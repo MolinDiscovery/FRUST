@@ -1,0 +1,21 @@
+# .gitignore
+__pycache__
+*.py[cod]
+dist
+build
+*.egg-info
+.DS_Store
+.env
+
+# Different files
+updatepypi.txt
+setup.py
+
+# Different folders
+/dev/
+.vscode/
+FRUST.egg-info/
+
+# Logs and temp files
+*.log
+*.tmp

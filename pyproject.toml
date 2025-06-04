@@ -1,0 +1,21 @@
+[build-system]
+requires = ["setuptools>=64.0"]
+build-backend = "setuptools.build_meta"
+
+[project]
+name = "FRUST"
+version = "0.1.0"
+description = "Frustrated Activation: a pipeline for automated frustrated lewis pair activation"
+readme = "README.md"
+requires-python = ">=3.10"
+authors = [{ name = "Jacob Molin Nielsen", email = "jacob.molin@me.com" }]
+dependencies = [
+    "rdkit",
+    "numpy",
+    "pandas",
+    "matplotlib",
+    "tqdm",
+]
+
+[tool.setuptools]
+packages = ["frust"]
