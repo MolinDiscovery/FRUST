@@ -1,6 +1,6 @@
 # frust/dirs.py
 from pathlib import Path
-from .utils.mols import get_molecule_name, generate_id
+from .mols import get_molecule_name, generate_id
 
 def prepare_base_dir(path: Path | str | None, ligands_smiles: list[str], job_id: int | None = None) -> Path:
     """Prepare and create a base directory for pipeline results.

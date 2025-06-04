@@ -10,7 +10,7 @@ import numpy as np
 import pandas as pd
 from pandas import Series
 
-from frust.dirs import make_step_dir, prepare_base_dir
+from frust.utils.dirs import make_step_dir, prepare_base_dir
 from frust.utils.slurm import detect_job_id
 
 from tooltoad.xtb import xtb_calculate
