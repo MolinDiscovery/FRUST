@@ -4,7 +4,7 @@
 [![License](https://img.shields.io/badge/License-MIT-green.svg)](https://opensource.org/licenses/MIT)
 [![Status](https://img.shields.io/badge/Status-Early%20Development-orange)](https://github.com)
 
-> **⚠️ Early Development Phase**: This project is in active development and may undergo significant changes.
+> **⚠️ Early Development Phase**: This project is in active development and will undergo significant changes.
 
 A computational pipeline for automated frustrated Lewis pair (FLP) activation studies, designed to facilitate the discovery and characterization of FLP-mediated chemical transformations.
 
@@ -142,6 +142,7 @@ Email: jacob.molin@me.com
 
 ## Acknowledgments
 
+- Jensen Group and Collaborators
 - RDKit development team for molecular manipulation tools
 - Quantum chemistry software developers (xTB, ORCA teams)
 - The frustrated Lewis pair research community
