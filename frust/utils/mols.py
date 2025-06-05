@@ -106,3 +106,37 @@ def rotated_maps(lig, old, reactive_old_idx, new_targets):
         d.rotate(shift)                            # positive = rotate right
         maps.append(list(zip(d, old)))
     return maps
+
+
+def combine_rw_mols(rw1, rw2):
+    """Merge two RWMols, returning (combined_rwmol, offset_for_rw2)."""
+    from rdkit.Chem.rdchem import RWMol
+    combined = RWMol(rw1)
+    old_to_new = {}
+    offset = combined.GetNumAtoms()
+    
+    # Add atoms from rw2
+    for a_idx in range(rw2.GetNumAtoms()):
+        new_idx = combined.AddAtom(rw2.GetAtomWithIdx(a_idx))
+        old_to_new[a_idx] = new_idx
+    
+    # Add bonds from rw2
+    for b_idx in range(rw2.GetNumBonds()):
+        bond = rw2.GetBondWithIdx(b_idx)
+        a1 = old_to_new[bond.GetBeginAtomIdx()]
+        a2 = old_to_new[bond.GetEndAtomIdx()]
+        combined.AddBond(a1, a2, bond.GetBondType())
+    
+    return combined, offset
+
+
+def remove_one_h(rwmol, atom_idx):
+    """Removes a single hydrogen from the specified atom_idx if present."""
+    atom = rwmol.GetAtomWithIdx(atom_idx)
+    for nbr in atom.GetNeighbors():
+        if nbr.GetAtomicNum() == 1:  # hydrogen
+            rwmol.RemoveBond(atom.GetIdx(), nbr.GetIdx())
+            rwmol.RemoveAtom(nbr.GetIdx())
+            # print(f"Removed an H from atom {atom_idx}")
+            return
+    print(f"No hydrogen found to remove on atom {atom_idx}")

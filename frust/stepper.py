@@ -31,7 +31,7 @@ class Stepper:
         n_cores: int = 8,
         memory_gb: float = 20.0,
         save_calc_dirs: bool = True,
-        save_output: bool = True,
+        save_output_dir: bool = True,
         **kwargs
     ):
         self.debug          = debug
@@ -41,10 +41,10 @@ class Stepper:
         self.n_cores        = n_cores
         self.memory_gb      = memory_gb
         self.save_calc_dirs = save_calc_dirs
-        self.save_output    = save_output
+        self.save_output    = save_output_dir
 
         self.base_dir = Path(output_base) if output_base is not None else Path(".")
-        if save_output:
+        if save_output_dir:
             self.base_dir = prepare_base_dir(output_base, ligands_smiles, job_id)
 
         if self.debug:
@@ -82,43 +82,84 @@ class Stepper:
 
     @staticmethod
     def build_initial_df(embedded_dict: dict) -> pd.DataFrame:
-        """…same as before…"""
-        rows = []
-        pattern = re.compile(r"^TS\((?P<ligand>.+?)_rpos\((?P<rpos>\d+)\)\)$")
+        """
+        Turn a dictionary of embedded‐conformer data into a tidy DataFrame.
 
-        for ts_name, val in embedded_dict.items():
-            if len(val) == 4:
-                mol, cids, keep, smi = val
+        The dictionary keys can be either:
+          1) TS names of the form 'TS(..._rpos(N))' (with a 4‐ or 5‐tuple value)
+          2) plain molecule names (without '_rpos(...)') and a 2‐tuple value
+
+        For TS entries:
+            key = 'TS(molname_rpos(N))'
+            value = (Mol_with_H, cids, keep_idxs, smiles[, energies])
+
+        For plain‐mol entries:
+            key = 'some_name'
+            value = (Mol, cids)
+
+        In the TS case we parse out `ligand_name` and `rpos` from the key;
+        in the plain‐mol case we set ligand_name=key and rpos=None.
+
+        Returns
+        -------
+        pd.DataFrame
+            One row per conformer with columns
+              - custom_name         (the original dict key)
+              - ligand_name         (parsed or just the key)
+              - rpos                (int or None)
+              - constraint_atoms    (list[int] or empty list)
+              - cid                 (conformer ID)
+              - smiles              (str or None)
+              - atoms               (list of atomic symbols)
+              - coords_embedded     (list of (x,y,z) tuples)
+              - energy_uff          (float or None)
+        """
+        rows: list[dict] = []
+        pattern = re.compile(r'^(?:TS\()?(?P<ligand>.+?)_rpos\((?P<rpos>\d+)\)\)?$')
+
+        for name, val in embedded_dict.items():
+            if len(val) == 2:
+                mol, cids = val
+                keep_idxs = None
+                smi = None    
+                energies: list[tuple[float,int]] = []
+            elif len(val) == 4:
+                mol, cids, keep_idxs, smi = val
                 energies = []
             elif len(val) == 5:
-                mol, cids, keep, smi, energies = val
+                mol, cids, keep_idxs, smi, energies = val
             else:
-                raise ValueError(f"Bad tuple length for {ts_name}")
+                raise ValueError(f"build_initial_df: unexpected tuple length {len(val)} for key '{name}'")
 
-            m = pattern.match(ts_name)
-            if not m:
-                raise ValueError(f"Bad TS name: {ts_name}")
-            ligand, rpos = m.group("ligand"), int(m.group("rpos"))
-            atom_syms = [a.GetSymbol() for a in mol.GetAtoms()]
-            e_map     = {cid: e for e, cid in energies}
+            m = pattern.match(name)
+            if m:
+                ligand_name = m.group("ligand")
+                rpos = int(m.group("rpos"))
+            else:
+                ligand_name = name
+                rpos = pd.NA
+
+            e_map: dict[int,float] = {cid_val: e_val for (e_val, cid_val) in energies} if energies else {}
+
+            atom_syms = [atom.GetSymbol() for atom in mol.GetAtoms()]
 
             for cid in cids:
-                conf   = mol.GetConformer(cid)
+                conf = mol.GetConformer(cid)
                 coords = [tuple(conf.GetAtomPosition(i)) for i in range(mol.GetNumAtoms())]
+
                 rows.append({
-                    "custom_name":      ts_name,
-                    "ligand_name":      ligand,
-                    "rpos":             rpos,
-                    "constraint_atoms": keep,
-                    "cid":              cid,
-                    "smiles":           smi,
-                    "atoms":            atom_syms,
-                    "coords_embedded":  coords,
-                    "energy_uff":       e_map.get(cid)
+                    "custom_name":     name,
+                    "ligand_name":     ligand_name,
+                    "rpos":            rpos,
+                    "constraint_atoms": keep_idxs,
+                    "cid":             cid,
+                    "smiles":          smi,
+                    "atoms":           atom_syms,
+                    "coords_embedded": coords,
+                    "energy_uff":      e_map.get(cid, None)
                 })
 
         return pd.DataFrame(rows)
-
     def _run_engine(
         self,
         df: pd.DataFrame,
@@ -142,7 +183,7 @@ class Stepper:
         all_row_data: list[dict[str, object]] = []
 
         for i, row in df_out.iterrows():
-            logger.info(f"[{prefix}] row {i} ({row['custom_name']})…")
+            logger.debug(f"[{prefix}] row {i} ({row['custom_name']})…")
 
             # Step 1: create a folder base_dir/prefix/TS(...)
             if self.save_calc_dirs and self.save_output or save_step:
