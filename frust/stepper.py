@@ -117,19 +117,22 @@ class Stepper:
         rows: list[dict] = []
         pattern = re.compile(r'^(?:TS\()?(?P<ligand>.+?)_rpos\((?P<rpos>\d+)\)\)?$')
 
+        ligand_mol = None
+
         for name, val in embedded_dict.items():
             if len(val) == 2:
                 mol, cids = val
                 keep_idxs = None
-                smi = None    
+                smi = None
                 energies: list[tuple[float,int]] = []
             elif len(val) == 4:
                 mol, cids, keep_idxs, smi = val
                 energies = []
-            elif len(val) == 5:
-                mol, cids, keep_idxs, smi, energies = val
+            # ----- unpack, now expecting 6-tuple -----
+            elif len(val) == 6:
+                mol, cids, keep_idxs, smi, energies, ligand_mol = val
             else:
-                raise ValueError(f"build_initial_df: unexpected tuple length {len(val)} for key '{name}'")
+                raise ValueError(f"Bad tuple length for {name}")
 
             m = pattern.match(name)
             if m:
@@ -154,6 +157,7 @@ class Stepper:
                     "constraint_atoms": keep_idxs,
                     "cid":             cid,
                     "smiles":          smi,
+                    "ligand_mol":      ligand_mol,
                     "atoms":           atom_syms,
                     "coords_embedded": coords,
                     "energy_uff":      e_map.get(cid, None)
