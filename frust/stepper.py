@@ -13,8 +13,7 @@ from pandas import Series
 from frust.utils.dirs import make_step_dir, prepare_base_dir
 from frust.utils.slurm import detect_job_id
 
-from tooltoad.xtb import xtb_calculate
-from tooltoad.orca import orca_calculate
+from rdkit import Chem
 
 # indices in the “constraint_atoms” list
 B, N, H, C = 0, 1, 4, 5
@@ -117,7 +116,7 @@ class Stepper:
         rows: list[dict] = []
         pattern = re.compile(r'^(?:TS\()?(?P<ligand>.+?)_rpos\((?P<rpos>\d+)\)\)?$')
 
-        ligand_mol = None
+        ligand_mol_block = None
 
         for name, val in embedded_dict.items():
             if len(val) == 2:
@@ -128,9 +127,8 @@ class Stepper:
             elif len(val) == 4:
                 mol, cids, keep_idxs, smi = val
                 energies = []
-            # ----- unpack, now expecting 6-tuple -----
-            elif len(val) == 6:
-                mol, cids, keep_idxs, smi, energies, ligand_mol = val
+            elif len(val) == 5:
+                mol, cids, keep_idxs, smi, energies = val
             else:
                 raise ValueError(f"Bad tuple length for {name}")
 
@@ -151,19 +149,20 @@ class Stepper:
                 coords = [tuple(conf.GetAtomPosition(i)) for i in range(mol.GetNumAtoms())]
 
                 rows.append({
-                    "custom_name":     name,
-                    "ligand_name":     ligand_name,
-                    "rpos":            rpos,
+                    "custom_name":      name,
+                    "ligand_name":      ligand_name,
+                    "rpos":             rpos,
                     "constraint_atoms": keep_idxs,
-                    "cid":             cid,
-                    "smiles":          smi,
-                    "ligand_mol":      ligand_mol,
-                    "atoms":           atom_syms,
-                    "coords_embedded": coords,
-                    "energy_uff":      e_map.get(cid, None)
+                    "cid":              cid,
+                    "smiles":           smi,
+                    "atoms":            atom_syms,
+                    "coords_embedded":  coords,
+                    "energy_uff":       e_map.get(cid, None)
                 })
 
         return pd.DataFrame(rows)
+    
+
     def _run_engine(
         self,
         df: pd.DataFrame,
@@ -187,7 +186,7 @@ class Stepper:
         all_row_data: list[dict[str, object]] = []
 
         for i, row in df_out.iterrows():
-            logger.debug(f"[{prefix}] row {i} ({row['custom_name']})…")
+            logger.info(f"[{prefix}] row {i} ({row['custom_name']})…")
 
             # Step 1: create a folder base_dir/prefix/TS(...)
             if self.save_calc_dirs and self.save_output or save_step:

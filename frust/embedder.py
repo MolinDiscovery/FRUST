@@ -131,10 +131,7 @@ def embed_ts(
 
             energies.append((ff.CalcEnergy(), cid))
 
-    #return ts_with_H, list(cids), atom_indices_to_keep, smi, energies
-    # build the exact ligand Mol we used to pick rpos
-    ligand_base = Chem.AddHs(Chem.MolFromSmiles(smi))
-    return ts_with_H, list(cids), atom_indices_to_keep, smi, energies, ligand_base
+    return ts_with_H, list(cids), atom_indices_to_keep, smi, energies
 
 def embed_mols(
     mols_dict: Dict[str, Chem.Mol],

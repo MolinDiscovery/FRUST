@@ -5,15 +5,17 @@ import submitit
 from frust.pipes import run_ts1
 
 # ─── CONFIGURE HERE ─────────────────────────────────────────────────────────────
-USE_SLURM    = False            # True → submit to Slurm; False → run locally
-CSV_PATH     = "datasets/ir_borylation.csv"
-TS_XYZ       = "structures/ts1_guess.xyz"
-OUT_DIR      = "results"        # per-SMI .parquet will go here
-LOG_DIR      = "logs/ts"        # submitit’s log folder
-CPUS_PER_JOB = 8
-MEM_GB       = 16
-TIMEOUT_MIN  = 60
-N_CONFS      = 10
+USE_SLURM       = False            # True → submit to Slurm; False → run locally
+DEBUG           = False
+CSV_PATH        = "../datasets/ir_borylation_test.csv"
+TS_XYZ          = "../structures/ts1_guess.xyz"
+OUT_DIR         = "results"        # per-SMI .parquet will go here
+LOG_DIR         = "logs/ts"        # submitit’s log folder
+SAVE_OUT_DIRS   = False
+CPUS_PER_JOB    = 8
+MEM_GB          = 16
+TIMEOUT_MIN     = 60
+N_CONFS         = 2
 # ────────────────────────────────────────────────────────────────────────────────
 
 # read and dedupe SMILES
@@ -42,10 +44,15 @@ jobs = executor.map_array(
         ts_guess_xyz=TS_XYZ,
         n_confs=N_CONFS,
         n_cores=CPUS_PER_JOB,
-        debug=not USE_SLURM,
+        debug=DEBUG,
         output_parquet=os.path.join(OUT_DIR, f"{smi}.parquet"),
+        save_output_dir=SAVE_OUT_DIRS
     ),
     smi_list
 )
 
-print("Submitted jobs:", jobs.job_ids)
+
+if USE_SLURM:
+    print("Submitted jobs:", jobs.job_ids)
+else:
+    print(f"Local run submitted {len(jobs)} ligands.")

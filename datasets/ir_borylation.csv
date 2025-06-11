@@ -1,8 +1,6 @@
 df index,smiles,active atom
 16,Cc1nc2ccccc2o1,7
-17,Cc1nc2ccccc2o1,7
 18,Cc1nc2cc(Br)ccc2o1,8
-19,Cc1nc2cc(Br)ccc2o1,8
 20,Cc1nc2ccccc2[nH]1,5
 21,Cc1cc2c(Cl)ccnc2[nH]1,6
 22,COc1ccc2oc(C)nc2c1,4
@@ -63,19 +61,8 @@ df index,smiles,active atom
 218,CCOC(=O)c1ccc(O)cc1,10
 219,Oc1ccc(F)cc1,7
 220,Oc1ccc(Cl)cc1Cl,2
-260,CCCCCCN(CCCCCC)C(=O)c1ccccc1C(F)(F)F,17
-262,CCCCCCN(CCCCCC)C(=O)c1ccccc1C(=O)OC,17
-264,CCCCCCN(CCCCCC)C(=O)c1cccc(Br)c1,17
-266,CCCCCCN(CCCCCC)C(=O)c1cccc(-c2ccccc2)c1,17
-268,CCCCCCN(CCCCCC)C(=O)c1cccc(C#N)c1,17
-270,CCCCCCN(CCCCCC)C(=O)c1cccc(Cl)c1Cl,17
-272,CCCCCCN(CCCCCC)C(=O)c1cccc(C(F)(F)F)c1F,17
-274,CCCCCCN(CCCCCC)C(=O)c1cccs1,18
-276,CCCCCCN(CCCCCC)C(=O)c1ccc[nH]1,18
-278,CCCCCCN(CCCCCC)C(=O)c1cc2ccccc2[nH]1,21
 280,CCOP(=O)(OCC)c1ccccc1C(F)(F)F,10
 282,CCN(CC)P(=O)(c1ccccc1)N(CC)CC,11
-284,O=P(c1ccccc1)(C1CCCCC1)C1CCCCC1,6
 337,FC(F)(F)c1ccc2c(Cl)ccnc2c1,10
 338,Clc1ccc2c(Cl)ccnc2c1,7
 339,Cc1ccc2nc(C)ccc2c1,9
@@ -101,10 +88,6 @@ df index,smiles,active atom
 490,CC(C)c1cccc(C(C)C)c1,5
 491,Cc1cccc(Br)c1,3
 492,Cc1cccc(N(C)C)c1,3
-493,Cc1cccc(Br)c1,3
-494,Cc1cccc(N(C)C)c1,3
-495,COc1cccc(OC)c1OC,4
-499,COc1cccc(OC)c1,4
 501,COC(=O)c1ccc(C#N)cc1,10
 502,N#Cc1ccc(C(F)(F)F)cc1,11
 503,N#Cc1ccc(I)cc1,8

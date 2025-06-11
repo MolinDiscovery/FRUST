@@ -1,0 +1,3 @@
+df index,smiles,active atom
+16,Cc1nc2ccccc2o1,7
+18,Cc1nc2cc(Br)ccc2o1,8
