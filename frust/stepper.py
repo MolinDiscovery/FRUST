@@ -2,6 +2,7 @@
 import logging
 logger = logging.getLogger(__name__)
 
+import sys
 from pathlib import Path
 import re
 import textwrap
@@ -12,8 +13,6 @@ from pandas import Series
 
 from frust.utils.dirs import make_step_dir, prepare_base_dir
 from frust.utils.slurm import detect_job_id
-
-from rdkit import Chem
 
 # indices in the “constraint_atoms” list
 B, N, H, C = 0, 1, 4, 5
@@ -63,7 +62,7 @@ class Stepper:
             logger.setLevel(logging.INFO)
 
         if not logger.handlers:
-            handler = logging.StreamHandler()
+            handler = logging.StreamHandler(sys.stdout)
             fmt = logging.Formatter(
                 "%(asctime)s %(levelname)-5s %(name)s: %(message)s",
                 datefmt="%Y-%m-%d %H:%M:%S",
