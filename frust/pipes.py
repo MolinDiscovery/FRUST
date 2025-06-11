@@ -10,10 +10,11 @@ def run_ts1(
     ligand_smiles_list: list[str],
     ts_guess_xyz: str,
     *,
-    n_confs: int = 5,
+    n_confs: int | None = None,
     n_cores: int = 4,
     debug: bool = False,
     top_n: int = 5,
+    out_dir: str = None,
     output_parquet: str | None = None,
     save_output_dir: bool = True,
 ):
@@ -31,7 +32,13 @@ def run_ts1(
     embedded = embed_ts(ts_structs, n_confs=n_confs, optimize=not debug)
 
     # 3) xTB cascade
-    step = Stepper(ligand_smiles_list, n_cores=n_cores, debug=debug, save_output_dir=save_output_dir)
+    step = Stepper(
+    ligand_smiles_list,
+    n_cores=n_cores,
+    debug=debug,
+    output_base=out_dir,
+    save_output_dir=save_output_dir,
+    )
     df0 = step.build_initial_df(embedded)
     df1 = step.xtb(df0, options={"gfnff": None, "opt": None}, constraint=True)
     df2 = step.xtb(df1, options={"gfn": 2})

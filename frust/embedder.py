@@ -3,7 +3,7 @@ logger = logging.getLogger(__name__)
 
 from typing import Dict, Tuple, List, Union
 from rdkit import Chem
-from rdkit.Chem import AllChem, rdmolops, rdDistGeom
+from rdkit.Chem import AllChem, rdmolops, rdDistGeom, rdMolDescriptors
 from rdkit.Chem.rdchem import Mol, RWMol
 
 
@@ -20,7 +20,7 @@ def embed_ts(
     ts_data: Union[Dict[str, Tuple[Mol, List[int], str]], Mol],
     atom_indices_to_keep: List[int] = None,
     *,
-    n_confs: int = 2,
+    n_confs: None | int = None,
     n_cores: int = 1,
     optimize: bool = False,
     force_constant: float = 1e6,
@@ -39,7 +39,10 @@ def embed_ts(
         • Dict[str, (Mol, keep_idxs, smiles)] – typically what `transformer_ts` returns.
     atom_indices_to_keep
         Constraint atoms (needed only in single-Mol mode).
-    n_confs, n_cores
+    n_confs
+        Number of conformers to generate. If None, automatically determined
+        based on rotatable bonds (≤7: 50, ≤12: 200, >12: 300).
+    n_cores
         Passed to RDKit EmbedMultipleConfs.
     optimize
         If True, each embedded conformer is minimized with UFF **inside this function**.
@@ -59,10 +62,21 @@ def embed_ts(
     if isinstance(ts_data, dict):
         result: Dict[str, TSValue] = {}
         for name, (mol, keep_idxs, smi_in) in ts_data.items():
+            # Calculate n_confs if not provided
+            confs_to_use = n_confs
+            if confs_to_use is None:
+                N_rot = rdMolDescriptors.CalcNumRotatableBonds(mol)
+                if N_rot <= 7:
+                    confs_to_use = 50
+                elif N_rot <= 12:
+                    confs_to_use = 200
+                else:
+                    confs_to_use = 300
+
             result[name] = embed_ts(
                 mol,
                 keep_idxs,
-                n_confs=n_confs,
+                n_confs=confs_to_use,
                 n_cores=n_cores,
                 optimize=optimize,
                 force_constant=force_constant,
@@ -82,6 +96,16 @@ def embed_ts(
         idx: ts_mol.GetConformer().GetAtomPosition(idx)
         for idx in atom_indices_to_keep
     }
+
+    # Calculate conformations to create
+    if n_confs is None:
+        N_rot = rdMolDescriptors.CalcNumRotatableBonds(ts_mol)
+        if N_rot <= 7:
+            n_confs = 50
+        elif N_rot <= 12:
+            n_confs = 200
+        else:
+            n_confs = 300
 
     # Prepare molecule with explicit Hs
     ts_mol.UpdatePropertyCache(strict=True)
@@ -133,9 +157,10 @@ def embed_ts(
 
     return ts_with_H, list(cids), atom_indices_to_keep, smi, energies
 
+
 def embed_mols(
     mols_dict: Dict[str, Chem.Mol],
-    n_confs: int      = 10,
+    n_confs: int | None = None,
     n_cores: int      = 5,
     optimization: str = 'none',
     max_iters: int    = 100
@@ -143,10 +168,13 @@ def embed_mols(
     """
     For each molecule in `mols_dict`:
       1. Add explicit Hs.
-      2. Embed `n_confs` conformers (using RDKit's DG).
+      2. Embed `n_confs` conformers (using RDKit's DG). If n_confs is None, 
+         automatically determine based on rotatable bonds.
       3. Optionally minimize each conformer with UFF or MMFF94.
       4. Return a dict mapping name -> (molecule_with_conformers, conformer_IDs).
 
+    - n_confs: Number of conformers to generate. If None, automatically determined
+      based on rotatable bonds (≤7: 50, ≤12: 200, >12: 300).
     - optimization: 'UFF', 'MMFF94', or 'MMFF94s' (case‐insensitive).
     - If the molecule cannot be optimized by the chosen force field, we skip that molecule
       with a warning.
@@ -157,10 +185,21 @@ def embed_mols(
     for name, raw_mol in mols_dict.items():
         mol = Chem.AddHs(raw_mol)
 
+        # Calculate n_confs if not provided
+        confs_to_use = n_confs
+        if confs_to_use is None:
+            N_rot = rdMolDescriptors.CalcNumRotatableBonds(mol)
+            if N_rot <= 7:
+                confs_to_use = 50
+            elif N_rot <= 12:
+                confs_to_use = 200
+            else:
+                confs_to_use = 300
+
         try:
             cids = rdDistGeom.EmbedMultipleConfs(
                 mol, 
-                numConfs   = n_confs,
+                numConfs   = confs_to_use,
                 randomSeed = 0xF00D,
                 numThreads = n_cores,
             )
