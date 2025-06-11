@@ -6,7 +6,7 @@ from frust.pipes import run_ts1
 
 # ─── CONFIGURE HERE ─────────────────────────────────────────────────────────────
 USE_SLURM       = False            # True → submit to Slurm; False → run locally
-DEBUG           = False
+DEBUG           = True
 CSV_PATH        = "../datasets/ir_borylation_test.csv"
 TS_XYZ          = "../structures/ts1_guess.xyz"
 OUT_DIR         = "results"        # per-SMI .parquet will go here

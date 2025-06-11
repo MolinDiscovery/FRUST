@@ -15,6 +15,7 @@ dependencies = [
     "pandas",
     "matplotlib",
     "tqdm",
+    "pyarrow",
 ]
 
 [tool.setuptools]
