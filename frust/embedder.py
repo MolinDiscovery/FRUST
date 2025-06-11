@@ -65,6 +65,7 @@ def embed_ts(
             # Calculate n_confs if not provided
             confs_to_use = n_confs
             if confs_to_use is None:
+                rdmolops.FastFindRings(mol)
                 N_rot = rdMolDescriptors.CalcNumRotatableBonds(mol)
                 if N_rot <= 7:
                     confs_to_use = 50
@@ -99,6 +100,7 @@ def embed_ts(
 
     # Calculate conformations to create
     if n_confs is None:
+        rdmolops.FastFindRings(ts_mol)
         N_rot = rdMolDescriptors.CalcNumRotatableBonds(ts_mol)
         if N_rot <= 7:
             n_confs = 50
@@ -188,6 +190,7 @@ def embed_mols(
         # Calculate n_confs if not provided
         confs_to_use = n_confs
         if confs_to_use is None:
+            rdmolops.FastFindRings(mol)
             N_rot = rdMolDescriptors.CalcNumRotatableBonds(mol)
             if N_rot <= 7:
                 confs_to_use = 50

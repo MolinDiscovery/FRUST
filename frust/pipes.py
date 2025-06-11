@@ -111,5 +111,5 @@ def run_mols(
 if __name__ == '__main__':
     FRUST_path = str(Path(__file__).resolve().parent.parent)
     print(f"FRUST path: {FRUST_path}")
-    #run_ts1(["CN1C=CC=C1"], ts_guess_xyz=f"{FRUST_path}/structures/ts1_guess.xyz", debug=False, save_output_dir=False)
-    run_mols(["CN1C=CC=C1"], debug=False, save_output_dir=False)
+    run_ts1(["CN1C=CC=C1"], ts_guess_xyz=f"{FRUST_path}/structures/ts1_guess.xyz", n_confs=1, debug=False, save_output_dir=True)
+    #run_mols(["CN1C=CC=C1"], debug=False, save_output_dir=False)
