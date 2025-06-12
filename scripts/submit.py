@@ -1,67 +1,81 @@
 #!/usr/bin/env python3
 import os
+import inspect
 import pandas as pd
 import submitit
 from itertools import islice
-from frust.pipes import run_ts1
+import importlib
 
 # ─── CONFIG ─────────────────────────────────────────────────────────────
-PRODUCTION      = True
-USE_SLURM       = True
-DEBUG           = False
-BATCH_SIZE      = 4          # ← ligands per task / node
-CSV_PATH        = "../datasets/ir_borylation.csv" if PRODUCTION else "../datasets/ir_borylation_test.csv"
-# CSV_PATH        = "../datasets/font_smiles.csv"
-TS_XYZ          = "../structures/ts1_guess.xyz"
-OUT_DIR         = "results"
-LOG_DIR         = "logs/ts"
-SAVE_OUT_DIRS   = True
-CPUS_PER_JOB    = 8
-MEM_GB          = 16
-TIMEOUT_MIN     = 7200       # one work week
-N_CONFS         = None # None = use default rule
-# ─────────────────────────────────────────────────────────────────────────
+PIPELINE_NAME  = "run_mols"    # or "run_mols", etc.
+PRODUCTION     = True
+USE_SLURM      = False
+DEBUG          = False
+BATCH_SIZE     = 8
+CSV_PATH       = "../datasets/ir_borylation.csv" if PRODUCTION else "../datasets/ir_borylation_test.csv"
+TS_XYZ         = "../structures/ts1_guess.xyz"
+OUT_DIR        = "results"
+LOG_DIR        = "logs/mols"
+SAVE_OUT_DIRS  = False
+CPUS_PER_JOB   = 4
+MEM_GB         = 8
+TIMEOUT_MIN    = 7200
+N_CONFS        = None if PRODUCTION else 1
+# ────────────────────────────────────────────────────────────────────────
 
 def batched(iterable, n):
     it = iter(iterable)
-    while batch := list(islice(it, n)):
+    while (batch := list(islice(it, n))):
         yield batch
 
-# 1) Read and dedupe SMILES
-df        = pd.read_csv(CSV_PATH)
-smi_list  = list(dict.fromkeys(df["smiles"]))
+# load pipeline
+pipes_mod   = importlib.import_module("frust.pipes")
+pipeline_fn = getattr(pipes_mod, PIPELINE_NAME)
+sig         = inspect.signature(pipeline_fn)
+accepts_ts  = 'ts_guess_xyz' in sig.parameters
+
+# read smiles
+df       = pd.read_csv(CSV_PATH)
+smi_list = list(dict.fromkeys(df["smiles"]))
 
 os.makedirs(OUT_DIR, exist_ok=True)
 os.makedirs(LOG_DIR, exist_ok=True)
 
-# 2) Pick executor
-executor = submitit.AutoExecutor(LOG_DIR) if USE_SLURM else submitit.LocalExecutor(LOG_DIR)
+executor = (
+    submitit.AutoExecutor(LOG_DIR)
+    if USE_SLURM
+    else submitit.LocalExecutor(LOG_DIR)
+)
 executor.update_parameters(
-    slurm_partition = "kemi1" if USE_SLURM else None,
-    cpus_per_task   = CPUS_PER_JOB,
-    mem_gb          = MEM_GB,
-    timeout_min     = TIMEOUT_MIN,
+    slurm_partition="kemi1" if USE_SLURM else None,
+    cpus_per_task=CPUS_PER_JOB,
+    mem_gb=MEM_GB,
+    timeout_min=TIMEOUT_MIN,
 )
 
-# 3) Submit one future per batch
 futures = []
 for batch in batched(smi_list, BATCH_SIZE):
-    out_name = f"batch_{hash(tuple(batch)) & 0xffffffff:x}.parquet"
-    executor.update(slurm_job_name=out_name)
-    fut = executor.submit(
-        run_ts1,
-        batch,                      # list[str]  ← run_ts1 already expects this
-        ts_guess_xyz    = TS_XYZ,
-        n_confs         = N_CONFS,
-        n_cores         = CPUS_PER_JOB,
-        debug           = DEBUG,
-        out_dir         = OUT_DIR,
-        output_parquet  = os.path.join(OUT_DIR, out_name),
-        save_output_dir = SAVE_OUT_DIRS,
+    tag = f"{PIPELINE_NAME}_batch_{hash(tuple(batch)) & 0xffffffff:x}"
+    if USE_SLURM:
+        executor.update(slurm_job_name=tag)
+
+    common_kwargs = dict(
+        ligand_smiles_list=batch,
+        n_confs=N_CONFS,
+        n_cores=CPUS_PER_JOB,
+        debug=DEBUG,
+        out_dir=OUT_DIR,
+        output_parquet=os.path.join(OUT_DIR, f"{tag}.parquet"),
+        save_output_dir=SAVE_OUT_DIRS,
     )
+
+    if accepts_ts:
+        fut = executor.submit(pipeline_fn, ts_guess_xyz=TS_XYZ, **common_kwargs)
+    else:
+        fut = executor.submit(pipeline_fn, **common_kwargs)
+
     futures.append(fut)
 
-# 4) Report / wait
 if USE_SLURM:
     print("Submitted Slurm job IDs:", [f.job_id for f in futures])
 else:

@@ -14,7 +14,7 @@ def run_ts1(
     n_cores: int = 4,
     debug: bool = False,
     top_n: int = 5,
-    out_dir: str = None,
+    out_dir: str | None = None,
     output_parquet: str | None = None,
     save_output_dir: bool = True,
 ):
@@ -50,10 +50,10 @@ def run_ts1(
            .head(top_n)
     )
 
-    df3 = step.xtb(df2_filt, options={"gfn": 2, "ohess": True}, constraint=True)
+    df3 = step.xtb(df2_filt, options={"gfn": 2, "opt": None}, constraint=True)
 
     df3_fin = (
-        df3.sort_values(["ligand_name", "rpos", "xtb-gfn-ohess-gibbs_energy"])
+        df3.sort_values(["ligand_name", "rpos", "xtb-gfn-opt-electronic_energy"])
            .groupby(["ligand_name", "rpos"])
            .head(1)
     )
@@ -70,37 +70,54 @@ def run_mols(
     n_confs: int = 5,
     n_cores: int = 4,
     debug: bool = False,
-    top_n: int = 5,                 # keep N best per ligand before ohess
+    top_n: int = 5,
+    out_dir: str | None = None,
     output_parquet: str | None = None,
     save_output_dir: bool = True
 ):
-    # 1) generic cycle members
     mols = {}
     for smi in ligand_smiles_list:
-        mols.update(transformer_mols(ligand_smiles=smi, only_generics=True))
+        tmp = transformer_mols(ligand_smiles=smi, only_generics=True)
+        ligand_key = list(tmp.keys())[1]
+        mols[ligand_key] = tmp[ligand_key]
 
-    # 2) embed
     embedded = embed_mols(mols, n_confs=n_confs, n_cores=n_cores)
 
-    # 3) xTB cascade
-    step = Stepper(ligand_smiles_list, n_cores=n_cores, debug=debug, save_output_dir=save_output_dir)
+    step = Stepper(
+        ligand_smiles_list,
+        n_cores=n_cores,
+        debug=debug,
+        output_base=out_dir,
+        save_output_dir=save_output_dir
+    )
     df0 = step.build_initial_df(embedded)
-    df1 = step.xtb(df0, options={"gfnff": None, "opt": None})
-    df2 = step.xtb(df1, options={"gfn": 2})
 
-    # ---------- identical filtering to notebook ----------
-    df2_filt = (
-        df2.sort_values(["ligand_name", "xtb-gfn-electronic_energy"])
-           .groupby("ligand_name")
-           .head(top_n)
+    df1 = step.xtb(
+        df0,
+        options={"gfnff": None, "opt": None},
+    )
+    df2 = step.xtb(
+        df1,
+        options={"gfn": 2},
     )
 
-    df3 = step.xtb(df2_filt, options={"gfn": 2, "ohess": True})
+    df2_filt = (
+        df2
+        .sort_values(["ligand_name", "xtb-gfn-electronic_energy"])
+        .groupby("ligand_name")
+        .head(top_n)
+    )
+
+    df3 = step.xtb(
+        df2_filt,
+        options={"gfn": 2, "opt": None},
+    )
 
     df3_fin = (
-        df3.sort_values(["ligand_name", "xtb-gfn-ohess-gibbs_energy"])
-           .groupby("ligand_name")
-           .head(1)
+        df3
+        .sort_values(["ligand_name", "xtb-gfn-opt-electronic_energy"])
+        .groupby("ligand_name")
+        .head(1)
     )
 
     if output_parquet:
@@ -111,5 +128,5 @@ def run_mols(
 if __name__ == '__main__':
     FRUST_path = str(Path(__file__).resolve().parent.parent)
     print(f"FRUST path: {FRUST_path}")
-    run_ts1(["CN1C=CC=C1"], ts_guess_xyz=f"{FRUST_path}/structures/ts1_guess.xyz", n_confs=1, debug=False, save_output_dir=True)
+    run_ts1(["CN1C=CC=C1"], ts_guess_xyz=f"{FRUST_path}/structures/ts1_guess.xyz", n_confs=1, debug=False, save_output_dir=False)
     #run_mols(["CN1C=CC=C1"], debug=False, save_output_dir=False)

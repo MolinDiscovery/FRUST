@@ -20,3 +20,7 @@ FRUST.egg-info/
 # Logs and temp files
 *.log
 *.tmp
+
+# Special rule for scripts directory
+/scripts/*
+!/scripts/submit.py
