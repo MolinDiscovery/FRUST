@@ -6,6 +6,7 @@ from rdkit import Chem
 from rdkit.Chem import AllChem, rdmolops, rdDistGeom, rdMolDescriptors
 from rdkit.Chem.rdchem import Mol, RWMol
 
+from tooltoad.vis import MolTo3DGrid
 
 TSValue = Tuple[
     Mol,                 # ts_with_H
@@ -20,6 +21,7 @@ def embed_ts(
     ts_data: Union[Dict[str, Tuple[Mol, List[int], str]], Mol],
     atom_indices_to_keep: List[int] = None,
     *,
+    ts_type: str = "ts1",
     n_confs: None | int = None,
     n_cores: int = 1,
     optimize: bool = False,
@@ -77,6 +79,7 @@ def embed_ts(
             result[name] = embed_ts(
                 mol,
                 keep_idxs,
+                ts_type=ts_type,
                 n_confs=confs_to_use,
                 n_cores=n_cores,
                 optimize=optimize,
@@ -97,7 +100,7 @@ def embed_ts(
         idx: ts_mol.GetConformer().GetAtomPosition(idx)
         for idx in atom_indices_to_keep
     }
-
+    
     # Calculate conformations to create
     if n_confs is None:
         rdmolops.FastFindRings(ts_mol)
@@ -125,15 +128,26 @@ def embed_ts(
         coordMap=coord_map,
         ignoreSmoothingFailures=True,
         enforceChirality=True,
+        useSmallRingTorsions=True,
         numThreads=n_cores
     )
 
-    # Remove temporary bonds (hard-coded: 10-reactive_C / 10-reactive_H)
-    reactive_C = atom_indices_to_keep[-1]
-    reactive_H = atom_indices_to_keep[-2]
     ts_with_H = RWMol(ts_with_H)
-    ts_with_H.RemoveBond(10, reactive_C)
-    ts_with_H.RemoveBond(10, reactive_H)
+    if ts_type == "ts1":
+        # Remove temporary bonds (hard-coded: 10-reactive_C / 10-reactive_H)
+        reactive_C = atom_indices_to_keep[-1]
+        reactive_H = atom_indices_to_keep[-2]
+        ts_with_H.RemoveBond(10, reactive_C)
+        ts_with_H.RemoveBond(10, reactive_H)
+
+    if ts_type == "ts2":
+        reactive_C = atom_indices_to_keep[-1]
+        reactive_H = atom_indices_to_keep[-2]
+        cat_B      = atom_indices_to_keep[0]
+        pin_B      = atom_indices_to_keep[-3]
+        ts_with_H.RemoveBond(reactive_C, cat_B)
+        ts_with_H.RemoveBond(reactive_H, cat_B)
+        ts_with_H.RemoveBond(pin_B, cat_B)
 
     print(f"Embedded {len(cids)} conformers on atom {reactive_C}")
 

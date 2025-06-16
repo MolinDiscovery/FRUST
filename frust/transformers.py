@@ -21,7 +21,7 @@ def transformer_ts(
     ts_guess_struct     = "ts1_guess.xyz",
     bonds_to_remove     = [(10, 41), (10, 12), (11, 41)],
     H_idx               = 10,
-    pre_name            = "TS",
+    pre_name            = "TS1",
     embed_ready         = True,
 ):
     
@@ -452,7 +452,7 @@ def transformer_ts2(
             ts_rw_combined.AddBond(B_cat_idx, reactive_C, Chem.BondType.ZERO)
             ts_rw_combined.AddBond(B_cat_idx, reactive_H, Chem.BondType.SINGLE)
             ts_rw_combined.AddBond(B_cat_idx, B_pin_idx, Chem.BondType.SINGLE)
-            b_atom = ts_rw_combined.GetAtomWithIdx(10)
+            b_atom = ts_rw_combined.GetAtomWithIdx(B_cat_idx)
             b_atom.SetFormalCharge(2)
             c_atom = ts_rw_combined.GetAtomWithIdx(reactive_C)
             c_atom.SetFormalCharge(-1)

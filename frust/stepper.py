@@ -14,13 +14,11 @@ from pandas import Series
 from frust.utils.dirs import make_step_dir, prepare_base_dir
 from frust.utils.slurm import detect_job_id
 
-# indices in the “constraint_atoms” list
-B, N, H, C = 0, 1, 4, 5
-
 class Stepper:
     def __init__(
         self,
         ligands_smiles: list[str],
+        step_type: str | None = None,
         output_base: Path | str | None = None,
         job_id: int | None = None,
         debug: bool = False,
@@ -32,6 +30,7 @@ class Stepper:
         save_output_dir: bool = True,
         **kwargs
     ):
+        self.step_type      = step_type
         self.debug          = debug
         self.live           = live
         job_id              = detect_job_id(job_id, live and not debug)
@@ -78,8 +77,8 @@ class Stepper:
             raise ValueError("No column containing 'coords' found")
         return cols[-1]
 
-    @staticmethod
-    def build_initial_df(embedded_dict: dict) -> pd.DataFrame:
+
+    def build_initial_df(self, embedded_dict: dict) -> pd.DataFrame:
         """
         Turn a dictionary of embedded‐conformer data into a tidy DataFrame.
 
@@ -113,7 +112,11 @@ class Stepper:
               - energy_uff          (float or None)
         """
         rows: list[dict] = []
-        pattern = re.compile(r'^(?:TS\()?(?P<ligand>.+?)_rpos\((?P<rpos>\d+)\)\)?$')
+        pattern = re.compile(
+            r'^(?:(?P<prefix>TS\d*|Mols)\()?'
+            r'(?P<ligand>.+?)_rpos\('        
+            r'(?P<rpos>\d+)\)\)?$'           
+        )
 
         ligand_mol_block = None
 
@@ -133,11 +136,15 @@ class Stepper:
 
             m = pattern.match(name)
             if m:
+                prefix = m.group("prefix")
                 ligand_name = m.group("ligand")
                 rpos = int(m.group("rpos"))
             else:
                 ligand_name = name
                 rpos = pd.NA
+
+            if self.step_type == None:
+                self.step_type = prefix
 
             e_map: dict[int,float] = {cid_val: e_val for (e_val, cid_val) in energies} if energies else {}
 
@@ -275,12 +282,13 @@ class Stepper:
             base_str = detailed_inp_str.strip()
             if base_str:
                 inp["detailed_input_str"] = base_str
-
-            if constraint:
+            
+            if self.step_type.upper() == "TS1":
+                B, N, H, C = 0, 1, 4, 5
                 atom = [x+1 for x in row["constraint_atoms"]]
                 block = textwrap.dedent(f"""
                 $constrain
-                  force constant=10
+                  force constant=50
                   distance: {atom[B]}, {atom[H]}, 2.07696
                   distance: {atom[N]}, {atom[H]}, 1.5127
                   distance: {atom[H]}, {atom[C]}, 1.29095
@@ -288,6 +296,24 @@ class Stepper:
                   distance: {atom[B]}, {atom[N]}, 3.06223
                   angle: {atom[N]}, {atom[H]}, {atom[C]}, 170.1342
                   angle: {atom[H]}, {atom[C]}, {atom[B]}, 87.4870
+                $end
+                """).strip()
+
+            if self.step_type.upper() == "TS2":
+                BCat, BPin, H, C = 0, 3, 4, 5
+                atom = [x+1 for x in row["constraint_atoms"]]
+                block = textwrap.dedent(f"""
+                $constrain
+                  force constant=50
+                  distance: {atom[BCat]}, {atom[H]}, 1.335
+                  distance: {atom[BPin]}, {atom[H]}, 2.168
+                  distance: {atom[H]}, {atom[C]}, 2.424
+                  distance: {atom[BCat]}, {atom[C]}, 1.335
+                  distance: {atom[BPin]}, {atom[C]}, 1.956
+                  distance: {atom[BPin]}, {atom[H]}, 2.168
+                  distance: {atom[BCat]}, {atom[BPin]}, 2.063
+                  angle: {atom[BPin]}, {atom[C]}, {atom[BCat]}, 65.36
+                  angle: {atom[BPin]}, {atom[H]}, {atom[BCat]}, 67.39
                 $end
                 """).strip()
 
