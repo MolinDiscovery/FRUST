@@ -170,31 +170,39 @@ class Stepper:
     
 
     def _run_engine(
-        self,
-        df: pd.DataFrame,
-        engine_fn: Callable[..., dict],
-        prefix: str,
-        build_inputs: Callable[[Series], dict],
-        save_step: bool,
-    ) -> pd.DataFrame:
+            self,
+            df: pd.DataFrame,
+            engine_fn: Callable[..., dict],
+            prefix: str,
+            build_inputs: Callable[[Series], dict],
+            save_step: bool,
+        ) -> pd.DataFrame:
         """
         Generic runner for xTB or ORCA or any other engine.
 
-        For each row:
-          - Build a calc_dir = base_dir/prefix/row_name
-          - Call engine_fn(atoms=…, coords=…, n_cores=…, calc_dir=…, **build_inputs(row))
-          - Ensure we collect exactly one value per “kept” key (normal_termination, electronic_energy, opt_coords, vibs, gibbs_energy).
-          - If a key is missing, insert a default so that the final column has the same length
-            as df.
+        - Rows with missing coords (None or NaN) are auto‐skipped and get
+        normal_termination=False / electronic_energy=NaN.
+        - Only rows with valid coords are passed to engine_fn.
         """
-        df_out     = df.copy()
-        coord_col  = self._last_coord_col(df_out)
+        import pandas as _pd
+
+        df_out    = df.copy()
+        coord_col = self._last_coord_col(df_out)
         all_row_data: list[dict[str, object]] = []
 
         for i, row in df_out.iterrows():
+            coords = row[coord_col]
+            # --- skip any row with no coords ---
+            if coords is None or (_pd.isna(coords) if not isinstance(coords, (list, tuple)) else False):
+                all_row_data.append({
+                    f"{prefix}-normal_termination": False,
+                    f"{prefix}-electronic_energy":  np.nan
+                })
+                continue
+
             logger.info(f"[{prefix}] row {i} ({row['custom_name']})…")
 
-            # Step 1: create a folder base_dir/prefix/TS(...)
+            # step 1: build calc_dir if needed
             if self.save_calc_dirs and self.save_output or save_step:
                 engine_base = self.base_dir / prefix
                 engine_base.mkdir(parents=True, exist_ok=True)
@@ -203,15 +211,16 @@ class Stepper:
             else:
                 calc_dir = None
 
+            # step 2: assemble arguments
             base_args = {
                 "atoms":   row["atoms"],
-                "coords":  [list(c) for c in row[coord_col]],
+                "coords":  [list(c) for c in coords],
                 "n_cores": self.n_cores,
                 "calc_dir": calc_dir,
             }
-
             inputs = {**base_args, **build_inputs(row)}
 
+            # step 3: run engine, catch exceptions
             try:
                 out = engine_fn(**inputs) or {}
             except Exception as e:
@@ -219,33 +228,34 @@ class Stepper:
                     print(f"  → engine error: {e}")
                 out = {"normal_termination": False}
 
+            # step 4: enforce defaults
             out.setdefault("normal_termination", False)
             if out["normal_termination"]:
                 out.setdefault("electronic_energy", np.nan)
 
-
-            allowed_keys = {"normal_termination", "electronic_energy", "opt_coords", "vibs"}
+            # step 5: pick only the keys we know how to handle
+            allowed = {"normal_termination", "electronic_energy", "opt_coords", "vibs"}
             if "vibs" in out and "gibbs_energy" in out:
-                allowed_keys.add("gibbs_energy")
-                
+                allowed.add("gibbs_energy")
+
             row_data: dict[str, object] = {}
-            for key in allowed_keys:
+            for key in allowed:
                 if key in out:
-                    col_name = f"{prefix}-{key}"
-                    row_data[col_name] = out[key]
+                    col = f"{prefix}-{key}"
+                    row_data[col] = out[key]
 
             all_row_data.append(row_data)
 
-        all_cols = set().union(*(rd.keys() for rd in all_row_data))
+        # --- now assemble all_row_data back into df_out ---
+        all_cols = sorted({c for rd in all_row_data for c in rd})
+        column_arrays = {col: [] for col in all_cols}
 
-        final_cols = sorted(all_cols)
-
-        column_arrays: dict[str, list] = {col: [] for col in final_cols}
-        for row_data in all_row_data:
-            for col in final_cols:
-                if col in row_data:
-                    column_arrays[col].append(row_data[col])
+        for rd in all_row_data:
+            for col in all_cols:
+                if col in rd:
+                    column_arrays[col].append(rd[col])
                 else:
+                    # fill defaults for skipped rows
                     if col.endswith("-normal_termination"):
                         column_arrays[col].append(False)
                     elif col.endswith("-electronic_energy") or col.endswith("-gibbs_energy"):
@@ -257,6 +267,7 @@ class Stepper:
             df_out[col] = vals
 
         return df_out
+
 
     def xtb(
         self,
