@@ -16,7 +16,7 @@ from .utils.mols import combine_rw_mols, remove_one_h, get_molecule_name
 logger = logging.getLogger(__name__)
 
 
-def transformer_ts(
+def transformer_ts1(
     ligand_smiles       = "CC([Si](N1C=CC=C1)(C(C)C)C(C)C)C",
     ts_guess_struct     = "ts1_guess.xyz",
     bonds_to_remove     = [(10, 41), (10, 12), (11, 41)],
@@ -182,7 +182,7 @@ def transformer_ts2(
     constraint_atoms=[54, 52, 59, 62], # TS2: H, B1, B2, C ---> B1 = Catalyst, B2 = Pinacolborane
     H_idx=54,
     pre_name="TS2",
-    embed_ready=False,
+    embed_ready=True,
 ):
     # --- Read TS Guess Structure --- #
     try:

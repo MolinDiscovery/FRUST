@@ -21,7 +21,7 @@ def embed_ts(
     ts_data: Union[Dict[str, Tuple[Mol, List[int], str]], Mol],
     atom_indices_to_keep: List[int] = None,
     *,
-    ts_type: str = "ts1",
+    ts_type: str = "TS1",
     n_confs: None | int = None,
     n_cores: int = 1,
     optimize: bool = False,
@@ -133,14 +133,14 @@ def embed_ts(
     )
 
     ts_with_H = RWMol(ts_with_H)
-    if ts_type == "ts1":
+    if ts_type.upper() == "TS1":
         # Remove temporary bonds (hard-coded: 10-reactive_C / 10-reactive_H)
         reactive_C = atom_indices_to_keep[-1]
         reactive_H = atom_indices_to_keep[-2]
         ts_with_H.RemoveBond(10, reactive_C)
         ts_with_H.RemoveBond(10, reactive_H)
 
-    if ts_type == "ts2":
+    if ts_type.upper() == "TS2":
         reactive_C = atom_indices_to_keep[-1]
         reactive_H = atom_indices_to_keep[-2]
         cat_B      = atom_indices_to_keep[0]
