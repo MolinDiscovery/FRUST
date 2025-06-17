@@ -117,14 +117,21 @@ def run_mols(
     output_parquet: str | None = None,
     save_output_dir: bool = True,
     DFT: bool = False,
+    select_mols: str | list[str] = "all",  # "all", "uniques", "generics", or specific names
 ):
-    # 1) build generic-cycle molecules
+    # 1) build generic-cycle molecules (with optional selection)
     mols = {}
     for smi in ligand_smiles_list:
-        tmp = transformer_mols(ligand_smiles=smi, only_generics=True)
-        # your pattern: second key is the ligand
-        ligand_key = list(tmp.keys())[1]
-        mols[ligand_key] = tmp[ligand_key]
+        if select_mols == "all":
+            tmp = transformer_mols(ligand_smiles=smi)
+        elif select_mols == "uniques":
+            tmp = transformer_mols(ligand_smiles=smi, only_uniques=True)
+        elif select_mols == "generics":
+            tmp = transformer_mols(ligand_smiles=smi, only_generics=True)
+        else:
+            tmp = transformer_mols(ligand_smiles=smi, select=select_mols)
+
+        mols.update(tmp)
 
     # 2) embed
     embedded = embed_mols(mols, n_confs=n_confs, n_cores=n_cores)
@@ -173,7 +180,7 @@ def run_mols(
         "6-31G**": None,
         "TightSCF": None,
         "SlowConv": None,
-        "Opt":     None,   # geometry optimize
+        "Opt":     None,
         "Freq":    None,
         "NoSym":   None,
     }
@@ -198,12 +205,12 @@ def run_mols(
 if __name__ == '__main__':
     FRUST_path = str(Path(__file__).resolve().parent.parent)
     print(f"FRUST path: {FRUST_path}")
-    run_ts(
-        ["CN1C=CC=C1"],
-        ts_guess_xyz=f"{FRUST_path}/structures/ts1_guess.xyz",
-        n_confs=1,
-        debug=False,
-        save_output_dir=False,
-        DFT=True
-    )
-    # run_mols(["CN1C=CC=C1"], debug=False, save_output_dir=False)
+    # run_ts(
+    #     ["CN1C=CC=C1"],
+    #     ts_guess_xyz=f"{FRUST_path}/structures/ts1_guess.xyz",
+    #     n_confs=1,
+    #     debug=False,
+    #     save_output_dir=False,
+    #     DFT=True
+    # )
+    print(run_mols(["CN1C=CC=C1", "CC([Si](N1C=CC=C1)(C(C)C)C(C)C)C"], debug=True, save_output_dir=False, DFT=True, select_mols=["dimer", "catalyst"]))

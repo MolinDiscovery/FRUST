@@ -468,170 +468,159 @@ def transformer_mols(
     catalyst_smiles = "CC1(C)CCCC(C)(C)N1C2=CC=CC=C2B",
     only_uniques = False,
     only_generics = False,
-    show_IUPAC=True,
+    show_IUPAC = True,
+    select: str | list[str] | None = None,
+    key_prefix: str | None = None,
 ):
+    """
+    Build the standard set of cycle molecules:
+      dimer, ligand, catalyst, int2_rpos(#), mol2_rpos(#), HBpin-ligand_rpos(#), HBpin-mol
+
+    Flags:
+      - only_uniques   : drop any _rpos variants
+      - only_generics  : keep only the bare names (and select int2/mol2/HBpin-ligand variants)
+      - select         : a name or list from
+                         ['dimer','ligand','catalyst','int2','mol2','HBpin-ligand','HBpin-mol']
+                         to return only those entries (including their _rpos(...) variants).
+    """
+
+    # --- normalize select to a list if given ---
+    base_names = ['dimer','ligand','catalyst','int2','mol2','HBpin-ligand','HBpin-mol']
+    if select is not None:
+        if isinstance(select, str):
+            select = [select]
+        bad = set(select) - set(base_names)
+        if bad:
+            raise ValueError(f"select must be from {base_names}, got {bad}")
+
+    # --- prepare input molecules ---
     catalyst_mol = Chem.MolFromSmiles(catalyst_smiles)
     ligand_mol   = Chem.MolFromSmiles(ligand_smiles)
-
-    catalyst_rw = RWMol(catalyst_mol)
-    ligand_rw   = RWMol(ligand_mol)
+    catalyst_rw  = RWMol(catalyst_mol)
+    ligand_rw    = RWMol(ligand_mol)
 
     ####################
     ### Create dimer ###
     ####################
+    # (unchanged from your version)
     catalyst1 = Chem.MolFromSmiles(catalyst_smiles)
     catalyst2 = Chem.MolFromSmiles(catalyst_smiles)
-
     B_pattern_dimer = Chem.MolFromSmarts("[B]c1ccccc1")
     B_match_dimer = catalyst1.GetSubstructMatches(B_pattern_dimer)
-
     B_idx_1 = B_match_dimer[0][0]
     catalyst1 = Chem.AddHs(catalyst1, onlyOnAtoms=[B_idx_1])
     catalyst2 = Chem.AddHs(catalyst2, onlyOnAtoms=[B_idx_1])
-
     catalyst1_RW = RWMol(catalyst1)
     catalyst2_RW = RWMol(catalyst2)
-
     dimer, offset = combine_rw_mols(catalyst1_RW, catalyst2_RW)
-
     BHH_pattern = Chem.MolFromSmarts("B([H])([H])c1ccccc1")
     BHH_match = catalyst1.GetSubstructMatches(BHH_pattern)
-
-    cat1_H1_idx = BHH_match[0][1]
-    cat1_H2_idx = BHH_match[0][2]
+    cat1_H1_idx, cat1_H2_idx = BHH_match[0][1], BHH_match[0][2]
     cat2_H1_idx = cat1_H1_idx + offset
     cat2_H2_idx = cat1_H2_idx + offset
-
-    cat1_B_idx = BHH_match[0][0]
-    cat2_B_idx = cat1_B_idx + offset
-
+    cat1_B_idx  = BHH_match[0][0]
+    cat2_B_idx  = cat1_B_idx + offset
     dimer.AddBond(cat1_H1_idx, cat2_B_idx, Chem.BondType.SINGLE)
     dimer.AddBond(cat2_H1_idx, cat1_B_idx, Chem.BondType.SINGLE)
-
-    cat1_B = dimer.GetAtomWithIdx(cat1_B_idx)
-    cat2_B = dimer.GetAtomWithIdx(cat2_B_idx)
-    cat1_B.SetFormalCharge(-1)
-    cat2_B.SetFormalCharge(-1)
-
-    cat1_H1 = dimer.GetAtomWithIdx(cat1_H1_idx)
-    cat2_H1 = dimer.GetAtomWithIdx(cat2_H1_idx)
-    cat1_H1.SetFormalCharge(+1)
-    cat2_H1.SetFormalCharge(+1)
-
+    for idx, charge in [(cat1_B_idx, -1), (cat2_B_idx, -1),
+                        (cat1_H1_idx, +1), (cat2_H1_idx, +1)]:
+        atom = dimer.GetAtomWithIdx(idx)
+        atom.SetFormalCharge(charge)
     dimer_mol = dimer.GetMol()
     Chem.SanitizeMol(dimer_mol)
 
     ######################
     ### Find unique cH ###
-    ######################    
+    ######################
     cH_patt = Chem.MolFromSmarts('[cH]')
     matches = ligand_rw.GetSubstructMatches(cH_patt)
     cH_atoms = [ind[0] for ind in matches]
-
-    atom_rank = list(Chem.CanonicalRankAtoms(ligand_rw,breakTies=False))
-
+    atom_rank = list(Chem.CanonicalRankAtoms(ligand_rw, breakTies=False))
     def find_unique_atoms(lst):
-        seen = set()
-        result = []
+        seen = set(); out = []
         for i, x in enumerate(lst):
             if x not in seen:
-                result.append(i)
-                seen.add(x)
-        return result
-
-    unique_atoms = find_unique_atoms(atom_rank)
-    unique_cH = set(unique_atoms).intersection(set(cH_atoms))
-    unique_cH = tuple(unique_cH)
+                seen.add(x); out.append(i)
+        return out
+    unique_cH = set(find_unique_atoms(atom_rank)).intersection(cH_atoms)
 
     ############################################
     ### Create intermediate 2 and molecule 2 ###
     ############################################
     b_pattern = Chem.MolFromSmarts("[B]")
-    pyrrole_attach_pattern = Chem.MolFromSmarts("[n,s,o]1[cH][c][c][c]1")
-
-    catalyst_matches = catalyst_mol.GetSubstructMatches(b_pattern)
-
-    if not catalyst_matches:
-        raise ValueError("No [B] atom found in the catalyst.")
-
-    catalyst_b_idx = catalyst_matches[0][0]
-
-    # print("Catalyst: B is at atom idx =", catalyst_b_idx)
-
-    mol2s = []
-    int2s = []
+    TMP       = Chem.MolFromSmarts('CC1(C)CCCC(C)(C)N1')
+    mol2s = []; int2s = []
     for cH in unique_cH:
-
-        combined_rw, offset = combine_rw_mols(catalyst_rw, ligand_rw)
-        combined_mol = combined_rw.GetMol()
-        Chem.SanitizeMol(combined_mol)
-        
-        b_idx_combined   = catalyst_b_idx
-        ch_idx_combined  = cH + offset
-
-        combined_rw.AddBond(b_idx_combined, ch_idx_combined, Chem.BondType.SINGLE)
-
-        mol2 = combined_rw.GetMol()
-
-        boron = combined_rw.GetAtomWithIdx(catalyst_b_idx)
-        boron.SetFormalCharge(-1)
-
-        TMP = Chem.MolFromSmarts('CC1(C)CCCC(C)(C)N1')
-        TMP_match = combined_rw.GetSubstructMatches(TMP)
-        nitrogen = combined_rw.GetAtomWithIdx(TMP_match[0][9])
-        nitrogen.SetFormalCharge(+1)
-
-        int2 = combined_rw.GetMol()
-        Chem.SanitizeMol(mol2)
-        Chem.SanitizeMol(int2)
-
-        mol2s.append((mol2, ch_idx_combined))
-        int2s.append((int2, ch_idx_combined))
+        combo_rw, offset = combine_rw_mols(catalyst_rw, ligand_rw)
+        combo_rw.AddBond(catalyst_rw.GetAtomWithIdx(0).GetIdx(),
+                         cH + offset, Chem.BondType.SINGLE)
+        # set B/N charges
+        combo_rw.GetAtomWithIdx(0).SetFormalCharge(-1)
+        nm = combo_rw.GetSubstructMatches(TMP)[0][9]
+        combo_rw.GetAtomWithIdx(nm).SetFormalCharge(+1)
+        mol2 = combo_rw.GetMol(); Chem.SanitizeMol(mol2)
+        int2 = combo_rw.GetMol(); Chem.SanitizeMol(int2)
+        mol2s.append((mol2, cH+offset))
+        int2s.append((int2, cH+offset))
 
     ###########################
     ### Add HBpin to ligand ###
     ###########################
-    HBpin_smile = 'CC1(C)OB([H])OC1(C)C'
-    HBpin_mol = Chem.MolFromSmiles(HBpin_smile)
-    HBpin_with_hs = Chem.AddHs(HBpin_mol)
-    HBpin_rw      = RWMol(HBpin_with_hs)
-    HBpin_b_idx   = HBpin_rw.GetSubstructMatches(b_pattern)[0][0]
-
+    HBpin_smile  = 'CC1(C)OB([H])OC1(C)C'
+    HBpin_mol    = Chem.MolFromSmiles(HBpin_smile)
+    HBpin_with_h = Chem.AddHs(HBpin_mol)
+    HBpin_rw     = RWMol(HBpin_with_h)
+    HBpin_b_idx  = HBpin_rw.GetSubstructMatches(b_pattern)[0][0]
     remove_one_h(HBpin_rw, HBpin_b_idx)
-
     HBpin_ligands = []
     for cH in unique_cH:
-        combined_HBpin, offset = combine_rw_mols(HBpin_rw, ligand_rw)
-
-        b_idx_combined_HBpin = HBpin_b_idx
-        ch_idx_combined = cH + offset
-
-        combined_HBpin.AddBond(b_idx_combined_HBpin, ch_idx_combined, Chem.BondType.SINGLE)
-        HBpin_ligand = Chem.RemoveHs(combined_HBpin)
-
-        HBpin_ligands.append((HBpin_ligand, ch_idx_combined))
-
+        hrw, offset = combine_rw_mols(HBpin_rw, ligand_rw)
+        hrw.AddBond(HBpin_b_idx, cH + offset, Chem.BondType.SINGLE)
+        hb_lig = Chem.RemoveHs(hrw)
+        HBpin_ligands.append((hb_lig, cH + offset))
 
     #######################
     ### Finalize output ###
     #######################
-    names = ['dimer', 'ligand', 'catalyst', 'int2', 'mol2', 'HBpin-ligand', 'HBpin-mol']
-    if show_IUPAC: 
-        name = get_molecule_name(ligand_smiles)
-        names[1] = name
+    names = ['dimer','ligand','catalyst','int2','mol2','HBpin-ligand','HBpin-mol']
+    if show_IUPAC:
+        names[1] = get_molecule_name(ligand_smiles)
+    mols = [dimer_mol, ligand_mol, catalyst_mol, int2s, mol2s, HBpin_ligands, HBpin_mol]
 
-    mols = [dimer, ligand_mol, catalyst_mol, int2s, mol2s, HBpin_ligands, HBpin_mol]
-    mols_dict = {}
+    mols_dict: dict[str, Chem.Mol] = {}
     for name, mol in zip(names, mols):
         if only_generics:
-            if name not in ['int2', 'mol2', 'HBpin-ligand']:
+            if name not in [names[1], 'int2', 'mol2', 'HBpin-ligand']:
                 mols_dict[name] = mol
         else:
-            if name in ['int2', 'mol2', 'HBpin-ligand']:
+            if isinstance(mol, list):
                 for m, i in mol:
-                    n = f"{name}_rpos({i})"
-                    mols_dict[n] = m
+                    mols_dict[f"{name}_rpos({i})"] = m
             elif not only_uniques:
                 mols_dict[name] = mol
+
+    iupac_ligand_name = names[1]
+
+    # --- apply select filter if requested ---
+    if select is not None:
+        filtered: dict[str, Chem.Mol] = {}
+        for choice in select:
+            # remap the alias "ligand" to the real IUPAC key if needed
+            actual = choice
+            if choice == "ligand" and show_IUPAC:
+                actual = iupac_ligand_name
+
+            for key, m in mols_dict.items():
+                # keep exact matches or any rpos‐variants
+                if key == actual or key.startswith(f"{actual}_rpos"):
+                    filtered[key] = m
+
+        mols_dict = filtered
+
+    if key_prefix is None:
+        key_prefix = ligand_smiles
+
+    if key_prefix:
+        mols_dict = {f"{key_prefix}_{k}": m for k, m in mols_dict.items()}
 
     return mols_dict

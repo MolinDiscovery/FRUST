@@ -118,8 +118,6 @@ class Stepper:
             r'(?P<rpos>\d+)\)\)?$'           
         )
 
-        ligand_mol_block = None
-
         for name, val in embedded_dict.items():
             if len(val) == 2:
                 mol, cids = val
@@ -140,11 +138,18 @@ class Stepper:
                 ligand_name = m.group("ligand")
                 rpos = int(m.group("rpos"))
             else:
-                ligand_name = name
+                if "_" in name:
+                    ligand_name = name.split("_", 1)[1]
+                else:
+                    ligand_name = name
                 rpos = pd.NA
 
             if self.step_type == None:
-                self.step_type = prefix
+                try:
+                    self.step_type = prefix
+                except Exception:
+                    self.step_type = "unknown"
+                    logger.warning("\n\nwarning: No calculation type identified.\nwarning: This is fine if you don't calculate a transition state.\n")
 
             e_map: dict[int,float] = {cid_val: e_val for (e_val, cid_val) in energies} if energies else {}
 
