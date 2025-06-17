@@ -8,17 +8,18 @@ import importlib
 
 # ─── CONFIG ─────────────────────────────────────────────────────────────
 PIPELINE_NAME  = "run_ts"  # or "run_mols"
-PRODUCTION     = False
-USE_SLURM      = False
+PRODUCTION     = True
+USE_SLURM      = True
 DEBUG          = False
-BATCH_SIZE     = 8
-CSV_PATH       = "../datasets/ir_borylation.csv" if PRODUCTION else "../datasets/ir_borylation_test.csv"
-TS_XYZ         = "../structures/ts1_guess.xyz"
-OUT_DIR        = "results_test"
-LOG_DIR        = "logs/test"
+BATCH_SIZE     = 1
+#CSV_PATH       = "../datasets/ir_borylation.csv" if PRODUCTION else "../datasets/ir_borylation_test.csv"
+CSV_PATH       = "../datasets/font_smiles.csv"
+TS_XYZ         = "../structures/ts2_guess.xyz"
+OUT_DIR        = "results_ts2_font"
+LOG_DIR        = "logs/ts2_font"
 SAVE_OUT_DIRS  = False
-CPUS_PER_JOB   = 4
-MEM_GB         = 8
+CPUS_PER_JOB   = 12
+MEM_GB         = 30
 TIMEOUT_MIN    = 7200
 N_CONFS        = None if PRODUCTION else 1
 DFT            = True
@@ -55,7 +56,7 @@ futures = []
 for batch in batched(smi_list, BATCH_SIZE):
     tag = f"{PIPELINE_NAME}_batch_{hash(tuple(batch)) & 0xffffffff:x}"
     if USE_SLURM:
-        executor.update(slurm_job_name=tag)
+        executor.update_parameters(slurm_job_name=tag)
 
     # master dict of every possible argument
     all_kwargs = {

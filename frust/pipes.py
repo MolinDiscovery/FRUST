@@ -60,7 +60,7 @@ def run_ts(
            .head(top_n)
     )
 
-    df3 = step.xtb(df2_filt, options={"gfn": 2, "opt": None}, constraint=True, save_step=True)
+    df3 = step.xtb(df2_filt, options={"gfn": 2, "opt": None}, constraint=True)
 
     df3_filt = (
         df3.sort_values(["ligand_name", "rpos", "xtb-gfn-opt-electronic_energy"])
@@ -87,7 +87,7 @@ def run_ts(
         "NoSym"    : None,
     }   
 
-    df4 = step.orca(df3_filt, options=options, xtra_inp_str=detailed_inp)
+    df4 = step.orca(df3_filt, name="DFT", options=options, xtra_inp_str=detailed_inp)
 
     detailed_inp = """%CPCM\nSMD TRUE\nSMDSOLVENT "chloroform"\nend"""
     options = {
@@ -98,7 +98,7 @@ def run_ts(
         "NoSym"   : None,
     }
 
-    df5 = step.orca(df4, options=options, xtra_inp_str=detailed_inp)
+    df5 = step.orca(df4, name="DFT-SP", options=options, xtra_inp_str=detailed_inp)
     
     if output_parquet:
         df5.to_parquet(output_parquet)
