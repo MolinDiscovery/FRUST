@@ -8,22 +8,25 @@ import importlib
 
 # ─── CONFIG ─────────────────────────────────────────────────────────────
 PIPELINE_NAME  = "run_mols"  # "run_ts" or "run_mols"
-PRODUCTION     = False
+PRODUCTION     = True
 USE_SLURM      = True
-DEBUG          = True
+DEBUG          = False
 BATCH_SIZE     = 1
 #CSV_PATH       = "../datasets/ir_borylation.csv" if PRODUCTION else "../datasets/ir_borylation_test.csv"
 CSV_PATH       = "../datasets/font_smiles.csv"
-TS_XYZ         = "../structures/ts2_guess.xyz"
-OUT_DIR        = "mols_test"
-LOG_DIR        = "logs/mols_test"
+OUT_DIR        = "results_ligs_font"
+LOG_DIR        = "logs/ligs_font"
 SAVE_OUT_DIRS  = False
-CPUS_PER_JOB   = 12
-MEM_GB         = 30
+CPUS_PER_JOB   = 6
+MEM_GB         = 15
 TIMEOUT_MIN    = 7200
 N_CONFS        = None if PRODUCTION else 1
 DFT            = True
-# ────────────────────────────────────────────────────────────────────────
+# ─── TS SPECIFIC ─────────────────────────────────────────────────────────
+TS_XYZ         = "../structures/ts2_guess.xyz"
+# ─── MOL SPECIFIC ────────────────────────────────────────────────────────
+SELECT_MOLS    = ["ligand"] # "all", "uniques", "generics", or specific names in a list ["dimer", "ligand"]
+
 
 def batched(iterable, n):
     it = iter(iterable)
@@ -69,6 +72,7 @@ for batch in batched(smi_list, BATCH_SIZE):
         "output_parquet":     os.path.join(OUT_DIR, f"{tag}.parquet"),
         "save_output_dir":    SAVE_OUT_DIRS,
         "DFT":                DFT,
+        "select_mols":        SELECT_MOLS,
     }
 
     # filter to only those the pipeline actually declares

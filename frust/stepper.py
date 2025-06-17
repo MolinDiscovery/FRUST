@@ -135,7 +135,8 @@ class Stepper:
             m = pattern.match(name)
             if m:
                 prefix = m.group("prefix")
-                ligand_name = m.group("ligand")
+                raw = m.group("ligand")
+                ligand_name = raw.split("_", 1)[1] if "_" in raw else raw
                 rpos = int(m.group("rpos"))
             else:
                 if "_" in name:

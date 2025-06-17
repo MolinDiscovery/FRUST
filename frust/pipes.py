@@ -213,4 +213,4 @@ if __name__ == '__main__':
     #     save_output_dir=False,
     #     DFT=True
     # )
-    print(run_mols(["CN1C=CC=C1", "CC([Si](N1C=CC=C1)(C(C)C)C(C)C)C"], debug=True, save_output_dir=False, DFT=True, select_mols=["dimer", "catalyst"]))
+    print(run_mols(["CN1C=CC=C1", "CC([Si](N1C=CC=C1)(C(C)C)C(C)C)C"], debug=True, save_output_dir=False, DFT=True))
