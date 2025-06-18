@@ -147,7 +147,10 @@ class Stepper:
 
             if self.step_type == None:
                 try:
-                    self.step_type = prefix
+                    if prefix:
+                        self.step_type = prefix
+                    else:
+                        self.step_type = "MOLS"
                 except Exception:
                     self.step_type = "unknown"
                     logger.warning("\n\nwarning: No calculation type identified.\nwarning: This is fine if you don't calculate a transition state.\n")
