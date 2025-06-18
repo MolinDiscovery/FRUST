@@ -5,6 +5,13 @@ from frust.embedder import embed_ts, embed_mols
 from frust.transformers import transformer_mols
 from frust.utils.io import read_ts_type_from_xyz
 
+import os
+try:
+    if "SLURM_JOB_ID" in os.environ:
+        from nuse import start_monitoring
+        start_monitoring(filter_cgroup=True)
+except ImportError:
+    pass
 
 # ─────────────────────────  TS xTB  ──────────────────────────
 def run_ts(
@@ -21,6 +28,8 @@ def run_ts(
     DFT: bool = False,
 ):
     
+    nuse.start_monitoring(filter_cgroup=True)
+
     ts_type = read_ts_type_from_xyz(ts_guess_xyz)
 
     if ts_type == 'TS1':

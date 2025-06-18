@@ -8,14 +8,14 @@ import importlib
 
 # ─── CONFIG ─────────────────────────────────────────────────────────────
 PIPELINE_NAME  = "run_mols"  # "run_ts" or "run_mols"
-PRODUCTION     = True
+PRODUCTION     = False
 USE_SLURM      = True
 DEBUG          = False
 BATCH_SIZE     = 1
-#CSV_PATH       = "../datasets/ir_borylation.csv" if PRODUCTION else "../datasets/ir_borylation_test.csv"
-CSV_PATH       = "../datasets/font_smiles.csv"
-OUT_DIR        = "results_ligs_font"
-LOG_DIR        = "logs/ligs_font"
+CSV_PATH       = "../datasets/ir_borylation.csv" if PRODUCTION else "../datasets/ir_borylation_test.csv"
+#CSV_PATH       = "../datasets/font_smiles.csv"
+OUT_DIR        = "nuse_test"
+LOG_DIR        = "logs/nuse_test"
 SAVE_OUT_DIRS  = False
 CPUS_PER_JOB   = 6
 MEM_GB         = 15
