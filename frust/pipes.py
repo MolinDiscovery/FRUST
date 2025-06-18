@@ -27,8 +27,6 @@ def run_ts(
     save_output_dir: bool = True,
     DFT: bool = False,
 ):
-    
-    nuse.start_monitoring(filter_cgroup=True)
 
     ts_type = read_ts_type_from_xyz(ts_guess_xyz)
 
