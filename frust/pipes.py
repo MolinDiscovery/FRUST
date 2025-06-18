@@ -94,7 +94,7 @@ def run_ts(
         "NoSym"    : None,
     }   
 
-    df4 = step.orca(df3_filt, name="DFT", options=options, xtra_inp_str=detailed_inp)
+    df4 = step.orca(df3_filt, name="DFT", options=options, xtra_inp_str=detailed_inp, save_step=True)
 
     detailed_inp = """%CPCM\nSMD TRUE\nSMDSOLVENT "chloroform"\nend"""
     options = {
@@ -105,7 +105,7 @@ def run_ts(
         "NoSym"   : None,
     }
 
-    df5 = step.orca(df4, name="DFT-SP", options=options, xtra_inp_str=detailed_inp)
+    df5 = step.orca(df4, name="DFT-SP", options=options, xtra_inp_str=detailed_inp, save_step=True)
     
     if output_parquet:
         df5.to_parquet(output_parquet)

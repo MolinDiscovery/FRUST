@@ -8,14 +8,14 @@ import importlib
 
 # ─── CONFIG ─────────────────────────────────────────────────────────────
 PIPELINE_NAME  = "run_mols"  # "run_ts" or "run_mols"
-PRODUCTION     = False
+PRODUCTION     = True
 USE_SLURM      = True
 DEBUG          = False
 BATCH_SIZE     = 1
-CSV_PATH       = "../datasets/ir_borylation.csv" if PRODUCTION else "../datasets/ir_borylation_test.csv"
-#CSV_PATH       = "../datasets/font_smiles.csv"
-OUT_DIR        = "nuse_test"
-LOG_DIR        = "logs/nuse_test"
+#CSV_PATH       = "../datasets/ir_borylation.csv" if PRODUCTION else "../datasets/ir_borylation_test.csv"
+CSV_PATH       = "../datasets/font_smiles.csv"
+OUT_DIR        = "results_HBpin_font"
+LOG_DIR        = "logs/HBpin_font"
 SAVE_OUT_DIRS  = False
 CPUS_PER_JOB   = 6
 MEM_GB         = 15
@@ -25,7 +25,7 @@ DFT            = True
 # ─── TS SPECIFIC ─────────────────────────────────────────────────────────
 TS_XYZ         = "../structures/ts2_guess.xyz"
 # ─── MOL SPECIFIC ────────────────────────────────────────────────────────
-SELECT_MOLS    = ["ligand"] # "all", "uniques", "generics", or specific names in a list ["dimer", "ligand"]
+SELECT_MOLS    = ["HBpin-ligand"] # "all", "uniques", "generics", or specific names in a list ['dimer','ligand','catalyst','int2','mol2','HBpin-ligand','HBpin-mol']
 
 
 def batched(iterable, n):
