@@ -512,18 +512,18 @@ def transformer_mols(
 ):
     """
     Build the standard set of cycle molecules:
-      dimer, ligand, catalyst, int2_rpos(#), mol2_rpos(#), HBpin-ligand_rpos(#), HBpin-mol
+      dimer, HH, ligand, catalyst, int2_rpos(#), mol2_rpos(#), HBpin-ligand_rpos(#), HBpin-mol
 
     Flags:
       - only_uniques   : drop any _rpos variants
       - only_generics  : keep only the bare names (and select int2/mol2/HBpin-ligand variants)
       - select         : a name or list from
-                         ['dimer','ligand','catalyst','int2','mol2','HBpin-ligand','HBpin-mol']
+                         ['dimer','HH','ligand','catalyst','int2','mol2','HBpin-ligand','HBpin-mol']
                          to return only those entries (including their _rpos(...) variants).
     """
 
     # --- normalize select to a list if given ---
-    base_names = ['dimer','ligand','catalyst','int2','mol2','HBpin-ligand','HBpin-mol']
+    base_names = ['dimer','HH','ligand','catalyst','int2','mol2','HBpin-ligand','HBpin-mol']
     if select is not None:
         if isinstance(select, str):
             select = [select]
@@ -540,7 +540,6 @@ def transformer_mols(
     ####################
     ### Create dimer ###
     ####################
-    # (unchanged from your version)
     catalyst1 = Chem.MolFromSmiles(catalyst_smiles)
     catalyst2 = Chem.MolFromSmiles(catalyst_smiles)
     B_pattern_dimer = Chem.MolFromSmarts("[B]c1ccccc1")
@@ -567,6 +566,11 @@ def transformer_mols(
     dimer_mol = dimer.GetMol()
     Chem.SanitizeMol(dimer_mol)
 
+    ####################
+    ### Create HH  ###
+    ####################
+    HH_mol = Chem.MolFromSmiles("[H][H]")
+
     ######################
     ### Find unique cH ###
     ######################
@@ -585,14 +589,12 @@ def transformer_mols(
     ############################################
     ### Create intermediate 2 and molecule 2 ###
     ############################################
-    b_pattern = Chem.MolFromSmarts("[B]")
     TMP       = Chem.MolFromSmarts('CC1(C)CCCC(C)(C)N1')
     mol2s = []; int2s = []
     for cH in unique_cH:
         combo_rw, offset = combine_rw_mols(catalyst_rw, ligand_rw)
         combo_rw.AddBond(catalyst_rw.GetAtomWithIdx(0).GetIdx(),
                          cH + offset, Chem.BondType.SINGLE)
-        # set B/N charges
         combo_rw.GetAtomWithIdx(0).SetFormalCharge(-1)
         nm = combo_rw.GetSubstructMatches(TMP)[0][9]
         combo_rw.GetAtomWithIdx(nm).SetFormalCharge(+1)
@@ -608,8 +610,7 @@ def transformer_mols(
     HBpin_mol    = Chem.MolFromSmiles(HBpin_smile)
     HBpin_with_h = Chem.AddHs(HBpin_mol)
     HBpin_rw     = RWMol(HBpin_with_h)
-    HBpin_b_idx  = HBpin_rw.GetSubstructMatches(b_pattern)[0][0]
-    remove_one_h(HBpin_rw, HBpin_b_idx)
+    HBpin_b_idx  = HBpin_rw.GetSubstructMatches(Chem.MolFromSmarts("[B]"))[0][0]
     HBpin_ligands = []
     for cH in unique_cH:
         hrw, offset = combine_rw_mols(HBpin_rw, ligand_rw)
@@ -620,15 +621,24 @@ def transformer_mols(
     #######################
     ### Finalize output ###
     #######################
-    names = ['dimer','ligand','catalyst','int2','mol2','HBpin-ligand','HBpin-mol']
+    names = ['dimer','HH','ligand','catalyst','int2','mol2','HBpin-ligand','HBpin-mol']
     if show_IUPAC:
-        names[1] = get_molecule_name(ligand_smiles)
-    mols = [dimer_mol, ligand_mol, catalyst_mol, int2s, mol2s, HBpin_ligands, HBpin_mol]
+        names[2] = get_molecule_name(ligand_smiles)
+    mols = [
+        dimer_mol,
+        HH_mol,
+        ligand_mol,
+        catalyst_mol,
+        int2s,
+        mol2s,
+        HBpin_ligands,
+        HBpin_mol
+    ]
 
     mols_dict: dict[str, Chem.Mol] = {}
     for name, mol in zip(names, mols):
         if only_generics:
-            if name not in [names[1], 'int2', 'mol2', 'HBpin-ligand']:
+            if name not in [names[2], 'int2', 'mol2', 'HBpin-ligand']:
                 mols_dict[name] = mol
         else:
             if isinstance(mol, list):
@@ -637,27 +647,22 @@ def transformer_mols(
             elif not only_uniques:
                 mols_dict[name] = mol
 
-    iupac_ligand_name = names[1]
+    iupac_ligand_name = names[2]
 
     # --- apply select filter if requested ---
     if select is not None:
         filtered: dict[str, Chem.Mol] = {}
         for choice in select:
-            # remap the alias "ligand" to the real IUPAC key if needed
             actual = choice
             if choice == "ligand" and show_IUPAC:
                 actual = iupac_ligand_name
-
             for key, m in mols_dict.items():
-                # keep exact matches or any rpos‐variants
                 if key == actual or key.startswith(f"{actual}_rpos"):
                     filtered[key] = m
-
         mols_dict = filtered
 
     if key_prefix is None:
         key_prefix = ligand_smiles
-
     if key_prefix:
         mols_dict = {f"{key_prefix}_{k}": m for k, m in mols_dict.items()}
 

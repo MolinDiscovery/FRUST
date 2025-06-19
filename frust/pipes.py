@@ -215,13 +215,20 @@ def run_mols(
 if __name__ == '__main__':
     FRUST_path = str(Path(__file__).resolve().parent.parent)
     print(f"Running in main. FRUST path: {FRUST_path}")
-    run_ts(
-        ["CN1C=CC=C1"],
-        ts_guess_xyz=f"{FRUST_path}/structures/ts3_guess.xyz",
-        n_confs=1,
+    # run_ts(
+    #     ["CN1C=CC=C1"],
+    #     ts_guess_xyz=f"{FRUST_path}/structures/ts3_guess.xyz",
+    #     n_confs=1,
+    #     debug=False,
+    #     save_output_dir=False,
+    #     output_parquet="TS3_test.parguet",
+    #     DFT=False
+    # )
+    run_mols(
+        ["CN1C=CC=C1", "CC([Si](N1C=CC=C1)(C(C)C)C(C)C)C"],
         debug=False,
         save_output_dir=False,
-        output_parquet="TS3_test.parguet",
-        DFT=False
+        output_parquet="HH.parquet",
+        DFT=True,
+        select_mols=["HH"]
     )
-    # run_mols(["CN1C=CC=C1", "CC([Si](N1C=CC=C1)(C(C)C)C(C)C)C"], debug=True, save_output_dir=False, DFT=True)

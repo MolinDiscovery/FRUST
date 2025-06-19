@@ -303,6 +303,8 @@ class Stepper:
             if base_str:
                 inp["detailed_input_str"] = base_str
             
+            block = None
+
             if self.step_type.upper() == "TS1":
                 B, N, H, C = 0, 1, 4, 5
                 atom = [x+1 for x in row["constraint_atoms"]]
