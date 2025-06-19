@@ -1,4 +1,10 @@
 # frust/utils/mols.py
+import numpy as np
+from rdkit import Chem
+from rdkit.Chem import rdchem, rdDetermineBonds
+from rdkit.Geometry.rdGeometry import Point3D
+from rdkit.Chem.rdchem import RWMol
+
 
 def get_molecule_name(smiles: str):
     """Retrieve the IUPAC name for a molecule from its SMILES string.
@@ -140,3 +146,116 @@ def remove_one_h(rwmol, atom_idx):
             # print(f"Removed an H from atom {atom_idx}")
             return
     print(f"No hydrogen found to remove on atom {atom_idx}")
+
+
+def fix_pin_frag(frag: Chem.Mol) -> Chem.Mol:
+    """
+    • converts B=O double bonds → single, neutralises B/O  
+    • adds a B–H 1.18 Å away from B but does **not** move any other atom
+    """
+    BH_LEN = 1.18   # Å – average B–H bond length
+
+    def _unit(vec):
+        """return unit vector (or None if zero length)"""
+        import math
+        norm = math.sqrt(vec.x ** 2 + vec.y ** 2 + vec.z ** 2)
+        if norm < 1e-6:
+            return None
+        return vec.__class__(vec.x / norm, vec.y / norm, vec.z / norm)
+
+    rw   = Chem.RWMol(frag)
+    conf = rw.GetConformer()
+
+    # ---- locate boron ----
+    b_idx = next(a.GetIdx() for a in rw.GetAtoms() if a.GetAtomicNum() == 5)
+    boron = rw.GetAtomWithIdx(b_idx)
+
+    # ---- make B-O single & neutral ----
+    for nb in boron.GetNeighbors():
+        bond = rw.GetBondBetweenAtoms(b_idx, nb.GetIdx())
+        if bond.GetBondType() == rdchem.BondType.DOUBLE:
+            bond.SetBondType(rdchem.BondType.SINGLE)
+        if nb.GetAtomicNum() == 8:
+            nb.SetFormalCharge(0)
+    boron.SetFormalCharge(0)
+
+    # ---- add the missing H (if needed) ----
+    if boron.GetTotalDegree() < 3:
+        # 1) choose a direction opposite to the average of B→heavy-neighbor vectors
+        b_pos = conf.GetAtomPosition(b_idx)
+        acc   = b_pos.__class__(0.0, 0.0, 0.0)
+        heavy_cnt = 0
+        for nb in boron.GetNeighbors():
+            if nb.GetAtomicNum() > 1:        # O or C
+                n_pos = conf.GetAtomPosition(nb.GetIdx())
+                acc.x += n_pos.x - b_pos.x
+                acc.y += n_pos.y - b_pos.y
+                acc.z += n_pos.z - b_pos.z
+                heavy_cnt += 1
+        # average & flip
+        acc.x *= -1.0 / heavy_cnt
+        acc.y *= -1.0 / heavy_cnt
+        acc.z *= -1.0 / heavy_cnt
+        direction = _unit(acc) or b_pos.__class__(1.0, 0.0, 0.0)  # fallback
+
+        # 2) place H at BH_LEN along that direction
+        h_pos = b_pos.__class__(
+            b_pos.x + direction.x * BH_LEN,
+            b_pos.y + direction.y * BH_LEN,
+            b_pos.z + direction.z * BH_LEN,
+        )
+
+        # 3) add the atom & bond
+        h_idx = rw.AddAtom(Chem.Atom(1))
+        rw.AddBond(b_idx, h_idx, rdchem.BondType.SINGLE)
+        conf.SetAtomPosition(h_idx, h_pos)
+
+    # ---- sanitize & return ----
+    Chem.SanitizeMol(rw)
+    rw.RemoveAtom(h_idx)
+
+    return rw.GetMol()
+
+def fix_cat_frag(mol: Chem.Mol, bh_len: float = 1.19) -> Chem.Mol:
+    """
+    • Finds the single B atom in *mol*
+    • Adds one H at a standard B–H distance without moving any existing atoms
+    • Neutralises B if it was −1
+    • Rebuilds all connectivity from the final 3D coords (rings, valence, aromaticity)
+    """
+    rw   = Chem.RWMol(mol)
+    conf = rw.GetConformer()
+
+    # locate boron and neutralise if needed
+    b_idx = next(a.GetIdx() for a in rw.GetAtoms() if a.GetAtomicNum() == 5)
+    boron = rw.GetAtomWithIdx(b_idx)
+    if boron.GetFormalCharge() == -1:
+        boron.SetFormalCharge(0)
+
+    # pick direction roughly opposite its neighbours
+    bpos   = np.array(conf.GetAtomPosition(b_idx))
+    neighs = [n.GetIdx() for n in boron.GetNeighbors()]
+    if neighs:
+        pts = np.array([conf.GetAtomPosition(i) for i in neighs])
+        v   = bpos - pts.mean(axis=0)
+    else:
+        v   = np.array([1.0, 0.0, 0.0])
+    v /= np.linalg.norm(v) or 1.0
+
+    # add the H at ~bh_len Å from B
+    h_pos = bpos + bh_len * v
+    h_idx = rw.AddAtom(Chem.Atom(1))
+
+    rw.AddBond(b_idx, h_idx, Chem.BondType.SINGLE)
+    conf.SetAtomPosition(h_idx, Point3D(*h_pos))
+
+    # rebuild connectivity purely from 3D coords
+    xyz = Chem.MolToXYZBlock(rw)
+    mol2 = Chem.MolFromXYZBlock(xyz)
+    rdDetermineBonds.DetermineBonds(mol2, useVdw=True)
+    Chem.SanitizeMol(mol2)
+
+    rw = RWMol(mol2)
+    rw.RemoveAtom(h_idx)
+
+    return rw.GetMol()    

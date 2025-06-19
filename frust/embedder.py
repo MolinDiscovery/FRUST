@@ -149,6 +149,12 @@ def embed_ts(
         ts_with_H.RemoveBond(reactive_H, cat_B)
         ts_with_H.RemoveBond(pin_B, cat_B)
 
+    if ts_type.upper() == "TS3":
+        reactive_C = atom_indices_to_keep[-1]
+        reactive_H = atom_indices_to_keep[-3]
+        cat_B      = atom_indices_to_keep[0]
+        ts_with_H.RemoveBond(cat_B, reactive_H)
+
     print(f"Embedded {len(cids)} conformers on atom {reactive_C}")
 
     # ---------- OPTIONAL UFF ----------

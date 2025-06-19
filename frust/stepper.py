@@ -337,12 +337,25 @@ class Stepper:
                 $end
                 """).strip()
 
-                # Append constraint block if there was already some input,
-                # or assign it fresh if none existed.
-                if "detailed_input_str" in inp:
-                    inp["detailed_input_str"] += "\n\n" + block
-                else:
-                    inp["detailed_input_str"] = block
+            if self.step_type.upper() == "TS3":
+                BCat10, N17, H40, H41, C46 = 0, 1, 4, 3, 5
+                atom = [x+1 for x in row["constraint_atoms"]]
+                block = textwrap.dedent(f"""
+                $constrain
+                  force constant=50
+                  distance: {atom[BCat10]}, {atom[H41]}, 1.656
+                  distance: {atom[N17]}, {atom[H40]}, 1.961
+                  distance: {atom[BCat10]}, {atom[N17]}, 3.080
+                  distance: {atom[BCat10]}, {atom[N17]}, 3.080
+                  angle: {atom[BCat10]}, {atom[H41]}, {atom[N17]}, 86.58
+                $end
+                """).strip()
+
+            if "detailed_input_str" in inp:
+                inp["detailed_input_str"] += "\n\n" + block
+            else:
+                inp["detailed_input_str"] = block
+
             return inp
 
         return self._run_engine(df, self.xtb_fn, prefix, build_xtb, save_step)
