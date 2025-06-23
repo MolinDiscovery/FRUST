@@ -312,7 +312,28 @@ class Stepper:
         save_step = False,
         lowest: int | None = None,
     ) -> pd.DataFrame:
-        
+        """Embed multiple conformers with xTB and optionally optimize and/or compute frequencies.
+
+        Args:
+            df (pd.DataFrame): A DataFrame containing embedded conformers. Required columns:
+                - 'coords_embedded': list of 3D coordinate tuples for each conformer.
+                - 'atoms': list of atomic symbols.
+                - 'constraint_atoms' (optional): list of atom indices to constrain during optimization.
+            name (str): Base name for the xTB step, used to prefix result columns.
+            options (dict, optional): xTB driver options, e.g. {'gfn': 2, 'opt': None}. Defaults to {'gfn': 0}.
+            detailed_inp_str (str, optional): Additional xTB input block (cards) to include. Defaults to "".
+            constraint (bool, optional): If True, applies predefined distance/angle constraints for TS steps. Defaults to False.
+            save_step (bool, optional): If True, saves calculation directories for each conformer. Defaults to False.
+            lowest (int or None, optional): If set, retains only the lowest-energy N conformers per ligand/rpos group. Defaults to None.
+
+        Returns:
+            pd.DataFrame: The input DataFrame augmented with columns for each xTB result:
+                - '{name}-{method}-normal_termination' (bool)
+                - '{name}-{method}-electronic_energy' (float)
+                - '{name}-{method}-opt_coords' (list of coords) if optimization run
+                - '{name}-{method}-vibs' (vibrational modes) if frequencies computed
+                - '{name}-{method}-gibbs_energy' (float) if frequencies computed
+        """        
         opts = options or {"gfn": 0}
         keys = list(opts)
         level = keys[0]
@@ -398,6 +419,28 @@ class Stepper:
         save_step: bool = False,
         lowest: int | None = None
     ) -> pd.DataFrame:
+        """Run ORCA calculations (SP, OptTS, Freq) and attach results to the DataFrame.
+
+        Args:
+            df (pd.DataFrame): DataFrame of conformers to compute. Must include:
+                - 'coords_embedded': list of 3D coordinate tuples for each conformer.
+                - 'atoms': list of atomic symbols.
+            name (str): Base name for the ORCA step, used to prefix result columns.
+            options (dict): ORCA input keywords, e.g. {'wB97X-D3': None, '6-31G**': None, 'OptTS': None, 'Freq': None}.
+            xtra_inp_str (str, optional): Additional ORCA input block (e.g. CPCM or Calc_Hess). Defaults to "".
+            constraint (bool, optional): Reserved for TS constraints (unused for plain ORCA). Defaults to False.
+            save_step (bool, optional): If True, saves ORCA run directories for inspection. Defaults to False.
+            lowest (int or None, optional): If set, keeps only the lowest-energy conformer per ligand/rpos group. Defaults to None.
+
+        Returns:
+            pd.DataFrame: The input DataFrame extended with ORCA output columns:
+                - '{name}-{method}-normal_termination' (bool)
+                - '{name}-{method}-electronic_energy' (float)
+                - '{name}-{method}-opt_coords' (list of coords) if optimization run
+                - '{name}-{method}-vibs' (vibrational modes) if frequencies computed
+                - '{name}-{method}-gibbs_energy' (float) if frequencies computed
+        """        
+        
         opts = options or {}
         keys = list(opts)
         if len(keys) < 1:
