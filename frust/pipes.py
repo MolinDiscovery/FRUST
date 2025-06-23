@@ -64,16 +64,18 @@ def run_ts(
     df1 = step.xtb(df0, options={"gfnff": None, "opt": None}, constraint=True)
     df2 = step.xtb(df1, options={"gfn": 2})
 
+    last_energy = [c for c in df2.columns if c.endswith("_energy")][-1]
     df2_filt = (
-        df2.sort_values(["ligand_name", "rpos", "xtb-gfn-electronic_energy"])
+        df2.sort_values(["ligand_name", "rpos", last_energy])
            .groupby(["ligand_name", "rpos"])
            .head(top_n)
     )
 
     df3 = step.xtb(df2_filt, options={"gfn": 2, "opt": None}, constraint=True)
 
+    last_energy = [c for c in df3.columns if c.endswith("_energy")][-1]
     df3_filt = (
-        df3.sort_values(["ligand_name", "rpos", "xtb-gfn-opt-electronic_energy"])
+        df3.sort_values(["ligand_name", "rpos", last_energy])
            .groupby(["ligand_name", "rpos"])
            .head(1)
     )
@@ -86,6 +88,23 @@ def run_ts(
     df3_filt.to_parquet("test.parquet")
 
     # ↓↓↓↓↓↓↓↓ This code only executes if DFT is True ↓↓↓↓↓↓↓↓
+    options = {
+        "wB97X-D3": None,
+        "6-31+G**": None,
+        "TightSCF": None,
+        "SP": None,
+        "NoSym": None,
+    }
+
+    df4 = step.orca(df3, name="DFT-pre-SP", options=options, save_step=True)
+
+    last_energy = [c for c in df4.columns if c.endswith("_energy")][-1]
+    df4_filt = (
+    df4.sort_values(["ligand_name", "rpos", last_energy])
+        .groupby(["ligand_name", "rpos"])
+        .head(1)
+    )
+
     detailed_inp = """%geom\nCalc_Hess true\nend"""
     options = {
         "wB97X-D3" : None,
@@ -97,18 +116,18 @@ def run_ts(
         "NoSym"    : None,
     }   
 
-    df4 = step.orca(df3_filt, name="DFT", options=options, xtra_inp_str=detailed_inp, save_step=True)
+    df5 = step.orca(df4_filt, name="DFT", options=options, xtra_inp_str=detailed_inp, save_step=True)
 
     detailed_inp = """%CPCM\nSMD TRUE\nSMDSOLVENT "chloroform"\nend"""
     options = {
         "wB97X-D3": None,
-        "6-31+G**": None, # Using larger basis for SP
+        "6-31+G**": None,
         "TightSCF": None,
         "SP"      : None,
         "NoSym"   : None,
     }
 
-    df5 = step.orca(df4, name="DFT-SP", options=options, xtra_inp_str=detailed_inp, save_step=True)
+    df5 = step.orca(df5, name="DFT-SP", options=options, xtra_inp_str=detailed_inp, save_step=True)
     
     if output_parquet:
         df5.to_parquet(output_parquet)
@@ -215,20 +234,20 @@ def run_mols(
 if __name__ == '__main__':
     FRUST_path = str(Path(__file__).resolve().parent.parent)
     print(f"Running in main. FRUST path: {FRUST_path}")
-    # run_ts(
-    #     ["CN1C=CC=C1"],
-    #     ts_guess_xyz=f"{FRUST_path}/structures/ts3_guess.xyz",
-    #     n_confs=1,
+    run_ts(
+        ["CN1C=CC=C1"],
+        ts_guess_xyz=f"{FRUST_path}/structures/ts2_guess.xyz",
+        n_confs=1,
+        debug=True,
+        save_output_dir=False,
+        #output_parquet="TS3_test.parguet",
+        DFT=True,
+    )
+    # run_mols(
+    #     ["CN1C=CC=C1", "CC([Si](N1C=CC=C1)(C(C)C)C(C)C)C"],
     #     debug=False,
     #     save_output_dir=False,
-    #     output_parquet="TS3_test.parguet",
-    #     DFT=False
+    #     output_parquet="HH.parquet",
+    #     DFT=True,
+    #     select_mols=["HH"]
     # )
-    run_mols(
-        ["CN1C=CC=C1", "CC([Si](N1C=CC=C1)(C(C)C)C(C)C)C"],
-        debug=False,
-        save_output_dir=False,
-        output_parquet="HH.parquet",
-        DFT=True,
-        select_mols=["HH"]
-    )
