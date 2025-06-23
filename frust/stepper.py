@@ -185,6 +185,7 @@ class Stepper:
             prefix: str,
             build_inputs: Callable[[Series], dict],
             save_step: bool,
+            lowest: int | None,
         ) -> pd.DataFrame:
         """
         Generic runner for xTB or ORCA or any other engine.
@@ -198,6 +199,29 @@ class Stepper:
         df_out    = df.copy()
         coord_col = self._last_coord_col(df_out)
         all_row_data: list[dict[str, object]] = []
+
+        if lowest is not None and lowest < 1:
+            logger.warning(f"ignoring lowest={lowest!r}, must be ≥1")
+            lowest = None
+
+        if lowest:
+            energy_cols = [c for c in df_out.columns if c.endswith("_energy")]
+            if not energy_cols:
+                raise ValueError("cannot apply `lowest=` filter: no *_energy column found")
+            last_energy = energy_cols[-1]
+
+            # build the list of grouping keys: always ligand_name, optionally rpos
+            group_keys = ["ligand_name"]
+            if "rpos" in df_out.columns:
+                group_keys.append("rpos")
+
+            sort_keys = group_keys + [last_energy]
+            df_out = (
+                df_out
+                .sort_values(sort_keys, na_position="last")
+                .groupby(group_keys, dropna=False)
+                .head(lowest)
+            )
 
         for i, row in df_out.iterrows():
             coords = row[coord_col]
@@ -286,6 +310,7 @@ class Stepper:
         detailed_inp_str: str = "",
         constraint: bool = False,
         save_step = False,
+        lowest: int | None = None,
     ) -> pd.DataFrame:
         
         opts = options or {"gfn": 0}
@@ -360,7 +385,7 @@ class Stepper:
 
             return inp
 
-        return self._run_engine(df, self.xtb_fn, prefix, build_xtb, save_step)
+        return self._run_engine(df, self.xtb_fn, prefix, build_xtb, save_step, lowest)
 
 
     def orca(
@@ -371,6 +396,7 @@ class Stepper:
         xtra_inp_str: str = "",
         constraint: bool = False,
         save_step: bool = False,
+        lowest: int | None = None
     ) -> pd.DataFrame:
         opts = options or {}
         keys = list(opts)
@@ -401,4 +427,4 @@ class Stepper:
                 inp["xtra_inp_str"] += ("\n\n" + block) if inp["xtra_inp_str"] else block
             return inp
 
-        return self._run_engine(df, self.orca_fn, prefix, build_orca, save_step)
+        return self._run_engine(df, self.orca_fn, prefix, build_orca, save_step, lowest)

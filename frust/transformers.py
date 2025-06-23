@@ -176,7 +176,7 @@ def transformer_ts1(
         # rpos = lig_match.index(rpos) # reset the index for rpos.
 
         mol_name = get_molecule_name(ligand_smiles)  
-        ts_mols[f'{pre_name}({mol_name}_rpos({rpos}))'] = (ts_rw_combined, atom_indices_to_keep)
+        ts_mols[f'{pre_name}({mol_name}_rpos({rpos}))'] = (ts_rw_combined, atom_indices_to_keep, ligand_smiles)
     
     return ts_mols
 
@@ -352,7 +352,7 @@ def transformer_ts2(
             c_atom.SetFormalCharge(-1)
 
         mol_name = get_molecule_name(ligand_smiles)
-        ts_mols[f'{pre_name}({mol_name}_rpos({rpos}))'] = (ts_rw_combined, atom_indices_to_keep)
+        ts_mols[f'{pre_name}({mol_name}_rpos({rpos}))'] = (ts_rw_combined, atom_indices_to_keep, ligand_smiles)
 
     return ts_mols
 
@@ -496,7 +496,7 @@ def transformer_ts3(
             ts_rw_combined.AddBond(B_cat_idx, reactive_H1, Chem.BondType.ZERO)
 
         mol_name = get_molecule_name(ligand_smiles)
-        ts_mols[f'{pre_name}({mol_name}_rpos({rpos}))'] = (ts_rw_combined, atom_indices_to_keep)
+        ts_mols[f'{pre_name}({mol_name}_rpos({rpos}))'] = (ts_rw_combined, atom_indices_to_keep, ligand_smiles)
     
     return ts_mols
 

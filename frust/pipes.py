@@ -43,13 +43,10 @@ def run_ts(
         raise ValueError(f"Unrecognized TS type: {ts_type}")
 
     ts_structs = {}
+
     for smi in ligand_smiles_list:
-        ts_structs.update({
-            name: (mol, idxs, smi)
-            for name, (mol, idxs) in transformer_ts(
-                ligand_smiles=smi, ts_guess_struct=ts_guess_xyz
-            ).items()
-        })
+        ts_mols = transformer_ts(smi, ts_guess_xyz)
+        ts_structs.update(ts_mols)
 
     embedded = embed_ts(ts_structs, ts_type=ts_type, n_confs=n_confs, optimize=not debug)
 
@@ -63,15 +60,7 @@ def run_ts(
     df0 = step.build_initial_df(embedded)
     df1 = step.xtb(df0, options={"gfnff": None, "opt": None}, constraint=True)
     df2 = step.xtb(df1, options={"gfn": 2})
-
-    last_energy = [c for c in df2.columns if c.endswith("_energy")][-1]
-    df2_filt = (
-        df2.sort_values(["ligand_name", "rpos", last_energy])
-           .groupby(["ligand_name", "rpos"])
-           .head(top_n)
-    )
-
-    df3 = step.xtb(df2_filt, options={"gfn": 2, "opt": None}, constraint=True)
+    df3 = step.xtb(df2, options={"gfn": 2, "opt": None}, constraint=True, lowest=top_n)
 
     last_energy = [c for c in df3.columns if c.endswith("_energy")][-1]
     df3_filt = (
@@ -98,13 +87,6 @@ def run_ts(
 
     df4 = step.orca(df3, name="DFT-pre-SP", options=options, save_step=True)
 
-    last_energy = [c for c in df4.columns if c.endswith("_energy")][-1]
-    df4_filt = (
-    df4.sort_values(["ligand_name", "rpos", last_energy])
-        .groupby(["ligand_name", "rpos"])
-        .head(1)
-    )
-
     detailed_inp = """%geom\nCalc_Hess true\nend"""
     options = {
         "wB97X-D3" : None,
@@ -116,7 +98,7 @@ def run_ts(
         "NoSym"    : None,
     }   
 
-    df5 = step.orca(df4_filt, name="DFT", options=options, xtra_inp_str=detailed_inp, save_step=True)
+    df5 = step.orca(df4, name="DFT", options=options, xtra_inp_str=detailed_inp, save_step=True, lowest=1)
 
     detailed_inp = """%CPCM\nSMD TRUE\nSMDSOLVENT "chloroform"\nend"""
     options = {
@@ -127,11 +109,11 @@ def run_ts(
         "NoSym"   : None,
     }
 
-    df5 = step.orca(df5, name="DFT-SP", options=options, xtra_inp_str=detailed_inp, save_step=True)
+    df6 = step.orca(df5, name="DFT-SP", options=options, xtra_inp_str=detailed_inp, save_step=True)
     
     if output_parquet:
-        df5.to_parquet(output_parquet)
-    return df5
+        df6.to_parquet(output_parquet)
+    return df6
 
 
 # ──────────────────────  catalytic-cycle molecules  ──────────────────────
@@ -176,16 +158,7 @@ def run_mols(
     df0 = step.build_initial_df(embedded)
     df1 = step.xtb(df0, options={"gfnff": None, "opt": None})
     df2 = step.xtb(df1, options={"gfn": 2})
-
-    # filter to top_n per ligand
-    df2_filt = (
-        df2
-        .sort_values(["ligand_name", "xtb-gfn-electronic_energy"])
-        .groupby("ligand_name")
-        .head(top_n)
-    )
-
-    df3 = step.xtb(df2_filt, options={"gfn": 2, "opt": None})
+    df3 = step.xtb(df2, options={"gfn": 2, "opt": None}, lowest=top_n)
 
     df3_fin = (
         df3
@@ -201,6 +174,16 @@ def run_mols(
         return df3_fin
 
     # ↓↓↓↓↓↓↓↓ DFT branch ↓↓↓↓↓↓↓↓
+    options = {
+        "wB97X-D3": None,
+        "6-31+G**": None,
+        "TightSCF": None,
+        "SP": None,
+        "NoSym": None,
+    }
+
+    df4 = step.orca(df3, name="DFT-pre-SP", options=options, save_step=True)
+
 
     # a) TS-like Hess-calc & frequency for each ligand
     detailed_inp = """%geom\nCalc_Hess true\nend"""
@@ -213,7 +196,7 @@ def run_mols(
         "Freq":    None,
         "NoSym":   None,
     }
-    df4 = step.orca(df3_fin, options=orca_opts, xtra_inp_str=detailed_inp)
+    df5 = step.orca(df4, options=orca_opts, xtra_inp_str=detailed_inp, lowest=1)
 
     # b) single-point with solvent model
     detailed_inp = """%CPCM\nSMD TRUE\nSMDSOLVENT "chloroform"\nend"""
@@ -224,11 +207,11 @@ def run_mols(
         "SP":       None,
         "NoSym":    None,
     }
-    df5 = step.orca(df4, options=orca_opts, xtra_inp_str=detailed_inp)
+    df6 = step.orca(df5, options=orca_opts, xtra_inp_str=detailed_inp)
 
     if output_parquet:
-        df5.to_parquet(output_parquet)
-    return df5
+        df6.to_parquet(output_parquet)
+    return df6
 
 
 if __name__ == '__main__':
@@ -237,11 +220,12 @@ if __name__ == '__main__':
     run_ts(
         ["CN1C=CC=C1"],
         ts_guess_xyz=f"{FRUST_path}/structures/ts2_guess.xyz",
-        n_confs=1,
+        n_confs=3,
         debug=True,
         save_output_dir=False,
         #output_parquet="TS3_test.parguet",
         DFT=True,
+        top_n=1
     )
     # run_mols(
     #     ["CN1C=CC=C1", "CC([Si](N1C=CC=C1)(C(C)C)C(C)C)C"],
