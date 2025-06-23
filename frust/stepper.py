@@ -2,7 +2,7 @@
 import logging
 logger = logging.getLogger(__name__)
 
-import sys
+import sys, os
 from pathlib import Path
 import re
 import textwrap
@@ -30,6 +30,7 @@ class Stepper:
         save_output_dir: bool = True,
         **kwargs
     ):
+        self.ligands_smiles = ligands_smiles
         self.step_type      = step_type
         self.debug          = debug
         self.live           = live

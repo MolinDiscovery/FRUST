@@ -9,23 +9,23 @@ import importlib
 # ─── CONFIG ─────────────────────────────────────────────────────────────
 PIPELINE_NAME  = "run_ts"  # "run_ts" or "run_mols"
 PRODUCTION     = True
-USE_SLURM      = False
+USE_SLURM      = True
 DEBUG          = False
 BATCH_SIZE     = 1
 #CSV_PATH       = "../datasets/ir_borylation.csv" if PRODUCTION else "../datasets/ir_borylation_test.csv"
 CSV_PATH       = "../datasets/font_smiles.csv"
-OUT_DIR        = "results_font_ts1_redo"
-LOG_DIR        = "logs/font_ts1_redo"
+OUT_DIR        = "results_font_ts2_c2"
+LOG_DIR        = "logs/font_ts2_c2"
 SAVE_OUT_DIRS  = False
 CPUS_PER_JOB   = 12
 MEM_GB         = 30
 TIMEOUT_MIN    = 7200
 N_CONFS        = None if PRODUCTION else 1 # if this is set to None, the following rule goes. Let R me rotatable bonds. 50 confs when R < 7, 200 confs when R 7-12 bonds and 300 if more.
-DFT            = False
+DFT            = True
 # ─── TS SPECIFIC ─────────────────────────────────────────────────────────
-TS_XYZ         = "../structures/ts1_guess.xyz"
+TS_XYZ         = "../structures/ts2_guess.xyz"
 # ─── MOL SPECIFIC ────────────────────────────────────────────────────────
-SELECT_MOLS    = ["HBpin-mol"] # "all", "uniques", "generics", or specific names in a list ['dimer','ligand','catalyst','int2','mol2','HBpin-ligand','HBpin-mol']
+SELECT_MOLS    = ["HBpin-mol", "HH"] # "all", "uniques", "generics", or specific names in a list ['dimer','ligand','catalyst','int2','mol2','HBpin-ligand','HBpin-mol']
 
 
 def batched(iterable, n):

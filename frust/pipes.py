@@ -21,7 +21,7 @@ def run_ts(
     n_confs: int | None = None,
     n_cores: int = 4,
     debug: bool = False,
-    top_n: int = 5,
+    top_n: int = 10,
     out_dir: str | None = None,
     output_parquet: str | None = None,
     save_output_dir: bool = True,
@@ -96,9 +96,9 @@ def run_ts(
         "OptTS"    : None,
         "Freq"     : None,
         "NoSym"    : None,
-    }   
+    }
 
-    df5 = step.orca(df4, name="DFT", options=options, xtra_inp_str=detailed_inp, save_step=True, lowest=1)
+    df5 = step.orca(df4, name="DFT", options=options, xtra_inp_str=detailed_inp, save_step=True, lowest=1, distribute=True)
 
     detailed_inp = """%CPCM\nSMD TRUE\nSMDSOLVENT "chloroform"\nend"""
     options = {
@@ -196,7 +196,7 @@ def run_mols(
         "Freq":    None,
         "NoSym":   None,
     }
-    df5 = step.orca(df4, options=orca_opts, xtra_inp_str=detailed_inp, lowest=1)
+    df5 = step.orca(df4, options=orca_opts, xtra_inp_str=detailed_inp, lowest=1, distribute=True)
 
     # b) single-point with solvent model
     detailed_inp = """%CPCM\nSMD TRUE\nSMDSOLVENT "chloroform"\nend"""
@@ -213,6 +213,77 @@ def run_mols(
         df6.to_parquet(output_parquet)
     return df6
 
+
+def run_test(
+    ligand_smiles_list: list[str],
+    *,
+    n_confs: int = 5,
+    n_cores: int = 4,
+    debug: bool = False,
+    top_n: int = 5,
+    out_dir: str | None = None,
+    output_parquet: str | None = None,
+    save_output_dir: bool = True,
+    DFT: bool = False,
+    select_mols: str | list[str] = "all",  # "all", "uniques", "generics", or specific names
+):
+    # 1) build generic-cycle molecules (with optional selection)
+    mols = {}
+    for smi in ligand_smiles_list:
+        if select_mols == "all":
+            tmp = transformer_mols(ligand_smiles=smi)
+        elif select_mols == "uniques":
+            tmp = transformer_mols(ligand_smiles=smi, only_uniques=True)
+        elif select_mols == "generics":
+            tmp = transformer_mols(ligand_smiles=smi, only_generics=True)
+        else:
+            tmp = transformer_mols(ligand_smiles=smi, select=select_mols)
+
+        mols.update(tmp)
+
+    # 2) embed
+    embedded = embed_mols(mols, n_confs=n_confs, n_cores=n_cores)
+
+    # 3) xTB cascade
+    step = Stepper(
+        ligand_smiles_list,
+        n_cores=n_cores,
+        debug=debug,
+        output_base=out_dir,
+        save_output_dir=save_output_dir
+    )
+    df0 = step.build_initial_df(embedded)
+
+    # ↓↓↓↓↓↓↓↓ DFT branch ↓↓↓↓↓↓↓↓
+
+    # a) TS-like Hess-calc & frequency for each ligand
+    detailed_inp = """%geom\nCalc_Hess true\nend"""
+    orca_opts = {
+        "wB97X-D3": None,
+        "6-31G**": None,
+        "TightSCF": None,
+        "SlowConv": None,
+        "Opt":     None,
+        "Freq":    None,
+        "NoSym":   None,
+    }
+    print(df0)
+    df5 = step.orca(df0, options=orca_opts, xtra_inp_str=detailed_inp, lowest=1, distribute=True)
+
+    # b) single-point with solvent model
+    detailed_inp = """%CPCM\nSMD TRUE\nSMDSOLVENT "chloroform"\nend"""
+    orca_opts = {
+        "wB97X-D3": None,
+        "6-31+G**": None,
+        "TightSCF": None,
+        "SP":       None,
+        "NoSym":    None,
+    }
+    df6 = step.orca(df5, options=orca_opts, xtra_inp_str=detailed_inp)
+
+    if output_parquet:
+        df6.to_parquet(output_parquet)
+    return df6
 
 if __name__ == '__main__':
     FRUST_path = str(Path(__file__).resolve().parent.parent)
