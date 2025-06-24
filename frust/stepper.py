@@ -10,6 +10,7 @@ from typing import Callable
 import numpy as np
 import pandas as pd
 from pandas import Series
+import submitit
 
 from frust.utils.dirs import make_step_dir, prepare_base_dir
 from frust.utils.slurm import detect_job_id
@@ -156,6 +157,7 @@ class Stepper:
                     self.step_type = "unknown"
                     logger.warning("\n\nwarning: No calculation type identified.\nwarning: This is fine if you don't calculate a transition state.\n")
 
+
             e_map: dict[int,float] = {cid_val: e_val for (e_val, cid_val) in energies} if energies else {}
 
             atom_syms = [atom.GetSymbol() for atom in mol.GetAtoms()]
@@ -179,6 +181,71 @@ class Stepper:
         return pd.DataFrame(rows)
     
 
+    @staticmethod
+    def _run_single_row(args):
+        """
+        This top‐level function gets pickled and run under Slurm.
+        args is a tuple (idx, row_dict, engine_fn, prefix, build_inputs,
+                        n_cores, memory_gb, save_calc_dirs, base_dir)
+        """
+
+        from frust.utils.dirs import make_step_dir
+        idx, row_dict, engine_fn, prefix, build_inputs, n_cores, memory_gb, save_calc_dirs, base_dir = args
+
+        # rehydrate the row into a Series
+        row = pd.Series(row_dict)
+        coord_col = [c for c in row.index if "coords" in c][-1]
+        coords = row[coord_col]
+
+        # skip if no coords
+        if coords is None or (pd.isna(coords) if not isinstance(coords, (list, tuple, np.ndarray)) else False):
+            return idx, {
+                f"{prefix}-normal_termination": False,
+                f"{prefix}-electronic_energy": np.nan
+            }
+
+        # build calc_dir if needed
+        calc_dir = None
+        if save_calc_dirs:
+            engine_base = base_dir / prefix
+            engine_base.mkdir(parents=True, exist_ok=True)
+            save_name = f"{row['custom_name']}_{row['cid']}"
+            calc_dir = str(make_step_dir(engine_base, save_name))
+
+        # assemble inputs
+        base_args = {
+            "atoms":   row["atoms"],
+            "coords":  [list(c) for c in coords],
+            "n_cores": n_cores,
+            "memory":  memory_gb,
+            "calc_dir": calc_dir
+        }
+        inputs = {**base_args, **build_inputs(row)}
+
+        # run the engine
+        try:
+            out = engine_fn(**inputs) or {}
+        except Exception:
+            out = {"normal_termination": False}
+
+        # enforce defaults
+        out.setdefault("normal_termination", False)
+        if out["normal_termination"]:
+            out.setdefault("electronic_energy", np.nan)
+
+        # pick known keys
+        allowed = {"normal_termination", "electronic_energy", "opt_coords", "vibs"}
+        if "vibs" in out and "gibbs_energy" in out:
+            allowed.add("gibbs_energy")
+
+        result = {}
+        for k in allowed:
+            if k in out:
+                result[f"{prefix}-{k}"] = out[k]
+
+        return idx, result
+
+
     def _run_engine(
             self,
             df: pd.DataFrame,
@@ -187,6 +254,7 @@ class Stepper:
             build_inputs: Callable[[Series], dict],
             save_step: bool,
             lowest: int | None,
+            distribute: bool = False,
         ) -> pd.DataFrame:
         """
         Generic runner for xTB or ORCA or any other engine.
@@ -224,10 +292,64 @@ class Stepper:
                 .head(lowest)
             )
 
+
+        if distribute:
+            # 1) Prepare args for each row
+            args_list = []
+            for idx, row in df_out.iterrows():
+                args_list.append((
+                    idx,
+                    row.to_dict(),
+                    engine_fn,
+                    prefix,
+                    build_inputs,
+                    self.n_cores,
+                    self.memory_gb,
+                    self.save_calc_dirs and self.save_output,
+                    self.base_dir
+                ))
+
+            # 2) Create a Submitit executor
+            exec_dist = submitit.AutoExecutor(folder=self.base_dir / f"{prefix}_dist")
+            exec_dist.update_parameters(
+                name=f"{prefix}-dist",
+                timeout_min=14400,
+                cpus_per_task=self.n_cores,
+                mem_gb=self.memory_gb,
+                slurm_partition="kemi1"
+            )
+
+            # 3) Submit one job per row
+            futures = [exec_dist.submit(self._run_single_row, args) for args in args_list]
+
+            # 4) Gather results into a dict: idx → {col: val, …}
+            results = {}
+            for fut in futures:
+                idx, row_res = fut.result()
+                results[idx] = row_res
+
+            # 5) Build output columns
+            all_cols = sorted({c for res in results.values() for c in res})
+            for col in all_cols:
+                def default(i):
+                    if col.endswith("-normal_termination"):
+                        return False
+                    if col.endswith(("-electronic_energy", "-gibbs_energy")):
+                        return np.nan
+                    return None
+
+                df_out[col] = df_out.index.map(
+                    lambda i: results[i].get(col, default(i))
+                )
+
+            return df_out
+
+
         for i, row in df_out.iterrows():
             coords = row[coord_col]
             # --- skip any row with no coords ---
-            if coords is None or (_pd.isna(coords) if not isinstance(coords, (list, tuple)) else False):
+            # if coords is None or (_pd.isna(coords) if not isinstance(coords, (list, tuple)) else False):
+            if coords is None or (_pd.isna(coords) if not isinstance(coords, (list, tuple, np.ndarray)) else False):            
                 all_row_data.append({
                     f"{prefix}-normal_termination": False,
                     f"{prefix}-electronic_energy":  np.nan
@@ -472,4 +594,4 @@ class Stepper:
                 inp["xtra_inp_str"] += ("\n\n" + block) if inp["xtra_inp_str"] else block
             return inp
 
-        return self._run_engine(df, self.orca_fn, prefix, build_orca, save_step, lowest)
+        return self._run_engine(df, self.orca_fn, prefix, build_orca, save_step, lowest, distribute)
