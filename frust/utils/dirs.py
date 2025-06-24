@@ -1,4 +1,4 @@
-# frust/dirs.py
+# frust/utils/dirs.py
 from pathlib import Path
 from .mols import get_molecule_name, generate_id
 

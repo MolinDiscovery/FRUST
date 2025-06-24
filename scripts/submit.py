@@ -1,4 +1,4 @@
-#!/usr/bin/env python3
+# scripts/submit.py
 import os
 import inspect
 import pandas as pd

@@ -310,13 +310,28 @@ class Stepper:
                 ))
 
             # 2) Create a Submitit executor
-            exec_dist = submitit.AutoExecutor(folder=self.base_dir / f"{prefix}_dist")
+            # exec_dist = submitit.AutoExecutor(folder=self.base_dir / f"{prefix}_dist")
+
+            # exec_dist.update_parameters(
+            #     name=f"{prefix}-dist",
+            #     timeout_min=14400,
+            #     cpus_per_task=self.n_cores,
+            #     mem_gb=self.memory_gb,
+            #     slurm_partition="kemi1"
+            # )
+
+            from frust.utils.slurm import SSHSlurmExecutor
+
+            exec_dist = SSHSlurmExecutor(
+                login_host="fend03.hpc.ku.dk",
+                folder=self.base_dir / f"{prefix}_dist",
+            )
             exec_dist.update_parameters(
                 name=f"{prefix}-dist",
                 timeout_min=14400,
                 cpus_per_task=self.n_cores,
                 mem_gb=self.memory_gb,
-                slurm_partition="kemi1"
+                slurm_partition="kemi1",
             )
 
             # 3) Submit one job per row
