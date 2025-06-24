@@ -418,7 +418,8 @@ class Stepper:
         xtra_inp_str: str = "",
         constraint: bool = False,
         save_step: bool = False,
-        lowest: int | None = None
+        lowest: int | None = None,
+        distribute: bool = False,
     ) -> pd.DataFrame:
         """Run ORCA calculations (SP, OptTS, Freq) and attach results to the DataFrame.
 
@@ -440,7 +441,7 @@ class Stepper:
                 - '{name}-{method}-opt_coords' (list of coords) if optimization run
                 - '{name}-{method}-vibs' (vibrational modes) if frequencies computed
                 - '{name}-{method}-gibbs_energy' (float) if frequencies computed
-        """        
+        """
         
         opts = options or {}
         keys = list(opts)
