@@ -268,7 +268,7 @@ def run_test(
         "NoSym":   None,
     }
     print(df0)
-    df5 = step.orca(df0, options=orca_opts, xtra_inp_str=detailed_inp, lowest=1, distribute=True)
+    df5 = step.orca(df0, options=orca_opts, xtra_inp_str=detailed_inp, distribute=True)
 
     # b) single-point with solvent model
     detailed_inp = """%CPCM\nSMD TRUE\nSMDSOLVENT "chloroform"\nend"""

@@ -7,15 +7,15 @@ from itertools import islice
 import importlib
 
 # ─── CONFIG ─────────────────────────────────────────────────────────────
-PIPELINE_NAME  = "run_ts"  # "run_ts" or "run_mols"
-PRODUCTION     = True
+PIPELINE_NAME  = "run_test"  # "run_ts" or "run_mols"
+PRODUCTION     = False
 USE_SLURM      = True
 DEBUG          = False
 BATCH_SIZE     = 1
 #CSV_PATH       = "../datasets/ir_borylation.csv" if PRODUCTION else "../datasets/ir_borylation_test.csv"
-CSV_PATH       = "../datasets/font_smiles.csv"
-OUT_DIR        = "results_font_ts2_c2"
-LOG_DIR        = "logs/font_ts2_c2"
+CSV_PATH       = "../datasets/1m.csv"
+OUT_DIR        = "results_test_dist"
+LOG_DIR        = "logs/test_dist"
 SAVE_OUT_DIRS  = False
 CPUS_PER_JOB   = 12
 MEM_GB         = 30

@@ -332,6 +332,7 @@ class Stepper:
                 cpus_per_task=self.n_cores,
                 mem_gb=self.memory_gb,
                 slurm_partition="kemi1",
+                slurm_extra=["--cpu-bind=none"],
             )
 
             # 3) Submit one job per row
