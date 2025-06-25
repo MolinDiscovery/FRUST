@@ -24,3 +24,5 @@ FRUST.egg-info/
 # Special rule for scripts directory
 /scripts/*
 !/scripts/submit.py
+!/scripts/tmp.ipynb
+!/scripts/merge_parquet.py
