@@ -15,7 +15,6 @@ setup.py
 /dev/
 .vscode/
 FRUST.egg-info/
-/pipes/
 
 # Logs and temp files
 *.log

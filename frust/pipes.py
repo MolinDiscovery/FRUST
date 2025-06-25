@@ -285,6 +285,11 @@ def run_test(
         df6.to_parquet(output_parquet)
     return df6
 
+
+def run_IRC_test():
+    pass
+
+
 if __name__ == '__main__':
     FRUST_path = str(Path(__file__).resolve().parent.parent)
     print(f"Running in main. FRUST path: {FRUST_path}")
