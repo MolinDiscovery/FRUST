@@ -7,10 +7,10 @@ from itertools import islice
 import importlib
 
 # ─── CONFIG ─────────────────────────────────────────────────────────────
-PIPELINE_NAME  = "run_test"  # "run_ts" or "run_mols"
+PIPELINE_NAME  = "run_ts"  # "run_ts" or "run_mols"
 PRODUCTION     = False
 USE_SLURM      = True
-DEBUG          = False
+DEBUG          = True
 BATCH_SIZE     = 1
 #CSV_PATH       = "../datasets/ir_borylation.csv" if PRODUCTION else "../datasets/ir_borylation_test.csv"
 CSV_PATH       = "../datasets/1m.csv"
