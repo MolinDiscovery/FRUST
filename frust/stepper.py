@@ -254,7 +254,6 @@ class Stepper:
             build_inputs: Callable[[Series], dict],
             save_step: bool,
             lowest: int | None,
-            distribute: bool = False,
         ) -> pd.DataFrame:
         """
         Generic runner for xTB or ORCA or any other engine.
@@ -291,74 +290,6 @@ class Stepper:
                 .groupby(group_keys, dropna=False)
                 .head(lowest)
             )
-
-
-        if distribute:
-            # 1) Prepare args for each row
-            args_list = []
-            for idx, row in df_out.iterrows():
-                args_list.append((
-                    idx,
-                    row.to_dict(),
-                    engine_fn,
-                    prefix,
-                    build_inputs,
-                    self.n_cores,
-                    self.memory_gb,
-                    self.save_calc_dirs and self.save_output,
-                    self.base_dir
-                ))
-
-            # 2) Create a Submitit executor
-            # exec_dist = submitit.AutoExecutor(folder=self.base_dir / f"{prefix}_dist")
-
-            # exec_dist.update_parameters(
-            #     name=f"{prefix}-dist",
-            #     timeout_min=14400,
-            #     cpus_per_task=self.n_cores,
-            #     mem_gb=self.memory_gb,
-            #     slurm_partition="kemi1"
-            # )
-
-            from frust.utils.slurm import SSHSlurmExecutor
-
-            exec_dist = SSHSlurmExecutor(
-                login_host="fend03.hpc.ku.dk",
-                folder=self.base_dir / f"{prefix}_dist",
-            )
-            exec_dist.update_parameters(
-                name=f"{prefix}-dist",
-                timeout_min=14400,
-                cpus_per_task=self.n_cores,
-                mem_gb=self.memory_gb,
-                slurm_partition="kemi1",
-                slurm_extra=["--cpu-bind=none"],
-            )
-
-            # 3) Submit one job per row
-            futures = [exec_dist.submit(self._run_single_row, args) for args in args_list]
-
-            # 4) Gather results into a dict: idx → {col: val, …}
-            results = {}
-            for fut in futures:
-                idx, row_res = fut.result()
-                results[idx] = row_res
-
-            # 5) Build output columns
-            all_cols = sorted({c for res in results.values() for c in res})
-            for col in all_cols:
-                def default(i):
-                    if col.endswith("-normal_termination"):
-                        return False
-                    if col.endswith(("-electronic_energy", "-gibbs_energy")):
-                        return np.nan
-                    return None
-
-                df_out[col] = df_out.index.map(
-                    lambda i: results[i].get(col, default(i))
-                )
-
-            return df_out
 
 
         for i, row in df_out.iterrows():
@@ -557,7 +488,6 @@ class Stepper:
         constraint: bool = False,
         save_step: bool = False,
         lowest: int | None = None,
-        distribute: bool = False,
     ) -> pd.DataFrame:
         """Run ORCA calculations (SP, OptTS, Freq) and attach results to the DataFrame.
 
@@ -610,4 +540,4 @@ class Stepper:
                 inp["xtra_inp_str"] += ("\n\n" + block) if inp["xtra_inp_str"] else block
             return inp
 
-        return self._run_engine(df, self.orca_fn, prefix, build_orca, save_step, lowest, distribute)
+        return self._run_engine(df, self.orca_fn, prefix, build_orca, save_step, lowest)

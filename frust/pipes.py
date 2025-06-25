@@ -98,7 +98,7 @@ def run_ts(
         "NoSym"    : None,
     }
 
-    df5 = step.orca(df4, name="DFT", options=options, xtra_inp_str=detailed_inp, save_step=True, lowest=1, distribute=True)
+    df5 = step.orca(df4, name="DFT", options=options, xtra_inp_str=detailed_inp, save_step=True, lowest=1)
 
     detailed_inp = """%CPCM\nSMD TRUE\nSMDSOLVENT "chloroform"\nend"""
     options = {
@@ -196,7 +196,7 @@ def run_mols(
         "Freq":    None,
         "NoSym":   None,
     }
-    df5 = step.orca(df4, options=orca_opts, xtra_inp_str=detailed_inp, lowest=1, distribute=True)
+    df5 = step.orca(df4, options=orca_opts, xtra_inp_str=detailed_inp, lowest=1)
 
     # b) single-point with solvent model
     detailed_inp = """%CPCM\nSMD TRUE\nSMDSOLVENT "chloroform"\nend"""
