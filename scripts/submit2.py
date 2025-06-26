@@ -60,7 +60,6 @@ executor.update_parameters(
     cpus_per_task=CPUS_PER_JOB,
     mem_gb=MEM_GB,
     timeout_min=TIMEOUT_MIN,
-    slurm_array_parallelism=10,
 )
 
 # 5) dispatch batches
