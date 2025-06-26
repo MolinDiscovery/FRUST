@@ -12,7 +12,6 @@ updatepypi.txt
 setup.py
 
 # Different folders
-/dev/
 .vscode/
 FRUST.egg-info/
 
