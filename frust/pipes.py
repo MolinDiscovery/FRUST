@@ -13,6 +13,32 @@ try:
 except ImportError:
     pass
 
+
+def setup_ts(
+    ligand_smiles_list: list[str],
+    ts_guess_xyz: str,        
+    ):
+
+    ts_type = read_ts_type_from_xyz(ts_guess_xyz)
+
+    if ts_type == 'TS1':
+        from frust.transformers import transformer_ts1
+        transformer_ts = transformer_ts1
+    elif ts_type == 'TS2':
+        from frust.transformers import transformer_ts2
+        transformer_ts = transformer_ts2
+    elif ts_type == 'TS3':
+        from frust.transformers import transformer_ts3
+        transformer_ts = transformer_ts3
+    else:
+        raise ValueError(f"Unrecognized TS type: {ts_type}")
+
+    ts_structs = {}
+
+    for smi in ligand_smiles_list:
+        ts_mols = transformer_ts(smi, ts_guess_xyz)
+        ts_structs.update(ts_mols)
+
 # ─────────────────────────  TS xTB  ──────────────────────────
 def run_ts(
     ligand_smiles_list: list[str],
