@@ -1,0 +1,389 @@
+
+
+           ************************************************************
+           *        Program running with 24 parallel MPI-processes    *
+           *              working on a common directory               *
+           ************************************************************
+-------------------------------------------------------------------------------
+                                 ORCA GUESS
+                   Start orbitals & Density for SCF / CASSCF
+-------------------------------------------------------------------------------
+
+------------
+SCF SETTINGS
+------------
+Hamiltonian:
+ Density Functional     Method          .... DFT(GTOs)
+ Exchange Functional    Exchange        .... WB97X-D3
+ Correlation Functional Correlation     .... WB97X-D3
+ Gradients option       PostSCFGGA      .... off
+ Hybrid DFT is turned on
+   Fraction HF Exchange ScalHFX         ....  0.195728
+   Scaling of DF-GGA-X  ScalDFX         ....  0.000000
+   Scaling of DF-GGA-C  ScalDFC         ....  1.000000
+   Scaling of DF-LDA-C  ScalLDAC        ....  1.000000
+   Perturbative correction              ....  0.000000
+ Long-range corrected/Screened/Range-Separated Hybrid DFT is turned on
+   Amount of maximum screened exact exchange              ....  0.804272
+   Range separation parameter mu (erf(mu*r12)/r12)        ....  0.250000
+ RI-approximation to the Coulomb term is turned on
+   Number of AuxJ basis functions       .... 2030
+   RIJ-COSX (HFX calculated with COS-X)).... on
+
+
+General Settings:
+ Integral files         IntName         .... input_IRC_F
+ Hartree-Fock type      HFTyp           .... RHF
+ Total Charge           Charge          ....    0
+ Multiplicity           Mult            ....    1
+ Number of Electrons    NEL             ....  238
+ Basis Dimension        Dim             ....  658
+ Nuclear Repulsion      ENuc            ....   3599.9249685319 Eh
+
+Convergence Acceleration:
+ AO-DIIS                CNVDIIS         .... on
+   Start iteration      DIISMaxIt       ....    12
+   Startup error        DIISStart       ....  0.200000
+   # of expansion vecs  DIISMaxEq       ....     5
+   Bias factor          DIISBfac        ....   1.050
+   Max. coefficient     DIISMaxC        ....  10.000
+ MO-DIIS                CNVKDIIS        .... off
+ Trust-Rad. Augm. Hess. CNVTRAH         .... auto
+   Auto Start mean grad. ratio tolernc. ....  1.125000
+   Auto Start start iteration           ....     1
+   Auto Start num. interpolation iter.  ....    10
+   Max. Number of Micro iterations      ....    24
+   Max. Number of Macro iterations      .... Maxiter - #DIIS iter
+   Number of Davidson start vectors     ....     2
+   Converg. threshold    (grad. norm)   ....   1.000e-05
+   Grad. Scal. Fac. for Micro threshold ....   0.100
+   Minimum threshold for Micro iter.    ....   1.000e-02
+   NR start threshold (gradient norm)   ....   1.000e-04
+   Initial trust radius                 ....   0.400
+   Minimum AH scaling param. (alpha)    ....   1.000
+   Maximum AH scaling param. (alpha)    .... 1000.000
+   Quad. conv. algorithm                .... NR
+   White noise on init. David. guess    .... on
+   Maximum white noise                  ....   0.010
+   Pseudo random numbers                .... off
+   Inactive MOs                         .... canonical
+   Orbital update algorithm             .... Taylor
+   Preconditioner                       .... Diag
+   Full preconditioner red. dimension   ....   250
+ SOSCF                  CNVSOSCF        .... on
+   Start iteration      SOSCFMaxIt      ....   150
+   Startup grad/error   SOSCFStart      ....  0.003300
+   Hessian update       SOSCFHessUp     .... L-BFGS
+ Level Shifting         CNVShift        .... on
+   Level shift para.    LevelShift      ....    0.2500
+   Turn off err/grad.   ShiftErr        ....    0.0010
+ Zerner damping         CNVZerner       .... off
+ Static damping         CNVDamp         .... on
+   Fraction old density DampFac         ....    0.7000
+   Max. Damping (<1)    DampMax         ....    0.9800
+   Min. Damping (>=0)   DampMin         ....    0.0000
+   Turn off err/grad.   DampErr         ....    0.1000
+
+SCF Procedure:
+ Maximum # iterations   MaxIter         ....   125
+ SCF integral mode      SCFMode         .... Direct
+   Integral package                     .... SHARK and LIBINT hybrid scheme
+ Reset frequency        DirectResetFreq ....    20
+ Integral Threshold     Thresh          ....  2.500e-11 Eh
+ Primitive CutOff       TCut            ....  2.500e-12 Eh
+
+Convergence Tolerance:
+ Convergence Check Mode ConvCheckMode   .... Total+1el-Energy
+ Convergence forced     ConvForced      .... 0
+ Energy Change          TolE            ....  1.000e-08 Eh
+ 1-El. energy change                    ....  1.000e-05 Eh
+ Orbital Gradient       TolG            ....  1.000e-05
+ Orbital Rotation angle TolX            ....  1.000e-05
+ DIIS Error             TolErr          ....  5.000e-07
+
+---------------------
+INITIAL GUESS: MOREAD
+---------------------
+Guess MOs are being read from file: input_IRC_F.gbw
+Input Geometry matches current geometry (good)
+Input basis set matches current basis set (good)
+Occupation numbers will be reassigned to an Aufbau configuration
+MOs were renormalized
+MOs were reorthogonalized (Cholesky)
+                      ------------------
+                      INITIAL GUESS DONE (   0.3 sec)
+                      ------------------
+             **** ENERGY FILE WAS UPDATED (input_IRC_F.en.tmp) ****
+Finished Guess after   0.7 sec
+Maximum memory used throughout the entire GUESS-calculation: 62.8 MB
+
+
+           ************************************************************
+           *        Program running with 24 parallel MPI-processes    *
+           *              working on a common directory               *
+           ************************************************************
+
+-------------------------------------------------------------------------------------------
+                                      ORCA LEAN-SCF
+                              memory conserving SCF solver
+-------------------------------------------------------------------------------------------
+
+----------------------------------------D-I-I-S--------------------------------------------
+Iteration    Energy (Eh)           Delta-E    RMSDP     MaxDP     DIISErr   Damp  Time(sec)
+-------------------------------------------------------------------------------------------
+               ***  Starting incremental Fock matrix formation  ***
+                              *** Initializing SOSCF ***
+---------------------------------------S-O-S-C-F--------------------------------------
+Iteration    Energy (Eh)           Delta-E    RMSDP     MaxDP     MaxGrad    Time(sec)
+--------------------------------------------------------------------------------------
+    1    -1325.4906147612759924     0.00e+00  1.67e-06  7.80e-05  1.34e-05    10.4
+               *** Restarting incremental Fock matrix formation ***
+    2    -1325.4906149427711171    -1.81e-07  6.69e-07  3.60e-05  2.03e-05     9.6
+    3    -1325.4906149705170719    -2.77e-08  5.67e-07  2.69e-05  9.37e-06     3.6
+    4    -1325.4906149810335592    -1.05e-08  1.77e-07  1.58e-05  4.30e-06     4.0
+    5    -1325.4906149679095506     1.31e-08  6.00e-08  3.54e-06  8.54e-07     2.8
+                  *** Gradient check signals convergence ***
+
+               *****************************************************
+               *                     SUCCESS                       *
+               *           SCF CONVERGED AFTER   5 CYCLES          *
+               *****************************************************
+
+Recomputing exchange energy using gridx3       ... done (   16.802 sec)
+Old exchange energy                            :    -62.156089136 Eh
+New exchange energy                            :    -62.156101800 Eh
+Exchange energy change after final integration :     -0.000012664 Eh
+Total energy after final integration           :  -1325.490627632 Eh
+             **** ENERGY FILE WAS UPDATED (input_IRC_F.en.tmp) ****
+
+----------------
+TOTAL SCF ENERGY
+----------------
+
+Total Energy       :      -1325.49062763220877 Eh          -36068.43366 eV
+
+Components:
+Nuclear Repulsion  :       3599.92496853185048 Eh           97958.93853 eV
+Electronic Energy  :      -4925.41558349976003 Eh         -134027.37185 eV
+One Electron Energy:      -8962.07519161175514 Eh         -243870.46410 eV
+Two Electron Energy:       4036.65960811199511 Eh          109843.09225 eV
+
+Virial components:
+Potential Energy   :      -2641.66504870954759 Eh          -71883.36045 eV
+Kinetic Energy     :       1316.17442107733859 Eh           35814.92679 eV
+Virial Ratio       :          2.00707824616987
+
+DFT components:
+N(Alpha)           :      119.000088335504 electrons
+N(Beta)            :      119.000088335504 electrons
+N(Total)           :      238.000176671009 electrons
+E(XC)              :     -133.942135062381 Eh       
+
+---------------
+SCF CONVERGENCE
+---------------
+
+  Last Energy change         ...   -1.3124e-08  Tolerance :   1.0000e-08
+  Last MAX-Density change    ...    3.5433e-06  Tolerance :   1.0000e-07
+  Last RMS-Density change    ...    5.9967e-08  Tolerance :   5.0000e-09
+  Last DIIS Error            ...    1.1853e-04  Tolerance :   5.0000e-07
+  Last Orbital Gradient      ...    8.5428e-07  Tolerance :   1.0000e-05
+  Last Orbital Rotation      ...    2.0939e-06  Tolerance :   1.0000e-05
+
+
+----------------
+ORBITAL ENERGIES
+----------------
+
+  NO   OCC          E(Eh)            E(eV) 
+   0   2.0000     -19.236699      -523.4572 
+   1   2.0000     -19.230712      -523.2943 
+   2   2.0000     -14.512522      -394.9058 
+   3   2.0000     -14.395871      -391.7316 
+   4   2.0000     -10.344093      -281.4771 
+   5   2.0000     -10.343663      -281.4654 
+   6   2.0000     -10.342462      -281.4327 
+   7   2.0000     -10.326395      -280.9955 
+   8   2.0000     -10.306967      -280.4668 
+   9   2.0000     -10.305705      -280.4325 
+  10   2.0000     -10.303200      -280.3643 
+  11   2.0000     -10.302556      -280.3468 
+  12   2.0000     -10.291879      -280.0563 
+  13   2.0000     -10.289759      -279.9986 
+  14   2.0000     -10.276230      -279.6304 
+  15   2.0000     -10.272303      -279.5236 
+  16   2.0000     -10.270503      -279.4746 
+  17   2.0000     -10.270464      -279.4735 
+  18   2.0000     -10.267065      -279.3810 
+  19   2.0000     -10.265989      -279.3518 
+  20   2.0000     -10.265123      -279.3282 
+  21   2.0000     -10.263479      -279.2835 
+  22   2.0000     -10.262537      -279.2578 
+  23   2.0000     -10.260934      -279.2142 
+  24   2.0000     -10.258466      -279.1471 
+  25   2.0000     -10.253978      -279.0249 
+  26   2.0000     -10.252220      -278.9771 
+  27   2.0000     -10.250547      -278.9316 
+  28   2.0000     -10.247903      -278.8596 
+  29   2.0000     -10.247546      -278.8499 
+  30   2.0000      -6.896064      -187.6515 
+  31   2.0000      -6.803787      -185.1404 
+  32   2.0000      -1.165211       -31.7070 
+  33   2.0000      -1.125358       -30.6226 
+  34   2.0000      -1.093743       -29.7623 
+  35   2.0000      -1.024876       -27.8883 
+  36   2.0000      -0.942462       -25.6457 
+  37   2.0000      -0.937107       -25.5000 
+  38   2.0000      -0.917999       -24.9800 
+  39   2.0000      -0.907172       -24.6854 
+  40   2.0000      -0.897377       -24.4189 
+  41   2.0000      -0.866084       -23.5673 
+  42   2.0000      -0.860096       -23.4044 
+  43   2.0000      -0.838131       -22.8067 
+  44   2.0000      -0.831889       -22.6368 
+  45   2.0000      -0.818136       -22.2626 
+  46   2.0000      -0.817369       -22.2417 
+  47   2.0000      -0.806908       -21.9571 
+  48   2.0000      -0.788072       -21.4445 
+  49   2.0000      -0.784444       -21.3458 
+  50   2.0000      -0.775352       -21.0984 
+  51   2.0000      -0.768872       -20.9221 
+  52   2.0000      -0.736917       -20.0525 
+  53   2.0000      -0.710608       -19.3366 
+  54   2.0000      -0.704356       -19.1665 
+  55   2.0000      -0.699607       -19.0373 
+  56   2.0000      -0.681893       -18.5552 
+  57   2.0000      -0.668461       -18.1898 
+  58   2.0000      -0.665109       -18.0985 
+  59   2.0000      -0.652050       -17.7432 
+  60   2.0000      -0.649791       -17.6817 
+  61   2.0000      -0.630425       -17.1547 
+  62   2.0000      -0.620886       -16.8952 
+  63   2.0000      -0.603065       -16.4102 
+  64   2.0000      -0.588445       -16.0124 
+  65   2.0000      -0.577455       -15.7133 
+  66   2.0000      -0.564225       -15.3533 
+  67   2.0000      -0.562608       -15.3093 
+  68   2.0000      -0.558135       -15.1876 
+  69   2.0000      -0.553319       -15.0566 
+  70   2.0000      -0.544404       -14.8140 
+  71   2.0000      -0.543680       -14.7943 
+  72   2.0000      -0.540597       -14.7104 
+  73   2.0000      -0.534798       -14.5526 
+  74   2.0000      -0.532106       -14.4793 
+  75   2.0000      -0.527641       -14.3578 
+  76   2.0000      -0.519209       -14.1284 
+  77   2.0000      -0.515757       -14.0345 
+  78   2.0000      -0.506714       -13.7884 
+  79   2.0000      -0.503092       -13.6898 
+  80   2.0000      -0.500101       -13.6084 
+  81   2.0000      -0.496947       -13.5226 
+  82   2.0000      -0.496402       -13.5078 
+  83   2.0000      -0.490657       -13.3515 
+  84   2.0000      -0.489212       -13.3121 
+  85   2.0000      -0.487020       -13.2525 
+  86   2.0000      -0.482527       -13.1302 
+  87   2.0000      -0.481996       -13.1158 
+  88   2.0000      -0.480264       -13.0686 
+  89   2.0000      -0.472232       -12.8501 
+  90   2.0000      -0.466532       -12.6950 
+  91   2.0000      -0.464154       -12.6303 
+  92   2.0000      -0.462568       -12.5871 
+  93   2.0000      -0.458521       -12.4770 
+  94   2.0000      -0.454889       -12.3782 
+  95   2.0000      -0.452627       -12.3166 
+  96   2.0000      -0.445366       -12.1190 
+  97   2.0000      -0.441307       -12.0086 
+  98   2.0000      -0.439393       -11.9565 
+  99   2.0000      -0.438367       -11.9286 
+ 100   2.0000      -0.434371       -11.8198 
+ 101   2.0000      -0.427705       -11.6384 
+ 102   2.0000      -0.423808       -11.5324 
+ 103   2.0000      -0.418272       -11.3818 
+ 104   2.0000      -0.417969       -11.3735 
+ 105   2.0000      -0.409304       -11.1377 
+ 106   2.0000      -0.396830       -10.7983 
+ 107   2.0000      -0.393025       -10.6948 
+ 108   2.0000      -0.388977       -10.5846 
+ 109   2.0000      -0.382226       -10.4009 
+ 110   2.0000      -0.380432       -10.3521 
+ 111   2.0000      -0.377393       -10.2694 
+ 112   2.0000      -0.364514        -9.9189 
+ 113   2.0000      -0.353038        -9.6066 
+ 114   2.0000      -0.342505        -9.3200 
+ 115   2.0000      -0.320842        -8.7306 
+ 116   2.0000      -0.305772        -8.3205 
+ 117   2.0000      -0.294966        -8.0264 
+ 118   2.0000      -0.266433        -7.2500 
+ 119   0.0000       0.036255         0.9866 
+ 120   0.0000       0.096553         2.6273 
+ 121   0.0000       0.098056         2.6682 
+ 122   0.0000       0.140551         3.8246 
+ 123   0.0000       0.155806         4.2397 
+ 124   0.0000       0.160077         4.3559 
+ 125   0.0000       0.173027         4.7083 
+ 126   0.0000       0.183024         4.9803 
+ 127   0.0000       0.192624         5.2416 
+ 128   0.0000       0.196105         5.3363 
+ 129   0.0000       0.199845         5.4380 
+*Only the first 10 virtual orbitals were printed.
+-------
+TIMINGS
+-------
+
+Total SCF time: 0 days 0 hours 0 min 48 sec 
+
+Total time                  ....      48.214 sec
+Sum of individual times     ....      47.989 sec  ( 99.5%)
+
+SCF preparation             ....       0.766 sec  (  1.6%)
+Fock matrix formation       ....      45.911 sec  ( 95.2%)
+  Startup                   ....       0.307 sec  (  0.7% of F)
+  Split-RI-J                ....       2.178 sec  (  4.7% of F)
+  Chain of spheres X        ....      39.930 sec  ( 87.0% of F)
+  XC integration            ....       2.385 sec  (  5.2% of F)
+    XC Preparation          ....       0.000 sec  (  0.0% of XC)
+    Basis function eval.    ....       0.416 sec  ( 17.5% of XC)
+    Density eval.           ....       0.440 sec  ( 18.4% of XC)
+    XC-Functional eval.     ....       0.059 sec  (  2.5% of XC)
+    XC-Potential eval.      ....       0.332 sec  ( 13.9% of XC)
+Diagonalization             ....       0.000 sec  (  0.0%)
+Density matrix formation    ....       0.145 sec  (  0.3%)
+Total Energy calculation    ....       0.058 sec  (  0.1%)
+Population analysis         ....       0.000 sec  (  0.0%)
+Orbital Transformation      ....       0.184 sec  (  0.4%)
+Orbital Orthonormalization  ....       0.000 sec  (  0.0%)
+DIIS solution               ....       0.202 sec  (  0.4%)
+SOSCF solution              ....       0.724 sec  (  1.5%)
+Finished LeanSCF after  48.5 sec
+
+Maximum memory used throughout the entire LEANSCF-calculation: 130.5 MB
+
+
+-------------------------------------------------------------------------------
+                          DFT DISPERSION CORRECTION                            
+                                                                               
+                              DFTD3 V3.1  Rev 1                                
+                              USING zero damping                               
+-------------------------------------------------------------------------------
+The omegaB97X-D3 functional is recognized. Fit by Chai et al.
+Active option DFTDOPT                   ...         3   
+
+molecular C6(AA) [au] = 46510.133567 
+
+
+            DFT-D V3
+ parameters
+ s6 scaling factor         :     1.0000 
+ rs6 scaling factor        :     1.2810 
+ s8 scaling factor         :     1.0000 
+ rs8 scaling factor        :     1.0940 
+ Damping factor alpha6     :    14.0000 
+ Damping factor alpha8     :    16.0000 
+ ad hoc parameters k1-k3   :    16.0000     1.3333    -4.0000 
+
+ Edisp/kcal,au: -32.863763999887  -0.052371735970 
+ E6   /kcal   : -16.005494564 
+ E8   /kcal   : -16.858269436 
+ % E8         :  51.297439441 
+
