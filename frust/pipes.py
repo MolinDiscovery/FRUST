@@ -73,8 +73,6 @@ def run_ts(
         if output_parquet:
             df3_filt.to_parquet(output_parquet)            
         return df3_filt
-    
-    df3_filt.to_parquet("test.parquet")
 
     # ↓↓↓↓↓↓↓↓ This code only executes if DFT is True ↓↓↓↓↓↓↓↓
     options = {
@@ -284,10 +282,6 @@ def run_test(
     if output_parquet:
         df6.to_parquet(output_parquet)
     return df6
-
-
-def run_IRC_test():
-    pass
 
 
 if __name__ == '__main__':
