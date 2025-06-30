@@ -8,21 +8,21 @@ import importlib
 
 # ─── CONFIG ─────────────────────────────────────────────────────────────
 PIPELINE_NAME  = "run_ts_per_rpos"  # "run_ts_per_rpos", "run_ts_per_lig", "run_mols"
-PRODUCTION     = False
+PRODUCTION     = True
 USE_SLURM      = True
-DEBUG          = True
-BATCH_SIZE     = 8
+DEBUG          = False
+BATCH_SIZE     = 1
 CSV_PATH       = "../datasets/font_smiles.csv"
-OUT_DIR        = "results_test_ts_rpos"
-LOG_DIR        = "logs/test_ts_rpos"
+OUT_DIR        = "results_font_ts3_preSP"
+LOG_DIR        = "logs/test_ts3_preSP"
 SAVE_OUT_DIRS  = False
-CPUS_PER_JOB   = 1
-MEM_GB         = 2
-TIMEOUT_MIN    = 7200
+CPUS_PER_JOB   = 4
+MEM_GB         = 10
+TIMEOUT_MIN    = 14400
 N_CONFS        = None if PRODUCTION else 1
 DFT            = True
 # ─── TS SPECIFIC ─────────────────────────────────────────────────────────
-TS_XYZ         = "../structures/ts2_guess.xyz"
+TS_XYZ         = "../structures/ts3_guess.xyz"
 # ─── MOL SPECIFIC ────────────────────────────────────────────────────────
 SELECT_MOLS    = ["HBpin-mol", "HH"] # "all", "uniques", "generics", or specific names
 
@@ -67,7 +67,8 @@ futures = []
 if PIPELINE_NAME == "run_ts_per_rpos":
     for ts_struct in job_inputs:
         tag = f"{PIPELINE_NAME}_{list(ts_struct.keys())[0]}"
-        # pipeline-specific invocation, no batching for rpos
+        if USE_SLURM:
+            executor.update_parameters(slurm_job_name=tag)
         all_kwargs = {
             "ligand_smiles_list": None,
             "ts_guess_xyz":       TS_XYZ,
