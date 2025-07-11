@@ -415,7 +415,7 @@ if __name__ == '__main__':
         ["CN1C=CC=C1"],
         ts_guess_xyz=f"{FRUST_path}/structures/ts2_guess.xyz",
         n_confs=3,
-        debug=True,
+        debug=False,
         save_output_dir=False,
         #output_parquet="TS3_test.parguet",
         DFT=True,

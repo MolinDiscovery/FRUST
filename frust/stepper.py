@@ -27,7 +27,7 @@ class Stepper:
         dump_each_step: bool = False,
         n_cores: int = 8,
         memory_gb: float = 20.0,
-        save_calc_dirs: bool = True,
+        save_calc_dirs: bool = False,
         save_output_dir: bool = True,
         **kwargs
     ):
@@ -78,7 +78,6 @@ class Stepper:
         if not cols:
             raise ValueError("No column containing 'coords' found")
         return cols[-1]
-
 
     def build_initial_df(self, embedded_dict: dict) -> pd.DataFrame:
         """
@@ -157,7 +156,6 @@ class Stepper:
                     self.step_type = "unknown"
                     logger.warning("\n\nwarning: No calculation type identified.\nwarning: This is fine if you don't calculate a transition state.\n")
 
-
             e_map: dict[int,float] = {cid_val: e_val for (e_val, cid_val) in energies} if energies else {}
 
             atom_syms = [atom.GetSymbol() for atom in mol.GetAtoms()]
@@ -180,7 +178,6 @@ class Stepper:
 
         return pd.DataFrame(rows)
 
-
     def _run_engine(
             self,
             df: pd.DataFrame,
@@ -189,6 +186,7 @@ class Stepper:
             build_inputs: Callable[[Series], dict],
             save_step: bool,
             lowest: int | None,
+            save_files: list[str] | None = None,
         ) -> pd.DataFrame:
         """
         Generic runner for xTB or ORCA or any other engine.
@@ -226,7 +224,6 @@ class Stepper:
                 .head(lowest)
             )
 
-
         for i, row in df_out.iterrows():
             coords = row[coord_col]
             # --- skip any row with no coords ---
@@ -240,22 +237,41 @@ class Stepper:
 
             logger.info(f"[{prefix}] row {i} ({row['custom_name']})…")
 
-            # step 1: build calc_dir if needed
-            if self.save_calc_dirs and self.save_output or save_step:
+            save_full_calc = (self.save_calc_dirs and self.save_output) or save_step
+            save_partial   = save_files is not None and not save_step
+
+            if save_full_calc or save_partial:
+                dir_name    = f"{row['custom_name']}_{row['cid']}"
                 engine_base = self.base_dir / prefix
                 engine_base.mkdir(parents=True, exist_ok=True)
-                save_dir_name = row["custom_name"] + "_" + str(row["cid"])
-                calc_dir = str(make_step_dir(engine_base, save_dir_name))
+                created_dir = str(make_step_dir(engine_base, dir_name))
             else:
-                calc_dir = None
+                created_dir = None
 
-            # step 2: assemble arguments
+            if save_full_calc:
+                calc_dir   = created_dir
+                save_dir   = created_dir
+                save_files = None
+            elif save_partial:
+                calc_dir   = None
+                save_dir   = created_dir
+            else:
+                calc_dir   = None
+                save_dir   = None
+
             base_args = {
-                "atoms":   row["atoms"],
-                "coords":  [list(c) for c in coords],
+                "atoms":  row["atoms"],
+                "coords": [list(c) for c in coords],
                 "n_cores": self.n_cores,
-                "calc_dir": calc_dir,
             }
+
+            if calc_dir is not None:
+                base_args["calc_dir"] = calc_dir
+            if save_dir is not None:
+                base_args["save_dir"] = save_dir
+            if save_files is not None:
+                base_args["save_files"] = save_files
+
             inputs = {**base_args, **build_inputs(row)}
 
             # step 3: run engine, catch exceptions
@@ -306,7 +322,6 @@ class Stepper:
 
         return df_out
 
-
     def xtb(
         self,
         df: pd.DataFrame,
@@ -353,7 +368,7 @@ class Stepper:
             base_str = detailed_inp_str.strip()
             if base_str:
                 inp["detailed_input_str"] = base_str
-            
+
             block = None
 
             if self.step_type.upper() == "TS1":
@@ -413,7 +428,6 @@ class Stepper:
 
         return self._run_engine(df, self.xtb_fn, prefix, build_xtb, save_step, lowest)
 
-
     def orca(
         self,
         df: pd.DataFrame,
@@ -422,6 +436,7 @@ class Stepper:
         xtra_inp_str: str = "",
         constraint: bool = False,
         save_step: bool = False,
+        save_files: list[str] | None = ["orca.out"],
         lowest: int | None = None,
     ) -> pd.DataFrame:
         """Run ORCA calculations (SP, OptTS, Freq) and attach results to the DataFrame.
@@ -445,13 +460,13 @@ class Stepper:
                 - '{name}-{method}-vibs' (vibrational modes) if frequencies computed
                 - '{name}-{method}-gibbs_energy' (float) if frequencies computed
         """
-        
+
         opts = options or {}
         keys = list(opts)
         if len(keys) < 1:
             raise ValueError("`options` must include at least one ORCA method key")
 
-        # prefix = "orca-FUNC-BASIS[-OptTS or Freq or NoSym]" 
+        # prefix = "orca-FUNC-BASIS[-OptTS or Freq or NoSym]"
         if len(keys) == 1:
             prefix = f"{name}-{keys[0]}"
         else:
@@ -475,4 +490,4 @@ class Stepper:
                 inp["xtra_inp_str"] += ("\n\n" + block) if inp["xtra_inp_str"] else block
             return inp
 
-        return self._run_engine(df, self.orca_fn, prefix, build_orca, save_step, lowest)
+        return self._run_engine(df, self.orca_fn, prefix, build_orca, save_step, lowest, save_files)
