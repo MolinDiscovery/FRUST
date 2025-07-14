@@ -69,7 +69,14 @@ class Stepper:
                 datefmt="%Y-%m-%d %H:%M:%S",
             )
             handler.setFormatter(fmt)
-            logger.addHandler(handler)            
+            logger.addHandler(handler)
+
+        try:
+            self.work_dir = os.environ["SCRATCH"]
+        except:
+            self.work_dir = "."
+        os.makedirs(self.work_dir, exist_ok=True)
+        logger.info(f"Working dir: {self.work_dir}")  
 
     @staticmethod
     def _last_coord_col(df: pd.DataFrame) -> str:
@@ -235,8 +242,6 @@ class Stepper:
                 })
                 continue
 
-            logger.info(f"[{prefix}] row {i} ({row['custom_name']})…")
-
             save_full_calc = (self.save_calc_dirs and self.save_output) or save_step
             save_partial   = save_files is not None and not save_step
 
@@ -263,6 +268,7 @@ class Stepper:
                 "atoms":  row["atoms"],
                 "coords": [list(c) for c in coords],
                 "n_cores": self.n_cores,
+                "scr": self.work_dir
             }
 
             if calc_dir is not None:
@@ -273,8 +279,9 @@ class Stepper:
                 base_args["save_files"] = save_files
 
             inputs = {**base_args, **build_inputs(row)}
-
+            
             # step 3: run engine, catch exceptions
+            logger.info(f"[{prefix}] row {i} ({row['custom_name']})…")
             try:
                 out = engine_fn(**inputs) or {}
             except Exception as e:

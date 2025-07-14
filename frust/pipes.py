@@ -408,6 +408,32 @@ def run_test(
     return df6
 
 
+def run_small_test(
+    ligand_smiles_list: list[str],
+    *,
+    out_dir: str | None = None,
+    save_output_dir: bool = True,      
+):
+    from rdkit import Chem
+    smi = ligand_smiles_list[0]
+    m = Chem.MolFromSmiles(smi)
+    mol_dict = {"mol": m}
+    mols_dict_embedded = embed_mols(mol_dict, n_confs=1)
+
+    step = Stepper(
+        [smi],
+        n_cores=1,
+        memory_gb=2,
+        debug=False,
+        output_base=out_dir,
+        save_output_dir=save_output_dir,
+    )
+    df0 = step.build_initial_df(mols_dict_embedded)
+
+    df1 = step.xtb(df0, options={"gfn": 2})
+    df2 = step.orca(df0, options={"HF": None, "STO-3G": None})
+
+
 if __name__ == '__main__':
     FRUST_path = str(Path(__file__).resolve().parent.parent)
     print(f"Running in main. FRUST path: {FRUST_path}")

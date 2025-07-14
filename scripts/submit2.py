@@ -7,14 +7,14 @@ from itertools import islice
 import importlib
 
 # ─── CONFIG ─────────────────────────────────────────────────────────────
-PIPELINE_NAME  = "run_ts_per_rpos"  # "run_ts_per_rpos", "run_ts_per_lig", "run_mols"
-PRODUCTION     = True
+PIPELINE_NAME  = "run_small_test"  # "run_ts_per_rpos", "run_ts_per_lig", "run_mols"
+PRODUCTION     = False
 USE_SLURM      = True
 DEBUG          = False
 BATCH_SIZE     = 1
-CSV_PATH       = "../datasets/font_smiles.csv"
-OUT_DIR        = "results_font_ts3_preSP"
-LOG_DIR        = "logs/test_ts3_preSP"
+CSV_PATH       = "../datasets/1m.csv"
+OUT_DIR        = "results_test_scratch"
+LOG_DIR        = "logs/test_scratch"
 SAVE_OUT_DIRS  = False
 CPUS_PER_JOB   = 4
 MEM_GB         = 10
@@ -44,7 +44,7 @@ smi_list = list(dict.fromkeys(df["smiles"]))
 if PIPELINE_NAME == "run_ts_per_rpos":
     from frust.pipes import create_ts_per_rpos
     job_inputs = create_ts_per_rpos(smi_list, TS_XYZ)
-elif PIPELINE_NAME in {"run_ts_per_lig", "run_mols"}:
+elif PIPELINE_NAME in {"run_ts_per_lig", "run_mols", "run_small_test"}:
     job_inputs = smi_list
 else:
     raise ValueError(f"Unknown pipeline {PIPELINE_NAME!r}")
