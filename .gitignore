@@ -6,6 +6,7 @@ build
 *.egg-info
 .DS_Store
 .env
+.submission_file_*
 
 # Different files
 updatepypi.txt
