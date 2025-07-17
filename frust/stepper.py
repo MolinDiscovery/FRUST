@@ -335,7 +335,7 @@ class Stepper:
         name: str = "xtb",
         options: dict | None = None,
         detailed_inp_str: str = "",
-        constraint: bool = False,
+        constraint: bool = True,
         save_step = False,
         lowest: int | None = None,
     ) -> pd.DataFrame:
@@ -378,7 +378,7 @@ class Stepper:
 
             block = None
 
-            if self.step_type.upper() == "TS1":
+            if self.step_type.upper() == "TS1" and constraint:
                 B, N, H, C = 0, 1, 4, 5
                 atom = [x+1 for x in row["constraint_atoms"]]
                 block = textwrap.dedent(f"""
@@ -394,7 +394,7 @@ class Stepper:
                 $end
                 """).strip()
 
-            if self.step_type.upper() == "TS2":
+            if self.step_type.upper() == "TS2" and constraint:
                 BCat, BPin, H, C = 0, 3, 4, 5
                 atom = [x+1 for x in row["constraint_atoms"]]
                 block = textwrap.dedent(f"""
@@ -412,7 +412,7 @@ class Stepper:
                 $end
                 """).strip()
 
-            if self.step_type.upper() == "TS3":
+            if self.step_type.upper() == "TS3" and constraint:
                 BCat10, N17, H40, H41, C46 = 0, 1, 4, 3, 5
                 atom = [x+1 for x in row["constraint_atoms"]]
                 block = textwrap.dedent(f"""
@@ -421,10 +421,58 @@ class Stepper:
                   distance: {atom[BCat10]}, {atom[H41]}, 1.656
                   distance: {atom[N17]}, {atom[H40]}, 1.961
                   distance: {atom[BCat10]}, {atom[N17]}, 3.080
-                  distance: {atom[BCat10]}, {atom[N17]}, 3.080
                   angle: {atom[BCat10]}, {atom[H41]}, {atom[N17]}, 86.58
                 $end
                 """).strip()
+
+            if self.step_type.upper() == "INT3" and constraint:
+                BCat10, BPin22, H11, C = 0, 3, 4, 5
+                atom = [x+1 for x in row["constraint_atoms"]]
+                block = textwrap.dedent(f"""
+                $constrain
+                  force constant=5
+                  distance: {atom[BCat10]}, {atom[H11]}, 1.279
+                  distance: {atom[BCat10]}, {atom[C]}, 1.688
+                  distance: {atom[BPin22]}, {atom[H11]}, 1.378
+                  distance: {atom[BPin22]}, {atom[C]}, 1.749
+                  angle: {atom[BCat10]}, {atom[H11]}, {atom[BPin22]}, 89.85
+                  angle: {atom[BCat10]}, {atom[C]}, {atom[BPin22]}, 66.22
+                $end
+                """).strip()
+
+            if self.step_type.upper() == "TS3-NEW" and constraint:
+                BCat10, H11, BPin22, H21, C = 0, 2, 3, 4, 5
+                atom = [x+1 for x in row["constraint_atoms"]]
+                block = textwrap.dedent(f"""
+                $constrain
+                  force constant=50
+                  distance: {atom[H21]}, {atom[BCat10]}, 1.376
+                  distance: {atom[H21]}, {atom[BPin22]}, 1.264
+                  distance: {atom[H21]}, {atom[C]}, 2.477
+                  distance: {atom[BCat10]}, {atom[C]}, 1.616
+                  distance: {atom[BPin22]}, {atom[C]}, 2.180
+                  distance: {atom[BPin22]}, {atom[BCat10]}, 2.007
+                  angle: {atom[BCat10]}, {atom[H21]}, {atom[BPin22]}, 98.89
+                  angle: {atom[BCat10]}, {atom[C]}, {atom[BPin22]}, 61.75
+                $end
+                """).strip()
+
+            if self.step_type.upper() == "TS4-NEW" and constraint:
+                BCat11, H12, H13, BPin37, C = 0, 2, 3, 4, 5
+                atom = [x+1 for x in row["constraint_atoms"]]
+                block = textwrap.dedent(f"""
+                $constrain
+                  force constant=50
+                  distance: {atom[BCat11]}, {atom[BPin37]}, 2.219
+                  distance: {atom[BPin37]}, {atom[H13]}, 1.868
+                  distance: {atom[C]}, {atom[H13]}, 2.489
+                  distance: {atom[BCat11]}, {atom[H13]}, 1.216
+                  distance: {atom[BCat11]}, {atom[C]}, 1.946
+                  distance: {atom[BPin37]}, {atom[C]}, 1.585
+                  angle: {atom[BCat11]}, {atom[H13]}, {atom[BPin37]}, 89.48
+                  angle: {atom[BCat11]}, {atom[C]}, {atom[BPin37]}, 77.13
+                $end
+                """).strip()                
 
             if "detailed_input_str" in inp:
                 inp["detailed_input_str"] += "\n\n" + block

@@ -96,11 +96,15 @@ def embed_ts(
     atom_indices_to_keep = atom_indices_to_keep or []
 
     # Build coord map to freeze selected atoms during embedding
-    coord_map = {
-        idx: ts_mol.GetConformer().GetAtomPosition(idx)
-        for idx in atom_indices_to_keep
-    }
-    
+    coord_map = {}
+    for idx in atom_indices_to_keep:
+        if ts_type.upper() in ("TS3-NEW", "TS4-NEW"):
+            atom = ts_mol.GetAtomWithIdx(idx)
+            if atom.GetSymbol() == "N":
+                continue
+        pos = ts_mol.GetConformer().GetAtomPosition(idx)
+        coord_map[idx] = pos
+
     # Calculate conformations to create
     if n_confs is None:
         rdmolops.FastFindRings(ts_mol)
@@ -155,12 +159,24 @@ def embed_ts(
         cat_B      = atom_indices_to_keep[0]
         ts_with_H.RemoveBond(cat_B, reactive_H)
 
-    if ts_type.upper() in ("TS3-NEW", "TS4-NEW"):
+    if ts_type.upper() == "TS3-NEW":
         print(atom_indices_to_keep)
         reactive_C = atom_indices_to_keep[-1]
         cat_B      = atom_indices_to_keep[0]
         pin_B      = atom_indices_to_keep[-3]
         ts_with_H.RemoveBond(pin_B, cat_B)
+    
+    if ts_type.upper() == "TS4-NEW":
+        print(atom_indices_to_keep)
+        reactive_C = atom_indices_to_keep[-1]
+        cat_B      = atom_indices_to_keep[0]
+        pin_B      = atom_indices_to_keep[-2]
+        ts_with_H.RemoveBond(pin_B, cat_B)    
+
+    if ts_type.upper() == "INT3":
+        reactive_C = atom_indices_to_keep[-1]
+        #H_pin = atom_indices_to_keep[-2]
+        #ts_with_H.RemoveBond(reactive_C, H_pin)
 
     print(f"Embedded {len(cids)} conformers on atom {reactive_C}")
 
