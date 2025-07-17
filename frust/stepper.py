@@ -430,7 +430,7 @@ class Stepper:
                 atom = [x+1 for x in row["constraint_atoms"]]
                 block = textwrap.dedent(f"""
                 $constrain
-                  force constant=5
+                  force constant=50
                   distance: {atom[BCat10]}, {atom[H11]}, 1.279
                   distance: {atom[BCat10]}, {atom[C]}, 1.688
                   distance: {atom[BPin22]}, {atom[H11]}, 1.378

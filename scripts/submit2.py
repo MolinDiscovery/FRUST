@@ -22,7 +22,7 @@ TIMEOUT_MIN    = 14400
 N_CONFS        = None if PRODUCTION else 1
 DFT            = True
 # ─── TS SPECIFIC ─────────────────────────────────────────────────────────
-TS_XYZ         = "../structures/ts3_guess.xyz"
+TS_XYZ         = "../structures/ts2.xyz"
 # ─── MOL SPECIFIC ────────────────────────────────────────────────────────
 SELECT_MOLS    = ["HBpin-mol", "HH"] # "all", "uniques", "generics", or specific names
 

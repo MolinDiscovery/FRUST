@@ -439,7 +439,7 @@ if __name__ == '__main__':
     print(f"Running in main. FRUST path: {FRUST_path}")
     run_ts_per_lig(
         ["CN1C=CC=C1"],
-        ts_guess_xyz=f"{FRUST_path}/structures/ts2_guess.xyz",
+        ts_guess_xyz=f"{FRUST_path}/structures/ts2_guess_old.xyz",
         n_confs=3,
         debug=False,
         save_output_dir=False,

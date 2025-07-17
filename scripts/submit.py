@@ -23,7 +23,7 @@ TIMEOUT_MIN    = 7200
 N_CONFS        = None if PRODUCTION else 1 # if this is set to None, the following rule goes. Let R me rotatable bonds. 50 confs when R < 7, 200 confs when R 7-12 bonds and 300 if more.
 DFT            = True
 # ─── TS SPECIFIC ─────────────────────────────────────────────────────────
-TS_XYZ         = "../structures/ts2_guess.xyz"
+TS_XYZ         = "../structures/ts2_guess_old.xyz"
 # ─── MOL SPECIFIC ────────────────────────────────────────────────────────
 SELECT_MOLS    = ["HBpin-mol", "HH"] # "all", "uniques", "generics", or specific names in a list ['dimer','ligand','catalyst','int2','mol2','HBpin-ligand','HBpin-mol']
 
