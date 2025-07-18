@@ -100,8 +100,6 @@ def run_ts_per_rpos(
     output_base=out_dir,
     save_output_dir=save_output_dir,
     )
-    print("JOB CWD:", os.getcwd())
-    print("Stepper base_dir:", step.base_dir)
     
     df0 = step.build_initial_df(embedded)
     df1 = step.xtb(df0, options={"gfnff": None, "opt": None}, constraint=True)
