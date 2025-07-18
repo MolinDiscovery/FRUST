@@ -100,6 +100,9 @@ def run_ts_per_rpos(
     output_base=out_dir,
     save_output_dir=save_output_dir,
     )
+    print("JOB CWD:", os.getcwd())
+    print("Stepper base_dir:", step.base_dir)
+    
     df0 = step.build_initial_df(embedded)
     df1 = step.xtb(df0, options={"gfnff": None, "opt": None}, constraint=True)
     df2 = step.xtb(df1, options={"gfn": 2})
@@ -126,7 +129,7 @@ def run_ts_per_rpos(
         "NoSym": None,
     }
 
-    df4 = step.orca(df3, name="DFT-pre-SP", options=options, save_step=True)
+    df4 = step.orca(df3, name="DFT-pre-SP", options=options)
 
     detailed_inp = """%geom\nCalc_Hess true\nend"""
     options = {
@@ -139,7 +142,7 @@ def run_ts_per_rpos(
         "NoSym"    : None,
     }
 
-    df5 = step.orca(df4, name="DFT", options=options, xtra_inp_str=detailed_inp, save_step=True, lowest=1)
+    df5 = step.orca(df4, name="DFT", options=options, xtra_inp_str=detailed_inp, lowest=1)
 
     detailed_inp = """%CPCM\nSMD TRUE\nSMDSOLVENT "chloroform"\nend"""
     options = {
@@ -150,7 +153,7 @@ def run_ts_per_rpos(
         "NoSym"   : None,
     }
 
-    df6 = step.orca(df5, name="DFT-SP", options=options, xtra_inp_str=detailed_inp, save_step=True)
+    df6 = step.orca(df5, name="DFT-SP", options=options, xtra_inp_str=detailed_inp)
     
     if output_parquet:
         df6.to_parquet(output_parquet)
@@ -231,7 +234,7 @@ def run_ts_per_lig(
         "NoSym": None,
     }
     
-    df4 = step.orca(df3, name="DFT-pre-SP", options=options, save_step=False)
+    df4 = step.orca(df3, name="DFT-pre-SP", options=options)
     
     if ts_type == "INT3":
         opt = "Opt"
@@ -249,7 +252,7 @@ def run_ts_per_lig(
         "NoSym"    : None,
     }
 
-    df5 = step.orca(df4, name="DFT", options=options, xtra_inp_str=detailed_inp, save_step=True, lowest=1)
+    df5 = step.orca(df4, name="DFT", options=options, xtra_inp_str=detailed_inp, lowest=1)
 
     detailed_inp = """%CPCM\nSMD TRUE\nSMDSOLVENT "chloroform"\nend"""
     options = {
@@ -260,7 +263,7 @@ def run_ts_per_lig(
         "NoSym"   : None,
     }
 
-    df6 = step.orca(df5, name="DFT-SP", options=options, xtra_inp_str=detailed_inp, save_step=True)
+    df6 = step.orca(df5, name="DFT-SP", options=options, xtra_inp_str=detailed_inp)
     
     if output_parquet:
         df6.to_parquet(output_parquet)
@@ -333,7 +336,7 @@ def run_mols(
         "NoSym": None,
     }
 
-    df4 = step.orca(df3, name="DFT-pre-SP", options=options, save_step=True)
+    df4 = step.orca(df3, name="DFT-pre-SP", options=options)
 
 
     # a) TS-like Hess-calc & frequency for each ligand
