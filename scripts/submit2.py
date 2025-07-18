@@ -7,16 +7,16 @@ from itertools import islice
 import importlib
 
 # ─── CONFIG ─────────────────────────────────────────────────────────────
-PIPELINE_NAME  = "run_small_test"  # "run_ts_per_rpos", "run_ts_per_lig", "run_mols"
+PIPELINE_NAME  = "run_ts_per_rpos"  # "run_ts_per_rpos", "run_ts_per_lig", "run_mols"
 PRODUCTION     = False
-USE_SLURM      = True
+USE_SLURM      = False
 DEBUG          = False
 BATCH_SIZE     = 1
 CSV_PATH       = "../datasets/1m.csv"
-OUT_DIR        = "results_test_scratch"
-LOG_DIR        = "logs/test_scratch"
+OUT_DIR        = "results_test"
+LOG_DIR        = "logs/test"
 SAVE_OUT_DIRS  = False
-CPUS_PER_JOB   = 4
+CPUS_PER_JOB   = 1
 MEM_GB         = 10
 TIMEOUT_MIN    = 14400
 N_CONFS        = None if PRODUCTION else 1
@@ -30,7 +30,7 @@ def batched(iterable, n):
     it = iter(iterable)
     while (batch := list(islice(it, n))):
         yield batch
-
+ 
 # 1) load the requested pipeline
 pipes_mod   = importlib.import_module("frust.pipes")
 pipeline_fn = getattr(pipes_mod, PIPELINE_NAME)

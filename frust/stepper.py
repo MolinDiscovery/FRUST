@@ -120,10 +120,11 @@ class Stepper:
               - energy_uff          (float or None)
         """
         rows: list[dict] = []
+
         pattern = re.compile(
-            r'^(?:(?P<prefix>TS\d*|Mols)\()?'
+            r'^(?:(?P<prefix>(?:TS|INT)\d*|Mols)\()?'
             r'(?P<ligand>.+?)_rpos\('        
-            r'(?P<rpos>\d+)\)\)?$'           
+            r'(?P<rpos>\d+)\)\)?$'
         )
 
         for name, val in embedded_dict.items():
@@ -367,7 +368,7 @@ class Stepper:
         # check for optimization flag among the remaining keys
         opt_flag = next((k for k in keys[1:] if k in ("opt", "ohess")), None)
         prefix = f"{name}-{level}" + (f"-{opt_flag}" if opt_flag else "")
-
+        
         def build_xtb(row: pd.Series) -> dict:
             inp: dict[str, object] = {"options": opts}
 
@@ -394,25 +395,26 @@ class Stepper:
                 $end
                 """).strip()
 
-            if self.step_type.upper() == "TS2" and constraint:
-                BCat, BPin, H, C = 0, 3, 4, 5
-                atom = [x+1 for x in row["constraint_atoms"]]
-                block = textwrap.dedent(f"""
-                $constrain
-                  force constant=50
-                  distance: {atom[BCat]}, {atom[H]}, 1.335
-                  distance: {atom[BPin]}, {atom[H]}, 2.168
-                  distance: {atom[H]}, {atom[C]}, 2.424
-                  distance: {atom[BCat]}, {atom[C]}, 1.335
-                  distance: {atom[BPin]}, {atom[C]}, 1.956
-                  distance: {atom[BPin]}, {atom[H]}, 2.168
-                  distance: {atom[BCat]}, {atom[BPin]}, 2.063
-                  angle: {atom[BPin]}, {atom[C]}, {atom[BCat]}, 65.36
-                  angle: {atom[BPin]}, {atom[H]}, {atom[BCat]}, 67.39
-                $end
-                """).strip()
+            # Old TS2
+            # if self.step_type.upper() == "TS2" and constraint:
+            #     BCat, BPin, H, C = 0, 3, 4, 5
+            #     atom = [x+1 for x in row["constraint_atoms"]]
+            #     block = textwrap.dedent(f"""
+            #     $constrain
+            #       force constant=50
+            #       distance: {atom[BCat]}, {atom[H]}, 1.335
+            #       distance: {atom[BPin]}, {atom[H]}, 2.168
+            #       distance: {atom[H]}, {atom[C]}, 2.424
+            #       distance: {atom[BCat]}, {atom[C]}, 1.335
+            #       distance: {atom[BPin]}, {atom[C]}, 1.956
+            #       distance: {atom[BPin]}, {atom[H]}, 2.168
+            #       distance: {atom[BCat]}, {atom[BPin]}, 2.063
+            #       angle: {atom[BPin]}, {atom[C]}, {atom[BCat]}, 65.36
+            #       angle: {atom[BPin]}, {atom[H]}, {atom[BCat]}, 67.39
+            #     $end
+            #     """).strip()
 
-            if self.step_type.upper() == "TS3" and constraint:
+            if self.step_type.upper() == "TS2" and constraint:
                 BCat10, N17, H40, H41, C46 = 0, 1, 4, 3, 5
                 atom = [x+1 for x in row["constraint_atoms"]]
                 block = textwrap.dedent(f"""
@@ -425,22 +427,7 @@ class Stepper:
                 $end
                 """).strip()
 
-            if self.step_type.upper() == "INT3" and constraint:
-                BCat10, BPin22, H11, C = 0, 3, 4, 5
-                atom = [x+1 for x in row["constraint_atoms"]]
-                block = textwrap.dedent(f"""
-                $constrain
-                  force constant=50
-                  distance: {atom[BCat10]}, {atom[H11]}, 1.279
-                  distance: {atom[BCat10]}, {atom[C]}, 1.688
-                  distance: {atom[BPin22]}, {atom[H11]}, 1.378
-                  distance: {atom[BPin22]}, {atom[C]}, 1.749
-                  angle: {atom[BCat10]}, {atom[H11]}, {atom[BPin22]}, 89.85
-                  angle: {atom[BCat10]}, {atom[C]}, {atom[BPin22]}, 66.22
-                $end
-                """).strip()
-
-            if self.step_type.upper() == "TS3-NEW" and constraint:
+            if self.step_type.upper() == "TS3" and constraint:
                 BCat10, H11, BPin22, H21, C = 0, 2, 3, 4, 5
                 atom = [x+1 for x in row["constraint_atoms"]]
                 block = textwrap.dedent(f"""
@@ -457,7 +444,7 @@ class Stepper:
                 $end
                 """).strip()
 
-            if self.step_type.upper() == "TS4-NEW" and constraint:
+            if self.step_type.upper() == "TS4" and constraint:
                 BCat11, H12, H13, BPin37, C = 0, 2, 3, 4, 5
                 atom = [x+1 for x in row["constraint_atoms"]]
                 block = textwrap.dedent(f"""
@@ -472,7 +459,22 @@ class Stepper:
                   angle: {atom[BCat11]}, {atom[H13]}, {atom[BPin37]}, 89.48
                   angle: {atom[BCat11]}, {atom[C]}, {atom[BPin37]}, 77.13
                 $end
-                """).strip()                
+                """).strip()
+
+            if self.step_type.upper() == "INT3" and constraint:
+                BCat10, BPin22, H11, C = 0, 3, 4, 5
+                atom = [x+1 for x in row["constraint_atoms"]]
+                block = textwrap.dedent(f"""
+                $constrain
+                  force constant=50
+                  distance: {atom[BCat10]}, {atom[H11]}, 1.279
+                  distance: {atom[BCat10]}, {atom[C]}, 1.688
+                  distance: {atom[BPin22]}, {atom[H11]}, 1.378
+                  distance: {atom[BPin22]}, {atom[C]}, 1.749
+                  angle: {atom[BCat10]}, {atom[H11]}, {atom[BPin22]}, 89.85
+                  angle: {atom[BCat10]}, {atom[C]}, {atom[BPin22]}, 66.22
+                $end
+                """).strip()                           
 
             if "detailed_input_str" in inp:
                 inp["detailed_input_str"] += "\n\n" + block

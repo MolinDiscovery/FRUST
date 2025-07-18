@@ -20,6 +20,18 @@ def create_ts_per_rpos(
     ligand_smiles_list: list[str],
     ts_guess_xyz: str,        
     ):
+    """
+    Generate transition state (TS) structures for each ligand SMILES using a TS guess XYZ template.
+
+    Args:
+        ligand_smiles_list (List[str]): List of ligand SMILES strings for which to create TS structures.
+        ts_guess_xyz (str): Path to an XYZ file containing the TS guess geometry. The TS type
+            (e.g., 'TS1', 'TS2', 'TS3', 'TS4') is inferred from the comment line.
+
+    Returns:
+        List[Dict[str, rdkit.Chem.Mol]]: A list of dictionaries, each mapping a TS identifier
+            (e.g., reaction position key) to an RDKit Mol object representing the generated TS.
+    """
 
     ts_type = read_ts_type_from_xyz(ts_guess_xyz)
 
@@ -32,6 +44,12 @@ def create_ts_per_rpos(
     elif ts_type == 'TS3':
         from frust.transformers import transformer_ts3
         transformer_ts = transformer_ts3
+    elif ts_type == 'TS4':
+        from frust.transformers import transformer_ts4
+        transformer_ts = transformer_ts4
+    elif ts_type == 'INT3':
+        from frust.transformers import transformer_int3
+        transformer_ts = transformer_int3        
     else:
         raise ValueError(f"Unrecognized TS type: {ts_type}")
 
@@ -61,7 +79,7 @@ def run_ts_per_rpos(
 ):
     import re
     pattern = re.compile(
-    r'^(?:(?P<prefix>TS\d*|Mols)\()?'
+    r'^(?:(?P<prefix>(?:TS|INT)\d*|Mols)\()?'
     r'(?P<ligand>.+?)_rpos\('        
     r'(?P<rpos>\d+)\)\)?$'           
     )
@@ -164,6 +182,12 @@ def run_ts_per_lig(
     elif ts_type == 'TS3':
         from frust.transformers import transformer_ts3
         transformer_ts = transformer_ts3
+    elif ts_type == 'TS4':
+        from frust.transformers import transformer_ts4
+        transformer_ts = transformer_ts4
+    elif ts_type == 'INT3':
+        from frust.transformers import transformer_int3
+        transformer_ts = transformer_int3
     else:
         raise ValueError(f"Unrecognized TS type: {ts_type}")
 
@@ -206,8 +230,13 @@ def run_ts_per_lig(
         "SP": None,
         "NoSym": None,
     }
-
-    df4 = step.orca(df3, name="DFT-pre-SP", options=options, save_step=True)
+    
+    df4 = step.orca(df3, name="DFT-pre-SP", options=options, save_step=False)
+    
+    if ts_type == "INT3":
+        opt = "Opt"
+    else:
+        opt = "OptTS"
 
     detailed_inp = """%geom\nCalc_Hess true\nend"""
     options = {
@@ -215,7 +244,7 @@ def run_ts_per_lig(
         "6-31G**"  : None,
         "TightSCF" : None,
         "SlowConv" : None,
-        "OptTS"    : None,
+        opt        : None,
         "Freq"     : None,
         "NoSym"    : None,
     }
@@ -439,14 +468,20 @@ if __name__ == '__main__':
     print(f"Running in main. FRUST path: {FRUST_path}")
     run_ts_per_lig(
         ["CN1C=CC=C1"],
-        ts_guess_xyz=f"{FRUST_path}/structures/ts2_guess_old.xyz",
-        n_confs=3,
+        ts_guess_xyz=f"{FRUST_path}/structures/ts2.xyz",
+        n_confs=1,
         debug=False,
+        out_dir="noob",
         save_output_dir=False,
         #output_parquet="TS3_test.parguet",
         DFT=True,
         top_n=1
     )
+
+    # ts_mols = create_ts_per_rpos(["CN1C=CC=C1"], ts_guess_xyz=f"{FRUST_path}/structures/int3.xyz")
+    # for ts_rpos in ts_mols:
+    #     run_ts_per_rpos(ts_rpos, save_output_dir=False, n_confs=1)
+
     # run_mols(
     #     ["CN1C=CC=C1", "CC([Si](N1C=CC=C1)(C(C)C)C(C)C)C"],
     #     debug=False,
