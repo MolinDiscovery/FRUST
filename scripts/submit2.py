@@ -8,21 +8,21 @@ import importlib
 
 # ─── CONFIG ─────────────────────────────────────────────────────────────
 PIPELINE_NAME  = "run_ts_per_rpos"  # "run_ts_per_rpos", "run_ts_per_lig", "run_mols"
-PRODUCTION     = False
+PRODUCTION     = True
 USE_SLURM      = True
 DEBUG          = False
 BATCH_SIZE     = 1
-CSV_PATH       = "../datasets/1m.csv"
-OUT_DIR        = os.path.abspath("results_test") # "results_test"
-LOG_DIR        = "logs/test"
+CSV_PATH       = "../datasets/font_smiles.csv"
+OUT_DIR        = "results_font_int3_1"
+LOG_DIR        = "logs/font_int3_1"
 SAVE_OUT_DIRS  = False
-CPUS_PER_JOB   = 1
-MEM_GB         = 3
+CPUS_PER_JOB   = 2
+MEM_GB         = 8
 TIMEOUT_MIN    = 14400
 N_CONFS        = None if PRODUCTION else 1
 DFT            = True
 # ─── TS SPECIFIC ─────────────────────────────────────────────────────────
-TS_XYZ         = "../structures/ts3.xyz"
+TS_XYZ         = "../structures/int3.xyz"
 # ─── MOL SPECIFIC ────────────────────────────────────────────────────────
 SELECT_MOLS    = ["HBpin-mol", "HH"] # "all", "uniques", "generics", or specific names
 

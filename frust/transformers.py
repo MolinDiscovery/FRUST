@@ -848,7 +848,7 @@ def transformer_int3(
 
         ts_rw_combined.GetAtomWithIdx(hetero_atom_idx).SetFormalCharge(1)
 
-        Chem.SanitizeMol(ts_rw_combined)
+        # Chem.SanitizeMol(ts_rw_combined)
 
         mol_name = get_molecule_name(ligand_smiles)
         ts_mols[f'{pre_name}({mol_name}_rpos({rpos}))'] = (ts_rw_combined, atom_indices_to_keep, ligand_smiles)
