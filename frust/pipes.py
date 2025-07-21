@@ -70,6 +70,7 @@ def run_ts_per_rpos(
     *,
     n_confs: int | None = None,
     n_cores: int = 4,
+    mem_gb: int = 20,
     debug: bool = False,
     top_n: int = 10,
     out_dir: str | None = None,
@@ -96,6 +97,7 @@ def run_ts_per_rpos(
     step = Stepper(
     ligand_smiles,
     n_cores=n_cores,
+    memory_gb=mem_gb,
     debug=debug,
     output_base=out_dir,
     save_output_dir=save_output_dir,
@@ -164,6 +166,7 @@ def run_ts_per_lig(
     *,
     n_confs: int | None = None,
     n_cores: int = 4,
+    mem_gb: int = 20,    
     debug: bool = False,
     top_n: int = 10,
     out_dir: str | None = None,
@@ -202,6 +205,7 @@ def run_ts_per_lig(
     step = Stepper(
     ligand_smiles_list,
     n_cores=n_cores,
+    memory_gb=mem_gb,
     debug=debug,
     output_base=out_dir,
     save_output_dir=save_output_dir,
@@ -274,6 +278,7 @@ def run_mols(
     *,
     n_confs: int = 5,
     n_cores: int = 4,
+    mem_gb: int = 20,    
     debug: bool = False,
     top_n: int = 5,
     out_dir: str | None = None,
@@ -303,6 +308,7 @@ def run_mols(
     step = Stepper(
         ligand_smiles_list,
         n_cores=n_cores,
+        memory_gb=mem_gb,
         debug=debug,
         output_base=out_dir,
         save_output_dir=save_output_dir
@@ -440,19 +446,26 @@ def run_test(
 
 def run_small_test(
     ligand_smiles_list: list[str],
+    ts_guess_xyz: str,
     *,
+    n_confs: int | None = None,
+    n_cores: int = 4,
+    debug: bool = False,
+    top_n: int = 10,
     out_dir: str | None = None,
-    save_output_dir: bool = True,      
+    output_parquet: str | None = None,
+    save_output_dir: bool = True,
+    DFT: bool = False,    
 ):
     from rdkit import Chem
     smi = ligand_smiles_list[0]
     m = Chem.MolFromSmiles(smi)
     mol_dict = {"mol": m}
-    mols_dict_embedded = embed_mols(mol_dict, n_confs=1)
+    mols_dict_embedded = embed_mols(mol_dict, n_confs=n_confs)
 
     step = Stepper(
         [smi],
-        n_cores=1,
+        n_cores=n_cores,
         memory_gb=2,
         debug=False,
         output_base=out_dir,
