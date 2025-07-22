@@ -26,7 +26,7 @@ def get_molecule_name(smiles: str):
     """
     import pubchempy as pcp
     import time
-
+    
     max_retries = 5      # Maximum number of retry attempts
     delay = 10           # Seconds to wait between attempts
 

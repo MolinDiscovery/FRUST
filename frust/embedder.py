@@ -177,10 +177,10 @@ def embed_ts(
         pin_B      = atom_indices_to_keep[-3]   
         H_pin = atom_indices_to_keep[-2]
 
-        ts_with_H.AddBond(pin_B, H_pin, Chem.BondType.SINGLE) # only for visualization
-        ts_with_H.AddBond(cat_B, reactive_C, Chem.BondType.SINGLE) # only for visualization
+        #ts_with_H.AddBond(pin_B, H_pin, Chem.BondType.SINGLE) # only for visualization
+        #ts_with_H.AddBond(cat_B, reactive_C, Chem.BondType.SINGLE) # only for visualization
 
-        ts_with_H.RemoveBond(cat_B, pin_B)
+        #ts_with_H.RemoveBond(cat_B, pin_B)
 
     print(f"Embedded {len(cids)} conformers on atom {reactive_C}")
 
