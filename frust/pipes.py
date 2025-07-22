@@ -131,13 +131,18 @@ def run_ts_per_rpos(
 
     df4 = step.orca(df3, name="DFT-pre-SP", options=options)
 
+    if ts_type.upper() == "INT3":
+        opt = "Opt"
+    else:
+        opt = "OptTS"
+
     detailed_inp = """%geom\nCalc_Hess true\nend"""
     options = {
         "wB97X-D3" : None,
         "6-31G**"  : None,
         "TightSCF" : None,
         "SlowConv" : None,
-        "OptTS"    : None,
+        opt        : None,
         "Freq"     : None,
         "NoSym"    : None,
     }
@@ -238,7 +243,7 @@ def run_ts_per_lig(
     
     df4 = step.orca(df3, name="DFT-pre-SP", options=options)
     
-    if ts_type == "INT3":
+    if ts_type.upper() == "INT3":
         opt = "Opt"
     else:
         opt = "OptTS"

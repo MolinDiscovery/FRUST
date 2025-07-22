@@ -13,18 +13,18 @@ USE_SLURM      = True
 DEBUG          = False
 BATCH_SIZE     = 1
 CSV_PATH       = "../datasets/font_smiles.csv"
-OUT_DIR        = "results_font_int3_1"
-LOG_DIR        = "logs/font_int3_1"
+OUT_DIR        = "results_int3_1"
+LOG_DIR        = "logs/int3_1"
 SAVE_OUT_DIRS  = False
-CPUS_PER_JOB   = 2
-MEM_GB         = 8
+CPUS_PER_JOB   = 4
+MEM_GB         = 16
 TIMEOUT_MIN    = 14400
 N_CONFS        = None if PRODUCTION else 1
 DFT            = True
 # ─── TS SPECIFIC ─────────────────────────────────────────────────────────
 TS_XYZ         = "../structures/int3.xyz"
 # ─── MOL SPECIFIC ────────────────────────────────────────────────────────
-SELECT_MOLS    = ["HBpin-mol", "HH"] # "all", "uniques", "generics", or specific names
+SELECT_MOLS    = ["HH"] # "all", "uniques", "generics", or specific names
 
 def batched(iterable, n):
     it = iter(iterable)

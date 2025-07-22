@@ -837,18 +837,28 @@ def transformer_int3(
         atom_indices_to_keep.extend([B_pin_idx])
         atom_indices_to_keep.extend([H_pin_idx, reactive_C])
 
-        ts_rw_combined.GetAtomWithIdx(reactive_C).SetFormalCharge(0)
-        ts_rw_combined.GetAtomWithIdx(B_cat_idx).SetFormalCharge(-1)
-        ts_rw_combined.GetAtomWithIdx(B_pin_idx).SetFormalCharge(-1)
-        ts_rw_combined.GetAtomWithIdx(H_pin_idx).SetFormalCharge(1)
+        # ts_rw_combined.GetAtomWithIdx(reactive_C).SetFormalCharge(0)
+        # ts_rw_combined.GetAtomWithIdx(B_cat_idx).SetFormalCharge(-1)
+        # ts_rw_combined.GetAtomWithIdx(B_pin_idx).SetFormalCharge(-1)
+        # ts_rw_combined.GetAtomWithIdx(H_pin_idx).SetFormalCharge(1)
 
-        het_ring = Chem.MolFromSmarts("[!#6;R]")
-        hetero_atom_idx = lig_mol_original.GetSubstructMatches(het_ring)
-        hetero_atom_idx = offset+hetero_atom_idx[0][0]
+        # het_ring = Chem.MolFromSmarts("[!#6;R]")
+        # hetero_atom_idx = lig_mol_original.GetSubstructMatches(het_ring)
+        # hetero_atom_idx = offset+hetero_atom_idx[0][0]
+        # ts_rw_combined.GetAtomWithIdx(hetero_atom_idx).SetFormalCharge(1)
 
-        ts_rw_combined.GetAtomWithIdx(hetero_atom_idx).SetFormalCharge(1)
+        # nbs = ts_rw_combined.GetAtomWithIdx(reactive_C).GetNeighbors()
+        # Cs_on_C = [nb for nb in nbs if nb.GetAtomicNum() == 6]
+        # Cs_on_C[0].SetFormalCharge(1)
 
-        # Chem.SanitizeMol(ts_rw_combined)
+        if embed_ready:
+            ts_rw_combined.RemoveBond(B_pin_idx, H_pin_idx)
+            ts_rw_combined.RemoveBond(B_cat_idx, reactive_C)
+            ts_rw_combined.AddBond(B_cat_idx, B_pin_idx, Chem.BondType.SINGLE)
+            ts_rw_combined.GetAtomWithIdx(B_cat_idx).SetFormalCharge(-1)
+            ts_rw_combined.GetAtomWithIdx(B_pin_idx).SetFormalCharge(-1)
+
+        Chem.SanitizeMol(ts_rw_combined)
 
         mol_name = get_molecule_name(ligand_smiles)
         ts_mols[f'{pre_name}({mol_name}_rpos({rpos}))'] = (ts_rw_combined, atom_indices_to_keep, ligand_smiles)
