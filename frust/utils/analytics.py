@@ -1,6 +1,7 @@
 import pandas as pd
-
-import pandas as pd
+from rdkit.Chem.Draw import rdMolDraw2D
+from rdkit import Chem
+from rdkit.Chem import Draw, rdDepictor
 
 def summarize_ts_vibrations(
     df: pd.DataFrame,
@@ -62,3 +63,50 @@ def summarize_ts_vibrations(
     print("\nSummary:")
     print(f"  ✅ True TSs : {true_ts_count}")
     print(f"  ❌ Non-TSs  : {non_ts_count}")
+
+
+def _svg_annotated_smi(
+        smi, pos_list, dE_list,
+        size=(250, 250), highlight_color=(1, 0, 0)):
+    """Return an SVG string of the molecule with per-atom ΔE labels."""
+
+    mol = Chem.MolFromSmiles(smi)
+    rdDepictor.Compute2DCoords(mol)
+
+    for p, e in zip(pos_list, dE_list):
+        mol.GetAtomWithIdx(int(p)).SetProp("atomNote", f"{e:.2f}")
+
+    drawer = rdMolDraw2D.MolDraw2DSVG(*size)
+    opts = drawer.drawOptions()
+    opts.drawAtomNotes       = True
+    opts.annotationFontScale = 0.9 
+
+    drawer.DrawMolecule(
+        mol,
+        #highlightAtoms      =[int(p) for p in pos_list],
+        #highlightAtomColors ={int(p): highlight_color for p in pos_list},
+    )
+    drawer.FinishDrawing()
+    return drawer.GetDrawingText()
+
+def build_annotated_frame(df,
+                          ligand_col="ligand_name",
+                          smi_col="smiles",
+                          pos_col="rpos",
+                          energy_col="dE"):
+    """One row per ligand + an SVG column with all ΔE annotations."""
+    rows = []
+    for lig, grp in df.groupby(ligand_col):
+        smi  = grp[smi_col].iloc[0]
+        pos  = grp[pos_col].astype(int).tolist()
+        dE   = grp[energy_col].tolist()
+        svg  = _svg_annotated_smi(smi, pos, dE)
+        rows.append({ligand_col: lig, smi_col: smi, "annotated_svg": svg})
+    
+    df = pd.DataFrame(rows)
+    html = df.to_html(
+    escape=False,
+    formatters={"annotated_svg": lambda x: x},
+    index=False
+    )
+    return df, html
