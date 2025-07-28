@@ -77,8 +77,9 @@ def plot_mols(
                 
                     coord_type = coord_col.replace("coords_", "").replace("_coords", "")
                     if rpos == None:
-                        rpos = ""
-                    legend = f"{ligand_name} r{rpos}\n{coord_type}"
+                        legend = f"{ligand_name}\n{coord_type}"
+                    else:
+                        legend = f"{ligand_name} r{rpos}\n{coord_type}"
                     all_legends.append(legend)
     
     if not all_mols:
@@ -164,7 +165,7 @@ def plot_vibs(
     amplitude: float = 1,
     transparent: bool = True,
     fps: float | None = None,
-    reps: int = 100,
+    reps: int = 50,
 ):
     from tooltoad.vis import show_vibs
 
