@@ -12,17 +12,17 @@ PRODUCTION     = True
 USE_SLURM      = True
 DEBUG          = False
 BATCH_SIZE     = 1
-CSV_PATH       = "../datasets/font_smiles.csv"
-OUT_DIR        = "results_int3_1"
-LOG_DIR        = "logs/int3_1"
+CSV_PATH       = "../datasets/1m.csv"
+OUT_DIR        = "results_ts4_TMP"
+LOG_DIR        = "logs/ts4_TMP"
 SAVE_OUT_DIRS  = False
-CPUS_PER_JOB   = 4
-MEM_GB         = 16
+CPUS_PER_JOB   = 15
+MEM_GB         = 60
 TIMEOUT_MIN    = 14400
 N_CONFS        = None if PRODUCTION else 1
 DFT            = True
 # ─── TS SPECIFIC ─────────────────────────────────────────────────────────
-TS_XYZ         = "../structures/int3.xyz"
+TS_XYZ         = "../structures/misc/TMPs/ts4_TMP.xyz"
 # ─── MOL SPECIFIC ────────────────────────────────────────────────────────
 SELECT_MOLS    = ["HH"] # "all", "uniques", "generics", or specific names
 
