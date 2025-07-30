@@ -474,7 +474,7 @@ class Stepper:
                   angle: {atom[BCat10]}, {atom[H11]}, {atom[BPin22]}, 89.85
                   angle: {atom[BCat10]}, {atom[C]}, {atom[BPin22]}, 66.22
                 $end
-                """).strip()                           
+                """).strip()                 
 
             if "detailed_input_str" in inp:
                 inp["detailed_input_str"] += "\n\n" + block
@@ -505,7 +505,7 @@ class Stepper:
             name (str): Base name for the ORCA step, used to prefix result columns.
             options (dict): ORCA input keywords, e.g. {'wB97X-D3': None, '6-31G**': None, 'OptTS': None, 'Freq': None}.
             xtra_inp_str (str, optional): Additional ORCA input block (e.g. CPCM or Calc_Hess). Defaults to "".
-            constraint (bool, optional): Reserved for TS constraints (unused for plain ORCA). Defaults to False.
+            constraint (bool, optional): If True, applies predefined distance/angle constraints for TS steps. Defaults to False.
             save_step (bool, optional): If True, saves ORCA run directories for inspection. Defaults to False.
             lowest (int or None, optional): If set, keeps only the lowest-energy conformer per ligand/rpos group. Defaults to None.
 
@@ -517,34 +517,125 @@ class Stepper:
                 - '{name}-{method}-vibs' (vibrational modes) if frequencies computed
                 - '{name}-{method}-gibbs_energy' (float) if frequencies computed
         """
-
         opts = options or {}
         keys = list(opts)
         if len(keys) < 1:
             raise ValueError("`options` must include at least one ORCA method key")
 
-        # prefix = "orca-FUNC-BASIS[-OptTS or Freq or NoSym]"
         if len(keys) == 1:
             prefix = f"{name}-{keys[0]}"
         else:
             func, basis = keys[0], keys[1]
-            opt_flag     = next((k for k in keys[2:] if k in ("OptTS", "Freq", "NoSym")), None)
-            prefix       = f"{name}-{func}-{basis}" + (f"-{opt_flag}" if opt_flag else "")
+            opt_flag = next((k for k in keys[2:] if k in ("OptTS", "Freq", "NoSym")), None)
+            prefix = f"{name}-{func}-{basis}" + (f"-{opt_flag}" if opt_flag else "")
 
         def build_orca(row: Series) -> dict:
             inp = {
-                "options":      opts,
+                "options": opts,
                 "xtra_inp_str": xtra_inp_str.strip(),
-                "memory":       self.memory_gb,
-                "n_cores":      self.n_cores
+                "memory": self.memory_gb,
+                "n_cores": self.n_cores,
             }
+
             if "Freq" in opts:
                 block = textwrap.dedent("""
-                %geom
-                  Calc_Hess true
-                end
+                    %geom
+                      Calc_Hess true
+                    end
                 """).strip()
                 inp["xtra_inp_str"] += ("\n\n" + block) if inp["xtra_inp_str"] else block
+
+            if constraint and self.step_type.upper() == "TS1":
+                atom = row["constraint_atoms"]
+                B, N, H, C = atom[0], atom[1], atom[4], atom[5]
+                block = textwrap.dedent(f"""
+                    %geom Constraints
+                      {{B {B} {H} 2.07696 C}}
+                      {{B {N} {H} 1.5127 C}}
+                      {{B {H} {C} 1.29095 C}}
+                      {{B {B} {C} 1.68461 C}}
+                      {{B {B} {N} 3.06223 C}}
+                      {{A {N} {H} {C} 170.1342 C}}
+                      {{A {H} {C} {B} 87.4870 C}}
+                    end
+                    end
+                """).strip()
+                inp["xtra_inp_str"] += ("\n\n" + block) if inp["xtra_inp_str"] else block
+
+            if constraint and self.step_type.upper() == "TS2":
+                atom = row["constraint_atoms"]
+                BCat, N17, H40, H41 = atom[0], atom[1], atom[4], atom[3]
+                block = textwrap.dedent(f"""
+                    %geom Constraints
+                      {{B {BCat} {H41} 1.656 C}}
+                      {{B {N17} {H40} 1.961 C}}
+                      {{B {BCat} {N17} 3.080 C}}
+                      {{A {BCat} {H41} {N17} 86.58 C}}
+                    end
+                    end
+                """).strip()
+                inp["xtra_inp_str"] += ("\n\n" + block) if inp["xtra_inp_str"] else block
+
+            if constraint and self.step_type.upper() == "TS3":
+                atom = row["constraint_atoms"]
+                BCat, H11, BPin, H21, C = atom[0], atom[2], atom[3], atom[4], atom[5]
+                block = textwrap.dedent(f"""
+                    %geom Constraints
+                      {{B {H21} {BCat} 1.376 C}}
+                      {{B {H21} {BPin} 1.264 C}}
+                      {{B {H21} {C} 2.477 C}}
+                      {{B {BCat} {C} 1.616 C}}
+                      {{B {BPin} {C} 2.180 C}}
+                      {{B {BPin} {BCat} 2.007 C}}
+                      {{A {BCat} {H21} {BPin} 98.89 C}}
+                      {{A {BCat} {C} {BPin} 61.75 C}}
+                    end
+                    end
+                """).strip()
+                inp["xtra_inp_str"] += ("\n\n" + block) if inp["xtra_inp_str"] else block
+
+            if constraint and self.step_type.upper() == "TS4":
+                atom = row["constraint_atoms"]
+                BCat, H12, H13, BPin, C = atom[0], atom[2], atom[3], atom[4], atom[5]
+                block = textwrap.dedent(f"""
+                    %geom Constraints
+                      {{B {BCat} {BPin} 2.219 C}}
+                      {{B {BPin} {H13} 1.868 C}}
+                      {{B {C} {H13} 2.489 C}}
+                      {{B {BCat} {H13} 1.216 C}}
+                      {{B {BCat} {C} 1.946 C}}
+                      {{B {BPin} {C} 1.585 C}}
+                      {{A {BCat} {H13} {BPin} 89.48 C}}
+                      {{A {BCat} {C} {BPin} 77.13 C}}
+                    end
+                    end
+                """).strip()
+                inp["xtra_inp_str"] += ("\n\n" + block) if inp["xtra_inp_str"] else block
+
+            if constraint and self.step_type.upper() == "INT3":
+                atom = row["constraint_atoms"]
+                BCat, BPin, H11, C = atom[0], atom[3], atom[4], atom[5]
+                block = textwrap.dedent(f"""
+                    %geom Constraints
+                      {{B {BCat} {H11} 1.279 C}}
+                      {{B {BCat} {C} 1.688 C}}
+                      {{B {BPin} {H11} 1.378 C}}
+                      {{B {BPin} {C} 1.749 C}}
+                      {{A {BCat} {H11} {BPin} 89.85 C}}
+                      {{A {BCat} {C} {BPin} 66.22 C}}
+                    end
+                    end
+                """).strip()
+                inp["xtra_inp_str"] += ("\n\n" + block) if inp["xtra_inp_str"] else block
+
             return inp
 
-        return self._run_engine(df, self.orca_fn, prefix, build_orca, save_step, lowest, save_files)
+        return self._run_engine(
+            df,
+            self.orca_fn,
+            prefix,
+            build_orca,
+            save_step,
+            lowest,
+            save_files,
+        )
