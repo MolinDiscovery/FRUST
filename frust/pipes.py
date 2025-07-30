@@ -219,14 +219,14 @@ def run_ts_per_lig(
     output_base=out_dir,
     save_output_dir=save_output_dir,
     )
-    df0 = step.build_initial_df(embedded)
-    df1 = step.xtb(df0, options={"gfnff": None, "opt": None}, constraint=True)
-    df2 = step.xtb(df1, options={"gfn": 2})
-    df3 = step.xtb(df2, options={"gfn": 2, "opt": None}, constraint=True, lowest=top_n)
+    df = step.build_initial_df(embedded)
+    df = step.xtb(df, options={"gfnff": None, "opt": None}, constraint=True)
+    df = step.xtb(df, options={"gfn": 2})
+    df = step.xtb(df, options={"gfn": 2, "opt": None}, constraint=True, lowest=top_n)
 
-    last_energy = [c for c in df3.columns if c.endswith("_energy")][-1]
+    last_energy = [c for c in df.columns if c.endswith("_energy")][-1]
     df3_filt = (
-        df3.sort_values(["ligand_name", "rpos", last_energy])
+        df.sort_values(["ligand_name", "rpos", last_energy])
            .groupby(["ligand_name", "rpos"])
            .head(1)
     )
@@ -237,23 +237,30 @@ def run_ts_per_lig(
         return df3_filt
 
     # ↓↓↓↓↓↓↓↓ This code only executes if DFT is True ↓↓↓↓↓↓↓↓
-    options = {
+    df = step.orca(df, name="DFT-pre-SP", options={
         "wB97X-D3": None,
         "6-31+G**": None,
         "TightSCF": None,
         "SP": None,
         "NoSym": None,
-    }
-    
-    df4 = step.orca(df3, name="DFT-pre-SP", options=options)
+    })
+
+    df = step.orca(df, name="DFT-pre-Opt", options={
+        "wB97X-D3" : None,
+        "6-31G**"  : None,
+        "TightSCF" : None,
+        "SlowConv" : None,
+        "Opt"      : None,
+        "Freq"     : None,
+        "NoSym"    : None,
+    }, constraint=True, lowest=1)    
     
     if ts_type.upper() == "INT3":
         opt = "Opt"
     else:
         opt = "OptTS"
 
-    detailed_inp = """%geom\nCalc_Hess true\nend"""
-    options = {
+    df = step.orca(df, name="DFT", options={
         "wB97X-D3" : None,
         "6-31G**"  : None,
         "TightSCF" : None,
@@ -261,24 +268,19 @@ def run_ts_per_lig(
         opt        : None,
         "Freq"     : None,
         "NoSym"    : None,
-    }
+    }, xtra_inp_str="""%geom\nCalc_Hess true\nend""", lowest=1)
 
-    df5 = step.orca(df4, name="DFT", options=options, xtra_inp_str=detailed_inp, lowest=1)
-
-    detailed_inp = """%CPCM\nSMD TRUE\nSMDSOLVENT "chloroform"\nend"""
-    options = {
+    df = step.orca(df, name="DFT-SP", options={
         "wB97X-D3": None,
         "6-31+G**": None,
         "TightSCF": None,
         "SP"      : None,
         "NoSym"   : None,
-    }
-
-    df6 = step.orca(df5, name="DFT-SP", options=options, xtra_inp_str=detailed_inp)
+    }, xtra_inp_str="""%CPCM\nSMD TRUE\nSMDSOLVENT "chloroform"\nend""")
     
     if output_parquet:
-        df6.to_parquet(output_parquet)
-    return df6
+        df.to_parquet(output_parquet)
+    return df
 
 
 # ──────────────────────  catalytic-cycle molecules  ──────────────────────

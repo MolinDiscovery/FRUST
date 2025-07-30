@@ -69,18 +69,24 @@ def plot_mols(
         
         for coord_col in coord_columns:
             coords = row[coord_col]
-        
-            if coords is not None and not (isinstance(coords, np.ndarray) and coords.size == 0) and not pd.isna(coords).all() if isinstance(coords, np.ndarray) else not pd.isna(coords):
-                mol = ac2mol(atoms, coords)
-                if mol is not None:
-                    all_mols.append(mol)
+
+            if coords is not None:
+                if isinstance(coords, np.ndarray):
+                    is_valid = coords.size > 0 and not pd.isna(coords).all()
+                else:
+                    is_valid = not pd.isna(coords) if not isinstance(coords, list) else len(coords) > 0
                 
-                    coord_type = coord_col.replace("coords_", "").replace("_coords", "")
-                    if rpos == None:
-                        legend = f"{ligand_name}\n{coord_type}"
-                    else:
-                        legend = f"{ligand_name} r{rpos}\n{coord_type}"
-                    all_legends.append(legend)
+                if is_valid:
+                    mol = ac2mol(atoms, coords)
+                    if mol is not None:
+                        all_mols.append(mol)
+                    
+                        coord_type = coord_col.replace("coords_", "").replace("_coords", "")
+                        if rpos == None:
+                            legend = f"{ligand_name}\n{coord_type}"
+                        else:
+                            legend = f"{ligand_name} r{rpos}\n{coord_type}"
+                        all_legends.append(legend)
     
     if not all_mols:
         print("No valid molecules could be generated.")
