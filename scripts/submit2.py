@@ -13,16 +13,16 @@ USE_SLURM      = True
 DEBUG          = False
 BATCH_SIZE     = 1
 CSV_PATH       = "../datasets/1m.csv"
-OUT_DIR        = "results_ts4_TMP"
-LOG_DIR        = "logs/ts4_TMP"
+OUT_DIR        = "results_ts3_TMP_1"
+LOG_DIR        = "logs/ts3_TMP_1"
 SAVE_OUT_DIRS  = False
 CPUS_PER_JOB   = 15
-MEM_GB         = 60
+MEM_GB         = 62
 TIMEOUT_MIN    = 14400
 N_CONFS        = None if PRODUCTION else 1
 DFT            = True
 # ─── TS SPECIFIC ─────────────────────────────────────────────────────────
-TS_XYZ         = "../structures/misc/TMPs/ts4_TMP.xyz"
+TS_XYZ         = "../structures/ts3_TMP.xyz"
 # ─── MOL SPECIFIC ────────────────────────────────────────────────────────
 SELECT_MOLS    = ["HH"] # "all", "uniques", "generics", or specific names
 
