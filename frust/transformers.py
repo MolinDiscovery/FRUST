@@ -1,7 +1,6 @@
 # frust/transformers.py
 from copy import copy
 import logging
-import math
 import numpy as np
 
 from rdkit import Chem
@@ -18,6 +17,8 @@ from .utils.mols import (
     fix_cat_frag,
     fix_pin_frag,
 )
+
+from tooltoad.vis import MolTo3DGrid
 
 logger = logging.getLogger(__name__)
 
@@ -618,12 +619,30 @@ def transformer_ts4(
         for idx in sorted(atoms_to_remove, reverse=True):
             ts_rw.RemoveAtom(idx)
 
+        ts_rw.RemoveBond(11, 29)
+        ts_rw.RemoveBond(11, 24)
+        ts_rw.AddBond(24, 29, Chem.BondType.SINGLE)
+
         frags = Chem.GetMolFrags(ts_rw, asMols=True)
 
-        rdDetermineBonds.DetermineBonds(frags[0])
-        frag1 = fix_pin_frag(frags[1])
+        frag0 = fix_cat_frag(frags[0])
+        frag1 = RWMol(frags[1])
+        
+        # Remove H and fix
+        atom_idx_to_remove = 11
+        atom_to_remove = frag1.GetAtomWithIdx(atom_idx_to_remove)
+        atom_symbol = atom_to_remove.GetSymbol()
+        atom_coords = frag1.GetConformer().GetAtomPosition(atom_idx_to_remove)
 
-        ts_rw = RWMol(Chem.CombineMols(frags[0], frag1))
+        frag1.RemoveAtom(atom_idx_to_remove)
+        frag1 = fix_pin_frag(frag1)
+
+        ts_rw = RWMol(Chem.CombineMols(frag0, frag1))
+
+        #  --- Add H back --- #
+        new_atom_idx = ts_rw.AddAtom(Chem.Atom(atom_symbol))
+        ts_rw.GetConformer().SetAtomPosition(new_atom_idx, atom_coords)           
+        ts_rw.AddBond(11, 61, Chem.BondType.SINGLE)
 
         # --- Combine ligand and catalyst, add temporary bonds, and set temporary formal charges ---
         ts_combined = Chem.CombineMols(ts_rw, lig_mol)

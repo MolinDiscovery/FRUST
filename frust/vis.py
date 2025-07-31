@@ -11,6 +11,7 @@ def plot_mols(
     rpos_filter: Optional[List[Union[str, int]]] = None,
     exclude_coords: Optional[List[str]] = None,
     include_coords: Optional[List[str]] = None,
+    coord_indices: Optional[Union[List[int], slice]] = None,
     **molto3d_kwargs: Any
 ) -> None:
     """
@@ -23,6 +24,8 @@ def plot_mols(
         rpos_filter: List of rpos values to include (if None, includes all)
         exclude_coords: List of coordinate column patterns to exclude
         include_coords: List of coordinate column patterns to include (overrides exclude)
+        coord_indices: List of indices or a slice for coordinate columns 
+            (overrides include/exclude).
         **molto3d_kwargs: Additional arguments to pass to MolTo3DGrid
     
     Returns:
@@ -46,7 +49,12 @@ def plot_mols(
 
     coord_columns = [c for c in df.columns if "coords" in c]
     
-    if include_coords is not None:
+    if coord_indices is not None:
+        if isinstance(coord_indices, slice):
+            coord_columns = coord_columns[coord_indices]
+        else:
+            coord_columns = [coord_columns[i] for i in coord_indices if 0 <= i < len(coord_columns)]
+    elif include_coords is not None:
         coord_columns = [c for c in coord_columns if any(pattern in c for pattern in include_coords)]
     elif exclude_coords is not None:
         coord_columns = [c for c in coord_columns if not any(pattern in c for pattern in exclude_coords)]
@@ -117,6 +125,7 @@ def plot_row(
     df: pd.DataFrame, 
     row_index: int = 0, 
     exclude_coords: Optional[List[str]] = None, 
+    coord_indices: Optional[Union[List[int], slice]] = None,
     **kwargs: Any
 ) -> None:
     """Display all coordinate types for a single row."""
@@ -124,6 +133,7 @@ def plot_row(
         df, 
         row_indices=[row_index], 
         exclude_coords=exclude_coords,
+        coord_indices=coord_indices,
         **kwargs
     )
 
@@ -131,6 +141,7 @@ def plot_lig(
     df: pd.DataFrame, 
     ligand_names: Union[str, List[str]], 
     exclude_coords: Optional[List[str]] = None, 
+    coord_indices: Optional[Union[List[int], slice]] = None,
     **kwargs: Any
 ) -> None:
     """Display molecules filtered by ligand name(s)."""
@@ -141,6 +152,7 @@ def plot_lig(
         df, 
         ligand_filter=ligand_names, 
         exclude_coords=exclude_coords,
+        coord_indices=coord_indices,
         **kwargs
     )
 
@@ -148,6 +160,7 @@ def plot_rpos(
     df: pd.DataFrame, 
     rpos_values: Union[str, int, List[Union[str, int]]], 
     exclude_coords: Optional[List[str]] = None, 
+    coord_indices: Optional[Union[List[int], slice]] = None,
     **kwargs: Any
 ) -> None:
     """Display molecules filtered by rpos value(s)."""
@@ -158,6 +171,7 @@ def plot_rpos(
         df, 
         rpos_filter=rpos_values, 
         exclude_coords=exclude_coords,
+        coord_indices=coord_indices,
         **kwargs
     )
 
