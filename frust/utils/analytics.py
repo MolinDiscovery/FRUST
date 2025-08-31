@@ -89,24 +89,141 @@ def _svg_annotated_smi(
     drawer.FinishDrawing()
     return drawer.GetDrawingText()
 
-def build_annotated_frame(df,
-                          ligand_col="ligand_name",
-                          smi_col="smiles",
-                          pos_col="rpos",
-                          energy_col="dE"):
-    """One row per ligand + an SVG column with all ΔE annotations."""
+
+import pandas as pd
+
+def build_annotated_frame(
+    df: pd.DataFrame,
+    ligand_col: str = "ligand_name",
+    smi_col: str = "smiles",
+    pos_col: str = "rpos",
+    energy_col: str = "dE",
+    output_path: str | None = None
+) -> tuple[pd.DataFrame, str]:
+    """One row per ligand + an SVG column with all ΔE annotations.
+    If output_path is set, writes a standalone HTML file.
+
+    Args:
+        df (pd.DataFrame): Input data.
+        ligand_col (str): Column name for ligand grouping.
+        smi_col (str): Column name for SMILES.
+        pos_col (str): Column name for annotation positions.
+        energy_col (str): Column name for ΔE values.
+        output_path (str | None): File path to write HTML. No file written if None.
+
+    Returns:
+        Tuple[pd.DataFrame, str]:
+            - DataFrame with one row per ligand and an "annotated_svg" column.
+            - HTML table fragment as a string.
+    """
+    for col in (ligand_col, smi_col, pos_col, energy_col):
+        if col not in df.columns:
+            raise ValueError(f"Column not found: {col}")
+
     rows = []
     for lig, grp in df.groupby(ligand_col):
-        smi  = grp[smi_col].iloc[0]
-        pos  = grp[pos_col].astype(int).tolist()
-        dE   = grp[energy_col].tolist()
-        svg  = _svg_annotated_smi(smi, pos, dE)
+        smi = grp[smi_col].iloc[0]
+        pos = grp[pos_col].astype(int).tolist()
+        dE = grp[energy_col].tolist()
+        svg = _svg_annotated_smi(smi, pos, dE)
         rows.append({ligand_col: lig, smi_col: smi, "annotated_svg": svg})
-    
-    df = pd.DataFrame(rows)
-    html = df.to_html(
-    escape=False,
-    formatters={"annotated_svg": lambda x: x},
-    index=False
+
+    result_df = pd.DataFrame(rows)
+    html_table = result_df.to_html(
+        escape=False,
+        formatters={"annotated_svg": lambda x: x},
+        index=False
     )
-    return df, html
+
+    if output_path:
+        full_html = f"""<!DOCTYPE html>
+<html lang="en">
+<head>
+  <meta charset="utf-8">
+  <title>{output_path.split(".html")[0]}</title>
+</head>
+<body>
+<p>{output_path.split(".html")[0]}</p>
+{html_table}
+</body>
+</html>"""
+        with open(output_path, "w", encoding="utf-8") as f:
+            f.write(full_html)
+
+    return result_df, html_table
+
+
+import argparse
+from pathlib import Path
+from typing import Sequence, Union
+
+def merge_parquet_dir(
+    input_dir: Union[str, Path],
+    output: Union[str, Path] = "merged.parquet",
+) -> Path:
+    """Merge multiple Parquet files with identical schemas into one file.
+
+    Args:
+        input_dir: Directory containing .parquet files to merge.
+        output: Output Parquet file path.
+
+    Returns:
+        Path to the merged Parquet file.
+
+    Raises:
+        FileNotFoundError: If the input directory does not exist or contains
+            no .parquet files.
+        ValueError: If the merged DataFrame is empty.
+    """
+    in_path = Path(input_dir)
+    if not in_path.is_dir():
+        raise FileNotFoundError(f"Input directory '{in_path}' not found.")
+    files = sorted(in_path.glob("*.parquet"))
+    if not files:
+        raise FileNotFoundError(f"No .parquet files in '{in_path}'.")
+    dfs = [pd.read_parquet(str(fp)) for fp in files]
+    merged = pd.concat(dfs, ignore_index=True)
+    if merged.empty:
+        raise ValueError("Merged DataFrame is empty.")
+    out_path = Path(output)
+    merged.to_parquet(out_path)
+    return out_path
+
+
+def main_merge_parquet(argv: Sequence[str] | None = None) -> int:
+    """CLI entry for merging Parquet files.
+
+    Args:
+        argv: Optional list of CLI args for testing or entry points.
+
+    Returns:
+        Process exit code (0 on success, nonzero on error).
+    """
+    parser = argparse.ArgumentParser(
+        description=(
+            "Merge multiple Parquet files with the same schema into one file."
+        )
+    )
+    default_in = str(Path(__file__).resolve().parent.parent / "results")
+    parser.add_argument(
+        "-i",
+        "--input-dir",
+        type=str,
+        default=default_in,
+        help="Directory containing .parquet files to merge.",
+    )
+    parser.add_argument(
+        "-o",
+        "--output",
+        type=str,
+        default="merged.parquet",
+        help="Output Parquet file path.",
+    )
+    args = parser.parse_args(argv)
+    try:
+        out = merge_parquet_dir(args.input_dir, args.output)
+    except Exception as e:
+        print(str(e))
+        return 1
+    print(f"Merged files into '{out}'.")
+    return 0

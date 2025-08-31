@@ -3,6 +3,8 @@ from tooltoad.vis import MolTo3DGrid
 from tooltoad.chemutils import ac2mol
 import pandas as pd
 import numpy as np
+import matplotlib.pyplot as plt
+from scipy.stats import linregress, spearmanr
 
 def plot_mols(
     df: pd.DataFrame, 
@@ -207,3 +209,76 @@ def plot_vibs(
     view = show_vibs(view_dict, vId, width, height, numFrames, amplitude, transparent, fps, reps)
 
     return view
+
+
+def plot_regression_outliers(
+    df: pd.DataFrame,
+    x_col: str = "dG",
+    y_col: str = "dE",
+    label_col: str = "ligand_name",
+    rpos_col: str = "rpos",
+    method: str = "spearman",
+    num_outliers: int = 2
+) -> pd.DataFrame:
+    """Plot x vs y with linear fit, score outliers, and annotate top points.
+
+    Args:
+        df (pd.DataFrame): Input data.
+        x_col (str): Name of the column to use for x values. Defaults to "dG".
+        y_col (str): Name of the column to use for y values. Defaults to "dE".
+        label_col (str): Column used for point labels. Defaults to "ligand_name".
+        rpos_col (str): Column used for position annotations. Defaults to "rpos".
+        method (str, optional): Scoring method, "pearson" or "spearman".
+            Defaults to "spearman".
+        num_outliers (int, optional): Number of top outliers to annotate.
+            Defaults to 2.
+
+    Returns:
+        pd.DataFrame: DataFrame of the top outliers sorted by score.
+    """
+    for col in (x_col, y_col, label_col, rpos_col):
+        if col not in df.columns:
+            raise ValueError(f"Column not found: {col}")
+    if method not in ("pearson", "spearman"):
+        raise ValueError(f"Invalid method: {method}")
+
+    data = df.copy()
+    x = data[x_col]
+    y = data[y_col]
+
+    lr = linregress(x, y)
+    y_fit = lr.slope * x + lr.intercept
+    rho, _ = spearmanr(x, y)
+
+    if method == "pearson":
+        data["score"] = (y - y_fit).abs()
+    else:
+        data["rank_x"] = x.rank()
+        data["rank_y"] = y.rank()
+        data["score"] = (data["rank_y"] - data["rank_x"]).abs()
+
+    outliers = data.nlargest(num_outliers, "score")
+
+    plt.figure(figsize=(6, 4))
+    plt.scatter(x, y, alpha=0.7)
+    plt.plot(x, y_fit, color="red",
+             label=f"$R^2$={lr.rvalue**2:.3f}, spearman={rho:.3f}")
+    for _, row in outliers.iterrows():
+        label = f"{row[label_col]}-r{int(row[rpos_col])}"
+        plt.annotate(
+            label,
+            (row[x_col], row[y_col]),
+            textcoords="offset points",
+            xytext=(5, 5),
+            ha="left",
+            fontsize=8,
+            arrowprops=dict(arrowstyle="->", lw=0.5)
+        )
+    plt.xlabel(x_col + " DFT")
+    plt.ylabel(y_col + " xTB-GFN2")
+    plt.legend()
+    plt.grid(True)
+    plt.tight_layout()
+    plt.show()
+
+    return None

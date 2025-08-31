@@ -495,6 +495,7 @@ class Stepper:
         save_step: bool = False,
         save_files: list[str] | None = ["orca.out"],
         lowest: int | None = None,
+        uma: str | None = None,
     ) -> pd.DataFrame:
         """Run ORCA calculations (SP, OptTS, Freq) and attach results to the DataFrame.
 
@@ -630,12 +631,26 @@ class Stepper:
 
             return inp
 
-        return self._run_engine(
-            df,
-            self.orca_fn,
-            prefix,
-            build_orca,
-            save_step,
-            lowest,
-            save_files,
-        )
+        if uma is None:
+            return self._run_engine(df, self.orca_fn, prefix, build_orca, save_step, lowest, save_files)
+        
+        from frust.utils.uma import _uma_server
+        from frust.config import UMA_TOOLS as TOOLS
+        with _uma_server(task=uma, log_dir="UMA-logs") as (port, _slog):
+            client_block = f"""
+    %method
+    ProgExt "{TOOLS}/umaclient.sh"
+    Ext_Params "-b 127.0.0.1:{port}"
+    end
+    %output
+    Print[P_EXT_OUT] 1
+    Print[P_EXT_GRAD] 1
+    end
+    """.strip()
+            orig_build = build_orca
+            def build_orca_uma(row: Series) -> dict:
+                inp = orig_build(row)
+                xin = inp.get("xtra_inp_str", "")
+                inp["xtra_inp_str"] = (xin + "\n\n" + client_block).strip() if xin else client_block
+                return inp
+            return self._run_engine(df, self.orca_fn, prefix, build_orca_uma, save_step, lowest, save_files)

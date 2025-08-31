@@ -169,6 +169,110 @@ def run_ts_per_rpos(
     return df
 
 
+def run_ts_per_rpos_UMA(
+    ts_struct: dict[str, tuple[Mol, list, str]],
+    *,
+    n_confs: int | None = None,
+    n_cores: int = 4,
+    mem_gb: int = 20,
+    debug: bool = False,
+    top_n: int = 10,
+    out_dir: str | None = None,
+    output_parquet: str | None = None,
+    save_output_dir: bool = True,
+    DFT: bool = False,
+):
+    import re
+    pattern = re.compile(
+    r'^(?:(?P<prefix>(?:TS|INT)\d*|Mols)\()?'
+    r'(?P<ligand>.+?)_rpos\('        
+    r'(?P<rpos>\d+)\)\)?$'           
+    )
+
+    # Get type...
+    name = list(ts_struct.keys())[0]
+    m = pattern.match(name)
+    ts_type = m.group("prefix")
+    
+    embedded = embed_ts(ts_struct, ts_type=ts_type, n_confs=n_confs, optimize=not debug)
+
+    ligand_smiles = list(ts_struct.values())[0][2]
+
+    step = Stepper(
+    ligand_smiles,
+    n_cores=n_cores,
+    memory_gb=mem_gb,
+    debug=debug,
+    output_base=out_dir,
+    save_output_dir=save_output_dir,
+    )
+    
+    df = step.build_initial_df(embedded)
+    df = step.xtb(df, options={"gfnff": None, "opt": None}, constraint=True)
+    df = step.xtb(df, options={"gfn": 2})
+    df = step.xtb(df, options={"gfn": 2, "opt": None}, constraint=True, lowest=top_n)
+
+    last_energy = [c for c in df.columns if c.endswith("_energy")][-1]
+    df3_filt = (
+        df.sort_values(["ligand_name", "rpos", last_energy])
+           .groupby(["ligand_name", "rpos"])
+           .head(1)
+    )
+    
+    if not DFT:
+        if output_parquet:
+            df3_filt.to_parquet(output_parquet)            
+        return df3_filt
+
+    # ↓↓↓↓↓↓↓↓ This code only executes if DFT is True ↓↓↓↓↓↓↓↓
+
+    df = step.orca(df, name="DFT-pre-SP", options={
+        "wB97X-D3": None,
+        "6-31+G**": None,
+        "TightSCF": None,
+        "SP": None,
+        "NoSym": None,
+    })
+
+    df = step.orca(df, name="DFT-pre-Opt", options={
+        "wB97X-D3" : None,
+        "6-31G**"  : None,
+        "TightSCF" : None,
+        "SlowConv" : None,
+        "Opt"      : None,
+        "Freq"     : None,
+        "NoSym"    : None,
+    }, constraint=True, lowest=1)
+
+    if ts_type.upper() == "INT3":
+        opt = "Opt"
+    else:
+        opt = "OptTS"
+
+    df = step.orca(df, name="UMA", options={
+        "wB97X-D3" : None,
+        "6-31G**"  : None,
+        "TightSCF" : None,
+        "SlowConv" : None,
+        opt        : None,
+        "Freq"     : None,
+        "NoSym"    : None,
+    }, xtra_inp_str="""%geom\nCalc_Hess true\nend""", lowest=1)
+
+
+    df = step.orca(df, name="DFT-SP", options={
+        "wB97X-D3": None,
+        "6-31+G**": None,
+        "TightSCF": None,
+        "SP"      : None,
+        "NoSym"   : None,
+    }, xtra_inp_str="""%CPCM\nSMD TRUE\nSMDSOLVENT "chloroform"\nend""")
+    
+    if output_parquet:
+        df.to_parquet(output_parquet)
+    return df
+
+
 def run_ts_per_lig(
     ligand_smiles_list: list[str],
     ts_guess_xyz: str,

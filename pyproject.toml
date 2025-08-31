@@ -20,3 +20,6 @@ dependencies = [
 
 [tool.setuptools]
 packages = ["frust"]
+
+[project.scripts]
+merge_parquet = "frust.utils.analytics:main_merge_parquet"
