@@ -7,14 +7,14 @@ from itertools import islice
 import importlib
 
 # ─── CONFIG ─────────────────────────────────────────────────────────────
-PIPELINE_NAME  = "run_ts_per_rpos"  # "run_ts_per_rpos", "run_ts_per_lig", "run_mols"
+PIPELINE_NAME  = "run_ts_per_rpos_UMA"  # "run_ts_per_rpos", "run_ts_per_lig", "run_mols"
 PRODUCTION     = True
 USE_SLURM      = True
 DEBUG          = False
 BATCH_SIZE     = 1
 CSV_PATH       = "../datasets/font_smiles.csv"
-OUT_DIR        = "results_ts4_TMP_font_1"
-LOG_DIR        = "logs/ts4_TMP_font_1"
+OUT_DIR        = "results_ts4_TMP_font_UMA_1"
+LOG_DIR        = "logs/ts4_TMP_font_1_UMA_1"
 SAVE_OUT_DIRS  = False
 CPUS_PER_JOB   = 7
 MEM_GB         = 31

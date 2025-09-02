@@ -249,18 +249,23 @@ def run_ts_per_rpos_UMA(
     else:
         opt = "OptTS"
 
-    df = step.orca(df, name="UMA", options={
-        "wB97X-D3" : None,
-        "6-31G**"  : None,
-        "TightSCF" : None,
-        "SlowConv" : None,
-        opt        : None,
-        "Freq"     : None,
-        "NoSym"    : None,
-    }, xtra_inp_str="""%geom\nCalc_Hess true\nend""", lowest=1)
-
+    df = step.orca(df, name="UMA", options={"ExtOpt": None, "OptTS": None, "NumFreq": None}
+    }, xtra_inp_str="""%geom
+  Calc_Hess  true
+  NumHess    true
+  Recalc_Hess 5
+  MaxIter    300
+end""", lowest=1)
 
     df = step.orca(df, name="DFT-SP", options={
+        "wB97X-D3": None,
+        "6-31+G**": None,
+        "TightSCF": None,
+        "SP"      : None,
+        "NoSym"   : None,
+    })
+
+    df = step.orca(df, name="DFT-SP-solvent", options={
         "wB97X-D3": None,
         "6-31+G**": None,
         "TightSCF": None,
