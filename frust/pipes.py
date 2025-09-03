@@ -203,6 +203,7 @@ def run_ts_per_rpos_UMA(
     n_cores=n_cores,
     memory_gb=mem_gb,
     debug=debug,
+
     output_base=out_dir,
     save_output_dir=save_output_dir,
     )
@@ -316,17 +317,18 @@ def run_ts_per_rpos_UMA_short(
     )
     
     df = step.build_initial_df(embedded)
-    df = step.xtb(df, options={"gfnff": None, "opt": None}, constraint=True)
-    df = step.xtb(df, options={"gfn": 2})
+    # df = step.xtb(df, options={"gfnff": None, "opt": None}, constraint=True)
+    # df = step.xtb(df, options={"gfn": 2})
+    print(df)
     #df = step.xtb(df, options={"gfn": 2, "opt": None}, constraint=True, lowest=top_n)
-    df = step.orca(df, options={"ExtOpt": None, "Opt": None}, constraint=True, lowest=top_n)
+    df = step.orca(df, options={"ExtOpt": None, "SP": None}, uma="omol", constraint=False)
 
-    df = step.orca(df, name="UMA", options={"ExtOpt": None, "OptTS": None, "NumFreq": None}, xtra_inp_str="""%geom
-  Calc_Hess  true
-  NumHess    true
-  Recalc_Hess 5
-  MaxIter    300
-end""", lowest=1)
+#     df = step.orca(df, name="UMA", options={"ExtOpt": None, "OptTS": None, "NumFreq": None}, xtra_inp_str="""%geom
+#   Calc_Hess  true
+#   NumHess    true
+#   Recalc_Hess 5
+#   MaxIter    300
+# end""", lowest=1)
     
     if output_parquet:
         df.to_parquet(output_parquet)
@@ -384,7 +386,7 @@ def run_ts_per_lig(
     save_output_dir=save_output_dir,
     )
     df = step.build_initial_df(embedded)
-    df = step.xtb(df, options={"gfnff": None, "opt": None}, constraint=True)
+    df = step.xtb(df, options={"gfnff": None, "opt": None}, constraint=True, save_step=True)
     df = step.xtb(df, options={"gfn": 2})
     df = step.xtb(df, options={"gfn": 2, "opt": None}, constraint=True, lowest=top_n)
 
@@ -655,17 +657,17 @@ def run_small_test(
 if __name__ == '__main__':
     FRUST_path = str(Path(__file__).resolve().parent.parent)
     print(f"Running in main. FRUST path: {FRUST_path}")
-    run_ts_per_lig(
-        ["CN1C=CC=C1"],
-        ts_guess_xyz=f"{FRUST_path}/structures/ts2.xyz",
-        n_confs=1,
-        debug=False,
-        out_dir="noob",
-        save_output_dir=False,
-        #output_parquet="TS3_test.parguet",
-        DFT=True,
-        top_n=1
-    )
+    # run_ts_per_lig(
+    #     ["CN1C=CC=C1"],
+    #     ts_guess_xyz=f"{FRUST_path}/structures/ts2.xyz",
+    #     n_confs=1,
+    #     debug=False,
+    #     out_dir="noob",
+    #     save_output_dir=False,
+    #     #output_parquet="TS3_test.parguet",
+    #     DFT=True,
+    #     top_n=1
+    # )
 
     # ts_mols = create_ts_per_rpos(["CN1C=CC=C1"], ts_guess_xyz=f"{FRUST_path}/structures/int3.xyz")
     # for ts_rpos in ts_mols:
@@ -679,3 +681,37 @@ if __name__ == '__main__':
     #     DFT=True,
     #     select_mols=["HH"]
     # )
+
+    # ts_mols = create_ts_per_rpos(["CN1C=CC=C1"], ts_guess_xyz=f"{FRUST_path}/structures/ts1.xyz")
+    # for ts_rpos in ts_mols:
+    #     run_ts_per_rpos_UMA_short(ts_rpos, out_dir="noob", save_output_dir=True, n_confs=2)    
+
+    from frust.stepper import Stepper
+    from pathlib import Path
+    from tooltoad.chemutils import xyz2mol
+
+    f = Path("structures/ts4_TMP.xyz")
+    mols = {}
+    with open(f, "r") as file:
+        xyz_block = file.read()
+        mol = xyz2mol(xyz_block)
+        mols[f.stem] = (mol, [0])
+
+    step = Stepper(list(mols.keys()), step_type="ts1", save_output_dir=False)
+    df0 = step.build_initial_df(mols)
+
+    step = Stepper(["ts4-test-UMA"],
+                step_type="none",
+                debug=False,
+                save_output_dir=True,
+                output_base=str("ts4-test-freq"),
+                n_cores=10,
+                memory_gb=20)
+
+    df2 = step.orca(df0, "UMA-test", {"ExtOpt": None, "SP": None}, uma="omol", xtra_inp_str=
+    """%geom
+    Calc_Hess  true
+    NumHess    true
+    Recalc_Hess 5
+    MaxIter    300
+    end""")
