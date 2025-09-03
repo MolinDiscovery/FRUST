@@ -688,30 +688,31 @@ if __name__ == '__main__':
 
     from frust.stepper import Stepper
     from pathlib import Path
-    from tooltoad.chemutils import xyz2mol
+    from tooltoad.chemutils import xyz2mol, xyz2ac
 
     f = Path("structures/ts4_TMP.xyz")
     mols = {}
     with open(f, "r") as file:
         xyz_block = file.read()
-        mol = xyz2mol(xyz_block)
-        mols[f.stem] = (mol, [0])
+        # mol = xyz2mol(xyz_block)
+        # mols[f.stem] = (mol, [0])
+        atoms, coords = xyz2ac(xyz_block)
 
-    step = Stepper(list(mols.keys()), step_type="ts1", save_output_dir=False)
-    df0 = step.build_initial_df(mols)
+    from tooltoad.orca import orca_calculate
+    orca_calculate(atoms, coords, options={"XTB2": None, "SP": None}, calc_dir="noob")
 
-    step = Stepper(["ts4-test-UMA"],
-                step_type="none",
-                debug=False,
-                save_output_dir=True,
-                output_base=str("ts4-test-freq"),
-                n_cores=10,
-                memory_gb=20)
+    # step = Stepper(list(mols.keys()), step_type="ts1", save_output_dir=False)
+    # df0 = step.build_initial_df(mols)
 
-    df2 = step.orca(df0, "UMA-test", {"ExtOpt": None, "SP": None}, uma="omol", xtra_inp_str=
-    """%geom
-    Calc_Hess  true
-    NumHess    true
-    Recalc_Hess 5
-    MaxIter    300
-    end""")
+    # step = Stepper(["ts4-test-UMA"],
+    #             step_type="none",
+    #             debug=False,
+    #             save_output_dir=True,
+    #             output_base=str("ts4-test"),
+    #             save_calc_dirs=True,
+    #             n_cores=10,
+    #             memory_gb=20)
+
+    # df2 = step.orca(df0, "UMA-test", {"XTB2": None, "SP": None})
+
+
