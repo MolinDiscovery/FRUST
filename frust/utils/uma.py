@@ -25,11 +25,18 @@ def _uma_server(
     # Total logical CPUs available (prefer SLURM allocation if present)
     total = int(env.get("SLURM_CPUS_PER_TASK") or (os.cpu_count() or 1))
 
-    # Sensible defaults: a few light workers
-    if threads_per_worker is None:
-        threads_per_worker = 2 if total >= 4 else 1
-    if workers is None:
-        workers = max(1, min(8, total // max(1, threads_per_worker)))
+    # # Sensible defaults: a few light workers
+    # if threads_per_worker is None:
+    #     threads_per_worker = 2 if total >= 4 else 1
+    # if workers is None:
+    #     workers = max(1, min(8, total // max(1, threads_per_worker)))
+
+    threads_per_worker = 1
+    workers = total - 30 # leave some headroom.
+    
+    print(f"[DEBUG]: total {total}")
+    print(f"[DEBUG]: Threads per worker {threads_per_worker}")
+    print(f"[DEBUG]: Workers {workers}")
 
     # Threading hygiene (avoid oversubscription inside each UMA worker)
     t = str(threads_per_worker)
