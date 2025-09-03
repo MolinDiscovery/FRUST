@@ -14,10 +14,10 @@ DEBUG          = False
 BATCH_SIZE     = 1
 CSV_PATH       = "../datasets/font_smiles.csv"
 OUT_DIR        = "results_ts4_TMP_font_UMA_1"
-LOG_DIR        = "logs/ts4_TMP_font_1_UMA_1"
+LOG_DIR        = "logs/ts4_TMP_font_UMA_1"
 SAVE_OUT_DIRS  = False
-CPUS_PER_JOB   = 7
-MEM_GB         = 31
+CPUS_PER_JOB   = 12
+MEM_GB         = 32
 TIMEOUT_MIN    = 14400
 N_CONFS        = None if PRODUCTION else 1
 DFT            = True
@@ -41,7 +41,7 @@ df       = pd.read_csv(CSV_PATH)
 smi_list = list(dict.fromkeys(df["smiles"]))
 
 # determine job inputs
-if PIPELINE_NAME == "run_ts_per_rpos":
+if PIPELINE_NAME == "run_ts_per_rpos" or "run_ts_per_rpos_UMA":
     from frust.pipes import create_ts_per_rpos
     job_inputs = create_ts_per_rpos(smi_list, TS_XYZ)
 elif PIPELINE_NAME in {"run_ts_per_lig", "run_mols", "run_small_test"}:
@@ -64,7 +64,7 @@ executor.update_parameters(
 
 # 5) dispatch batches
 futures = []
-if PIPELINE_NAME == "run_ts_per_rpos":
+if PIPELINE_NAME == "run_ts_per_rpos" or "run_ts_per_rpos_UMA":
     for ts_struct in job_inputs:
         tag = f"{PIPELINE_NAME}_{list(ts_struct.keys())[0]}"
         if USE_SLURM:

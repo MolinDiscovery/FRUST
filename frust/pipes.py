@@ -249,8 +249,7 @@ def run_ts_per_rpos_UMA(
     else:
         opt = "OptTS"
 
-    df = step.orca(df, name="UMA", options={"ExtOpt": None, "OptTS": None, "NumFreq": None}
-    }, xtra_inp_str="""%geom
+    df = step.orca(df, name="UMA", options={"ExtOpt": None, "OptTS": None, "NumFreq": None}, xtra_inp_str="""%geom
   Calc_Hess  true
   NumHess    true
   Recalc_Hess 5
@@ -272,6 +271,62 @@ end""", lowest=1)
         "SP"      : None,
         "NoSym"   : None,
     }, xtra_inp_str="""%CPCM\nSMD TRUE\nSMDSOLVENT "chloroform"\nend""")
+    
+    if output_parquet:
+        df.to_parquet(output_parquet)
+    return df
+
+
+def run_ts_per_rpos_UMA_short(
+    ts_struct: dict[str, tuple[Mol, list, str]],
+    *,
+    n_confs: int | None = None,
+    n_cores: int = 4,
+    mem_gb: int = 20,
+    debug: bool = False,
+    top_n: int = 10,
+    out_dir: str | None = None,
+    output_parquet: str | None = None,
+    save_output_dir: bool = True,
+    DFT: bool = False,
+):
+    import re
+    pattern = re.compile(
+    r'^(?:(?P<prefix>(?:TS|INT)\d*|Mols)\()?'
+    r'(?P<ligand>.+?)_rpos\('        
+    r'(?P<rpos>\d+)\)\)?$'           
+    )
+
+    # Get type...
+    name = list(ts_struct.keys())[0]
+    m = pattern.match(name)
+    ts_type = m.group("prefix")
+    
+    embedded = embed_ts(ts_struct, ts_type=ts_type, n_confs=n_confs, optimize=not debug)
+
+    ligand_smiles = list(ts_struct.values())[0][2]
+
+    step = Stepper(
+    ligand_smiles,
+    n_cores=n_cores,
+    memory_gb=mem_gb,
+    debug=debug,
+    output_base=out_dir,
+    save_output_dir=save_output_dir,
+    )
+    
+    df = step.build_initial_df(embedded)
+    df = step.xtb(df, options={"gfnff": None, "opt": None}, constraint=True)
+    df = step.xtb(df, options={"gfn": 2})
+    #df = step.xtb(df, options={"gfn": 2, "opt": None}, constraint=True, lowest=top_n)
+    df = step.orca(df, options={"ExtOpt": None, "Opt": None}, constraint=True, lowest=top_n)
+
+    df = step.orca(df, name="UMA", options={"ExtOpt": None, "OptTS": None, "NumFreq": None}, xtra_inp_str="""%geom
+  Calc_Hess  true
+  NumHess    true
+  Recalc_Hess 5
+  MaxIter    300
+end""", lowest=1)
     
     if output_parquet:
         df.to_parquet(output_parquet)
