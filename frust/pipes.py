@@ -203,7 +203,6 @@ def run_ts_per_rpos_UMA(
     n_cores=n_cores,
     memory_gb=mem_gb,
     debug=debug,
-
     output_base=out_dir,
     save_output_dir=save_output_dir,
     )
@@ -241,7 +240,6 @@ def run_ts_per_rpos_UMA(
         "TightSCF" : None,
         "SlowConv" : None,
         "Opt"      : None,
-        "Freq"     : None,
         "NoSym"    : None,
     }, constraint=True, lowest=1)
 
