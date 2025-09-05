@@ -317,11 +317,10 @@ def run_ts_per_rpos_UMA_short(
     )
     
     df = step.build_initial_df(embedded)
-    # df = step.xtb(df, options={"gfnff": None, "opt": None}, constraint=True)
-    # df = step.xtb(df, options={"gfn": 2})
-    print(df)
-    #df = step.xtb(df, options={"gfn": 2, "opt": None}, constraint=True, lowest=top_n)
-    df = step.orca(df, options={"ExtOpt": None, "SP": None}, uma="omol", constraint=False)
+    df = step.xtb(df, options={"gfnff": None, "opt": None}, constraint=True)
+    df = step.xtb(df, options={"gfn": 2})
+    df = step.xtb(df, options={"gfn": 2, "opt": None}, constraint=True, lowest=top_n)
+    df = step.orca(df, options={"ExtOpt": None, "OptTS": None}, uma="omol")
 
 #     df = step.orca(df, name="UMA", options={"ExtOpt": None, "OptTS": None, "NumFreq": None}, xtra_inp_str="""%geom
 #   Calc_Hess  true
@@ -549,6 +548,58 @@ def run_mols(
     return df6
 
 
+def run_mols_UMA(
+    ligand_smiles_list: list[str],
+    *,
+    n_confs: int = 5,
+    n_cores: int = 4,
+    mem_gb: int = 20,    
+    debug: bool = False,
+    top_n: int = 5,
+    out_dir: str | None = None,
+    output_parquet: str | None = None,
+    save_output_dir: bool = True,
+    DFT: bool = False,
+    select_mols: str | list[str] = "all",  # "all", "uniques", "generics", or specific names
+):
+    # 1) build generic-cycle molecules (with optional selection)
+    mols = {}
+    for smi in ligand_smiles_list:
+        if select_mols == "all":
+            tmp = transformer_mols(ligand_smiles=smi)
+        elif select_mols == "uniques":
+            tmp = transformer_mols(ligand_smiles=smi, only_uniques=True)
+        elif select_mols == "generics":
+            tmp = transformer_mols(ligand_smiles=smi, only_generics=True)
+        else:
+            tmp = transformer_mols(ligand_smiles=smi, select=select_mols)
+
+        mols.update(tmp)
+
+    # 2) embed
+    embedded = embed_mols(mols, n_confs=n_confs, n_cores=n_cores)
+
+    # 3) xTB cascade
+    step = Stepper(
+        ligand_smiles_list,
+        n_cores=n_cores,
+        memory_gb=mem_gb,
+        debug=debug,
+        output_base=out_dir,
+        save_output_dir=save_output_dir,
+    )
+    df = step.build_initial_df(embedded)
+    df = step.xtb(df, options={"gfnff": None, "opt": None})
+    df = step.xtb(df, options={"gfn": 2})
+    df = step.orca(df, options={"ExtOpt": None, "Opt": None, "NumFreq": None}, uma="omol", lowest=1)
+    # df = step.orca(df, options={"XTB2": None, "Opt": None, "NumFreq": None})
+    
+    if output_parquet:
+            df.to_parquet(output_parquet)
+
+    return df
+
+
 def run_test(
     ligand_smiles_list: list[str],
     *,
@@ -685,34 +736,5 @@ if __name__ == '__main__':
     # ts_mols = create_ts_per_rpos(["CN1C=CC=C1"], ts_guess_xyz=f"{FRUST_path}/structures/ts1.xyz")
     # for ts_rpos in ts_mols:
     #     run_ts_per_rpos_UMA_short(ts_rpos, out_dir="noob", save_output_dir=True, n_confs=2)    
-
-    from frust.stepper import Stepper
-    from pathlib import Path
-    from tooltoad.chemutils import xyz2mol, xyz2ac
-
-    f = Path("structures/ts4_TMP.xyz")
-    mols = {}
-    with open(f, "r") as file:
-        xyz_block = file.read()
-        # mol = xyz2mol(xyz_block)
-        # mols[f.stem] = (mol, [0])
-        atoms, coords = xyz2ac(xyz_block)
-
-    from tooltoad.orca import orca_calculate
-    orca_calculate(atoms, coords, options={"XTB2": None, "SP": None}, calc_dir="noob")
-
-    # step = Stepper(list(mols.keys()), step_type="ts1", save_output_dir=False)
-    # df0 = step.build_initial_df(mols)
-
-    # step = Stepper(["ts4-test-UMA"],
-    #             step_type="none",
-    #             debug=False,
-    #             save_output_dir=True,
-    #             output_base=str("ts4-test"),
-    #             save_calc_dirs=True,
-    #             n_cores=10,
-    #             memory_gb=20)
-
-    # df2 = step.orca(df0, "UMA-test", {"XTB2": None, "SP": None})
 
 
