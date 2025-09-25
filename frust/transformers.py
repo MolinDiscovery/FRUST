@@ -813,7 +813,6 @@ def transformer_int3(
         B_pin_idx = ts_rw.GetSubstructMatches(pin_pat)[0][0]
         B_pin_nbs = ts_rw.GetAtomWithIdx(B_pin_idx).GetNeighbors()
         H_pin_idx = B_pin_nbs[0].GetIdx()
-        
         ts_rw.RemoveBond(B_pin_idx, H_pin_idx)
         frag0, frag1 = Chem.GetMolFrags(ts_rw, asMols=True) 
 
@@ -827,8 +826,7 @@ def transformer_int3(
         B_pin_idx = ts_rw.GetSubstructMatches(pin_pat)[0][0]
         B_pin_nbs = ts_rw.GetAtomWithIdx(B_pin_idx).GetNeighbors()
         H_pin_idx = B_pin_nbs[0].GetIdx()
-
-        ts_rw.AddBond(11, 22, Chem.BondType.SINGLE)
+        ts_rw.AddBond(11, 41, Chem.BondType.SINGLE) # 22 instead of 41 for non-TMP
 
         # --- Combine ligand and catalyst, add temporary bonds, and set temporary formal charges ---
         ts_combined = Chem.CombineMols(ts_rw, lig_mol)

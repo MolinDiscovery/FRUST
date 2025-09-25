@@ -7,24 +7,24 @@ from itertools import islice
 import importlib
 
 # ─── CONFIG ─────────────────────────────────────────────────────────────
-PIPELINE_NAME  = "run_ts_per_rpos_UMA"  # "run_ts_per_rpos", "run_ts_per_lig", "run_mols"
+PIPELINE_NAME  = "run_ts_per_rpos" # "run_ts_per_rpos", "run_ts_per_lig", "run_mols"
 PRODUCTION     = True
 USE_SLURM      = True
 DEBUG          = False
 BATCH_SIZE     = 1
-CSV_PATH       = "../datasets/font_smiles.csv"
-OUT_DIR        = "results_ts4_TMP_font_UMA_1"
-LOG_DIR        = "logs/ts4_TMP_font_UMA_1"
+CSV_PATH       = "../datasets/1m.csv"
+OUT_DIR        = "results_full_test_ts4"
+LOG_DIR        = "logs/full_test_ts4"
 SAVE_OUT_DIRS  = False
 CPUS_PER_JOB   = 12
-MEM_GB         = 32
+MEM_GB         = 45
 TIMEOUT_MIN    = 14400
 N_CONFS        = None if PRODUCTION else 1
 DFT            = True
 # ─── TS SPECIFIC ─────────────────────────────────────────────────────────
 TS_XYZ         = "../structures/ts4_TMP.xyz"
 # ─── MOL SPECIFIC ────────────────────────────────────────────────────────
-SELECT_MOLS    = ["HH"] # "all", "uniques", "generics", or specific names
+SELECT_MOLS    = "all" # "all", "uniques", "generics", or ['dimer','HH','ligand','catalyst','int2','mol2','HBpin-ligand','HBpin-mol']
 
 def batched(iterable, n):
     it = iter(iterable)
@@ -41,7 +41,7 @@ df       = pd.read_csv(CSV_PATH)
 smi_list = list(dict.fromkeys(df["smiles"]))
 
 # determine job inputs
-if PIPELINE_NAME == "run_ts_per_rpos" or "run_ts_per_rpos_UMA":
+if PIPELINE_NAME in {"run_ts_per_rpos", "run_ts_per_rpos_UMA"}:
     from frust.pipes import create_ts_per_rpos
     job_inputs = create_ts_per_rpos(smi_list, TS_XYZ)
 elif PIPELINE_NAME in {"run_ts_per_lig", "run_mols", "run_small_test"}:
@@ -64,7 +64,7 @@ executor.update_parameters(
 
 # 5) dispatch batches
 futures = []
-if PIPELINE_NAME == "run_ts_per_rpos" or "run_ts_per_rpos_UMA":
+if PIPELINE_NAME in {"run_ts_per_rpos", "run_ts_per_rpos_UMA"}:
     for ts_struct in job_inputs:
         tag = f"{PIPELINE_NAME}_{list(ts_struct.keys())[0]}"
         if USE_SLURM:

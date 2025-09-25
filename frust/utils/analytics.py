@@ -67,24 +67,56 @@ def summarize_ts_vibrations(
 
 def _svg_annotated_smi(
         smi, pos_list, dE_list,
-        size=(250, 250), highlight_color=(1, 0, 0)):
-    """Return an SVG string of the molecule with per-atom ΔE labels."""
+        size=(250, 250), highlight_color=(1, 0, 0),
+        show_rpos: bool = False, step_list: list[str] | None = None):
+    """Return an SVG string of the molecule with per-atom ΔE labels.
 
+    Args:
+        smi: SMILES string.
+        pos_list: Atom indices to annotate.
+        dE_list: Values to display next to each atom.
+        size: (width, height) of the SVG in px.
+        highlight_color: Unused unless highlight code is enabled.
+        show_rpos: If True, append ' (rX)' after the value.
+        step_list: Optional per-position step tags (e.g., 'ts1').
+            When provided, labels become like '20.10(ts1)'.
+    """
     mol = Chem.MolFromSmiles(smi)
     rdDepictor.Compute2DCoords(mol)
 
-    for p, e in zip(pos_list, dE_list):
-        mol.GetAtomWithIdx(int(p)).SetProp("atomNote", f"{e:.2f}")
+    for i, (p, e) in enumerate(zip(pos_list, dE_list)):
+        try:
+            p_int = int(p)
+        except (TypeError, ValueError):
+            continue
+
+        # Build base value
+        try:
+            val = float(e)
+            note = f"{val:.2f}"
+        except (TypeError, ValueError):
+            note = f"{e}"
+
+        # Append step tag like '(ts1)' with no space before parenthesis
+        if step_list is not None and i < len(step_list):
+            step_tag = step_list[i]
+            note += f"({step_tag})"
+
+        # Optionally append rpos with a leading space for readability
+        if show_rpos:
+            note += f" (r{p_int})"
+
+        mol.GetAtomWithIdx(p_int).SetProp("atomNote", note)
 
     drawer = rdMolDraw2D.MolDraw2DSVG(*size)
     opts = drawer.drawOptions()
-    opts.drawAtomNotes       = True
-    opts.annotationFontScale = 0.9 
+    opts.drawAtomNotes = True
+    opts.annotationFontScale = 0.9
 
     drawer.DrawMolecule(
         mol,
-        #highlightAtoms      =[int(p) for p in pos_list],
-        #highlightAtomColors ={int(p): highlight_color for p in pos_list},
+        # highlightAtoms=[int(p) for p in pos_list],
+        # highlightAtomColors={int(p): highlight_color for p in pos_list},
     )
     drawer.FinishDrawing()
     return drawer.GetDrawingText()
@@ -98,7 +130,9 @@ def build_annotated_frame(
     smi_col: str = "smiles",
     pos_col: str = "rpos",
     energy_col: str = "dE",
-    output_path: str | None = None
+    output_path: str | None = None,
+    step_col: str | None = None,
+    show_rpos: bool = False,
 ) -> tuple[pd.DataFrame, str]:
     """One row per ligand + an SVG column with all ΔE annotations.
     If output_path is set, writes a standalone HTML file.
@@ -109,7 +143,11 @@ def build_annotated_frame(
         smi_col (str): Column name for SMILES.
         pos_col (str): Column name for annotation positions.
         energy_col (str): Column name for ΔE values.
-        output_path (str | None): File path to write HTML. No file written if None.
+        output_path (str | None): File path to write HTML. No file written
+            if None.
+        step_col (str | None): Optional column with per-row step labels
+            (e.g. 'dG_high_step'). Shown as '(ts1)' next to the value.
+        show_rpos (bool): If True, append ' (rX)' to each label.
 
     Returns:
         Tuple[pd.DataFrame, str]:
@@ -119,13 +157,32 @@ def build_annotated_frame(
     for col in (ligand_col, smi_col, pos_col, energy_col):
         if col not in df.columns:
             raise ValueError(f"Column not found: {col}")
+    if step_col is not None and step_col not in df.columns:
+        raise ValueError(f"Column not found: {step_col}")
+
+    def _norm_step(s: object) -> str:
+        if not isinstance(s, str):
+            return str(s)
+        t = s.strip()
+        # Common tidy-up: 'dG_TS1' -> 'ts1', 'TS2' -> 'ts2'
+        t = t.replace("dG_", "").replace("dE_", "")
+        return t.lower()
 
     rows = []
     for lig, grp in df.groupby(ligand_col):
         smi = grp[smi_col].iloc[0]
         pos = grp[pos_col].astype(int).tolist()
         dE = grp[energy_col].tolist()
-        svg = _svg_annotated_smi(smi, pos, dE)
+
+        steps = None
+        if step_col is not None:
+            steps = [_norm_step(x) for x in grp[step_col].tolist()]
+
+        svg = _svg_annotated_smi(
+            smi, pos, dE,
+            show_rpos=show_rpos,
+            step_list=steps
+        )
         rows.append({ligand_col: lig, smi_col: smi, "annotated_svg": svg})
 
     result_df = pd.DataFrame(rows)
@@ -136,14 +193,15 @@ def build_annotated_frame(
     )
 
     if output_path:
+        title = output_path.split(".html")[0]
         full_html = f"""<!DOCTYPE html>
 <html lang="en">
 <head>
   <meta charset="utf-8">
-  <title>{output_path.split(".html")[0]}</title>
+  <title>{title}</title>
 </head>
 <body>
-<p>{output_path.split(".html")[0]}</p>
+<p>{title}</p>
 {html_table}
 </body>
 </html>"""

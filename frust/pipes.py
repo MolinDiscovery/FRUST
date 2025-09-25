@@ -122,21 +122,25 @@ def run_ts_per_rpos(
 
     # ↓↓↓↓↓↓↓↓ This code only executes if DFT is True ↓↓↓↓↓↓↓↓
 
+    functional      = "wB97M-V" # wB97X-D3
+    basisset        = "def2-TZVPD" # 6-31G**
+    basisset_solv   = "def2-TZVPD" # 6-31+G**
+    freq            = "NumFreq"
+
     df = step.orca(df, name="DFT-pre-SP", options={
-        "wB97X-D3": None,
-        "6-31+G**": None,
-        "TightSCF": None,
-        "SP": None,
-        "NoSym": None,
+        functional  : None,
+        basisset    : None,
+        "TightSCF"  : None,
+        "SP"        : None,
+        "NoSym"     : None,
     })
 
     df = step.orca(df, name="DFT-pre-Opt", options={
-        "wB97X-D3" : None,
-        "6-31G**"  : None,
+        functional : None,
+        basisset   : None,
         "TightSCF" : None,
         "SlowConv" : None,
         "Opt"      : None,
-        "Freq"     : None,
         "NoSym"    : None,
     }, constraint=True, lowest=1)
 
@@ -146,22 +150,22 @@ def run_ts_per_rpos(
         opt = "OptTS"
 
     df = step.orca(df, name="DFT", options={
-        "wB97X-D3" : None,
-        "6-31G**"  : None,
+        functional : None,
+        basisset   : None,
         "TightSCF" : None,
         "SlowConv" : None,
         opt        : None,
-        "Freq"     : None,
+        freq       : None,
         "NoSym"    : None,
-    }, xtra_inp_str="""%geom\nCalc_Hess true\nend""", lowest=1)
+    }, lowest=1)
 
 
     df = step.orca(df, name="DFT-SP", options={
-        "wB97X-D3": None,
-        "6-31+G**": None,
-        "TightSCF": None,
-        "SP"      : None,
-        "NoSym"   : None,
+        functional      : None,
+        basisset_solv   : None,
+        "TightSCF"      : None,
+        "SP"            : None,
+        "NoSym"         : None,
     }, xtra_inp_str="""%CPCM\nSMD TRUE\nSMDSOLVENT "chloroform"\nend""")
     
     if output_parquet:
@@ -316,16 +320,8 @@ def run_ts_per_rpos_UMA_short(
     
     df = step.build_initial_df(embedded)
     df = step.xtb(df, options={"gfnff": None, "opt": None}, constraint=True)
-    df = step.xtb(df, options={"gfn": 2})
-    df = step.xtb(df, options={"gfn": 2, "opt": None}, constraint=True, lowest=top_n)
-    df = step.orca(df, options={"ExtOpt": None, "OptTS": None}, uma="omol")
-
-#     df = step.orca(df, name="UMA", options={"ExtOpt": None, "OptTS": None, "NumFreq": None}, xtra_inp_str="""%geom
-#   Calc_Hess  true
-#   NumHess    true
-#   Recalc_Hess 5
-#   MaxIter    300
-# end""", lowest=1)
+    df = step.xtb(df, options={"gfn": 2, "opt": None}, constraint=True, lowest=10)
+    df = step.orca(df, options={"ExtOpt": None, "OptTS": None, "NumFreq": None}, uma="omol@uma-m-1p1")
     
     if output_parquet:
         df.to_parquet(output_parquet)
@@ -348,6 +344,7 @@ def run_ts_per_lig(
 ):
     
     ts_type = read_ts_type_from_xyz(ts_guess_xyz)
+    print(ts_type)
 
     if ts_type == 'TS1':
         from frust.transformers import transformer_ts1
@@ -400,17 +397,22 @@ def run_ts_per_lig(
         return df3_filt
 
     # ↓↓↓↓↓↓↓↓ This code only executes if DFT is True ↓↓↓↓↓↓↓↓
+
+    functional      = "wB97X-D3" # wB97M-V
+    basisset        = "6-31G**" # def2-TZVPD
+    basisset_solv   = "6-31+G**"
+
     df = step.orca(df, name="DFT-pre-SP", options={
-        "wB97X-D3": None,
-        "6-31+G**": None,
-        "TightSCF": None,
-        "SP": None,
-        "NoSym": None,
+        functional  : None,
+        basisset    : None,
+        "TightSCF"  : None,
+        "SP"        : None,
+        "NoSym"     : None,
     })
 
     df = step.orca(df, name="DFT-pre-Opt", options={
-        "wB97X-D3" : None,
-        "6-31G**"  : None,
+        functional : None,
+        basisset   : None,
         "TightSCF" : None,
         "SlowConv" : None,
         "Opt"      : None,
@@ -424,8 +426,8 @@ def run_ts_per_lig(
         opt = "OptTS"
 
     df = step.orca(df, name="DFT", options={
-        "wB97X-D3" : None,
-        "6-31G**"  : None,
+        functional : None,
+        basisset   : None,
         "TightSCF" : None,
         "SlowConv" : None,
         opt        : None,
@@ -434,11 +436,11 @@ def run_ts_per_lig(
     }, xtra_inp_str="""%geom\nCalc_Hess true\nend""", lowest=1)
 
     df = step.orca(df, name="DFT-SP", options={
-        "wB97X-D3": None,
-        "6-31+G**": None,
-        "TightSCF": None,
-        "SP"      : None,
-        "NoSym"   : None,
+        functional      : None,
+        basisset_solv   : None,
+        "TightSCF"      : None,
+        "SP"            : None,
+        "NoSym"         : None,
     }, xtra_inp_str="""%CPCM\nSMD TRUE\nSMDSOLVENT "chloroform"\nend""")
     
     if output_parquet:
@@ -506,40 +508,37 @@ def run_mols(
         return df3_fin
 
     # ↓↓↓↓↓↓↓↓ DFT branch ↓↓↓↓↓↓↓↓
-    options = {
-        "wB97X-D3": None,
-        "6-31+G**": None,
-        "TightSCF": None,
-        "SP": None,
-        "NoSym": None,
-    }
-
-    df4 = step.orca(df3, name="DFT-pre-SP", options=options)
+    functional      = "wB97X-D3" # wB97X-D3, wB97M-V
+    basisset        = "6-31G**" # 6-31G**, def2-TZVPD
+    basisset_solv   = "6-31+G**" # 6-31+G**, def2-TZVPD
+    freq            = "Freq" # Freq, NumFreq
 
 
-    # a) TS-like Hess-calc & frequency for each ligand
-    detailed_inp = """%geom\nCalc_Hess true\nend"""
-    orca_opts = {
-        "wB97X-D3": None,
-        "6-31G**": None,
-        "TightSCF": None,
-        "SlowConv": None,
-        "Opt":     None,
-        "Freq":    None,
-        "NoSym":   None,
-    }
-    df5 = step.orca(df4, options=orca_opts, xtra_inp_str=detailed_inp, lowest=1)
+    df4 = step.orca(df3, name="DFT-pre-SP", options={
+        functional  : None,
+        basisset    : None,
+        "TightSCF"  : None,
+        "SP"        : None,
+        "NoSym"     : None,
+    })
 
-    # b) single-point with solvent model
-    detailed_inp = """%CPCM\nSMD TRUE\nSMDSOLVENT "chloroform"\nend"""
-    orca_opts = {
-        "wB97X-D3": None,
-        "6-31+G**": None,
-        "TightSCF": None,
-        "SP":       None,
-        "NoSym":    None,
-    }
-    df6 = step.orca(df5, options=orca_opts, xtra_inp_str=detailed_inp)
+    df5 = step.orca(df4, "DFT-Opt", options={
+        functional  : None,
+        basisset    : None,
+        "TightSCF"  : None,
+        "SlowConv"  : None,
+        "Opt"       : None,
+        # freq        : None,
+        "NoSym"     : None,
+    }, lowest=1)
+
+    df6 = step.orca(df5, options={
+        functional      : None,
+        basisset_solv   : None,
+        "TightSCF"      : None,
+        "SP"            : None,
+        "NoSym"         : None,
+    }, xtra_inp_str="""%CPCM\nSMD TRUE\nSMDSOLVENT "chloroform"\nend""")
 
     if output_parquet:
         df6.to_parquet(output_parquet)
@@ -560,6 +559,7 @@ def run_mols_UMA(
     DFT: bool = False,
     select_mols: str | list[str] = "all",  # "all", "uniques", "generics", or specific names
 ):
+    
     # 1) build generic-cycle molecules (with optional selection)
     mols = {}
     for smi in ligand_smiles_list:
@@ -577,7 +577,7 @@ def run_mols_UMA(
     # 2) embed
     embedded = embed_mols(mols, n_confs=n_confs, n_cores=n_cores)
 
-    # 3) xTB cascade
+    # 3) cascade
     step = Stepper(
         ligand_smiles_list,
         n_cores=n_cores,
@@ -588,9 +588,9 @@ def run_mols_UMA(
     )
     df = step.build_initial_df(embedded)
     df = step.xtb(df, options={"gfnff": None, "opt": None})
-    df = step.xtb(df, options={"gfn": 2})
-    df = step.orca(df, options={"ExtOpt": None, "Opt": None, "NumFreq": None}, uma="omol", lowest=1)
-    # df = step.orca(df, options={"XTB2": None, "Opt": None, "NumFreq": None})
+    df = step.xtb(df, options={"gfnff": None, "opt": None}, lowest=10)
+    df = step.orca(df, options={"ExtOpt": None, "Opt": None}, uma="omol")
+    df = step.orca(df, options={"ExtOpt": None, "NumFreq": None}, uma="omol@uma-s-1p1", lowest=1)
     
     if output_parquet:
             df.to_parquet(output_parquet)

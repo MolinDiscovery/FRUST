@@ -462,17 +462,19 @@ class Stepper:
                 """).strip()
 
             if self.step_type.upper() == "INT3" and constraint:
-                BCat10, BPin22, H11, C = 0, 3, 4, 5
+                print("noob")
+                BCat10, BPin42, H11, C = 0, 3, 4, 5
                 atom = [x+1 for x in row["constraint_atoms"]]
+                print(atom)
                 block = textwrap.dedent(f"""
                 $constrain
                   force constant=50
                   distance: {atom[BCat10]}, {atom[H11]}, 1.279
                   distance: {atom[BCat10]}, {atom[C]}, 1.688
-                  distance: {atom[BPin22]}, {atom[H11]}, 1.378
-                  distance: {atom[BPin22]}, {atom[C]}, 1.749
-                  angle: {atom[BCat10]}, {atom[H11]}, {atom[BPin22]}, 89.85
-                  angle: {atom[BCat10]}, {atom[C]}, {atom[BPin22]}, 66.22
+                  distance: {atom[BPin42]}, {atom[H11]}, 1.378
+                  distance: {atom[BPin42]}, {atom[C]}, 1.749
+                  angle: {atom[BCat10]}, {atom[H11]}, {atom[BPin42]}, 89.85
+                  angle: {atom[BCat10]}, {atom[C]}, {atom[BPin42]}, 66.22
                 $end
                 """).strip()                 
 
@@ -496,6 +498,8 @@ class Stepper:
         save_files: list[str] | None = ["orca.out"],
         lowest: int | None = None,
         uma: str | None = None,
+        uma_client_block: str | None = None,
+        **kw        
     ) -> pd.DataFrame:
         """Run ORCA calculations (SP, OptTS, Freq) and attach results to the DataFrame.
 

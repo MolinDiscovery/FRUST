@@ -3,6 +3,7 @@ from contextlib import contextmanager
 from pathlib import Path
 import pandas as pd
 from pandas import Series
+import signal
 
 from frust.config import UMA_TOOLS as TOOLS
 
@@ -10,6 +11,7 @@ def _free_local_port() -> int:
     s = socket.socket(); s.bind(("127.0.0.1", 0))
     port = s.getsockname()[1]; s.close(); return port
 
+## VERSION 2
 # @contextmanager
 # def _uma_server(
 #     task: str,
@@ -82,6 +84,8 @@ def _free_local_port() -> int:
 #             p.kill()
 #         logf.flush(); logf.close()
 
+
+## VERSION 1
 @contextmanager
 def _uma_server(task: str, log_dir: str = ".", use_gpu: bool = False):
     port = _free_local_port()

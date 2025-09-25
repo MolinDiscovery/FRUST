@@ -21,6 +21,7 @@ FRUST.egg-info/
 # Logs and temp files
 *.log
 *.tmp
+*.out
 
 # Special rule for scripts directory
 /scripts/*
