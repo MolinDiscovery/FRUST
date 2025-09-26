@@ -377,13 +377,13 @@ def plot_regression_outliers(
     df: pd.DataFrame,
     x_col: str = "dG",
     y_col: str = "dE",
-    xlabel: str = "DFT dG, kcal/mol",
-    ylabel: str = "xTB dE, kcal/mol",
+    xlabel: str = "dG, kcal/mol",
+    ylabel: str = "dE, kcal/mol",
     label_col: str = "ligand_name",
     rpos_col: str = "rpos",
     method: str = "spearman",
     num_outliers: int = 2,
-    size: tuple = (6, 4)
+    size: tuple = (8, 6)
 ) -> pd.DataFrame:
     """Plot x vs y with linear fit, score outliers, and annotate top points.
 
