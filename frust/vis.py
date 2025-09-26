@@ -377,6 +377,8 @@ def plot_regression_outliers(
     df: pd.DataFrame,
     x_col: str = "dG",
     y_col: str = "dE",
+    xlabel: str = "DFT dG, kcal/mol",
+    ylabel: str = "xTB dE, kcal/mol",
     label_col: str = "ligand_name",
     rpos_col: str = "rpos",
     method: str = "spearman",
@@ -443,8 +445,8 @@ def plot_regression_outliers(
                 fontsize=8,
                 arrowprops=dict(arrowstyle="->", lw=0.5)
             )
-        plt.xlabel(x_col + " DFT")
-        plt.ylabel(y_col + " xTB-GFN2")
+        plt.xlabel(xlabel)
+        plt.ylabel(ylabel)
         plt.legend()
         plt.grid(True)
         plt.tight_layout()

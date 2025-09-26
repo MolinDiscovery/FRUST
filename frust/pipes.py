@@ -487,34 +487,20 @@ def run_mols(
         memory_gb=mem_gb,
         debug=debug,
         output_base=out_dir,
-        save_output_dir=save_output_dir
+        save_output_dir=save_output_dir,
+        save_calc_dirs=False,
     )
-    df0 = step.build_initial_df(embedded)
-    df1 = step.xtb(df0, options={"gfnff": None, "opt": None})
-    df2 = step.xtb(df1, options={"gfn": 2})
-    df3 = step.xtb(df2, options={"gfn": 2, "opt": None}, lowest=top_n)
+    df = step.build_initial_df(embedded)
+    df = step.xtb(df, options={"gfnff": None, "opt": None})
+    df = step.xtb(df, options={"gfn": 2})
+    df = step.xtb(df, options={"gfn": 2, "opt": None}, lowest=top_n)
 
-    df3_fin = (
-        df3
-        .sort_values(["ligand_name", "xtb-gfn-opt-electronic_energy"])
-        .groupby("ligand_name")
-        .head(1)
-    )
-
-    # 4) if no DFT requested, save/return
-    if not DFT:
-        if output_parquet:
-            df3_fin.to_parquet(output_parquet)
-        return df3_fin
-
-    # ↓↓↓↓↓↓↓↓ DFT branch ↓↓↓↓↓↓↓↓
     functional      = "wB97X-D3" # wB97X-D3, wB97M-V
     basisset        = "6-31G**" # 6-31G**, def2-TZVPD
     basisset_solv   = "6-31+G**" # 6-31+G**, def2-TZVPD
     freq            = "Freq" # Freq, NumFreq
 
-
-    df4 = step.orca(df3, name="DFT-pre-SP", options={
+    df = step.orca(df, name="DFT-pre-SP", options={
         functional  : None,
         basisset    : None,
         "TightSCF"  : None,
@@ -522,7 +508,24 @@ def run_mols(
         "NoSym"     : None,
     })
 
-    df5 = step.orca(df4, "DFT-Opt", options={
+    # 4) if no DFT requested, save/return
+    if not DFT:
+
+        if output_parquet:
+            df.to_parquet(output_parquet)
+        return df
+
+    # ↓↓↓↓↓↓↓↓ DFT branch ↓↓↓↓↓↓↓↓
+
+    df = step.orca(df, name="DFT-pre-SP", options={
+        functional  : None,
+        basisset    : None,
+        "TightSCF"  : None,
+        "SP"        : None,
+        "NoSym"     : None,
+    })
+
+    df = step.orca(df, "DFT-Opt", options={
         functional  : None,
         basisset    : None,
         "TightSCF"  : None,
@@ -532,7 +535,7 @@ def run_mols(
         "NoSym"     : None,
     }, lowest=1)
 
-    df6 = step.orca(df5, options={
+    df = step.orca(df, options={
         functional      : None,
         basisset_solv   : None,
         "TightSCF"      : None,
@@ -541,8 +544,8 @@ def run_mols(
     }, xtra_inp_str="""%CPCM\nSMD TRUE\nSMDSOLVENT "chloroform"\nend""")
 
     if output_parquet:
-        df6.to_parquet(output_parquet)
-    return df6
+        df.to_parquet(output_parquet)
+    return df
 
 
 def run_mols_UMA(

@@ -7,24 +7,24 @@ from itertools import islice
 import importlib
 
 # ─── CONFIG ─────────────────────────────────────────────────────────────
-PIPELINE_NAME  = "run_ts_per_rpos" # "run_ts_per_rpos", "run_ts_per_lig", "run_mols"
-PRODUCTION     = True
+PIPELINE_NAME  = "run_mols" # "run_ts_per_rpos", "run_ts_per_lig", "run_mols"
+PRODUCTION     = False
 USE_SLURM      = True
 DEBUG          = False
 BATCH_SIZE     = 1
 CSV_PATH       = "../datasets/1m.csv"
-OUT_DIR        = "results_full_test_ts4"
-LOG_DIR        = "logs/full_test_ts4"
-SAVE_OUT_DIRS  = False
-CPUS_PER_JOB   = 12
-MEM_GB         = 45
+OUT_DIR        = "results_ligs_fontaine_25-10-25"
+LOG_DIR        = "logs/ligs_fontaine_25-10-25"
+SAVE_OUT_DIRS  = True
+CPUS_PER_JOB   = 10
+MEM_GB         = 30
 TIMEOUT_MIN    = 14400
 N_CONFS        = None if PRODUCTION else 1
-DFT            = True
+DFT            = False
 # ─── TS SPECIFIC ─────────────────────────────────────────────────────────
 TS_XYZ         = "../structures/ts4_TMP.xyz"
 # ─── MOL SPECIFIC ────────────────────────────────────────────────────────
-SELECT_MOLS    = "all" # "all", "uniques", "generics", or ['dimer','HH','ligand','catalyst','int2','mol2','HBpin-ligand','HBpin-mol']
+SELECT_MOLS    = ["ligand"] # "all", "uniques", "generics", or ['dimer','HH','ligand','catalyst','int2','mol2','HBpin-ligand','HBpin-mol']
 
 def batched(iterable, n):
     it = iter(iterable)
