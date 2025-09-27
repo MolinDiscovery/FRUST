@@ -122,10 +122,10 @@ def run_ts_per_rpos(
 
     # ↓↓↓↓↓↓↓↓ This code only executes if DFT is True ↓↓↓↓↓↓↓↓
 
-    functional      = "wB97M-V" # wB97X-D3
-    basisset        = "def2-TZVPD" # 6-31G**
-    basisset_solv   = "def2-TZVPD" # 6-31+G**
-    freq            = "NumFreq"
+    functional      = "wB97X-D3" # wB97X-D3, wB97M-V
+    basisset        = "6-31G**" # 6-31G**, def2-TZVPD
+    basisset_solv   = "6-31+G**" # 6-31+G**, def2-TZVPD
+    freq            = "Freq" # NumFreq, Freq
 
     df = step.orca(df, name="DFT-pre-SP", options={
         functional  : None,

@@ -7,22 +7,22 @@ from itertools import islice
 import importlib
 
 # ─── CONFIG ─────────────────────────────────────────────────────────────
-PIPELINE_NAME  = "run_mols" # "run_ts_per_rpos", "run_ts_per_lig", "run_mols"
-PRODUCTION     = False
+PIPELINE_NAME  = "run_ts_per_rpos" # "run_ts_per_rpos", "run_ts_per_lig", "run_mols"
+PRODUCTION     = True
 USE_SLURM      = True
 DEBUG          = False
 BATCH_SIZE     = 1
 CSV_PATH       = "../datasets/1m.csv"
-OUT_DIR        = "results_ligs_fontaine_25-10-25"
-LOG_DIR        = "logs/ligs_fontaine_25-10-25"
+OUT_DIR        = "results_full_test_int3"
+LOG_DIR        = "logs/full_test_int3"
 SAVE_OUT_DIRS  = True
-CPUS_PER_JOB   = 10
-MEM_GB         = 30
+CPUS_PER_JOB   = 12
+MEM_GB         = 31
 TIMEOUT_MIN    = 14400
 N_CONFS        = None if PRODUCTION else 1
-DFT            = False
+DFT            = True
 # ─── TS SPECIFIC ─────────────────────────────────────────────────────────
-TS_XYZ         = "../structures/ts4_TMP.xyz"
+TS_XYZ         = "../structures/int3_TMP.xyz"
 # ─── MOL SPECIFIC ────────────────────────────────────────────────────────
 SELECT_MOLS    = ["ligand"] # "all", "uniques", "generics", or ['dimer','HH','ligand','catalyst','int2','mol2','HBpin-ligand','HBpin-mol']
 
