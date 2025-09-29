@@ -531,7 +531,7 @@ def run_mols(
         "TightSCF"  : None,
         "SlowConv"  : None,
         "Opt"       : None,
-        # freq        : None,
+        freq        : None,
         "NoSym"     : None,
     }, lowest=1)
 
