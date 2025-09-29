@@ -1,0 +1,8 @@
+{
+   "blist":[
+   [       0,********,       1]
+   ],
+   "program call": "xtb --gfnff input.xyz --chrg 0 --uhf 0 --norestart --wrtopo blist",
+   "method": "GFN-FF",
+   "xtb version": "6.7.1 (edcfbbe)"
+}

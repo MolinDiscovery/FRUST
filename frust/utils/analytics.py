@@ -111,7 +111,7 @@ def _svg_annotated_smi(
     drawer = rdMolDraw2D.MolDraw2DSVG(*size)
     opts = drawer.drawOptions()
     opts.drawAtomNotes = True
-    opts.annotationFontScale = 0.9
+    opts.annotationFontScale = 0.7
 
     drawer.DrawMolecule(
         mol,
