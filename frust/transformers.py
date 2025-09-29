@@ -971,19 +971,44 @@ def transformer_mols(
     ############################################
     ### Create intermediate 2 and molecule 2 ###
     ############################################
-    TMP       = Chem.MolFromSmarts('CC1(C)CCCC(C)(C)N1')
-    mol2s = []; int2s = []
+    b_pattern = Chem.MolFromSmarts("[B]")
+
+    catalyst_matches = catalyst_mol.GetSubstructMatches(b_pattern)
+
+    if not catalyst_matches:
+        raise ValueError("No [B] atom found in the catalyst.")
+
+    catalyst_b_idx = catalyst_matches[0][0]
+
+    mol2s = []
+    int2s = []
     for cH in unique_cH:
-        combo_rw, offset = combine_rw_mols(catalyst_rw, ligand_rw)
-        combo_rw.AddBond(catalyst_rw.GetAtomWithIdx(0).GetIdx(),
-                         cH + offset, Chem.BondType.SINGLE)
-        combo_rw.GetAtomWithIdx(0).SetFormalCharge(-1)
-        nm = combo_rw.GetSubstructMatches(TMP)[0][9]
-        combo_rw.GetAtomWithIdx(nm).SetFormalCharge(+1)
-        mol2 = combo_rw.GetMol(); Chem.SanitizeMol(mol2)
-        int2 = combo_rw.GetMol(); Chem.SanitizeMol(int2)
-        mol2s.append((mol2, cH+offset))
-        int2s.append((int2, cH+offset))
+
+        combined_rw, offset = combine_rw_mols(catalyst_rw, ligand_rw)
+        combined_mol = combined_rw.GetMol()
+        Chem.SanitizeMol(combined_mol)
+        
+        b_idx_combined   = catalyst_b_idx
+        ch_idx_combined  = cH + offset
+
+        combined_rw.AddBond(b_idx_combined, ch_idx_combined, Chem.BondType.SINGLE)
+
+        mol2 = combined_rw.GetMol()
+
+        boron = combined_rw.GetAtomWithIdx(catalyst_b_idx)
+        boron.SetFormalCharge(-1)
+
+        TMP = Chem.MolFromSmarts('CC1(C)CCCC(C)(C)N1')
+        TMP_match = combined_rw.GetSubstructMatches(TMP)
+        nitrogen = combined_rw.GetAtomWithIdx(TMP_match[0][9])
+        nitrogen.SetFormalCharge(+1)
+
+        int2 = combined_rw.GetMol()
+        Chem.SanitizeMol(mol2)
+        Chem.SanitizeMol(int2)
+
+        mol2s.append((mol2, ch_idx_combined))
+        int2s.append((int2, ch_idx_combined))        
 
     ###########################
     ### Add HBpin to ligand ###
