@@ -517,14 +517,6 @@ def run_mols(
 
     # ↓↓↓↓↓↓↓↓ DFT branch ↓↓↓↓↓↓↓↓
 
-    df = step.orca(df, name="DFT-pre-SP", options={
-        functional  : None,
-        basisset    : None,
-        "TightSCF"  : None,
-        "SP"        : None,
-        "NoSym"     : None,
-    })
-
     df = step.orca(df, "DFT-Opt", options={
         functional  : None,
         basisset    : None,

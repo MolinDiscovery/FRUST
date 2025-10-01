@@ -417,6 +417,12 @@ def plot_regression_outliers(
     y_fit = lr.slope * x + lr.intercept
     rho, _ = spearmanr(x, y)
 
+    # Print the linear equation to stdout (not on the plot)
+    eq_label = (f"y = {lr.slope:.6f}x "
+                f"{'+' if lr.intercept >= 0 else '-'} "
+                f"{abs(lr.intercept):.6f}")
+    print("[INFO]: Linear relation:", eq_label)
+
     if method == "pearson":
         data["score"] = (y - y_fit).abs()
     else:
@@ -426,7 +432,8 @@ def plot_regression_outliers(
 
     outliers = data.nlargest(num_outliers, "score")
 
-    style_ctx = plt.style.context('dark_background') if darkmode else nullcontext()
+    style_ctx = (plt.style.context('dark_background')
+                 if darkmode else nullcontext())
     with style_ctx:
         plt.figure(figsize=size)
         plt.scatter(x, y, alpha=0.7)
@@ -453,3 +460,4 @@ def plot_regression_outliers(
         plt.show()
 
     return None
+
