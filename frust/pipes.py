@@ -108,24 +108,10 @@ def run_ts_per_rpos(
     df = step.xtb(df, options={"gfn": 2})
     df = step.xtb(df, options={"gfn": 2, "opt": None}, constraint=True, lowest=top_n)
 
-    last_energy = [c for c in df.columns if c.endswith("_energy")][-1]
-    df3_filt = (
-        df.sort_values(["ligand_name", "rpos", last_energy])
-           .groupby(["ligand_name", "rpos"])
-           .head(1)
-    )
-    
-    if not DFT:
-        if output_parquet:
-            df3_filt.to_parquet(output_parquet)            
-        return df3_filt
-
-    # ↓↓↓↓↓↓↓↓ This code only executes if DFT is True ↓↓↓↓↓↓↓↓
-
     functional      = "wB97X-D3" # wB97X-D3, wB97M-V
     basisset        = "6-31G**" # 6-31G**, def2-TZVPD
     basisset_solv   = "6-31+G**" # 6-31+G**, def2-TZVPD
-    freq            = "Freq" # NumFreq, Freq
+    freq            = "Freq" # NumFreq, Freq    
 
     df = step.orca(df, name="DFT-pre-SP", options={
         functional  : None,
@@ -134,6 +120,13 @@ def run_ts_per_rpos(
         "SP"        : None,
         "NoSym"     : None,
     })
+    
+    if not DFT:
+        if output_parquet:
+            df.to_parquet(output_parquet)            
+        return df
+
+    # ↓↓↓↓↓↓↓↓ This code only executes if DFT is True ↓↓↓↓↓↓↓↓
 
     df = step.orca(df, name="DFT-pre-Opt", options={
         functional : None,
