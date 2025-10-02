@@ -119,7 +119,7 @@ def run_ts_per_rpos(
         "TightSCF"  : None,
         "SP"        : None,
         "NoSym"     : None,
-    })
+    }, lowest=1)
     
     if not DFT:
         if output_parquet:
