@@ -360,7 +360,7 @@ def run_ts_per_lig(
     ts_structs = {}
     for smi in ligand_smiles_list:
         ts_mols = transformer_ts(smi, ts_guess_xyz)
-        ts_structs.update(ts_mols)    
+        ts_structs.update(ts_mols)
 
     embedded = embed_ts(ts_structs, ts_type=ts_type, n_confs=n_confs, optimize=not debug)
 
@@ -373,27 +373,14 @@ def run_ts_per_lig(
     save_output_dir=save_output_dir,
     )
     df = step.build_initial_df(embedded)
-    df = step.xtb(df, options={"gfnff": None, "opt": None}, constraint=True, save_step=True)
+    df = step.xtb(df, options={"gfnff": None, "opt": None}, constraint=True)
     df = step.xtb(df, options={"gfn": 2})
     df = step.xtb(df, options={"gfn": 2, "opt": None}, constraint=True, lowest=top_n)
 
-    last_energy = [c for c in df.columns if c.endswith("_energy")][-1]
-    df3_filt = (
-        df.sort_values(["ligand_name", "rpos", last_energy])
-           .groupby(["ligand_name", "rpos"])
-           .head(1)
-    )
-    
-    if not DFT:
-        if output_parquet:
-            df3_filt.to_parquet(output_parquet)            
-        return df3_filt
-
-    # ↓↓↓↓↓↓↓↓ This code only executes if DFT is True ↓↓↓↓↓↓↓↓
-
-    functional      = "wB97X-D3" # wB97M-V
-    basisset        = "6-31G**" # def2-TZVPD
-    basisset_solv   = "6-31+G**"
+    functional      = "wB97X-D3" # wB97X-D3, wB97M-V
+    basisset        = "6-31G**" # 6-31G**, def2-TZVPD
+    basisset_solv   = "6-31+G**" # 6-31+G**, def2-TZVPD
+    freq            = "Freq" # NumFreq, Freq
 
     df = step.orca(df, name="DFT-pre-SP", options={
         functional  : None,
@@ -401,7 +388,14 @@ def run_ts_per_lig(
         "TightSCF"  : None,
         "SP"        : None,
         "NoSym"     : None,
-    })
+    }, lowest=1)
+
+    if not DFT:
+        if output_parquet:
+            df.to_parquet(output_parquet)
+        return df
+
+    # ↓↓↓↓↓↓↓↓ This code only executes if DFT is True ↓↓↓↓↓↓↓↓
 
     df = step.orca(df, name="DFT-pre-Opt", options={
         functional : None,
@@ -409,9 +403,8 @@ def run_ts_per_lig(
         "TightSCF" : None,
         "SlowConv" : None,
         "Opt"      : None,
-        "Freq"     : None,
         "NoSym"    : None,
-    }, constraint=True, lowest=1)    
+    }, constraint=True, lowest=1)
     
     if ts_type.upper() == "INT3":
         opt = "Opt"
@@ -424,9 +417,9 @@ def run_ts_per_lig(
         "TightSCF" : None,
         "SlowConv" : None,
         opt        : None,
-        "Freq"     : None,
+        freq       : None,
         "NoSym"    : None,
-    }, xtra_inp_str="""%geom\nCalc_Hess true\nend""", lowest=1)
+    }, lowest=1)
 
     df = step.orca(df, name="DFT-SP", options={
         functional      : None,
@@ -499,7 +492,7 @@ def run_mols(
         "TightSCF"  : None,
         "SP"        : None,
         "NoSym"     : None,
-    })
+    }, lowest=1)
 
     # 4) if no DFT requested, save/return
     if not DFT:

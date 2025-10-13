@@ -1,0 +1,11 @@
+,smiles,active atom
+80,CC(C)(C)OC(=O)Nc1ccc(O)cc1,14
+81,CC(C)(C)CC(=O)Nc1cccc(Cl)c1,10
+82,CC(C)(C)NC(=O)Oc1cccc(Cl)c1,10
+83,COc1c(C)cccc1C,6
+84,COc1cccc(OC)c1,4
+85,COc1cccc(OC)c1OC,4
+86,CC(C)c1cccc(C(C)C)c1,5
+87,Cc1cccc(Br)c1,3
+88,Cc1cccc(N(C)C)c1,3
+89,COC(=O)c1ccc(C#N)cc1,10

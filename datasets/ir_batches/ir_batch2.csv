@@ -1,0 +1,11 @@
+,smiles,active atom
+20,CC(C)(C)OC(=O)n1ccc2cccnc21,9
+21,COc1ccc2[nH]c(C)cc2c1,4
+22,N#Cc1cccc2[nH]ccc12,5
+23,Cc1cc2cc(Cl)ccc2[nH]1,8
+24,CCN(CC)C(=O)c1cc2ccccc2[nH]1,13
+25,CCOC(=O)c1cc2ccccc2[nH]1,11
+26,CCOC(=O)c1cc2cc(Cl)ccc2[nH]1,12
+27,c1ccc2occc2c1,5
+28,CCOC(=O)c1cc2cc(OC)ccc2[nH]1,13
+29,COC(=O)c1cc2c(OC)cccc2[nH]1,12

@@ -1,0 +1,11 @@
+,smiles,active atom
+40,Fc1cccc(-c2ccccc2)c1,2
+41,Fc1cccc(-c2ccc3ccccc3c2)c1,2
+42,Cc1ccc(O)cc1,6
+43,CC(C)(C)c1ccc(O)cc1,9
+44,Oc1ccc(Cl)cc1,7
+45,COc1cccc(O)c1,5
+46,Oc1ccc(Br)cc1Cl,2
+47,COc1ccccc1O,6
+48,Cc1ccccc1O,5
+49,Cc1ccc(O)cc1C,3

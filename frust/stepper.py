@@ -10,7 +10,7 @@ from typing import Callable
 import numpy as np
 import pandas as pd
 from pandas import Series
-import submitit
+from inspect import signature
 
 from frust.utils.dirs import make_step_dir, prepare_base_dir
 from frust.utils.slurm import detect_job_id
@@ -280,7 +280,20 @@ class Stepper:
                 base_args["save_files"] = save_files
 
             inputs = {**base_args, **build_inputs(row)}
-            
+
+            # Filter inputs to only those accepted by engine_fn (avoids unexpected kwargs)
+            try:
+                allowed = set(signature(engine_fn).parameters.keys())
+                filtered = {k: v for k, v in inputs.items() if k in allowed}
+                if self.debug:
+                    dropped = sorted(set(inputs) - set(filtered))
+                    if dropped:
+                        logger.debug(f"[{prefix}] dropped unsupported kwargs: {dropped}")
+                inputs = filtered
+            except Exception:
+                # If introspection fails for any reason, fall back to original inputs
+                pass
+
             # step 3: run engine, catch exceptions
             logger.info(f"[{prefix}] row {i} ({row['custom_name']})…")
             try:

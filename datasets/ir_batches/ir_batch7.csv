@@ -1,0 +1,11 @@
+,smiles,active atom
+70,COc1ccc2nc(C#N)ccc2c1,11
+71,Cc1ccc2ccc([Si](C)(C)C)cc2n1,3
+72,Cc1ccc2ccc(C#N)cc2n1,3
+73,COc1ccc2ccc(C)nc2c1,6
+74,Cc1ccc2ccc(C)nc2c1,5
+75,CN(C(=O)OC(C)(C)C)c1cccc(Cl)c1,11
+76,CC(C)(C)OC(=O)N(C(=O)OC(C)(C)C)c1cccc(Cl)c1,17
+77,CC(C)(C)OC(=O)Nc1ccc(Br)cc1,14
+78,CC(C)(C)OC(=O)Nc1ccc(C(F)(F)F)cc1,17
+79,CC(C)(C)OC(=O)Nc1ccc(Cl)cc1,14
