@@ -1,0 +1,11 @@
+,smiles,active atom
+10,Cc1nc2c(C)cccc2[nH]1,7
+11,Cc1nc2c(Cl)cccc2[nH]1,7
+12,Cc1nc2cc(F)ccc2[nH]1,7
+13,c1cn[nH]c1,0
+14,Cc1cc[nH]n1,2
+15,Cc1cc(C)[nH]n1,2
+16,FC(F)(F)c1cc[nH]n1,6
+17,c1cnc2[nH]ccc2c1,6
+18,Brc1cnc2[nH]ccc2c1,7
+19,c1cc2cc[nH]c2cn1,3
