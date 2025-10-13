@@ -65,10 +65,17 @@ def summarize_ts_vibrations(
     print(f"  ❌ Non-TSs  : {non_ts_count}")
 
 
+import re
+from rdkit.Chem import rdDepictor
+from rdkit.Chem.Draw import rdMolDraw2D
+
 def _svg_annotated_smi(
         smi, pos_list, dE_list,
         size=(250, 250), highlight_color=(1, 0, 0),
-        show_rpos: bool = False, step_list: list[str] | None = None):
+        show_rpos: bool = False, step_list: list[str] | None = None,
+        fixed_bond_px: float | None = 25.0,
+        note_font_px: float | None = None,
+        annotation_scale: float = 1):
     """Return an SVG string of the molecule with per-atom ΔE labels.
 
     Args:
@@ -80,8 +87,17 @@ def _svg_annotated_smi(
         show_rpos: If True, append ' (rX)' after the value.
         step_list: Optional per-position step tags (e.g., 'ts1').
             When provided, labels become like '20.10(ts1)'.
+        fixed_bond_px: If set, draw with a fixed px/bond to keep drawings
+            on a common scale (RDKit may still shrink to fit if canvas is
+            too small).
+        note_font_px: If set, enforce an absolute pixel size for annotation
+            text (via fixedFontSize * annotationFontScale).
+        annotation_scale: Multiplier for annotation size relative to the
+            base label font.
     """
     mol = Chem.MolFromSmiles(smi)
+    if mol is None:
+        return ""
     rdDepictor.Compute2DCoords(mol)
 
     for i, (p, e) in enumerate(zip(pos_list, dE_list)):
@@ -90,19 +106,14 @@ def _svg_annotated_smi(
         except (TypeError, ValueError):
             continue
 
-        # Build base value
         try:
             val = float(e)
             note = f"{val:.2f}"
         except (TypeError, ValueError):
             note = f"{e}"
-
-        # Append step tag like '(ts1)' with no space before parenthesis
+    
         if step_list is not None and i < len(step_list):
-            step_tag = step_list[i]
-            note += f"({step_tag})"
-
-        # Optionally append rpos with a leading space for readability
+            note += f" [{step_list[i]}]"
         if show_rpos:
             note += f" (r{p_int})"
 
@@ -111,16 +122,42 @@ def _svg_annotated_smi(
     drawer = rdMolDraw2D.MolDraw2DSVG(*size)
     opts = drawer.drawOptions()
     opts.drawAtomNotes = True
-    opts.annotationFontScale = 0.7
 
-    drawer.DrawMolecule(
-        mol,
-        # highlightAtoms=[int(p) for p in pos_list],
-        # highlightAtomColors={int(p): highlight_color for p in pos_list},
-    )
+    # Keep all molecules at the same scale (px per bond).
+    if fixed_bond_px is not None:
+        opts.fixedBondLength = float(fixed_bond_px)
+
+    # Control annotation size deterministically.
+    # If note_font_px is given, make the final annotation size = note_font_px.
+    scale = float(annotation_scale) if annotation_scale else 0.4
+    opts.annotationFontScale = scale
+    use_svg_patch = False
+    if note_font_px is not None:
+        # final px = annotationFontScale * fixedFontSize
+        base_font_px = max(1, int(round(float(note_font_px) / max(scale, 1e-6))))
+        if hasattr(opts, "fixedFontSize"):
+            opts.fixedFontSize = base_font_px  # <- must be INT
+            # (optional clamps; harmless when fixedFontSize is honored)
+            if hasattr(opts, "minFontSize"):
+                opts.minFontSize = base_font_px
+            if hasattr(opts, "maxFontSize"):
+                opts.maxFontSize = base_font_px
+        else:
+            # very old RDKit fallback: patch SVG after drawing
+            use_svg_patch = True
+
+    drawer.DrawMolecule(mol)
     drawer.FinishDrawing()
-    return drawer.GetDrawingText()
+    svg = drawer.GetDrawingText()
 
+    if note_font_px is not None and use_svg_patch:
+        px = float(note_font_px)
+        # Patch both style: and attribute-based font declarations.
+        svg = re.sub(r'(font-size\s*:\s*)[\d.]+px', rf'\1{px}px', svg)
+        svg = re.sub(r'(font-size\s*=\s*["\'])[\d.]+(px)?(["\'])',
+                     rf'\1{px}\3', svg)
+
+    return svg
 
 import pandas as pd
 
@@ -133,6 +170,11 @@ def build_annotated_frame(
     output_path: str | None = None,
     step_col: str | None = None,
     show_rpos: bool = False,
+    energy_cols: list[str] | None = None,
+    size: tuple[int, int] = (250, 250),
+    fixed_bond_px: float | None = 25.0,   # NEW
+    note_font_px: float | None = 14.0,    # NEW
+    annotation_scale: float = 1,   # NEW
 ) -> tuple[pd.DataFrame, str]:
     """One row per ligand + an SVG column with all ΔE annotations.
     If output_path is set, writes a standalone HTML file.
@@ -142,46 +184,87 @@ def build_annotated_frame(
         ligand_col (str): Column name for ligand grouping.
         smi_col (str): Column name for SMILES.
         pos_col (str): Column name for annotation positions.
-        energy_col (str): Column name for ΔE values.
+        energy_col (str): Column name for ΔE values. If this column is not
+            present, you can provide `energy_cols` and the function will use
+            the per-row maximum across those columns.
         output_path (str | None): File path to write HTML. No file written
             if None.
-        step_col (str | None): Optional column with per-row step labels
-            (e.g. 'dG_high_step'). Shown as '(ts1)' next to the value.
+        step_col (str | None): Optional column with per-row step labels.
         show_rpos (bool): If True, append ' (rX)' to each label.
+        energy_cols (list[str] | None): Columns to compute per-row maxima
+            when `energy_col` is not available.
+        fixed_bond_px (float | None): Passed to `_svg_annotated_smi`.
+        note_font_px (float | None): Passed to `_svg_annotated_smi`.
 
     Returns:
         Tuple[pd.DataFrame, str]:
             - DataFrame with one row per ligand and an "annotated_svg" column.
             - HTML table fragment as a string.
     """
-    for col in (ligand_col, smi_col, pos_col, energy_col):
+    for col in (ligand_col, smi_col, pos_col):
         if col not in df.columns:
             raise ValueError(f"Column not found: {col}")
-    if step_col is not None and step_col not in df.columns:
-        raise ValueError(f"Column not found: {step_col}")
+
+    work = df.copy()
+
+    energy_col_local = energy_col
+    step_col_local = step_col
+
+    if energy_col_local not in work.columns:
+        if not energy_cols:
+            raise ValueError(
+                "Energy column not found and no energy_cols provided. "
+                f"Missing: {energy_col!r}"
+            )
+        missing = [c for c in energy_cols if c not in work.columns]
+        if missing:
+            raise ValueError(f"Missing energy columns: {missing}")
+
+        vals = work[energy_cols].apply(pd.to_numeric, errors="coerce")
+        work["_energy_max_tmp"] = vals.max(axis=1, skipna=True)
+        try:
+            step_idx = vals.idxmax(axis=1, skipna=True)
+        except Exception:
+            step_idx = vals.apply(
+                lambda r: (r.idxmax(skipna=True)
+                           if r.notna().any() else None),
+                axis=1
+            )
+        work["_step_tmp"] = step_idx
+        energy_col_local = "_energy_max_tmp"
+        if step_col_local is None:
+            step_col_local = "_step_tmp"
+
+    if step_col_local is not None and step_col_local not in work.columns:
+        raise ValueError(f"Column not found: {step_col_local}")
 
     def _norm_step(s: object) -> str:
         if not isinstance(s, str):
             return str(s)
         t = s.strip()
-        # Common tidy-up: 'dG_TS1' -> 'ts1', 'TS2' -> 'ts2'
-        t = t.replace("dG_", "").replace("dE_", "")
-        return t.lower()
+        t = t.replace("dG_", "").replace("dE_", "").lower()
+        if t.startswith("ts"):
+            t = t[2:]  # remove the 'ts' prefix
+        return t
 
     rows = []
-    for lig, grp in df.groupby(ligand_col):
+    for lig, grp in work.groupby(ligand_col):
         smi = grp[smi_col].iloc[0]
         pos = grp[pos_col].astype(int).tolist()
-        dE = grp[energy_col].tolist()
+        dE_vals = grp[energy_col_local].tolist()
 
         steps = None
-        if step_col is not None:
-            steps = [_norm_step(x) for x in grp[step_col].tolist()]
+        if step_col_local is not None:
+            steps = [_norm_step(x) for x in grp[step_col_local].tolist()]
 
         svg = _svg_annotated_smi(
-            smi, pos, dE,
+            smi, pos, dE_vals,
             show_rpos=show_rpos,
-            step_list=steps
+            step_list=steps,
+            fixed_bond_px=fixed_bond_px,
+            note_font_px=note_font_px,
+            annotation_scale=annotation_scale,  # pass through
+            size=size,
         )
         rows.append({ligand_col: lig, smi_col: smi, "annotated_svg": svg})
 
