@@ -1,0 +1,11 @@
+,smiles,active atom
+60,Oc1ccc(F)cc1,7
+61,Oc1ccc(Cl)cc1Cl,2
+62,CCOP(=O)(OCC)c1ccccc1C(F)(F)F,10
+63,CCN(CC)P(=O)(c1ccccc1)N(CC)CC,11
+64,FC(F)(F)c1ccc2c(Cl)ccnc2c1,10
+65,Clc1ccc2c(Cl)ccnc2c1,7
+66,Cc1ccc2nc(C)ccc2c1,9
+67,COc1ccc2nc(C)ccc2c1,10
+68,Cc1ccc2cc(Cl)ccc2n1,3
+69,Cc1ccc2cc(Br)ccc2n1,3

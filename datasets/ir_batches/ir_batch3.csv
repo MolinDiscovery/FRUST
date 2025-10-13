@@ -1,0 +1,11 @@
+,smiles,active atom
+30,Cc1cc2ccccc2[nH]1,7
+31,C[Si](C)(C)c1cc2ccccc2[nH]1,10
+32,c1ccc(-c2cc3ccccc3[nH]2)cc1,10
+33,CCOC(=O)c1c(C)[nH]c2ccccc12,10
+34,Fc1cccc(C(F)(F)F)c1,2
+35,CN(C)S(=O)(=O)c1cccc(F)c1,9
+36,CCN(CC)C(=O)c1cccc(F)c1,10
+37,COC(=O)C(C)c1cccc(F)c1,9
+38,COc1cccc(F)c1,5
+39,CCOC(=O)c1cccc(F)c1,8

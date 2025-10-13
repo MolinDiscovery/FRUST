@@ -12,19 +12,19 @@ PRODUCTION     = True
 USE_SLURM      = True
 DEBUG          = False
 BATCH_SIZE     = 1
-CSV_PATH       = "../datasets/font_smiles.csv"
-OUT_DIR        = "results_full_font_ts2_xtb_2"
-LOG_DIR        = "logs/full_font_ts2_xtb_2"
+CSV_PATH       = "../datasets/ir_batches/ir_batch8.csv"
+OUT_DIR        = "results_ir_ts2_xtb_b8"
+LOG_DIR        = "logs/ir_ts2_xtb_b8"
 SAVE_OUT_DIRS  = True
-CPUS_PER_JOB   = 4
-MEM_GB         = 10
-TIMEOUT_MIN    = 14400
+CPUS_PER_JOB   = 2
+MEM_GB         = 2.5
+TIMEOUT_MIN    = 250
 N_CONFS        = None if PRODUCTION else 1
 DFT            = False
 # ─── TS SPECIFIC ─────────────────────────────────────────────────────────
 TS_XYZ         = "../structures/ts2.xyz"
 # ─── MOL SPECIFIC ────────────────────────────────────────────────────────
-SELECT_MOLS    = "uniques" # "all", "uniques", "generics", or ['dimer','HH','ligand','catalyst','int2','mol2','HBpin-ligand','HBpin-mol']
+SELECT_MOLS    = "all" # "all", "uniques", "generics", or ['dimer','HH','ligand','catalyst','int2','mol2','HBpin-ligand','HBpin-mol']
 
 def batched(iterable, n):
     it = iter(iterable)

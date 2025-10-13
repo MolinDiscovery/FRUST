@@ -119,9 +119,13 @@ def run_ts_per_rpos(
         "TightSCF"  : None,
         "SP"        : None,
         "NoSym"     : None,
-    }, lowest=1)
-    
+    })
+
     if not DFT:
+        last_energy = [c for c in df.columns if c.endswith("_energy")][-1]
+        df = (df.sort_values(["ligand_name", "rpos", last_energy]
+                            ).groupby(["ligand_name", "rpos"]).head(1))
+        
         if output_parquet:
             df.to_parquet(output_parquet)            
         return df
