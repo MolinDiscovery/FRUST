@@ -12,17 +12,17 @@ PRODUCTION     = True
 USE_SLURM      = True
 DEBUG          = False
 BATCH_SIZE     = 1
-CSV_PATH       = "../datasets/ir_batches/ir_batch8.csv"
-OUT_DIR        = "results_ir_ts2_xtb_b8"
-LOG_DIR        = "logs/ir_ts2_xtb_b8"
+CSV_PATH       = "../datasets/ir_batches/ir_batch9.csv"
+OUT_DIR        = "results_ir_ts4_xtb_b9"
+LOG_DIR        = "logs/ir_ts4_xtb_b9"
 SAVE_OUT_DIRS  = True
 CPUS_PER_JOB   = 2
-MEM_GB         = 2.5
-TIMEOUT_MIN    = 250
+MEM_GB         = 2
+TIMEOUT_MIN    = 1000
 N_CONFS        = None if PRODUCTION else 1
 DFT            = False
 # ─── TS SPECIFIC ─────────────────────────────────────────────────────────
-TS_XYZ         = "../structures/ts2.xyz"
+TS_XYZ         = "../structures/ts4_TMP.xyz"
 # ─── MOL SPECIFIC ────────────────────────────────────────────────────────
 SELECT_MOLS    = "all" # "all", "uniques", "generics", or ['dimer','HH','ligand','catalyst','int2','mol2','HBpin-ligand','HBpin-mol']
 
@@ -56,7 +56,7 @@ os.makedirs(LOG_DIR, exist_ok=True)
 # 4) pick executor
 executor = submitit.AutoExecutor(LOG_DIR) if USE_SLURM else submitit.LocalExecutor(LOG_DIR)
 executor.update_parameters(
-    slurm_partition="kemi1" if USE_SLURM else None,
+    slurm_partition="chem" if USE_SLURM else None,
     cpus_per_task=CPUS_PER_JOB,
     mem_gb=MEM_GB,
     timeout_min=TIMEOUT_MIN,
