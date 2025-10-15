@@ -12,17 +12,17 @@ PRODUCTION     = True
 USE_SLURM      = True
 DEBUG          = False
 BATCH_SIZE     = 1
-CSV_PATH       = "../datasets/ir_batches/ir_batch9.csv"
-OUT_DIR        = "results_ir_ts4_xtb_b9"
-LOG_DIR        = "logs/ir_ts4_xtb_b9"
+CSV_PATH       = "../datasets/temps/temp_ts3.csv"
+OUT_DIR        = "results_ts3_dft_redo"
+LOG_DIR        = "logs/ts3_dft_redo"
 SAVE_OUT_DIRS  = True
-CPUS_PER_JOB   = 2
-MEM_GB         = 2
-TIMEOUT_MIN    = 1000
+CPUS_PER_JOB   = 6
+MEM_GB         = 42
+TIMEOUT_MIN    = 7200
 N_CONFS        = None if PRODUCTION else 1
-DFT            = False
+DFT            = True
 # ─── TS SPECIFIC ─────────────────────────────────────────────────────────
-TS_XYZ         = "../structures/ts4_TMP.xyz"
+TS_XYZ         = "../structures/ts3_TMP.xyz"
 # ─── MOL SPECIFIC ────────────────────────────────────────────────────────
 SELECT_MOLS    = "all" # "all", "uniques", "generics", or ['dimer','HH','ligand','catalyst','int2','mol2','HBpin-ligand','HBpin-mol']
 
