@@ -27,5 +27,6 @@ FRUST.egg-info/
 /scripts/*
 !/scripts/submit.py
 !/scripts/submit2.py
+!/scripts/submit3.py
 !/scripts/tmp.ipynb
 !/scripts/merge_parquet.py
