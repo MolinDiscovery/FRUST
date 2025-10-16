@@ -29,6 +29,7 @@ class Stepper:
         memory_gb: float = 20.0,
         save_calc_dirs: bool = False,
         save_output_dir: bool = True,
+        work_dir: str | None = None,        
         **kwargs
     ):
         self.ligands_smiles = ligands_smiles
@@ -71,12 +72,17 @@ class Stepper:
             handler.setFormatter(fmt)
             logger.addHandler(handler)
 
-        try:
-            self.work_dir = os.environ["SCRATCH"]
-        except:
-            self.work_dir = "."
-        os.makedirs(self.work_dir, exist_ok=True)
-        logger.info(f"Working dir: {self.work_dir}")  
+        if work_dir:
+            self.work_dir = work_dir
+            os.makedirs(self.work_dir, exist_ok=True)
+            logger.info(f"Working dir: {self.work_dir}")              
+        else:
+            try:
+                self.work_dir = os.environ["SCRATCH"]
+            except:
+                self.work_dir = "."
+            os.makedirs(self.work_dir, exist_ok=True)
+            logger.info(f"Working dir: {self.work_dir}")
 
     @staticmethod
     def _last_coord_col(df: pd.DataFrame) -> str:

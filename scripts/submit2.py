@@ -8,16 +8,17 @@ import importlib
 
 # ─── CONFIG ─────────────────────────────────────────────────────────────
 PIPELINE_NAME  = "run_ts_per_rpos" # "run_ts_per_rpos", "run_ts_per_lig", "run_mols"
-PRODUCTION     = True
+PRODUCTION     = False
 USE_SLURM      = True
 DEBUG          = False
 BATCH_SIZE     = 1
-CSV_PATH       = "../datasets/temps/temp_ts3.csv"
-OUT_DIR        = "results_ts3_dft_redo"
-LOG_DIR        = "logs/ts3_dft_redo"
+CSV_PATH       = "../datasets/1m.csv"
+OUT_DIR        = "results_test"
+WORK_DIR       = "noob_wk_dir"
+LOG_DIR        = "logs/test"
 SAVE_OUT_DIRS  = True
-CPUS_PER_JOB   = 6
-MEM_GB         = 42
+CPUS_PER_JOB   = 20
+MEM_GB         = 40
 TIMEOUT_MIN    = 7200
 N_CONFS        = None if PRODUCTION else 1
 DFT            = True
@@ -52,11 +53,12 @@ else:
 # 3) make sure output dirs exist
 os.makedirs(OUT_DIR, exist_ok=True)
 os.makedirs(LOG_DIR, exist_ok=True)
+os.makedirs(WORK_DIR, exist_ok=True)
 
 # 4) pick executor
 executor = submitit.AutoExecutor(LOG_DIR) if USE_SLURM else submitit.LocalExecutor(LOG_DIR)
 executor.update_parameters(
-    slurm_partition="chem" if USE_SLURM else None,
+    slurm_partition="kemi1" if USE_SLURM else None,
     cpus_per_task=CPUS_PER_JOB,
     mem_gb=MEM_GB,
     timeout_min=TIMEOUT_MIN,
@@ -82,6 +84,7 @@ if PIPELINE_NAME in {"run_ts_per_rpos", "run_ts_per_rpos_UMA"}:
             "save_output_dir":    SAVE_OUT_DIRS,
             "DFT":                DFT,
             "select_mols":        SELECT_MOLS,
+            "work_dir":           WORK_DIR,
         }
         merged = all_kwargs.copy()
         merged.update({"ts_struct": ts_struct})

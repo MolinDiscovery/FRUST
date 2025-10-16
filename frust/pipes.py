@@ -74,6 +74,7 @@ def run_ts_per_rpos(
     debug: bool = False,
     top_n: int = 10,
     out_dir: str | None = None,
+    work_dir: str | None = None,
     output_parquet: str | None = None,
     save_output_dir: bool = True,
     DFT: bool = False,
@@ -101,6 +102,7 @@ def run_ts_per_rpos(
     debug=debug,
     output_base=out_dir,
     save_output_dir=save_output_dir,
+    work_dir=work_dir,
     )
     
     df = step.build_initial_df(embedded)
