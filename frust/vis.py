@@ -417,11 +417,32 @@ def plot_regression_outliers(
     y_fit = lr.slope * x + lr.intercept
     rho, _ = spearmanr(x, y)
 
-    # Print the linear equation to stdout (not on the plot)
-    eq_label = (f"y = {lr.slope:.6f}x "
+    c = float(np.mean(y - x))
+    y_hat = x + c
+
+    # Metrics
+    y_arr = np.asarray(y, dtype=float)
+    yfit_arr = np.asarray(y_fit, dtype=float)
+    yhat_arr = np.asarray(y_hat, dtype=float)
+
+    rmsd_fit = float(np.sqrt(np.mean((y_arr - yfit_arr) ** 2)))
+    rmsd_hat = float(np.sqrt(np.mean((y_arr - yhat_arr) ** 2)))
+
+    sst = float(np.sum((y_arr - np.mean(y_arr)) ** 2))
+    sse_hat = float(np.sum((y_arr - yhat_arr) ** 2))
+    r2_hat = 1.0 - (sse_hat / sst) if sst > 0 else np.nan
+
+    rho_hat, _ = spearmanr(y_hat, y)
+
+    # Print equations to stdout (not on the plot)
+    eq_label = (f"y = {lr.slope:.2f}x "
                 f"{'+' if lr.intercept >= 0 else '-'} "
-                f"{abs(lr.intercept):.6f}")
+                f"{abs(lr.intercept):.2f}")
     print("[INFO]: Linear relation:", eq_label)
+    eq2_label = (f"y = 1x "
+                 f"{'+' if c <= 0 else '-'} "
+                 f"{abs(c):.2f}")
+    print("[INFO]: Error relationship: ", eq2_label)
 
     if method == "pearson":
         data["score"] = (y - y_fit).abs()
@@ -439,7 +460,15 @@ def plot_regression_outliers(
         plt.scatter(x, y, alpha=0.7)
         plt.plot(
             x, y_fit, color="red",
-            label=f"$R^2$={lr.rvalue**2:.3f}, spearman={rho:.3f}"
+            label=(f"$R^2$={lr.rvalue**2:.3f}, "
+                   f"spearman={rho:.3f}, "
+                   f"RMSD={rmsd_fit:.3f}")
+        )
+        plt.plot(
+            x, y_hat,
+            label=(f"$R^2$={r2_hat:.3f}, "
+                   f"spearman={rho_hat:.3f}, "
+                   f"RMSD={rmsd_hat:.3f}")
         )
         for _, row in outliers.iterrows():
             label = f"{row[label_col]}-r{int(row[rpos_col])}"
@@ -460,4 +489,5 @@ def plot_regression_outliers(
         plt.show()
 
     return None
+
 

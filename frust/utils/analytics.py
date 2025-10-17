@@ -248,7 +248,7 @@ def build_annotated_frame(
         return t
 
     rows = []
-    for lig, grp in work.groupby(ligand_col):
+    for idx, (lig, grp) in enumerate(work.groupby(ligand_col), start=1):
         smi = grp[smi_col].iloc[0]
         pos = grp[pos_col].astype(int).tolist()
         dE_vals = grp[energy_col_local].tolist()
@@ -266,7 +266,7 @@ def build_annotated_frame(
             annotation_scale=annotation_scale,  # pass through
             size=size,
         )
-        rows.append({ligand_col: lig, smi_col: smi, "annotated_svg": svg})
+        rows.append({"i": idx, ligand_col: lig, smi_col: smi, "annotated_svg": svg})
 
     result_df = pd.DataFrame(rows)
     html_table = result_df.to_html(

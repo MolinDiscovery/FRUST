@@ -14,16 +14,16 @@ DEBUG          = False
 BATCH_SIZE     = 1
 CSV_PATH       = "../datasets/1m.csv"
 OUT_DIR        = "results_test"
-WORK_DIR       = "noob_wk_dir"
+WORK_DIR       = None
 LOG_DIR        = "logs/test"
 SAVE_OUT_DIRS  = True
-CPUS_PER_JOB   = 10
-MEM_GB         = 30
+CPUS_PER_JOB   = 4 
+MEM_GB         = 15
 TIMEOUT_MIN    = 7200
 N_CONFS        = None if PRODUCTION else 1
 DFT            = True
 # ─── TS SPECIFIC ─────────────────────────────────────────────────────────
-TS_XYZ         = "../structures/ts3_TMP.xyz"
+TS_XYZ         = "../structures/ts1.xyz"
 # ─── MOL SPECIFIC ────────────────────────────────────────────────────────
 SELECT_MOLS    = "all" # "all", "uniques", "generics", or ['dimer','HH','ligand','catalyst','int2','mol2','HBpin-ligand','HBpin-mol']
 
@@ -53,7 +53,8 @@ else:
 # 3) make sure output dirs exist
 os.makedirs(OUT_DIR, exist_ok=True)
 os.makedirs(LOG_DIR, exist_ok=True)
-os.makedirs(WORK_DIR, exist_ok=True)
+if WORK_DIR:
+    os.makedirs(WORK_DIR, exist_ok=True)
 
 # 4) pick executor
 executor = submitit.AutoExecutor(LOG_DIR) if USE_SLURM else submitit.LocalExecutor(LOG_DIR)

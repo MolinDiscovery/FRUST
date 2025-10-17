@@ -101,6 +101,7 @@ def run_ts_per_rpos(
     memory_gb=mem_gb,
     debug=debug,
     output_base=out_dir,
+    save_calc_dirs=True,
     save_output_dir=save_output_dir,
     work_dir=work_dir,
     )
