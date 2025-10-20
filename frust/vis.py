@@ -383,7 +383,8 @@ def plot_regression_outliers(
     rpos_col: str = "rpos",
     method: str = "spearman",
     num_outliers: int = 2,
-    size: tuple = (8, 6)
+    size: tuple = (8, 6),
+    plot_1x = False,
 ) -> pd.DataFrame:
     """Plot x vs y with linear fit, score outliers, and annotate top points.
 
@@ -416,7 +417,7 @@ def plot_regression_outliers(
     lr = linregress(x, y)
     y_fit = lr.slope * x + lr.intercept
     rho, _ = spearmanr(x, y)
-
+    
     c = float(np.mean(y - x))
     y_hat = x + c
 
@@ -464,12 +465,14 @@ def plot_regression_outliers(
                    f"spearman={rho:.3f}, "
                    f"RMSD={rmsd_fit:.3f}")
         )
-        plt.plot(
-            x, y_hat,
-            label=(f"$R^2$={r2_hat:.3f}, "
-                   f"spearman={rho_hat:.3f}, "
-                   f"RMSD={rmsd_hat:.3f}")
-        )
+        if plot_1x:
+            plt.plot(
+                x, y_hat,
+                label=(f"$R^2$={r2_hat:.3f}, "
+                       f"spearman={rho_hat:.3f}, "
+                       f"RMSD={rmsd_hat:.3f}")
+            )
+            
         for _, row in outliers.iterrows():
             label = f"{row[label_col]}-r{int(row[rpos_col])}"
             plt.annotate(
