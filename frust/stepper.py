@@ -356,40 +356,63 @@ class Stepper:
         options: dict | None = None,
         detailed_inp_str: str = "",
         constraint: bool = True,
-        save_step = False,
+        save_step: bool = False,
         lowest: int | None = None,
+        n_cores: int | None = None,
     ) -> pd.DataFrame:
-        """Embed multiple conformers with xTB and optionally optimize and/or compute frequencies.
+        """Embed multiple conformers with xTB and optionally optimize and/or
+        compute frequencies.
 
         Args:
-            df (pd.DataFrame): A DataFrame containing embedded conformers. Required columns:
-                - 'coords_embedded': list of 3D coordinate tuples for each conformer.
+            df (pd.DataFrame): A DataFrame containing embedded conformers.
+                Required columns:
+                - 'coords_embedded': list of 3D coordinate tuples for each
+                    conformer.
                 - 'atoms': list of atomic symbols.
-                - 'constraint_atoms' (optional): list of atom indices to constrain during optimization.
-            name (str): Base name for the xTB step, used to prefix result columns.
-            options (dict, optional): xTB driver options, e.g. {'gfn': 2, 'opt': None}. Defaults to {'gfn': 0}.
-            detailed_inp_str (str, optional): Additional xTB input block (cards) to include. Defaults to "".
-            constraint (bool, optional): If True, applies predefined distance/angle constraints for TS steps. Defaults to False.
-            save_step (bool, optional): If True, saves calculation directories for each conformer. Defaults to False.
-            lowest (int or None, optional): If set, retains only the lowest-energy N conformers per ligand/rpos group. Defaults to None.
+                - 'constraint_atoms' (optional): list of atom indices to
+                    constrain during optimization.
+            name (str): Base name for the xTB step, used to prefix result
+                columns.
+            options (dict, optional): xTB driver options, e.g. {'gfn': 2,
+                'opt': None}. Defaults to {'gfn': 0}.
+            detailed_inp_str (str, optional): Additional xTB input block
+                (cards) to include. Defaults to "".
+            constraint (bool, optional): If True, applies predefined
+                distance/angle constraints for TS steps. Defaults to False.
+            save_step (bool, optional): If True, saves calculation
+                directories for each conformer. Defaults to False.
+            lowest (int or None, optional): If set, retains only the
+                lowest-energy N conformers per ligand/rpos group. Defaults
+                to None.
+            n_cores (int or None, optional): If set, overrides the Stepper’s
+                default core count **for xTB only**. ORCA continues to use
+                `self.n_cores`. Defaults to None.
 
         Returns:
-            pd.DataFrame: The input DataFrame augmented with columns for each xTB result:
+            pd.DataFrame: The input DataFrame augmented with columns for each
+            xTB result:
                 - '{name}-{method}-normal_termination' (bool)
                 - '{name}-{method}-electronic_energy' (float)
-                - '{name}-{method}-opt_coords' (list of coords) if optimization run
-                - '{name}-{method}-vibs' (vibrational modes) if frequencies computed
-                - '{name}-{method}-gibbs_energy' (float) if frequencies computed
-        """        
-        opts = options or {"gfn": 0}
+                - '{name}-{method}-opt_coords' (list of coords) if
+                optimization run
+                - '{name}-{method}-vibs' (vibrational modes) if frequencies
+                computed
+                - '{name}-{method}-gibbs_energy' (float) if frequencies
+                computed
+        """
+        opts = dict(options) if options else {"gfn": 0}
         keys = list(opts)
         level = keys[0]
         # check for optimization flag among the remaining keys
         opt_flag = next((k for k in keys[1:] if k in ("opt", "ohess")), None)
         prefix = f"{name}-{level}" + (f"-{opt_flag}" if opt_flag else "")
-        
+
         def build_xtb(row: pd.Series) -> dict:
             inp: dict[str, object] = {"options": opts}
+
+            # Per-call override: only affects xTB, not ORCA.
+            if n_cores is not None:
+                inp["n_cores"] = int(n_cores)
 
             # Only add the user‐provided card if it's non‐empty
             base_str = detailed_inp_str.strip()
@@ -400,111 +423,94 @@ class Stepper:
 
             if self.step_type.upper() == "TS1" and constraint:
                 B, N, H, C = 0, 1, 4, 5
-                atom = [x+1 for x in row["constraint_atoms"]]
+                atom = [x + 1 for x in row["constraint_atoms"]]
                 block = textwrap.dedent(f"""
                 $constrain
-                  force constant=50
-                  distance: {atom[B]}, {atom[H]}, 2.07696
-                  distance: {atom[N]}, {atom[H]}, 1.5127
-                  distance: {atom[H]}, {atom[C]}, 1.29095
-                  distance: {atom[B]}, {atom[C]}, 1.68461
-                  distance: {atom[B]}, {atom[N]}, 3.06223
-                  angle: {atom[N]}, {atom[H]}, {atom[C]}, 170.1342
-                  angle: {atom[H]}, {atom[C]}, {atom[B]}, 87.4870
+                force constant=50
+                distance: {atom[B]}, {atom[H]}, 2.07696
+                distance: {atom[N]}, {atom[H]}, 1.5127
+                distance: {atom[H]}, {atom[C]}, 1.29095
+                distance: {atom[B]}, {atom[C]}, 1.68461
+                distance: {atom[B]}, {atom[N]}, 3.06223
+                angle: {atom[N]}, {atom[H]}, {atom[C]}, 170.1342
+                angle: {atom[H]}, {atom[C]}, {atom[B]}, 87.4870
                 $end
                 """).strip()
 
-            # Old TS2
-            # if self.step_type.upper() == "TS2" and constraint:
-            #     BCat, BPin, H, C = 0, 3, 4, 5
-            #     atom = [x+1 for x in row["constraint_atoms"]]
-            #     block = textwrap.dedent(f"""
-            #     $constrain
-            #       force constant=50
-            #       distance: {atom[BCat]}, {atom[H]}, 1.335
-            #       distance: {atom[BPin]}, {atom[H]}, 2.168
-            #       distance: {atom[H]}, {atom[C]}, 2.424
-            #       distance: {atom[BCat]}, {atom[C]}, 1.335
-            #       distance: {atom[BPin]}, {atom[C]}, 1.956
-            #       distance: {atom[BPin]}, {atom[H]}, 2.168
-            #       distance: {atom[BCat]}, {atom[BPin]}, 2.063
-            #       angle: {atom[BPin]}, {atom[C]}, {atom[BCat]}, 65.36
-            #       angle: {atom[BPin]}, {atom[H]}, {atom[BCat]}, 67.39
-            #     $end
-            #     """).strip()
-
             if self.step_type.upper() == "TS2" and constraint:
                 BCat10, N17, H40, H41, C46 = 0, 1, 4, 3, 5
-                atom = [x+1 for x in row["constraint_atoms"]]
+                atom = [x + 1 for x in row["constraint_atoms"]]
                 block = textwrap.dedent(f"""
                 $constrain
-                  force constant=50
-                  distance: {atom[BCat10]}, {atom[H41]}, 1.656
-                  distance: {atom[N17]}, {atom[H40]}, 1.961
-                  distance: {atom[BCat10]}, {atom[N17]}, 3.080
-                  angle: {atom[BCat10]}, {atom[H41]}, {atom[N17]}, 86.58
+                force constant=50
+                distance: {atom[BCat10]}, {atom[H41]}, 1.656
+                distance: {atom[N17]}, {atom[H40]}, 1.961
+                distance: {atom[BCat10]}, {atom[N17]}, 3.080
+                angle: {atom[BCat10]}, {atom[H41]}, {atom[N17]}, 86.58
                 $end
                 """).strip()
 
             if self.step_type.upper() == "TS3" and constraint:
                 BCat10, H11, BPin22, H21, C = 0, 2, 3, 4, 5
-                atom = [x+1 for x in row["constraint_atoms"]]
+                atom = [x + 1 for x in row["constraint_atoms"]]
                 block = textwrap.dedent(f"""
                 $constrain
-                  force constant=50
-                  distance: {atom[H21]}, {atom[BCat10]}, 1.376
-                  distance: {atom[H21]}, {atom[BPin22]}, 1.264
-                  distance: {atom[H21]}, {atom[C]}, 2.477
-                  distance: {atom[BCat10]}, {atom[C]}, 1.616
-                  distance: {atom[BPin22]}, {atom[C]}, 2.180
-                  distance: {atom[BPin22]}, {atom[BCat10]}, 2.007
-                  angle: {atom[BCat10]}, {atom[H21]}, {atom[BPin22]}, 98.89
-                  angle: {atom[BCat10]}, {atom[C]}, {atom[BPin22]}, 61.75
+                force constant=50
+                distance: {atom[H21]}, {atom[BCat10]}, 1.376
+                distance: {atom[H21]}, {atom[BPin22]}, 1.264
+                distance: {atom[H21]}, {atom[C]}, 2.477
+                distance: {atom[BCat10]}, {atom[C]}, 1.616
+                distance: {atom[BPin22]}, {atom[C]}, 2.180
+                distance: {atom[BPin22]}, {atom[BCat10]}, 2.007
+                angle: {atom[BCat10]}, {atom[H21]}, {atom[BPin22]}, 98.89
+                angle: {atom[BCat10]}, {atom[C]}, {atom[BPin22]}, 61.75
                 $end
                 """).strip()
 
             if self.step_type.upper() == "TS4" and constraint:
                 BCat11, H12, H13, BPin37, C = 0, 2, 3, 4, 5
-                atom = [x+1 for x in row["constraint_atoms"]]
+                atom = [x + 1 for x in row["constraint_atoms"]]
                 block = textwrap.dedent(f"""
                 $constrain
-                  force constant=50
-                  distance: {atom[BCat11]}, {atom[BPin37]}, 2.219
-                  distance: {atom[BPin37]}, {atom[H13]}, 1.868
-                  distance: {atom[C]}, {atom[H13]}, 2.489
-                  distance: {atom[BCat11]}, {atom[H13]}, 1.216
-                  distance: {atom[BCat11]}, {atom[C]}, 1.946
-                  distance: {atom[BPin37]}, {atom[C]}, 1.585
-                  angle: {atom[BCat11]}, {atom[H13]}, {atom[BPin37]}, 89.48
-                  angle: {atom[BCat11]}, {atom[C]}, {atom[BPin37]}, 77.13
+                force constant=50
+                distance: {atom[BCat11]}, {atom[BPin37]}, 2.219
+                distance: {atom[BPin37]}, {atom[H13]}, 1.868
+                distance: {atom[C]}, {atom[H13]}, 2.489
+                distance: {atom[BCat11]}, {atom[H13]}, 1.216
+                distance: {atom[BCat11]}, {atom[C]}, 1.946
+                distance: {atom[BPin37]}, {atom[C]}, 1.585
+                angle: {atom[BCat11]}, {atom[H13]}, {atom[BPin37]}, 89.48
+                angle: {atom[BCat11]}, {atom[C]}, {atom[BPin37]}, 77.13
                 $end
                 """).strip()
 
             if self.step_type.upper() == "INT3" and constraint:
-                print("noob")
                 BCat10, BPin42, H11, C = 0, 3, 4, 5
-                atom = [x+1 for x in row["constraint_atoms"]]
-                print(atom)
+                atom = [x + 1 for x in row["constraint_atoms"]]
                 block = textwrap.dedent(f"""
                 $constrain
-                  force constant=50
-                  distance: {atom[BCat10]}, {atom[H11]}, 1.279
-                  distance: {atom[BCat10]}, {atom[C]}, 1.688
-                  distance: {atom[BPin42]}, {atom[H11]}, 1.378
-                  distance: {atom[BPin42]}, {atom[C]}, 1.749
-                  angle: {atom[BCat10]}, {atom[H11]}, {atom[BPin42]}, 89.85
-                  angle: {atom[BCat10]}, {atom[C]}, {atom[BPin42]}, 66.22
+                force constant=50
+                distance: {atom[BCat10]}, {atom[H11]}, 1.279
+                distance: {atom[BCat10]}, {atom[C]}, 1.688
+                distance: {atom[BPin42]}, {atom[H11]}, 1.378
+                distance: {atom[BPin42]}, {atom[C]}, 1.749
+                angle: {atom[BCat10]}, {atom[H11]}, {atom[BPin42]}, 89.85
+                angle: {atom[BCat10]}, {atom[C]}, {atom[BPin42]}, 66.22
                 $end
-                """).strip()                 
+                """).strip()
 
-            if "detailed_input_str" in inp:
-                inp["detailed_input_str"] += "\n\n" + block
-            else:
-                inp["detailed_input_str"] = block
+            if block:
+                if "detailed_input_str" in inp:
+                    inp["detailed_input_str"] += "\n\n" + block
+                else:
+                    inp["detailed_input_str"] = block
 
             return inp
 
-        return self._run_engine(df, self.xtb_fn, prefix, build_xtb, save_step, lowest)
+        return self._run_engine(
+            df, self.xtb_fn, prefix, build_xtb, save_step, lowest
+        )
+
 
     def orca(
         self,
@@ -677,3 +683,160 @@ class Stepper:
                 inp["xtra_inp_str"] = (xin + "\n\n" + client_block).strip() if xin else client_block
                 return inp
             return self._run_engine(df, self.orca_fn, prefix, build_orca_uma, save_step, lowest, save_files)
+        
+
+
+    # def xtb(
+    #     self,
+    #     df: pd.DataFrame,
+    #     name: str = "xtb",
+    #     options: dict | None = None,
+    #     detailed_inp_str: str = "",
+    #     constraint: bool = True,
+    #     save_step = False,
+    #     lowest: int | None = None,
+    # ) -> pd.DataFrame:
+    #     """Embed multiple conformers with xTB and optionally optimize and/or compute frequencies.
+
+    #     Args:
+    #         df (pd.DataFrame): A DataFrame containing embedded conformers. Required columns:
+    #             - 'coords_embedded': list of 3D coordinate tuples for each conformer.
+    #             - 'atoms': list of atomic symbols.
+    #             - 'constraint_atoms' (optional): list of atom indices to constrain during optimization.
+    #         name (str): Base name for the xTB step, used to prefix result columns.
+    #         options (dict, optional): xTB driver options, e.g. {'gfn': 2, 'opt': None}. Defaults to {'gfn': 0}.
+    #         detailed_inp_str (str, optional): Additional xTB input block (cards) to include. Defaults to "".
+    #         constraint (bool, optional): If True, applies predefined distance/angle constraints for TS steps. Defaults to False.
+    #         save_step (bool, optional): If True, saves calculation directories for each conformer. Defaults to False.
+    #         lowest (int or None, optional): If set, retains only the lowest-energy N conformers per ligand/rpos group. Defaults to None.
+
+    #     Returns:
+    #         pd.DataFrame: The input DataFrame augmented with columns for each xTB result:
+    #             - '{name}-{method}-normal_termination' (bool)
+    #             - '{name}-{method}-electronic_energy' (float)
+    #             - '{name}-{method}-opt_coords' (list of coords) if optimization run
+    #             - '{name}-{method}-vibs' (vibrational modes) if frequencies computed
+    #             - '{name}-{method}-gibbs_energy' (float) if frequencies computed
+    #     """        
+    #     opts = options or {"gfn": 0}
+    #     keys = list(opts)
+    #     level = keys[0]
+    #     # check for optimization flag among the remaining keys
+    #     opt_flag = next((k for k in keys[1:] if k in ("opt", "ohess")), None)
+    #     prefix = f"{name}-{level}" + (f"-{opt_flag}" if opt_flag else "")
+        
+    #     def build_xtb(row: pd.Series) -> dict:
+    #         inp: dict[str, object] = {"options": opts}
+
+    #         # Only add the user‐provided card if it's non‐empty
+    #         base_str = detailed_inp_str.strip()
+    #         if base_str:
+    #             inp["detailed_input_str"] = base_str
+
+    #         block = None
+
+    #         if self.step_type.upper() == "TS1" and constraint:
+    #             B, N, H, C = 0, 1, 4, 5
+    #             atom = [x+1 for x in row["constraint_atoms"]]
+    #             block = textwrap.dedent(f"""
+    #             $constrain
+    #               force constant=50
+    #               distance: {atom[B]}, {atom[H]}, 2.07696
+    #               distance: {atom[N]}, {atom[H]}, 1.5127
+    #               distance: {atom[H]}, {atom[C]}, 1.29095
+    #               distance: {atom[B]}, {atom[C]}, 1.68461
+    #               distance: {atom[B]}, {atom[N]}, 3.06223
+    #               angle: {atom[N]}, {atom[H]}, {atom[C]}, 170.1342
+    #               angle: {atom[H]}, {atom[C]}, {atom[B]}, 87.4870
+    #             $end
+    #             """).strip()
+
+    #         # Old TS2
+    #         # if self.step_type.upper() == "TS2" and constraint:
+    #         #     BCat, BPin, H, C = 0, 3, 4, 5
+    #         #     atom = [x+1 for x in row["constraint_atoms"]]
+    #         #     block = textwrap.dedent(f"""
+    #         #     $constrain
+    #         #       force constant=50
+    #         #       distance: {atom[BCat]}, {atom[H]}, 1.335
+    #         #       distance: {atom[BPin]}, {atom[H]}, 2.168
+    #         #       distance: {atom[H]}, {atom[C]}, 2.424
+    #         #       distance: {atom[BCat]}, {atom[C]}, 1.335
+    #         #       distance: {atom[BPin]}, {atom[C]}, 1.956
+    #         #       distance: {atom[BPin]}, {atom[H]}, 2.168
+    #         #       distance: {atom[BCat]}, {atom[BPin]}, 2.063
+    #         #       angle: {atom[BPin]}, {atom[C]}, {atom[BCat]}, 65.36
+    #         #       angle: {atom[BPin]}, {atom[H]}, {atom[BCat]}, 67.39
+    #         #     $end
+    #         #     """).strip()
+
+    #         if self.step_type.upper() == "TS2" and constraint:
+    #             BCat10, N17, H40, H41, C46 = 0, 1, 4, 3, 5
+    #             atom = [x+1 for x in row["constraint_atoms"]]
+    #             block = textwrap.dedent(f"""
+    #             $constrain
+    #               force constant=50
+    #               distance: {atom[BCat10]}, {atom[H41]}, 1.656
+    #               distance: {atom[N17]}, {atom[H40]}, 1.961
+    #               distance: {atom[BCat10]}, {atom[N17]}, 3.080
+    #               angle: {atom[BCat10]}, {atom[H41]}, {atom[N17]}, 86.58
+    #             $end
+    #             """).strip()
+
+    #         if self.step_type.upper() == "TS3" and constraint:
+    #             BCat10, H11, BPin22, H21, C = 0, 2, 3, 4, 5
+    #             atom = [x+1 for x in row["constraint_atoms"]]
+    #             block = textwrap.dedent(f"""
+    #             $constrain
+    #               force constant=50
+    #               distance: {atom[H21]}, {atom[BCat10]}, 1.376
+    #               distance: {atom[H21]}, {atom[BPin22]}, 1.264
+    #               distance: {atom[H21]}, {atom[C]}, 2.477
+    #               distance: {atom[BCat10]}, {atom[C]}, 1.616
+    #               distance: {atom[BPin22]}, {atom[C]}, 2.180
+    #               distance: {atom[BPin22]}, {atom[BCat10]}, 2.007
+    #               angle: {atom[BCat10]}, {atom[H21]}, {atom[BPin22]}, 98.89
+    #               angle: {atom[BCat10]}, {atom[C]}, {atom[BPin22]}, 61.75
+    #             $end
+    #             """).strip()
+
+    #         if self.step_type.upper() == "TS4" and constraint:
+    #             BCat11, H12, H13, BPin37, C = 0, 2, 3, 4, 5
+    #             atom = [x+1 for x in row["constraint_atoms"]]
+    #             block = textwrap.dedent(f"""
+    #             $constrain
+    #               force constant=50
+    #               distance: {atom[BCat11]}, {atom[BPin37]}, 2.219
+    #               distance: {atom[BPin37]}, {atom[H13]}, 1.868
+    #               distance: {atom[C]}, {atom[H13]}, 2.489
+    #               distance: {atom[BCat11]}, {atom[H13]}, 1.216
+    #               distance: {atom[BCat11]}, {atom[C]}, 1.946
+    #               distance: {atom[BPin37]}, {atom[C]}, 1.585
+    #               angle: {atom[BCat11]}, {atom[H13]}, {atom[BPin37]}, 89.48
+    #               angle: {atom[BCat11]}, {atom[C]}, {atom[BPin37]}, 77.13
+    #             $end
+    #             """).strip()
+
+    #         if self.step_type.upper() == "INT3" and constraint:
+    #             BCat10, BPin42, H11, C = 0, 3, 4, 5
+    #             atom = [x+1 for x in row["constraint_atoms"]]
+    #             block = textwrap.dedent(f"""
+    #             $constrain
+    #               force constant=50
+    #               distance: {atom[BCat10]}, {atom[H11]}, 1.279
+    #               distance: {atom[BCat10]}, {atom[C]}, 1.688
+    #               distance: {atom[BPin42]}, {atom[H11]}, 1.378
+    #               distance: {atom[BPin42]}, {atom[C]}, 1.749
+    #               angle: {atom[BCat10]}, {atom[H11]}, {atom[BPin42]}, 89.85
+    #               angle: {atom[BCat10]}, {atom[C]}, {atom[BPin42]}, 66.22
+    #             $end
+    #             """).strip()                 
+
+    #         if "detailed_input_str" in inp:
+    #             inp["detailed_input_str"] += "\n\n" + block
+    #         else:
+    #             inp["detailed_input_str"] = block
+
+    #         return inp
+
+    #     return self._run_engine(df, self.xtb_fn, prefix, build_xtb, save_step, lowest)        

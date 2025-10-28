@@ -320,7 +320,7 @@ def run_ts_per_rpos_UMA_short(
     
     df = step.build_initial_df(embedded)
     df = step.xtb(df, options={"gfnff": None, "opt": None}, constraint=True)
-    df = step.xtb(df, options={"gfn": 2, "opt": None}, constraint=True, lowest=10)
+    df = step.xtb(df, options={"gfn": 2, "opt": None}, constraint=True, lowest=1
     df = step.orca(df, options={"ExtOpt": None, "OptTS": None, "NumFreq": None}, uma="omol@uma-m-1p1")
     
     if output_parquet:
@@ -575,10 +575,10 @@ def run_mols_UMA(
         save_output_dir=save_output_dir,
     )
     df = step.build_initial_df(embedded)
-    df = step.xtb(df, options={"gfnff": None, "opt": None})
-    df = step.xtb(df, options={"gfnff": None, "opt": None}, lowest=10)
-    df = step.orca(df, options={"ExtOpt": None, "Opt": None}, uma="omol")
-    df = step.orca(df, options={"ExtOpt": None, "NumFreq": None}, uma="omol@uma-s-1p1", lowest=1)
+    df = step.xtb(df, options={"gfnff": None, "opt": None}, n_cores=1)
+    df = step.xtb(df, options={"gfn": 2}, n_cores=1)
+    df = step.orca(df, options={"ExtOpt": None, "Opt": None}, uma="omol", lowest=10)
+    #df = step.orca(df, options={"ExtOpt": None, "NumFreq": None}, uma="omol@uma-s-1p1", lowest=1)
     
     if output_parquet:
             df.to_parquet(output_parquet)
