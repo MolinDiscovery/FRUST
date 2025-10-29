@@ -7,23 +7,23 @@ from itertools import islice
 import importlib
 
 # ─── CONFIG ─────────────────────────────────────────────────────────────
-PIPELINE_NAME           = "run_ts_per_rpos_UMA_short" # "run_ts_per_rpos", "run_ts_per_lig", "run_mols", "run_ts_per_rpos_UMA_short"
+PIPELINE_NAME           = "run_ts_per_rpos" # "run_ts_per_rpos", "run_ts_per_lig", "run_mols", "run_ts_per_rpos_UMA_short"
 PRODUCTION              = True
 USE_SLURM, PARTITION    = True, "kemi1"
 DEBUG                   = False
 BATCH_SIZE              = 1
-CSV_PATH                = "../datasets/1m.csv"
-OUT_DIR                 = "results_test"
+CSV_PATH                = "../datasets/temps/temp_ts4.csv"
+OUT_DIR                 = "results_full_test_ts4_redo1"
 WORK_DIR                = None
-LOG_DIR                 = "logs/test"
+LOG_DIR                 = "logs/full_test_ts4_redo1"
 SAVE_OUT_DIRS           = True
-CPUS_PER_JOB            = 20
-MEM_GB                  = 100
+CPUS_PER_JOB            = 6
+MEM_GB                  = 40
 TIMEOUT_MIN             = 7200
 N_CONFS                 = None if PRODUCTION else 1
 DFT                     = True
 # ─── TS SPECIFIC ─────────────────────────────────────────────────────────
-TS_XYZ                  = "../structures/ts1.xyz"
+TS_XYZ                  = "../structures/ts4_TMP.xyz"
 # ─── MOL SPECIFIC ────────────────────────────────────────────────────────
 SELECT_MOLS             = "all" # "all", "uniques", "generics", or ['dimer','HH','ligand','catalyst','int2','mol2','HBpin-ligand','HBpin-mol']
 

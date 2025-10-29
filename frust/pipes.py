@@ -113,7 +113,7 @@ def run_ts_per_rpos(
     functional      = "wB97X-D3" # wB97X-D3, wB97M-V
     basisset        = "6-31G**" # 6-31G**, def2-TZVPD
     basisset_solv   = "6-31+G**" # 6-31+G**, def2-TZVPD
-    freq            = "Freq" # NumFreq, Freq    
+    freq            = "Freq" # NumFreq, Freq
 
     df = step.orca(df, name="DFT-pre-SP", options={
         functional  : None,
