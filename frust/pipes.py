@@ -86,7 +86,6 @@ def run_ts_per_rpos(
     r'(?P<rpos>\d+)\)\)?$'           
     )
 
-    # Get type...
     name = list(ts_struct.keys())[0]
     m = pattern.match(name)
     ts_type = m.group("prefix")
@@ -279,7 +278,6 @@ end""", lowest=1)
         df.to_parquet(output_parquet)
     return df
 
-
 def run_ts_per_rpos_UMA_short(
     ts_struct: dict[str, tuple[Mol, list, str]],
     *,
@@ -289,6 +287,7 @@ def run_ts_per_rpos_UMA_short(
     debug: bool = False,
     top_n: int = 10,
     out_dir: str | None = None,
+    work_dir: str | None = None,
     output_parquet: str | None = None,
     save_output_dir: bool = True,
     DFT: bool = False,
@@ -316,12 +315,14 @@ def run_ts_per_rpos_UMA_short(
     debug=debug,
     output_base=out_dir,
     save_output_dir=save_output_dir,
+    work_dir=work_dir,
     )
     
     df = step.build_initial_df(embedded)
-    df = step.xtb(df, options={"gfnff": None, "opt": None}, constraint=True)
-    df = step.xtb(df, options={"gfn": 2, "opt": None}, constraint=True, lowest=1
-    df = step.orca(df, options={"ExtOpt": None, "OptTS": None, "NumFreq": None}, uma="omol@uma-m-1p1")
+    df = step.xtb(df, options={"gfnff": None, "opt": None}, constraint=True, n_cores=2)
+    df = step.xtb(df, options={"gfn": 2}, lowest=20, n_cores=2)
+    df = step.orca(df, options={"ExtOpt": None, "Opt": None}, constraint=True, lowest=10, uma="omol@uma-s-1p1")
+    df = step.orca(df, options={"ExtOpt": None, "OptTS": None, "NumFreq": None}, lowest=1, uma="omol@uma-s-1p1")
     
     if output_parquet:
         df.to_parquet(output_parquet)

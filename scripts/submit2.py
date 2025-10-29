@@ -7,25 +7,25 @@ from itertools import islice
 import importlib
 
 # ─── CONFIG ─────────────────────────────────────────────────────────────
-PIPELINE_NAME  = "run_ts_per_rpos" # "run_ts_per_rpos", "run_ts_per_lig", "run_mols"
-PRODUCTION     = False
-USE_SLURM      = True
-DEBUG          = False
-BATCH_SIZE     = 1
-CSV_PATH       = "../datasets/1m.csv"
-OUT_DIR        = "results_test"
-WORK_DIR       = None
-LOG_DIR        = "logs/test"
-SAVE_OUT_DIRS  = True
-CPUS_PER_JOB   = 4 
-MEM_GB         = 15
-TIMEOUT_MIN    = 7200
-N_CONFS        = None if PRODUCTION else 1
-DFT            = True
+PIPELINE_NAME           = "run_ts_per_rpos_UMA_short" # "run_ts_per_rpos", "run_ts_per_lig", "run_mols", "run_ts_per_rpos_UMA_short"
+PRODUCTION              = True
+USE_SLURM, PARTITION    = True, "kemi1"
+DEBUG                   = False
+BATCH_SIZE              = 1
+CSV_PATH                = "../datasets/1m.csv"
+OUT_DIR                 = "results_test"
+WORK_DIR                = None
+LOG_DIR                 = "logs/test"
+SAVE_OUT_DIRS           = True
+CPUS_PER_JOB            = 20
+MEM_GB                  = 100
+TIMEOUT_MIN             = 7200
+N_CONFS                 = None if PRODUCTION else 1
+DFT                     = True
 # ─── TS SPECIFIC ─────────────────────────────────────────────────────────
-TS_XYZ         = "../structures/ts1.xyz"
+TS_XYZ                  = "../structures/ts1.xyz"
 # ─── MOL SPECIFIC ────────────────────────────────────────────────────────
-SELECT_MOLS    = "all" # "all", "uniques", "generics", or ['dimer','HH','ligand','catalyst','int2','mol2','HBpin-ligand','HBpin-mol']
+SELECT_MOLS             = "all" # "all", "uniques", "generics", or ['dimer','HH','ligand','catalyst','int2','mol2','HBpin-ligand','HBpin-mol']
 
 def batched(iterable, n):
     it = iter(iterable)
@@ -42,7 +42,7 @@ df       = pd.read_csv(CSV_PATH)
 smi_list = list(dict.fromkeys(df["smiles"]))
 
 # determine job inputs
-if PIPELINE_NAME in {"run_ts_per_rpos", "run_ts_per_rpos_UMA"}:
+if PIPELINE_NAME in {"run_ts_per_rpos", "run_ts_per_rpos_UMA", "run_ts_per_rpos_UMA_short"}:
     from frust.pipes import create_ts_per_rpos
     job_inputs = create_ts_per_rpos(smi_list, TS_XYZ)
 elif PIPELINE_NAME in {"run_ts_per_lig", "run_mols", "run_small_test"}:
@@ -59,7 +59,7 @@ if WORK_DIR:
 # 4) pick executor
 executor = submitit.AutoExecutor(LOG_DIR) if USE_SLURM else submitit.LocalExecutor(LOG_DIR)
 executor.update_parameters(
-    slurm_partition="kemi1" if USE_SLURM else None,
+    slurm_partition=PARTITION if USE_SLURM else None,
     cpus_per_task=CPUS_PER_JOB,
     mem_gb=MEM_GB,
     timeout_min=TIMEOUT_MIN,
@@ -67,7 +67,7 @@ executor.update_parameters(
 
 # 5) dispatch batches
 futures = []
-if PIPELINE_NAME in {"run_ts_per_rpos", "run_ts_per_rpos_UMA"}:
+if PIPELINE_NAME in {"run_ts_per_rpos", "run_ts_per_rpos_UMA", "run_ts_per_rpos_UMA_short"}:
     for ts_struct in job_inputs:
         tag = f"{PIPELINE_NAME}_{list(ts_struct.keys())[0]}"
         if USE_SLURM:

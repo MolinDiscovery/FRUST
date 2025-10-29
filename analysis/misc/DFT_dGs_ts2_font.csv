@@ -1,4 +1,5 @@
 ,ligand_name,rpos,dG_ts2
+0,1-benzylpyrrole,3,20.70174162898911
 1,1-benzylpyrrole,4,20.19879977783421
 2,1-benzylpyrrole,5,21.569868235790636
 3,1-benzylpyrrole,8,14.441957751347218
@@ -21,11 +22,12 @@
 20,2-tert-butylfuran,3,21.09017822309397
 21,2-tert-butylfuran,4,18.571398597210646
 22,2-tert-butylfuran,5,16.02585806848947
-23,furan-2-yloxy(trimethyl)silane,5,16.079815001401585
-24,furan-2-yloxy(trimethyl)silane,6,19.103017108805943
-25,furan-2-yloxy(trimethyl)silane,7,13.449616899422836
-26,furan,0,15.69094130495796
-27,furan,1,18.125111359579023
+23,furan,0,15.69094130495796
+24,furan,1,18.125111359579023
+25,furan-2-yloxy(trimethyl)silane,5,16.079815001401585
+26,furan-2-yloxy(trimethyl)silane,6,19.103017108805943
+27,furan-2-yloxy(trimethyl)silane,7,13.449616899422836
 28,tri(propan-2-yl)-pyrrol-1-ylsilane,4,20.39646980841644
-29,trimethyl(pyrrol-1-yl)silane,3,17.43605619558366
-30,trimethyl(pyrrol-1-yl)silane,4,17.495737000193913
+29,tri(propan-2-yl)-pyrrol-1-ylsilane,5,19.41776681970805
+30,trimethyl(pyrrol-1-yl)silane,3,17.43605619558366
+31,trimethyl(pyrrol-1-yl)silane,4,17.495737000193913
