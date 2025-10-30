@@ -297,16 +297,26 @@ def build_annotated_frame(
 import argparse
 from pathlib import Path
 from typing import Sequence, Union
+import pandas as pd
+
 
 def merge_parquet_dir(
     input_dir: Union[str, Path],
     output: Union[str, Path] = "merged.parquet",
+    require_normal_termination: bool = False,
+    normal_term_cols: Sequence[str] | None = None,
 ) -> Path:
     """Merge multiple Parquet files with identical schemas into one file.
 
     Args:
         input_dir: Directory containing .parquet files to merge.
         output: Output Parquet file path.
+        require_normal_termination: If True, skip any file whose DataFrame
+            has a column ending with 'normal_termination' containing any
+            False (or NaN). If no such column exists, the file is kept.
+        normal_term_cols: Optional explicit list of columns to treat as
+            'normal_termination' columns. If None, columns ending with
+            'normal_termination' are auto-detected.
 
     Returns:
         Path to the merged Parquet file.
@@ -314,18 +324,48 @@ def merge_parquet_dir(
     Raises:
         FileNotFoundError: If the input directory does not exist or contains
             no .parquet files.
-        ValueError: If the merged DataFrame is empty.
+        ValueError: If no files pass the filter or the merged DataFrame is
+            empty.
     """
     in_path = Path(input_dir)
     if not in_path.is_dir():
         raise FileNotFoundError(f"Input directory '{in_path}' not found.")
+
     files = sorted(in_path.glob("*.parquet"))
     if not files:
         raise FileNotFoundError(f"No .parquet files in '{in_path}'.")
-    dfs = [pd.read_parquet(str(fp)) for fp in files]
+
+    dfs: list[pd.DataFrame] = []
+    for fp in files:
+        df = pd.read_parquet(str(fp))
+        if require_normal_termination:
+            cols = (list(normal_term_cols)
+                    if normal_term_cols is not None
+                    else [c for c in df.columns
+                          if str(c).endswith("normal_termination")])
+            if cols:
+                subset = (df[cols]
+                          .replace({None: False})
+                          .fillna(False))
+                # Robust cast to bool; then require all True across df+cols
+                try:
+                    subset = subset.astype(bool)
+                except Exception:
+                    subset = subset.applymap(
+                        lambda x: bool(x) if pd.notna(x) else False
+                    )
+                if not subset.all().all():
+                    # Skip this file entirely
+                    continue
+        dfs.append(df)
+
+    if not dfs:
+        raise ValueError("No files to merge after filtering.")
+
     merged = pd.concat(dfs, ignore_index=True)
     if merged.empty:
         raise ValueError("Merged DataFrame is empty.")
+
     out_path = Path(output)
     merged.to_parquet(out_path)
     return out_path
@@ -342,7 +382,8 @@ def main_merge_parquet(argv: Sequence[str] | None = None) -> int:
     """
     parser = argparse.ArgumentParser(
         description=(
-            "Merge multiple Parquet files with the same schema into one file."
+            "Merge multiple Parquet files with the same schema into one "
+            "file."
         )
     )
     default_in = str(Path(__file__).resolve().parent.parent / "results")
@@ -360,9 +401,28 @@ def main_merge_parquet(argv: Sequence[str] | None = None) -> int:
         default="merged.parquet",
         help="Output Parquet file path.",
     )
+    parser.add_argument(
+        "--require-normal-termination",
+        action="store_true",
+        help=("Skip any file where a '*normal_termination' column contains "
+              "False/NaN."),
+    )
+    parser.add_argument(
+        "--normal-term-cols",
+        nargs="*",
+        default=None,
+        help=("Explicit columns to treat as normal_termination (override "
+              "auto-detect)."),
+    )
+
     args = parser.parse_args(argv)
     try:
-        out = merge_parquet_dir(args.input_dir, args.output)
+        out = merge_parquet_dir(
+            args.input_dir,
+            args.output,
+            require_normal_termination=args.require_normal_termination,
+            normal_term_cols=args.normal_term_cols,
+        )
     except Exception as e:
         print(str(e))
         return 1
