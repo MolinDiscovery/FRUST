@@ -7,15 +7,15 @@ from itertools import islice
 import importlib
 
 # ─── CONFIG ─────────────────────────────────────────────────────────────
-PIPELINE_NAME           = "run_ts_per_rpos" # "run_ts_per_rpos", "run_ts_per_lig", "run_mols", "run_ts_per_rpos_UMA_short"
+PIPELINE_NAME           = "run_orca_smoke_test" # "run_ts_per_rpos", "run_ts_per_lig", "run_mols", "run_ts_per_rpos_UMA_short", run_orca_smoke_test
 PRODUCTION              = True
 USE_SLURM, PARTITION    = True, "kemi1"
 DEBUG                   = False
 BATCH_SIZE              = 1
-CSV_PATH                = "../datasets/temps/temp_ts4.csv"
-OUT_DIR                 = "results_full_test_ts4_redo1"
+CSV_PATH                = "../datasets/1m.csv"
+OUT_DIR                 = "results_test"
 WORK_DIR                = None
-LOG_DIR                 = "logs/full_test_ts4_redo1"
+LOG_DIR                 = "logs/test"
 SAVE_OUT_DIRS           = True
 CPUS_PER_JOB            = 6
 MEM_GB                  = 40
@@ -42,9 +42,13 @@ df       = pd.read_csv(CSV_PATH)
 smi_list = list(dict.fromkeys(df["smiles"]))
 
 # determine job inputs
-if PIPELINE_NAME in {"run_ts_per_rpos", "run_ts_per_rpos_UMA", "run_ts_per_rpos_UMA_short"}:
+if PIPELINE_NAME in {"run_ts_per_rpos", "run_ts_per_rpos_UMA", "run_ts_per_rpos_UMA_short", "run_orca_smoke_test"}:
     from frust.pipes import create_ts_per_rpos
-    job_inputs = create_ts_per_rpos(smi_list, TS_XYZ)
+    if PIPELINE_NAME == "run_orca_smoke_test":
+        job_inputs = [{"rand mol": "mol object"}]
+    else:
+        job_inputs = create_ts_per_rpos(smi_list, TS_XYZ)
+
 elif PIPELINE_NAME in {"run_ts_per_lig", "run_mols", "run_small_test"}:
     job_inputs = smi_list
 else:

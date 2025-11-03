@@ -1,8 +1,0 @@
-slurmstepd: error: StepId=52805997.0 exceeded memory limit (67098384384 > 64424509440), being killed
-slurmstepd: error: Exceeded job memory limit
-srun: Job step aborted: Waiting up to 602 seconds for job step to finish.
-slurmstepd: error: *** STEP 52805997.0 ON node068 CANCELLED AT 2025-06-30T21:00:12 ***
-slurmstepd: error: StepId=52805997.0 exceeded memory limit (67098384384 > 64424509440), being killed
-slurmstepd: error: Exceeded job memory limit
-srun: error: node068: task 0: Killed
-srun: Terminating StepId=52805997.0

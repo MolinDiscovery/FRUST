@@ -1,4 +1,0 @@
-submitit INFO (2025-07-23 14:37:55,261) - Starting with JobEnvironment(job_id=53166909, hostname=node066.cluster, local_rank=0(1), node=0(1), global_rank=0(1))
-submitit INFO (2025-07-23 14:37:55,266) - Loading pickle: /lustre/hpc/kemi/jmni/dev/FRUST/pipes/logs/4-trans-dimer/53166909_submitted.pkl
-2025-07-23 14:37:57 INFO  frust.stepper: Working dir: /scratch/53166909
-2025-07-23 14:37:57 INFO  frust.stepper: [DFT-wB97X-D3-6-31G**-Freq] row 0 (4-trans-dimer)…

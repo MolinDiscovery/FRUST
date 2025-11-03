@@ -1,6 +1,0 @@
-submitit INFO (2025-07-15 15:40:41,990) - Starting with JobEnvironment(job_id=53031206, hostname=node309.cluster, local_rank=0(1), node=0(1), global_rank=0(1))
-submitit INFO (2025-07-15 15:40:41,990) - Loading pickle: /lustre/hpc/kemi/jmni/dev/FRUST/pipes/logs/ts34/53031206_submitted.pkl
-2025-07-15 15:40:44 INFO  frust.stepper: Working dir: /scratch/53031206
-2025-07-15 15:40:44 INFO  frust.stepper: [DFT-wB97X-D3-6-31G**-Freq] row 0 (ts3)…
-submitit INFO (2025-07-15 16:45:10,723) - Job completed successfully
-submitit INFO (2025-07-15 16:45:10,737) - Exiting after successful completion

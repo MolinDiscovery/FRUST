@@ -4,7 +4,8 @@ from rdkit import Chem
 from rdkit.Chem import rdchem, rdDetermineBonds
 from rdkit.Geometry.rdGeometry import Point3D
 from rdkit.Chem.rdchem import RWMol
-
+from rdkit.Chem.rdchem import Mol
+from frust.utils.io import read_ts_type_from_xyz
 
 def get_molecule_name(smiles: str):
     """Retrieve the IUPAC name for a molecule from its SMILES string.
@@ -258,4 +259,53 @@ def fix_cat_frag(mol: Chem.Mol, bh_len: float = 1.19) -> Chem.Mol:
     rw = RWMol(mol2)
     rw.RemoveAtom(h_idx)
 
-    return rw.GetMol()    
+    return rw.GetMol()
+
+
+def create_ts_per_rpos(
+    ligand_smiles_list: list[str],
+    ts_guess_xyz: str,
+    ) -> list[dict[str, Mol]]:
+    """
+    Generate transition state (TS) structures for each ligand SMILES using a TS guess XYZ template.
+
+    Args:
+        ligand_smiles_list (List[str]): List of ligand SMILES strings for which to create TS structures.
+        ts_guess_xyz (str): Path to an XYZ file containing the TS guess geometry. The TS type
+            (e.g., 'TS1', 'TS2', 'TS3', 'TS4') is inferred from the comment line.
+
+    Returns:
+        List[Dict[str, rdkit.Chem.Mol]]: A list of dictionaries, each mapping a TS identifier
+            (e.g., reaction position key) to an RDKit Mol object representing the generated TS.
+    """
+
+    ts_type = read_ts_type_from_xyz(ts_guess_xyz)
+
+    if ts_type == 'TS1':
+        from frust.transformers import transformer_ts1
+        transformer_ts = transformer_ts1
+    elif ts_type == 'TS2':
+        from frust.transformers import transformer_ts2
+        transformer_ts = transformer_ts2
+    elif ts_type == 'TS3':
+        from frust.transformers import transformer_ts3
+        transformer_ts = transformer_ts3
+    elif ts_type == 'TS4':
+        from frust.transformers import transformer_ts4
+        transformer_ts = transformer_ts4
+    elif ts_type == 'INT3':
+        from frust.transformers import transformer_int3
+        transformer_ts = transformer_int3        
+    else:
+        raise ValueError(f"Unrecognized TS type: {ts_type}")
+
+    ts_structs = {}
+    for smi in ligand_smiles_list:
+        ts_mols = transformer_ts(smi, ts_guess_xyz)
+        ts_structs.update(ts_mols)
+
+    ts_structs_list = []
+    for k, i in ts_structs.items():
+        ts_structs_list.append({k:i})   
+
+    return ts_structs_list

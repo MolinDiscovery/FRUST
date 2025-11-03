@@ -1,4 +1,4 @@
-# scripts/submit2.py
+# scripts/submit3.py
 import os
 import inspect
 import pandas as pd
@@ -31,7 +31,7 @@ SELECT_MOLS = "all"
 
 # ─── SLURM ARRAY THROTTLING ─────────────────────────────────────────────
 # Max number of array tasks to run concurrently (like --array %LIMIT)
-ARRAY_LIMIT = 3
+ARRAY_LIMIT = 10
 
 
 def batched(iterable, n):
@@ -54,8 +54,11 @@ smi_list = list(dict.fromkeys(df["smiles"]))
 # determine job inputs
 if PIPELINE_NAME in {"run_ts_per_rpos", "run_ts_per_rpos_UMA"}:
     from frust.pipes import create_ts_per_rpos
-
-    job_inputs = create_ts_per_rpos(smi_list, TS_XYZ)
+    if PIPELINE_NAME == "run_orca_smoke_test":
+        job_inputs = [{"rand mol": "mol object"}]
+    else:
+        job_inputs = create_ts_per_rpos(smi_list, TS_XYZ)
+    
 elif PIPELINE_NAME in {"run_ts_per_lig", "run_mols", "run_small_test"}:
     job_inputs = smi_list
 else:

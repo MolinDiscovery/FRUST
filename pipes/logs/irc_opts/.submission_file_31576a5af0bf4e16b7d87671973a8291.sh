@@ -1,1 +1,0 @@
-/lustre/hpc/kemi/jmni/dev/FRUST/pipes/logs/irc_opts/52805991_submission.sh

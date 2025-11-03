@@ -19,7 +19,7 @@ except ImportError:
 def create_ts_per_rpos(
     ligand_smiles_list: list[str],
     ts_guess_xyz: str,        
-    ):
+    ) -> list[dict[str, Mol]]:
     """
     Generate transition state (TS) structures for each ligand SMILES using a TS guess XYZ template.
 
@@ -158,7 +158,6 @@ def run_ts_per_rpos(
         "NoSym"    : None,
     }, lowest=1)
 
-
     df = step.orca(df, name="DFT-SP", options={
         functional      : None,
         basisset_solv   : None,
@@ -169,6 +168,7 @@ def run_ts_per_rpos(
     
     if output_parquet:
         df.to_parquet(output_parquet)
+
     return df
 
 
@@ -690,6 +690,393 @@ def run_small_test(
 
     df1 = step.xtb(df0, options={"gfn": 2})
     df2 = step.orca(df0, options={"HF": None, "STO-3G": None})
+
+
+def run_orca_smoke_test(
+    ts_struct: dict[str, tuple[Mol, list, str]],
+    *,
+    n_confs: int | None = None,
+    n_cores: int = 4,
+    mem_gb: int = 20,
+    debug: bool = False,
+    top_n: int = 10,
+    out_dir: str | None = None,
+    work_dir: str | None = None,
+    output_parquet: str | None = None,
+    save_output_dir: bool = True,
+    DFT: bool = False,        
+):
+    from tooltoad.chemutils import xyz2mol
+
+    f = Path("../structures/misc/HH.xyz")
+    mols = {}
+    with open(f, "r") as file:
+        xyz_block = file.read()
+        mol = xyz2mol(xyz_block)
+        mols[f.stem] = (mol, [0])
+
+    step = Stepper(list(mols.keys()), step_type="mol", save_output_dir=False)
+    df = step.build_initial_df(mols)
+
+    name = df["custom_name"].iloc[0]
+
+    step = Stepper([name],
+                    step_type="none",
+                    debug=debug,
+                    save_output_dir=save_output_dir,
+                    output_base=out_dir,
+                    n_cores=n_cores,
+                    memory_gb=mem_gb,
+                    work_dir=work_dir,
+                    save_calc_dirs=True)
+    
+    df = step.xtb(df, options={"gfn": 2, "opt": None})
+    df = step.orca(df, options={
+        "wB97X-D3":     None,
+        "6-31G**":      None,
+        "TightSCF":     None,
+        "SP":          None,
+        "NoSym":        None,
+        "Freq":         None,
+    })
+
+    if output_parquet:
+            df.to_parquet(output_parquet)            
+    
+    return df
+
+
+# ─── NEW: two-stage helpers for splitting Freq ──────────────────────────
+import re
+import os
+import pandas as pd
+from frust.stepper import Stepper  # adjust import if different
+
+def run_ts_per_rpos_geom_only(
+    ts_struct: dict[str, tuple["Mol", list, str]],
+    *,
+    n_confs: int | None = None,
+    n_cores: int = 4,
+    mem_gb: int = 20,
+    debug: bool = False,
+    top_n: int = 10,
+    out_dir: str | None = None,
+    work_dir: str | None = None,
+    output_parquet: str | None = None,
+    save_output_dir: bool = True,
+    DFT: bool = False,
+):
+    """Stage-1: run everything except the costly frequency calculation.
+
+    Args:
+        ts_struct: One TS structure dict as produced by create_ts_per_rpos.
+        n_confs: Number of conformers or None.
+        n_cores: CPU cores for xTB/ORCA.
+        mem_gb: Memory in GB.
+        debug: If True, lighter/shorter steps.
+        top_n: Keep N lowest xTB conformers before DFT.
+        out_dir: Output directory base.
+        work_dir: Working directory (scratch).
+        output_parquet: Path to write stage-1 manifest parquet.
+        save_output_dir: Whether to save calc dirs.
+        DFT: Whether to do DFT optimization stages.
+        select_mols: Which molecule subsets to include.
+    """
+
+    pattern = re.compile(
+        r'^(?:(?P<prefix>(?:TS|INT)\d*|Mols)\()?'
+        r'(?P<ligand>.+?)_rpos\('
+        r'(?P<rpos>\d+)\)\)?$'
+    )
+
+    name = list(ts_struct.keys())[0]
+    m = pattern.match(name)
+    ts_type = m.group("prefix") if m else None
+
+    embedded = embed_ts(
+        ts_struct, ts_type=ts_type, n_confs=n_confs, optimize=not debug
+    )
+
+    ligand_smiles = list(ts_struct.values())[0][2]
+
+    step = Stepper(
+        ligand_smiles,
+        n_cores=n_cores,
+        memory_gb=mem_gb,
+        debug=debug,
+        output_base=out_dir,
+        save_calc_dirs=True,
+        save_output_dir=save_output_dir,
+        work_dir=work_dir,
+    )
+
+    df = step.build_initial_df(embedded)
+    df = step.xtb(df, options={"gfnff": None, "opt": None}, constraint=True, n_cores=2)
+    df = step.xtb(df, options={"gfn": 2}, n_cores=2)
+    df = step.xtb(df, options={"gfn": 2, "opt": None}, constraint=True, lowest=top_n, n_cores=2)
+
+    functional = "wB97X-D3"
+    basisset = "6-31G**"
+    basisset_solv = "6-31+G**"
+
+    df = step.orca(df, name="DFT-pre-SP", options={
+        functional: None,
+        basisset: None,
+        "TightSCF": None,
+        "SP": None,
+        "NoSym": None,
+    })
+
+    if not DFT:
+        last_energy = [c for c in df.columns if c.endswith("_energy")][-1]
+        df = (df.sort_values(["ligand_name", "rpos", last_energy])
+                .groupby(["ligand_name", "rpos"]).head(1))
+        if output_parquet:
+            df.to_parquet(output_parquet)
+        return df
+
+    # DFT geometry optimization (no Freq here)
+    df = step.orca(df, name="DFT-pre-Opt", options={
+        functional: None,
+        basisset: None,
+        "TightSCF": None,
+        "SlowConv": None,
+        "Opt": None,
+        "NoSym": None,
+    }, constraint=True, lowest=1)
+
+    opt_key = "Opt" if (ts_type or "").upper() == "INT3" else "szq"
+
+    df = step.orca(df, name="DFT", options={
+        functional: None,
+        basisset: None,
+        "TightSCF": None,
+        "SlowConv": None,
+        opt_key: None,
+        "NoSym": None,
+    }, lowest=1)
+
+    # Keep your SP-in-solvent as part of stage-1 if desired
+    df = step.orca(df, name="DFT-SP", options={
+        functional: None,
+        basisset_solv: None,
+        "TightSCF": None,
+        "SP": None,
+        "NoSym": None,
+    }, xtra_inp_str=(
+        "%CPCM\nSMD TRUE\nSMDSOLVENT \"chloroform\"\nend"
+    ))
+
+    if output_parquet:
+        df.to_parquet(output_parquet)
+
+    # Optional sentinel
+    if output_parquet:
+        done = os.path.splitext(output_parquet)[0] + ".geom.done"
+        try:
+            open(done, "a").close()
+        except OSError:
+            pass
+
+    return df
+
+
+def run_ts_freq_only_from_parquet(
+    parquet_path: str,
+    *,
+    n_cores: int = 5,
+    mem_gb: int = 35,
+    debug: bool = False,
+    out_dir: str | None = None,
+    work_dir: str | None = None,
+):
+    """Stage-2: run frequency only from a stage-1 parquet.
+
+    Args:
+        parquet_path: Path to stage-1 parquet with the chosen structure(s).
+        n_cores: CPU cores for ORCA.
+        mem_gb: Memory in GB.
+        debug: If True, lighter/shorter steps.
+        out_dir: Output directory base.
+        work_dir: Working directory (scratch).
+    """
+    df = pd.read_parquet(parquet_path)
+
+    # Idempotency: skip if already has Freq artifacts or sentinel exists.
+    stem = os.path.splitext(parquet_path)[0]
+    sentinel = stem + ".freq.done"
+    if os.path.exists(sentinel):
+        return df
+
+    last_energy = [c for c in df.columns if c.endswith("_energy")][-1]
+    df = (df.sort_values(["ligand_name", "rpos", last_energy])
+            .groupby(["ligand_name", "rpos"]).head(1))
+
+    ligand_smiles = list(dict.fromkeys(df["smiles"].tolist()))
+    step = Stepper(
+        ligand_smiles,
+        n_cores=n_cores,
+        memory_gb=mem_gb,
+        debug=debug,
+        output_base=out_dir,
+        save_calc_dirs=True,
+        save_output_dir=True,
+        work_dir=work_dir,
+    )
+
+    df = step.orca(df, name="DFT-Freq", options={
+        # "wB97X-D3": None,
+        # "6-31G**": None,
+        "PBE": None,
+        "def2-SVP": None,
+        "TightSCF": None,
+        "Freq": None,
+        "NoSym": None,
+    }, lowest=1)
+
+    # Write back next to the original parquet (overwrite/merge as you prefer)
+    out_parquet = stem + ".with_freq.parquet"
+    df.to_parquet(out_parquet)
+
+    try:
+        open(sentinel, "a").close()
+    except OSError:
+        pass
+
+    return df
+
+
+def run_orca_smoke_geom_only(
+    ts_struct: dict[str, tuple[Mol, list, str]],
+    *,
+    n_confs: int | None = None,
+    n_cores: int = 2,
+    mem_gb: int = 8,
+    debug: bool = False,
+    top_n: int = 1,
+    out_dir: str | None = None,
+    work_dir: str | None = None,
+    output_parquet: str | None = None,
+    save_output_dir: bool = True,
+    DFT: bool = True,
+):
+    """
+    Stage-1 (SMOKE): build a tiny DF and run a cheap SP (no Freq).
+    Produces a parquet hand-off + `.geom.done` sentinel.
+    """
+    from tooltoad.chemutils import xyz2mol
+
+    f = Path("../structures/misc/HH.xyz")
+    mols: dict[str, tuple[Mol, list[int]]] = {}
+
+    with open(f, "r") as file:
+        xyz_block = file.read()
+        mol = xyz2mol(xyz_block)
+        mols[f.stem] = (mol, [0])
+
+    # Initial DF
+    step = Stepper(
+        list(mols.keys()),
+        step_type="mol",
+        save_output_dir=False,
+        debug=debug,
+    )
+    df = step.build_initial_df(mols)
+
+    # Use the one name we just created
+    name = df["custom_name"].iloc[0]
+
+    # Real stepper for actual compute
+    step = Stepper(
+        [name],
+        step_type="none",
+        debug=debug,
+        save_output_dir=save_output_dir,
+        output_base=out_dir,
+        n_cores=n_cores,
+        memory_gb=mem_gb,
+        work_dir=work_dir,
+        save_calc_dirs=True,
+    )
+
+    # Light compute to exercise IO without big memory use
+    df = step.xtb(df, options={"gfn": 2, "opt": None}, save_step=True)
+    df = step.orca(df, options={
+        "wB97X-D3": None,
+        "6-31G**":  None,
+        "TightSCF": None,
+        "SP":       None,
+        "NoSym":    None,
+    }, save_step=True)
+
+    if output_parquet:
+        df.to_parquet(output_parquet)
+        stem = os.path.splitext(output_parquet)[0]
+        try:
+            open(stem + ".geom.done", "a").close()
+        except OSError:
+            pass
+
+    return df
+
+
+def run_orca_smoke_freq_only_from_parquet(
+    parquet_path: str,
+    *,
+    n_cores: int = 1,
+    mem_gb: int = 12,
+    debug: bool = False,
+    out_dir: str | None = None,
+    work_dir: str | None = None,
+    # accept extra kwargs for drop-in compatibility
+    **kwargs,
+):
+    """
+    Stage-2 (SMOKE): load Stage-1 parquet and run a cheap Freq-only step.
+    Writes `<stem>.with_freq.parquet` + `.freq.done` sentinel.
+    """
+    df = pd.read_parquet(parquet_path)
+    if df.empty:
+        return df
+
+    stem = os.path.splitext(parquet_path)[0]
+    sentinel = stem + ".freq.done"
+    if os.path.exists(sentinel):
+        return df
+
+    # Keep a single row; these smoke tests are just plumbing checks
+    df = df.head(1)
+    name = df["custom_name"].iloc[0]
+
+    step = Stepper(
+        [name],
+        step_type="none",
+        debug=debug,
+        save_output_dir=True,
+        output_base=out_dir,
+        n_cores=n_cores,
+        memory_gb=mem_gb,
+        work_dir=work_dir,
+        save_calc_dirs=True,
+    )
+
+    df = step.orca(df, options={
+        "wB97X-D3": None,
+        "6-31G**":  None,
+        "TightSCF": None,
+        "Freq":     None,
+        "NoSym":    None,
+    })
+
+    out_parquet = stem + ".with_freq.parquet"
+    df.to_parquet(out_parquet)
+
+    try:
+        open(sentinel, "a").close()
+    except OSError:
+        pass
+
+    return df
 
 
 if __name__ == '__main__':
