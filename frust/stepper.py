@@ -75,7 +75,7 @@ class Stepper:
         if work_dir:
             self.work_dir = work_dir
             os.makedirs(self.work_dir, exist_ok=True)
-            logger.info(f"Working dir: {self.work_dir}")              
+            logger.info(f"Working dir: {self.work_dir}")
         else:
             try:
                 self.work_dir = os.environ["SCRATCH"]
@@ -201,6 +201,7 @@ class Stepper:
             save_step: bool,
             lowest: int | None,
             save_files: list[str] | None = None,
+            use_last_hess: bool = False,
         ) -> pd.DataFrame:
         """
         Generic runner for xTB or ORCA or any other engine.
@@ -270,12 +271,17 @@ class Stepper:
             else:
                 calc_dir   = None
                 save_dir   = None
+            
+            if use_last_hess:
+                last_hess_col = [col for col in df.columns if ".hess" in col][-1]
+                last_hess = {"private_input.hess": row[last_hess_col]}
 
             base_args = {
                 "atoms":  row["atoms"],
                 "coords": [list(c) for c in coords],
                 "n_cores": self.n_cores,
-                "scr": self.work_dir
+                "scr": self.work_dir,
+                "data2file": last_hess if use_last_hess else None
             }
 
             if calc_dir is not None:
@@ -316,6 +322,8 @@ class Stepper:
 
             # step 5: pick only the keys we know how to handle
             allowed = {"normal_termination", "electronic_energy", "opt_coords", "vibs"}
+            [allowed.add(i) for i in out.keys() if '.' in i] # files that was read from the work_dir using `read_files` (eg. input.hess)
+
             if "vibs" in out and "gibbs_energy" in out:
                 allowed.add("gibbs_energy")
 
@@ -523,7 +531,8 @@ class Stepper:
         save_files: list[str] | None = ["orca.out"],
         lowest: int | None = None,
         uma: str | None = None,
-        uma_client_block: str | None = None,
+        read_files: list | None = None,
+        use_last_hess: bool = False,
         **kw        
     ) -> pd.DataFrame:
         """Run ORCA calculations (SP, OptTS, Freq) and attach results to the DataFrame.
@@ -538,6 +547,11 @@ class Stepper:
             constraint (bool, optional): If True, applies predefined distance/angle constraints for TS steps. Defaults to False.
             save_step (bool, optional): If True, saves ORCA run directories for inspection. Defaults to False.
             lowest (int or None, optional): If set, keeps only the lowest-energy conformer per ligand/rpos group. Defaults to None.
+            read_files (list or None, optional): Deposit contents from files in the work_dir directly in the dataframe, \
+            e.g ["input.hess"].
+            use_last_hess (bool, optional): If True, will use the last hessian found in the dataframe. In order to do this \
+            a frequency calculation must be done with the `read_files` argument set to ["input.hess"] in order to save the \
+            hessian into the dataframe.
 
         Returns:
             pd.DataFrame: The input DataFrame extended with ORCA output columns:
@@ -565,6 +579,7 @@ class Stepper:
                 "xtra_inp_str": xtra_inp_str.strip(),
                 "memory": self.memory_gb,
                 "n_cores": self.n_cores,
+                "read_files": read_files,
             }
 
             if "Freq" in opts:
@@ -573,6 +588,17 @@ class Stepper:
                       Calc_Hess true
                     end
                 """).strip()
+                inp["xtra_inp_str"] += ("\n\n" + block) if inp["xtra_inp_str"] else block
+
+            if use_last_hess:
+                block = textwrap.dedent(
+                    """
+                    %geom
+                      inhess Read
+                      InHessName "private_input.hess"
+                    end
+                    """
+                ).strip()
                 inp["xtra_inp_str"] += ("\n\n" + block) if inp["xtra_inp_str"] else block
 
             if constraint and self.step_type.upper() == "TS1":
@@ -661,7 +687,7 @@ class Stepper:
             return inp
 
         if uma is None:
-            return self._run_engine(df, self.orca_fn, prefix, build_orca, save_step, lowest, save_files)
+            return self._run_engine(df, self.orca_fn, prefix, build_orca, save_step, lowest, save_files, use_last_hess)
         
         from frust.utils.uma import _uma_server
         from frust.config import UMA_TOOLS as TOOLS
