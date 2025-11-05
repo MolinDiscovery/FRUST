@@ -7,8 +7,8 @@ from itertools import islice
 import importlib
 
 # ─── CONFIG ─────────────────────────────────────────────────────────────
-PIPELINE_NAME           = "run_orca_smoke_test" # "run_ts_per_rpos", "run_ts_per_lig", "run_mols", "run_ts_per_rpos_UMA_short", run_orca_smoke_test
-PRODUCTION              = True
+PIPELINE_NAME           = "run_ts_per_rpos" # "run_ts_per_rpos", "run_ts_per_lig", "run_mols", "run_ts_per_rpos_UMA_short", run_orca_smoke_test
+PRODUCTION              = False
 USE_SLURM, PARTITION    = True, "kemi1"
 DEBUG                   = False
 BATCH_SIZE              = 1
@@ -67,6 +67,10 @@ executor.update_parameters(
     cpus_per_task=CPUS_PER_JOB,
     mem_gb=MEM_GB,
     timeout_min=TIMEOUT_MIN,
+    slurm_additional_parameters={
+        "hint": "nomultithread",
+        "nodelist": "node236, node237, node238, node239",
+    }
 )
 
 # 5) dispatch batches

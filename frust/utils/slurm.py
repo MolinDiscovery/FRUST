@@ -1,6 +1,6 @@
 # frust/utils/slurm.py
 from __future__ import annotations
-import os, random
+import os
 
 
 def detect_job_id(user_supplied: int | None, live: bool) -> int | None:
@@ -21,7 +21,10 @@ def detect_job_id(user_supplied: int | None, live: bool) -> int | None:
             sjid = os.getenv("SLURM_JOB_ID")
             if sjid:
                 return int(sjid)
+            else:
+                return 1111
+
 
     # Notebook / unit test → short repeatable id
-    random.seed(42)
-    return random.randint(1000, 1999)
+    # random.seed(42)
+    # return random.randint(1000, 1999)

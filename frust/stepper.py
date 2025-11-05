@@ -23,7 +23,6 @@ class Stepper:
         output_base: Path | str | None = None,
         job_id: int | None = None,
         debug: bool = False,
-        live: bool = False,
         dump_each_step: bool = False,
         n_cores: int = 8,
         memory_gb: float = 20.0,
@@ -35,8 +34,7 @@ class Stepper:
         self.ligands_smiles = ligands_smiles
         self.step_type      = step_type
         self.debug          = debug
-        self.live           = live
-        job_id              = detect_job_id(job_id, live and not debug)
+        job_id              = detect_job_id(job_id, True)
         self.dump_each_step = dump_each_step
         self.n_cores        = n_cores
         self.memory_gb      = memory_gb
@@ -314,6 +312,28 @@ class Stepper:
                 if self.debug:
                     print(f"  → engine error: {e}")
                 out = {"normal_termination": False}
+            finally:
+                if save_step and save_dir:
+                    try:
+                        import shutil
+                        from pathlib import Path
+
+                        dir_name = f"{row['custom_name']}_{row['cid']}"
+
+                        candidates = list(Path(self.work_dir).rglob(dir_name))
+                        src = max(candidates, key=lambda p: len(p.parts)) if candidates else None
+
+                        if src is None:
+                            logger.warning(f"No calc dir named '{dir_name}' found under {self.work_dir}")
+                        else:
+                            for p in src.iterdir():
+                                dst = Path(save_dir) / p.name
+                                if p.is_dir():
+                                    shutil.copytree(p, dst, dirs_exist_ok=True)
+                                else:
+                                    shutil.copy2(p, dst)
+                    except Exception as e:
+                        logger.error(f"Failed to stage files from '{src}' to '{save_dir}': {e}")
 
             # step 4: enforce defaults
             out.setdefault("normal_termination", False)
