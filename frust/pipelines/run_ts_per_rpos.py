@@ -5,12 +5,20 @@ from frust.embedder import embed_ts, embed_mols
 from frust.transformers import transformer_mols
 from rdkit.Chem.rdchem import Mol
 import os
+import inspect
 import pandas as pd
 
 # ─── SHARED SETTINGS (inherit across steps) ─────────────────────────────
-FUNCTIONAL = "wB97X-D3"
-BASISSET = "6-31G**"
+FUNCTIONAL = "PBE" # "wB97X-D3"
+BASISSET = "def2-SVP" # "6-31G**"
 BASISSET_SOLV = "6-31+G**"  # for solvent SP
+
+run_dir = "run_ts_per_rpos"
+
+from frust.utils.mols import create_ts_per_rpos
+
+job_inputs = create_ts_per_rpos(["CN1C=CC=C1"], "../structures/ts1.xyz")
+job_inputs = job_inputs[0]
 
 try:
     if "SLURM_JOB_ID" in os.environ:
@@ -33,9 +41,8 @@ def run_init(
     mem_gb: int = 20,
     debug: bool = False,
     top_n: int = 10,
-    out_dir: str | None = None,
+    save_dir: str | None = None,
     work_dir: str | None = None,
-    output_parquet: str | None = None,
     save_output_dir: bool = True,
 ):
     import re
@@ -58,31 +65,32 @@ def run_init(
     n_cores=n_cores,
     memory_gb=mem_gb,
     debug=debug,
-    output_base=out_dir,
-    save_calc_dirs=True,
+    output_base=save_dir,
+    save_calc_dirs=False,
     save_output_dir=save_output_dir,
     work_dir=work_dir,
     )
     
     df = step.build_initial_df(embedded)
     df = step.xtb(df, options={"gfnff": None, "opt": None}, constraint=True)
-    df = step.xtb(df, options={"gfn": 2})
-    df = step.xtb(df, options={"gfn": 2, "opt": None}, constraint=True, lowest=top_n)
+    # df = step.xtb(df, options={"gfn": 2})
+    # df = step.xtb(df, options={"gfn": 2, "opt": None}, constraint=True, lowest=top_n)
 
-    df = step.orca(df, name="DFT-pre-SP", options={
-        FUNCTIONAL  : None,
-        BASISSET    : None,
-        "TightSCF"  : None,
-        "SP"        : None,
-        "NoSym"     : None,
-    })
+    # df = step.orca(df, name="DFT-pre-SP", options={
+    #     FUNCTIONAL  : None,
+    #     BASISSET    : None,
+    #     "TightSCF"  : None,
+    #     "SP"        : None,
+    #     "NoSym"     : None,
+    # })
 
     last_energy = [c for c in df.columns if c.endswith("_energy")][-1]
     df = (df.sort_values(["ligand_name", "rpos", last_energy]
                         ).groupby(["ligand_name", "rpos"]).head(1))
     
-    if output_parquet:
-        df.to_parquet(output_parquet)
+    fn_name = inspect.currentframe().f_code.co_name
+    parquet_name = fn_name.split("_")[1]
+    df.to_parquet(f"{save_dir}/{parquet_name}.parquet")
     
     return df
 
@@ -93,12 +101,11 @@ def run_hess(
     n_cores: int = 2,
     mem_gb: int = 32,
     debug: bool = False,
-    out_dir: str | None = None,
+    save_dir: str | None = None,
     work_dir: str | None = None,
 ):
-    """Compute a (numerical) Hessian to seed OptTS. Low RAM vs analytic Freq."""
-
-    df = pd.read_parquet(parquet_path)
+    
+    df = pd.read_parquet(f"{save_dir}/{parquet_path}")
     if df.empty:
         return df
 
@@ -110,32 +117,177 @@ def run_hess(
         n_cores=n_cores,
         memory_gb=mem_gb,
         debug=debug,
-        output_base=out_dir,
-        save_calc_dirs=True,
+        output_base=save_dir,
+        save_calc_dirs=False,
         save_output_dir=True,
         work_dir=work_dir,
     )
 
     df = step.orca(df, name="Hess", options={
-        FUNCTIONAL: None,
-        BASISSET: None,
-        "TightSCF": None,
-        "NumFreq": None,
+        "XTB2": None,
+        #BASISSET: None,
+        #"TightSCF": None,
+        "Freq": None,
         "NoSym": None,
-    })
+    }, read_files=["input.hess"])
 
-    stem = os.path.splitext(parquet_path)[0]
+    stem = parquet_path.rsplit('.', 1)[0]
     out_parquet = stem + ".hess.parquet"
-    df.to_parquet(out_parquet)
+    df.to_parquet(f"{save_dir}/{out_parquet}")
 
     return df
 
 
-def run_OptTS():
-    pass
+def run_OptTS(
+    parquet_path: str,
+    *,
+    n_cores: int = 8,
+    mem_gb: int = 40,
+    debug: bool = False,
+    save_dir: str | None = None,
+    work_dir: str | None = None,
+):
+    df = pd.read_parquet(f"{save_dir}/{parquet_path}")
 
-def run_freq():
-    pass
+    ligand_smiles = list(dict.fromkeys(df["smiles"].tolist()))
+    step = Stepper(
+        ligand_smiles,
+        n_cores=n_cores,
+        memory_gb=mem_gb,
+        debug=debug,
+        output_base=save_dir,
+        save_calc_dirs=True,
+        save_output_dir=True,
+        work_dir=work_dir,
+    )
 
-def run_solv_SP():
-    pass
+    # Read previously computed Hessian (*.hess from ORCA)
+    df = step.orca(df, name="DFT-OptTS", options={
+        "XTB2": None,
+        #BASISSET: None,
+        "TightSCF": None,
+        #"SlowConv": None,
+        "OptTS": None,
+        #"NoSym": None,
+    }, use_last_hess=True)
+
+    stem = parquet_path.rsplit('.', 1)[0]
+    out_parquet = stem + ".optts.parquet"
+    df.to_parquet(f"{save_dir}/{out_parquet}")
+
+    return df
+
+
+def run_freq(
+    parquet_path: str,
+    *,
+    n_cores: int = 8,
+    mem_gb: int = 40,
+    debug: bool = False,
+    save_dir: str | None = None,
+    work_dir: str | None = None,        
+):
+    df = pd.read_parquet(f"{save_dir}/{parquet_path}")
+
+    ligand_smiles = list(dict.fromkeys(df["smiles"].tolist()))
+    step = Stepper(
+        ligand_smiles,
+        n_cores=n_cores,
+        memory_gb=mem_gb,
+        debug=debug,
+        output_base=save_dir,
+        save_calc_dirs=True,
+        save_output_dir=True,
+        work_dir=work_dir,
+    )
+
+    df = step.orca(df, name="DFT-OptTS", options={
+        "XTB2": None,
+        #BASISSET: None,
+        "TightSCF": None,
+        #"SlowConv": None,
+        "Freq": None,
+        #"NoSym": None,
+    })
+
+    stem = parquet_path.rsplit('.', 1)[0]
+    out_parquet = stem + ".freq.parquet"
+    df.to_parquet(f"{save_dir}/{out_parquet}")
+
+    return df
+
+
+def run_solv(
+    parquet_path: str,
+    *,
+    n_cores: int = 8,
+    mem_gb: int = 40,
+    debug: bool = False,
+    save_dir: str | None = None,
+    work_dir: str | None = None,        
+):
+    df = pd.read_parquet(f"{save_dir}/{parquet_path}")
+
+    ligand_smiles = list(dict.fromkeys(df["smiles"].tolist()))
+    step = Stepper(
+        ligand_smiles,
+        n_cores=n_cores,
+        memory_gb=mem_gb,
+        debug=debug,
+        output_base=save_dir,
+        save_calc_dirs=True,
+        save_output_dir=True,
+        work_dir=work_dir,
+    )
+
+    df = step.orca(df, name="DFT-solv", options={
+        "XTB2": None,
+        #BASISSET: None,
+        "TightSCF": None,
+        #"SlowConv": None,
+        "SP": None,
+        #"NoSym": None,
+    })
+
+    stem = parquet_path.rsplit('.', 1)[0]
+    out_parquet = stem + ".solv.parquet"
+    df.to_parquet(f"{save_dir}/{out_parquet}")
+
+    return df
+
+
+def run_cleanup(save_dir):
+    print("[INFO]: Cleanup initiated...")
+
+    """Deletes residual .parquet files"""
+    parquet_files = list(Path(save_dir).glob("*.parquet"))
+    if not parquet_files:
+        print("No parquet files found.")
+        return
+
+    if len(parquet_files) < 2:
+        print("Passing parquet cleanup, only 1 parquat file found.")
+        return
+    
+    parquet_len = {}
+    for f in parquet_files:
+        c = len(f.name.split('.'))
+        parquet_len[f] = c
+        
+    parquet_len_sorted = dict(sorted(parquet_len.items(), key=lambda x: x[1], reverse=False))
+    dont_delete = max(parquet_len_sorted.values())
+
+    for f, c in parquet_len_sorted.items():
+        if c < dont_delete:
+            print(f"[INFO]: Removing residual parquet file {f}")
+            Path(f).unlink()
+
+    print("[INFO]: Cleanup done!")
+
+
+# Example local run
+# _ = run_init(job_inputs, n_confs=1, save_dir=test_dir)
+# _ = run_hess("init.parquet", save_dir=test_dir, n_cores=10)
+# _ = run_OptTS("init.hess.parquet", save_dir=test_dir, n_cores=10)
+# _ = run_freq("init.hess.optts.parquet", save_dir=test_dir, n_cores=10)
+# _ = run_solv("init.hess.optts.freq.parquet", save_dir=test_dir, n_cores=10)

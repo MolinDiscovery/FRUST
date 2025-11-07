@@ -569,7 +569,7 @@ class Stepper:
             lowest (int or None, optional): If set, keeps only the lowest-energy conformer per ligand/rpos group. Defaults to None.
             read_files (list or None, optional): Deposit contents from files in the work_dir directly in the dataframe, \
             e.g ["input.hess"].
-            use_last_hess (bool, optional): If True, will use the last hessian found in the dataframe. In order to do this \
+            use_last_hess (bool, optional): If True, will scan the dataframe for a *.hess column with contents fror a .hess file. In order to do this \
             a frequency calculation must be done with the `read_files` argument set to ["input.hess"] in order to save the \
             hessian into the dataframe.
 
