@@ -13,13 +13,6 @@ FUNCTIONAL = "PBE" # "wB97X-D3"
 BASISSET = "def2-SVP" # "6-31G**"
 BASISSET_SOLV = "6-31+G**"  # for solvent SP
 
-run_dir = "run_ts_per_rpos"
-
-from frust.utils.mols import create_ts_per_rpos
-
-job_inputs = create_ts_per_rpos(["CN1C=CC=C1"], "../structures/ts1.xyz")
-job_inputs = job_inputs[0]
-
 try:
     if "SLURM_JOB_ID" in os.environ:
         from nuse import start_monitoring
@@ -284,6 +277,13 @@ def run_cleanup(save_dir):
 
     print("[INFO]: Cleanup done!")
 
+
+# ––– Test stuff ────────────────────────────────────────────────────────–
+# run_dir = "run_ts_per_rpos"                                              
+# from frust.utils.mols import create_ts_per_rpos                          
+# job_inputs = create_ts_per_rpos(["CN1C=CC=C1"], "../structures/ts1.xyz") 
+# job_inputs = job_inputs[0]                                               
+# ───────────────────────────────────────────────────────────────────────–
 
 # Example local run
 # _ = run_init(job_inputs, n_confs=1, save_dir=test_dir)
