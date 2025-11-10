@@ -339,13 +339,30 @@ class Stepper:
             out.setdefault("normal_termination", False)
             if out["normal_termination"]:
                 out.setdefault("electronic_energy", np.nan)
-
             # step 5: pick only the keys we know how to handle
             allowed = {"normal_termination", "electronic_energy", "opt_coords", "vibs"}
-            [allowed.add(i) for i in out.keys() if '.' in i] # files that was read from the work_dir using `read_files` (eg. input.hess)
+            def _filelike(k: str) -> bool:
+                # Accept only filename-ish keys (no spaces), or our private_* stash
+                if not isinstance(k, str) or " " in k:
+                    return False
+                if k.startswith("private_"):
+                    return True
+                return bool(re.search(
+                    r"\.(hess|xyz|inp|out|log|gbw|molden|wfn|txt|json)$", k
+                ))
+
+            for k in out.keys():
+                if _filelike(k):
+                    allowed.add(k)
 
             if "vibs" in out and "gibbs_energy" in out:
                 allowed.add("gibbs_energy")
+
+            if self.debug:
+                ignored = sorted([k for k in out.keys()
+                                if '.' in k and k not in allowed])
+                if ignored:
+                    logger.debug(f"[{prefix}] ignoring non-file dot-keys: {ignored}")
 
             row_data: dict[str, object] = {}
             for key in allowed:
