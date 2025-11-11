@@ -9,8 +9,8 @@ import inspect
 import pandas as pd
 
 # ─── SHARED SETTINGS (inherit across steps) ─────────────────────────────
-FUNCTIONAL = "PBE" # "wB97X-D3"
-BASISSET = "def2-SVP" # "6-31G**"
+FUNCTIONAL = "wB97X-D3" # "wB97X-D3"
+BASISSET = "6-31G**" # "6-31G**"
 BASISSET_SOLV = "6-31+G**"  # for solvent SP
 
 try:
@@ -59,23 +59,22 @@ def run_init(
     memory_gb=mem_gb,
     debug=debug,
     output_base=save_dir,
-    save_calc_dirs=False,
     save_output_dir=save_output_dir,
     work_dir=work_dir,
     )
     
     df = step.build_initial_df(embedded)
-    df = step.xtb(df, options={"gfnff": None, "opt": None}, constraint=True)
-    # df = step.xtb(df, options={"gfn": 2})
-    # df = step.xtb(df, options={"gfn": 2, "opt": None}, constraint=True, lowest=top_n)
+    df = step.xtb(df, options={"gfnff": None, "opt": None}, constraint=True, n_cores=2)
+    df = step.xtb(df, options={"gfn": 2}, n_cores=2)
+    df = step.xtb(df, options={"gfn": 2, "opt": None}, constraint=True, lowest=top_n, n_cores=2)
 
-    # df = step.orca(df, name="DFT-pre-SP", options={
-    #     FUNCTIONAL  : None,
-    #     BASISSET    : None,
-    #     "TightSCF"  : None,
-    #     "SP"        : None,
-    #     "NoSym"     : None,
-    # })
+    df = step.orca(df, name="DFT-pre-SP", options={
+        FUNCTIONAL  : None,
+        BASISSET    : None,
+        "TightSCF"  : None,
+        "SP"        : None,
+        "NoSym"     : None,
+    })
 
     last_energy = [c for c in df.columns if c.endswith("_energy")][-1]
     df = (df.sort_values(["ligand_name", "rpos", last_energy]
@@ -111,15 +110,14 @@ def run_hess(
         memory_gb=mem_gb,
         debug=debug,
         output_base=save_dir,
-        save_calc_dirs=False,
         save_output_dir=True,
         work_dir=work_dir,
     )
 
     df = step.orca(df, name="Hess", options={
-        "XTB2": None,
-        #BASISSET: None,
-        #"TightSCF": None,
+        FUNCTIONAL: None,
+        BASISSET: None,
+        "TightSCF": None,
         "Freq": None,
         "NoSym": None,
     }, read_files=["input.hess"])
@@ -149,20 +147,19 @@ def run_OptTS(
         memory_gb=mem_gb,
         debug=debug,
         output_base=save_dir,
-        save_calc_dirs=True,
         save_output_dir=True,
         work_dir=work_dir,
     )
 
     # Read previously computed Hessian (*.hess from ORCA)
-    df = step.orca(df, name="DFT-OptTS", options={
-        "XTB2": None,
-        #BASISSET: None,
+    df = step.orca(df, name="OptTS", options={
+        FUNCTIONAL: None,
+        BASISSET: None,
         "TightSCF": None,
-        #"SlowConv": None,
+        "SlowConv": None,
         "OptTS": None,
-        #"NoSym": None,
-    }, use_last_hess=True)
+        "NoSym": None,
+    }, use_last_hess=True, save_files=["orca.out"])
 
     stem = parquet_path.rsplit('.', 1)[0]
     out_parquet = stem + ".optts.parquet"
@@ -189,18 +186,17 @@ def run_freq(
         memory_gb=mem_gb,
         debug=debug,
         output_base=save_dir,
-        save_calc_dirs=True,
         save_output_dir=True,
         work_dir=work_dir,
     )
 
-    df = step.orca(df, name="DFT-OptTS", options={
-        "XTB2": None,
-        #BASISSET: None,
+    df = step.orca(df, name="Freq", options={
+        FUNCTIONAL: None,
+        BASISSET: None,
         "TightSCF": None,
-        #"SlowConv": None,
+        "SlowConv": None,
         "Freq": None,
-        #"NoSym": None,
+        "NoSym": None,
     })
 
     stem = parquet_path.rsplit('.', 1)[0]
@@ -228,18 +224,15 @@ def run_solv(
         memory_gb=mem_gb,
         debug=debug,
         output_base=save_dir,
-        save_calc_dirs=True,
         save_output_dir=True,
         work_dir=work_dir,
     )
 
     df = step.orca(df, name="DFT-solv", options={
-        "XTB2": None,
-        #BASISSET: None,
-        "TightSCF": None,
-        #"SlowConv": None,
+        FUNCTIONAL: None,
+        BASISSET_SOLV: None,
         "SP": None,
-        #"NoSym": None,
+        "NoSym": None,
     })
 
     stem = parquet_path.rsplit('.', 1)[0]
