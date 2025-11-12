@@ -305,6 +305,7 @@ def merge_parquet_dir(
     output: Union[str, Path] = "merged.parquet",
     require_normal_termination: bool = False,
     normal_term_cols: Sequence[str] | None = None,
+    recursive: bool = False,
 ) -> Path:
     """Merge multiple Parquet files with identical schemas into one file.
 
@@ -317,6 +318,8 @@ def merge_parquet_dir(
         normal_term_cols: Optional explicit list of columns to treat as
             'normal_termination' columns. If None, columns ending with
             'normal_termination' are auto-detected.
+        recursive: If True, also include .parquet files found in
+            subdirectories (uses rglob).
 
     Returns:
         Path to the merged Parquet file.
@@ -331,7 +334,10 @@ def merge_parquet_dir(
     if not in_path.is_dir():
         raise FileNotFoundError(f"Input directory '{in_path}' not found.")
 
-    files = sorted(in_path.glob("*.parquet"))
+    pattern = "*.parquet"
+    files = sorted(
+        in_path.rglob(pattern) if recursive else in_path.glob(pattern)
+    )
     if not files:
         raise FileNotFoundError(f"No .parquet files in '{in_path}'.")
 
@@ -347,7 +353,6 @@ def merge_parquet_dir(
                 subset = (df[cols]
                           .replace({None: False})
                           .fillna(False))
-                # Robust cast to bool; then require all True across df+cols
                 try:
                     subset = subset.astype(bool)
                 except Exception:
@@ -355,7 +360,6 @@ def merge_parquet_dir(
                         lambda x: bool(x) if pd.notna(x) else False
                     )
                 if not subset.all().all():
-                    # Skip this file entirely
                     continue
         dfs.append(df)
 
@@ -414,6 +418,12 @@ def main_merge_parquet(argv: Sequence[str] | None = None) -> int:
         help=("Explicit columns to treat as normal_termination (override "
               "auto-detect)."),
     )
+    parser.add_argument(
+        "-r",
+        "--recursive",
+        action="store_true",
+        help="Include .parquet files in subdirectories.",
+    )
 
     args = parser.parse_args(argv)
     try:
@@ -422,6 +432,7 @@ def main_merge_parquet(argv: Sequence[str] | None = None) -> int:
             args.output,
             require_normal_termination=args.require_normal_termination,
             normal_term_cols=args.normal_term_cols,
+            recursive=args.recursive,
         )
     except Exception as e:
         print(str(e))
