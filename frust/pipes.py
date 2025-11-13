@@ -446,7 +446,7 @@ def run_ts_per_lig(
 def run_mols(
     ligand_smiles_list: list[str],
     *,
-    n_confs: int = 5,
+    n_confs: int | None = 5,
     n_cores: int = 4,
     mem_gb: int = 20,    
     debug: bool = False,
@@ -485,9 +485,9 @@ def run_mols(
         save_calc_dirs=False,
     )
     df = step.build_initial_df(embedded)
-    df = step.xtb(df, options={"gfnff": None, "opt": None})
-    df = step.xtb(df, options={"gfn": 2})
-    df = step.xtb(df, options={"gfn": 2, "opt": None}, lowest=top_n)
+    df = step.xtb(df, options={"gfnff": None, "opt": None}, n_cores=2)
+    df = step.xtb(df, options={"gfn": 2}, n_cores=2)
+    df = step.xtb(df, options={"gfn": 2, "opt": None}, lowest=top_n, n_cores=2)
 
     functional      = "wB97X-D3" # wB97X-D3, wB97M-V
     basisset        = "6-31G**" # 6-31G**, def2-TZVPD
