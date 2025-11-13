@@ -1,0 +1,22 @@
+{
+  "include": ["FRUST", "tool-toad", "scripts"],
+  "exclude": [
+    "**/.git/**",
+    "**/__pycache__/**",
+    "**/.ipynb_checkpoints/**",
+    "**/logs/**",
+    "**/_*/**",
+    "**/results/**",
+    "**/results_*/*",
+    "**/datasets/**",
+    "**/*.parquet",
+    "**/*.csv",
+    "**/UMA-logs/**"
+  ],
+  "extraPaths": [
+    "/Users/Mounts/HPC3/dev/FRUST",
+    "/Users/Mounts/HPC3/dev/tool-toad"
+  ]
+}
+
+// solves pylance problem on sshfs see: https://github.com/microsoft/pylance-release/issues/1538
