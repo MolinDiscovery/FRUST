@@ -7,6 +7,7 @@ A computational pipeline for automated **frustrated Lewis pair (FLP) activation*
 ## Status
 
 > ⚠️ **Early Development Phase**  
+>
 > The API and internal structure are still evolving. Expect breaking changes between versions while the research project is ongoing.
 
 ---
@@ -49,7 +50,6 @@ Although originally developed for **FLP-mediated C–H activation and borylation
     - Results collected into `.parquet` files for large-scale analysis
 - 📦 **Data-centric outputs**
     - Pandas-friendly tables with energies, geometries, metadata
-    - Easy integration with external active-learning pipelines
 
 > Note: Machine-learned accelerators (e.g. UMA) can be integrated via ORCA's external interfaces in some workflows, but this is considered advanced usage and may not be fully stable yet.
 
@@ -148,20 +148,26 @@ This pattern is typical for FRUST:
 The exact layout may evolve, but the repo is roughly organized as:
 
 - `frust/`  
+
   Core Python package with:
     - Pipeline and step definitions (`frust.pipes`)
     - Embedding / transformation utilities (`embedder.py`, `transformers.py`)
     - Execution helpers (`stepper.py`, monitoring, simple I/O utilities)
 - `scripts/`  
+
   Small command-line helpers and submission scripts, e.g.:
     - `submit.py`, `submit2.py`, `submit3.py` – Slurm/HPC helpers
     - Utility scripts to merge `.parquet` outputs, test jobs, etc.
 - `playground/`  
+
   Local scratch space for results, dev experiments, and temporary runs.  
+
   (Only selected `.py` / `.ipynb` files are tracked; most large output trees are intentionally **not** under version control.)
 - `dev/`  
+
   Development notebooks and prototypes (see next section).
 - `datasets/`  
+
   Example input data and reference datasets, e.g.:
     - `ir_borylation.csv` – FLP borylation dataset with SMILES and active sites
 
@@ -216,8 +222,11 @@ If `UMA_TOOLS` is missing, UMA-related functions will raise a runtime error.
 ## Stepper Showcase (xTB / ORCA Chaining)
 
 `Stepper` composes calculation stages by returning a new DataFrame every time
+
 you call `xtb(...)` or `orca(...)`. Each stage adds columns with a predictable
+
 prefix; changing the workflow is just reordering calls, tweaking `options`,
+
 or dropping columns.
 
 Minimal pattern (see `examples/stepper_showcase.py` for full version):
@@ -248,6 +257,7 @@ df = step.orca(df, name="sp_refine", options={"wB97X-D3": None, "6-31G**": None,
 ```
 
 Highlights:
+
 - Functional chaining; original rows preserved unless filtered by `lowest=`.
 - Adjust cores per xTB call with `n_cores` (arg on `xtb` only).
 - Column prefixes (`xtb-gfn2-opt`, `orca-wB97X-D3-6-31G**-Opt`, etc.) make it trivial to select or remove stages.
@@ -299,6 +309,7 @@ See the [`LICENSE`](LICENSE) file for the full text.
 ## Author
 
 **Jacob Molin Nielsen**  
+
 Email: <jacob.molin@me.com>
 
 ---

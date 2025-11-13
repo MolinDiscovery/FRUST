@@ -500,7 +500,7 @@ def run_mols(
         "TightSCF"  : None,
         "SP"        : None,
         "NoSym"     : None,
-    }, lowest=1)
+    })
 
     # 4) if no DFT requested, save/return
     if not DFT:
