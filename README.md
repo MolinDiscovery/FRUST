@@ -298,6 +298,48 @@ If `UMA_TOOLS` is missing, UMA-related functions will raise a runtime error.
 >
 > arguments keep runs transparent while the API evolves.
 
+## Stepper Showcase (xTB / ORCA Chaining)
+
+`Stepper` composes calculation stages by returning a new DataFrame every time
+you call `xtb(...)` or `orca(...)`. Each stage adds columns with a predictable
+prefix; changing the workflow is just reordering calls, tweaking `options`,
+or dropping columns.
+
+Minimal pattern (see `examples/stepper_showcase.py` for full version):
+
+```python
+from rdkit import Chem
+from frust.embedder import embed_mols
+from frust.stepper import Stepper
+
+smis = ["CCO", "c1ccccc1"]
+embedded = embed_mols({"mol0": Chem.MolFromSmiles(smis[0])}, n_confs=3)
+step = Stepper(smis, debug=True, save_output_dir=False)
+df = step.build_initial_df(embedded)
+
+# Chain xTB levels
+df = step.xtb(df, options={"gfnff": None, "opt": None})      # pre-opt
+df = step.xtb(df, options={"gfn": 2})                         # SP
+df = step.xtb(df, options={"gfn": 2, "opt": None}, lowest=1) # keep lowest per ligand
+
+# Add ORCA stages (mock in debug mode)
+df = step.orca(df, options={"HF": None, "STO-3G": None, "SP": None})
+df = step.orca(df, name="dft", options={"wB97X-D3": None, "6-31G**": None, "Opt": None})
+
+# Remove a stage (drop columns) & refine
+dft_cols = [c for c in df.columns if c.startswith("dft-")]
+df = df.drop(columns=dft_cols)
+df = step.orca(df, name="sp_refine", options={"wB97X-D3": None, "6-31G**": None, "SP": None})
+```
+
+Highlights:
+- Functional chaining; original rows preserved unless filtered by `lowest=`.
+- Adjust cores per xTB call with `n_cores` (arg on `xtb` only).
+- Column prefixes (`xtb-gfn2-opt`, `orca-wB97X-D3-6-31G**-Opt`, etc.) make it trivial to select or remove stages.
+- UMA external optimizations: provide `uma="task@profile"` in `orca(...)` once `UMA_TOOLS` is set.
+
+This modular approach avoids large monolithic driver scripts and encourages rapid iteration.
+
 ---
 
 ## Research Context
