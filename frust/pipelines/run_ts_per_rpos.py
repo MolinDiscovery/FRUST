@@ -7,6 +7,7 @@ from rdkit.Chem.rdchem import Mol
 import os
 import inspect
 import pandas as pd
+import numpy as np
 
 # ─── SHARED SETTINGS (inherit across steps) ─────────────────────────────
 FUNCTIONAL = "wB97X-D3" # "wB97X-D3"
@@ -256,27 +257,53 @@ def run_cleanup(save_dir):
     print("[INFO]: Cleanup initiated...")
 
     """Deletes residual .parquet files"""
+
     parquet_files = list(Path(save_dir).glob("*.parquet"))
     if not parquet_files:
         print("No parquet files found.")
         return
 
-    if len(parquet_files) < 2:
-        print("Passing parquet cleanup, only 1 parquat file found.")
-        return
-    
-    parquet_len = {}
-    for f in parquet_files:
-        c = len(f.name.split('.'))
-        parquet_len[f] = c
-        
-    parquet_len_sorted = dict(sorted(parquet_len.items(), key=lambda x: x[1], reverse=False))
-    dont_delete = max(parquet_len_sorted.values())
+    depths = {f: len(f.suffixes) for f in parquet_files}
+    max_depth = max(depths.values())
 
-    for f, c in parquet_len_sorted.items():
-        if c < dont_delete:
+    kept = []
+    for f, d in depths.items():
+        if d < max_depth:
             print(f"[INFO]: Removing residual parquet file {f}")
-            Path(f).unlink()
+            try:
+                f.unlink()
+            except Exception as e:
+                print(f"[WARN]: Could not remove {f}: {e}")
+        else:
+            kept.append(f)
+
+    for f in kept:
+        try:
+            df = pd.read_parquet(f)
+        except Exception as e:
+            print(f"[WARN]: Could not read {f}: {e}")
+            continue
+
+        hess_cols = []
+        for col in df.columns:
+            if col.endswith(".hess"):
+                nonnull = next(
+                    (v for v in df[col].tolist()
+                     if v is not None and not (isinstance(v, float) and np.isnan(v))),
+                    None
+                )
+                if nonnull is None or isinstance(nonnull, (bytes, bytearray, str)):
+                    hess_cols.append(col)
+
+        if hess_cols:
+            print(f"[INFO]: Dropping .hess columns from {f.name}: {hess_cols}")
+            df = df.drop(columns=hess_cols)
+            try:
+                df.to_parquet(f)
+            except Exception as e:
+                print(f"[WARN]: Failed writing cleaned Parquet {f}: {e}")
+        else:
+            print(f"[INFO]: No .hess columns in {f.name}")
 
     print("[INFO]: Cleanup done!")
 
