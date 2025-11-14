@@ -76,9 +76,18 @@ def run_init(
         "NoSym"     : None,
     })
 
-    last_energy = [c for c in df.columns if c.endswith("_energy")][-1]
-    df = (df.sort_values(["ligand_name", "rpos", last_energy]
-                        ).groupby(["ligand_name", "rpos"]).head(1))
+    # last_energy = [c for c in df.columns if c.endswith("_energy")][-1]
+    # df = (df.sort_values(["ligand_name", "rpos", last_energy]
+    #                     ).groupby(["ligand_name", "rpos"]).head(1))
+
+    df = step.orca(df, name="DFT-pre-Opt", options={
+        FUNCTIONAL : None,
+        BASISSET   : None,
+        "TightSCF" : None,
+        "SlowConv" : None,
+        "Opt"      : None,
+        "NoSym"    : None,
+    }, constraint=True, lowest=1)                        
     
     fn_name = inspect.currentframe().f_code.co_name
     parquet_name = fn_name.split("_")[1]
@@ -159,7 +168,7 @@ def run_OptTS(
         "SlowConv": None,
         "OptTS": None,
         "NoSym": None,
-    }, use_last_hess=True, save_files=["orca.out"])
+    }, use_last_hess=True)
 
     stem = parquet_path.rsplit('.', 1)[0]
     out_parquet = stem + ".optts.parquet"
@@ -231,9 +240,10 @@ def run_solv(
     df = step.orca(df, name="DFT-solv", options={
         FUNCTIONAL: None,
         BASISSET_SOLV: None,
+        "TightSCF": None,
         "SP": None,
         "NoSym": None,
-    })
+    }, xtra_inp_str="""%CPCM\nSMD TRUE\nSMDSOLVENT "chloroform"\nend""")
 
     stem = parquet_path.rsplit('.', 1)[0]
     out_parquet = stem + ".solv.parquet"

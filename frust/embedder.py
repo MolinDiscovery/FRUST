@@ -139,6 +139,7 @@ def embed_ts(
     ts_with_H = RWMol(ts_with_H)
     if ts_type.upper() == "TS1":
         # Remove temporary bonds (hard-coded: 10-reactive_C / 10-reactive_H)
+        logger.info("TS1 registered. Embedding accordingly...")
         reactive_C = atom_indices_to_keep[-1]
         reactive_H = atom_indices_to_keep[-2]
         ts_with_H.RemoveBond(10, reactive_C)
@@ -154,24 +155,28 @@ def embed_ts(
     #     ts_with_H.RemoveBond(pin_B, cat_B)
 
     if ts_type.upper() == "TS2":
+        logger.info("TS2 registered. Embedding accordingly...")
         reactive_C = atom_indices_to_keep[-1]
         reactive_H = atom_indices_to_keep[-3]
         cat_B      = atom_indices_to_keep[0]
         ts_with_H.RemoveBond(cat_B, reactive_H)
 
     if ts_type.upper() == "TS3":
+        logger.info("TS3 registered. Embedding accordingly...")
         reactive_C = atom_indices_to_keep[-1]
         cat_B      = atom_indices_to_keep[0]
         pin_B      = atom_indices_to_keep[-3]
         ts_with_H.RemoveBond(pin_B, cat_B)
     
     if ts_type.upper() == "TS4":
+        logger.info("TS4 registered. Embedding accordingly...")
         reactive_C = atom_indices_to_keep[-1]
         cat_B      = atom_indices_to_keep[0]
         pin_B      = atom_indices_to_keep[-2]
         ts_with_H.RemoveBond(pin_B, cat_B)    
 
     if ts_type.upper() == "INT3":
+        logger.info("INT3 registered. Embedding accordingly...")
         reactive_C = atom_indices_to_keep[-1]
         cat_B      = atom_indices_to_keep[0]
         pin_B      = atom_indices_to_keep[-3]   
