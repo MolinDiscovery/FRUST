@@ -88,7 +88,7 @@ def run_init(
         "SlowConv" : None,
         "Opt"      : None,
         "NoSym"    : None,
-    }, constraint=True, lowest=1)                        
+    }, constraint=True, lowest=1)
     
     fn_name = inspect.currentframe().f_code.co_name
     parquet_name = fn_name.split("_")[1]
