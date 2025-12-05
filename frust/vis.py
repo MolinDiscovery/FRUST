@@ -1,5 +1,5 @@
 from typing import Optional, List, Union, Any
-from tooltoad.vis import MolTo3DGrid
+from tooltoad.vis import MolTo3DGrid, RxnTo3DGrid
 from tooltoad.chemutils import ac2mol
 import pandas as pd
 import numpy as np
@@ -148,7 +148,7 @@ def plot_mols(
         'legends': all_legends,
         'show_labels': False,
         'show_confs': True,
-        'background_color': 'black' if darkmode else 'white',
+        #'background_color': 'black' if darkmode else 'white',
         'cell_size': (400, 400),
         'columns': len(coord_columns),
         'linked': False,
