@@ -933,7 +933,7 @@ def _svg_annotated_smi(
     robust_notes: bool = False,
     label_offset_px: float = 18.0,
     leader_line: bool = True,
-    tight_viewbox: bool = True,
+    tight_viewbox: bool = False,
     tight_padding_px: float = 12.0,
     tight_set_size: bool = False,
     highlight_atoms: list[int] | None = None,
@@ -1508,7 +1508,7 @@ def build_annotated_grid(
     show_smiles: bool = True,
     include_style: bool = True,
     label_offset_px: int = 22,
-    tight_viewbox: bool = True,
+    tight_viewbox: bool = False,
     tight_padding_px: float = 12.0,
     tight_set_size: bool = False,
     include_download_button: bool = False,
@@ -1517,6 +1517,8 @@ def build_annotated_grid(
     highlight_n_lowest: int | None = None,
     highlight_edge_ranks: list[tuple[str, int]] | None = None,
     highlight_color: tuple[float, float, float] = (1, 0, 0),
+    sort_by_lowest: bool = False,          # <--- add
+    sort_ascending: bool = True,           # <--- add
 ) -> tuple[pd.DataFrame, str]:
     """Render annotated molecules as a responsive HTML/CSS grid.
 
@@ -1681,8 +1683,28 @@ def build_annotated_grid(
             t = t[2:]
         return t
 
+    # --- optional sorting (per ligand: lowest energy among annotated values) ---
+    group_keys = list(work.groupby(ligand_col).groups.keys())
+
+    if sort_by_lowest:
+        def _ligand_lowest(g: pd.DataFrame) -> float:
+            vals = pd.to_numeric(g[energy_col_local], errors="coerce")
+            m = vals.min(skipna=True)
+            return float(m) if pd.notna(m) else float("inf")
+
+        key_to_score: dict[object, float] = {}
+        for lig, grp in work.groupby(ligand_col):
+            key_to_score[lig] = _ligand_lowest(grp)
+
+        group_keys.sort(
+            key=lambda lig: (key_to_score.get(lig, float("inf")), str(lig)),
+            reverse=not bool(sort_ascending),
+        )
+
     rows = []
-    for idx, (lig, grp) in enumerate(work.groupby(ligand_col), start=1):
+    grouped = work.groupby(ligand_col)
+    for idx, lig in enumerate(group_keys, start=1):
+        grp = grouped.get_group(lig)
         smi = grp[smi_col].iloc[0]
         pos = grp[pos_col].astype(int).tolist()
         dE_vals = grp[energy_col_local].tolist()
