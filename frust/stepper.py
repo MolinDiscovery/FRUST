@@ -473,7 +473,7 @@ class Stepper:
                 $constrain
                 force constant=50
                 distance: {atom[B]}, {atom[H]}, 2.07696
-                distance: {atom[N]}, {atom[H]}, 1.5127
+                distance: {atom[N]}, {atom[H]}, 1.5127 
                 distance: {atom[H]}, {atom[C]}, 1.29095
                 distance: {atom[B]}, {atom[C]}, 1.68461
                 distance: {atom[B]}, {atom[N]}, 3.06223

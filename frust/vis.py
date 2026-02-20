@@ -379,12 +379,14 @@ def plot_regression_outliers(
     y_col: str = "dE",
     xlabel: str = "dG, kcal/mol",
     ylabel: str = "dE, kcal/mol",
+    font_size: int = 14,
     label_col: str = "ligand_name",
     rpos_col: str = "rpos",
     method: str = "spearman",
     num_outliers: int = 2,
     size: tuple = (8, 6),
-    plot_1x = False,
+    plot_1x: bool = False,
+    equal_axis: bool = False,
 ) -> pd.DataFrame:
     """Plot x vs y with linear fit, score outliers, and annotate top points.
 
@@ -441,7 +443,7 @@ def plot_regression_outliers(
                 f"{abs(lr.intercept):.2f}")
     print("[INFO]: Linear relation:", eq_label)
     eq2_label = (f"y = 1x "
-                 f"{'+' if c <= 0 else '-'} "
+                 f"{'+' if c >= 0 else '-'} "
                  f"{abs(c):.2f}")
     print("[INFO]: Error relationship: ", eq2_label)
 
@@ -460,14 +462,14 @@ def plot_regression_outliers(
         plt.figure(figsize=size)
         plt.scatter(x, y, alpha=0.7)
         plt.plot(
-            x, y_fit, color="red",
+            x, y_fit, color="red", marker="",
             label=(f"$R^2$={lr.rvalue**2:.3f}, "
                    f"spearman={rho:.3f}, "
                    f"RMSD={rmsd_fit:.3f}")
         )
         if plot_1x:
             plt.plot(
-                x, y_hat,
+                x, y_hat, marker="",
                 label=(f"$R^2$={r2_hat:.3f}, "
                        f"spearman={rho_hat:.3f}, "
                        f"RMSD={rmsd_hat:.3f}")
@@ -484,13 +486,23 @@ def plot_regression_outliers(
                 fontsize=8,
                 arrowprops=dict(arrowstyle="->", lw=0.5)
             )
-        plt.xlabel(xlabel)
-        plt.ylabel(ylabel)
-        plt.legend()
+        plt.xlabel(xlabel, fontsize=font_size)
+        plt.ylabel(ylabel, fontsize=font_size)
+        plt.xticks(fontsize=font_size)
+        plt.yticks(fontsize=font_size)
+        plt.legend(fontsize=font_size)
         plt.grid(True)
+        if equal_axis:
+            xmin = min(x.min(), y.min())
+            xmax = max(x.max(), y.max())
+
+            plt.xlim(xmin, xmax)
+            plt.ylim(xmin, xmax)
+            plt.gca().set_aspect("equal", adjustable="box")        
+
         plt.tight_layout()
         plt.show()
-
+        
     return None
 
 
