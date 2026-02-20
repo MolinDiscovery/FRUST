@@ -133,7 +133,6 @@ def run_ts_per_rpos(
         return df
 
     # ↓↓↓↓↓↓↓↓ This code only executes if DFT is True ↓↓↓↓↓↓↓↓
-
     df = step.orca(df, name="DFT-pre-Opt", options={
         functional : None,
         basisset   : None,
@@ -170,7 +169,6 @@ def run_ts_per_rpos(
         df.to_parquet(output_parquet)
 
     return df
-
 
 def run_ts_per_rpos_UMA(
     ts_struct: dict[str, tuple[Mol, list, str]],
@@ -743,6 +741,112 @@ def run_orca_smoke_test(
     if output_parquet:
             df.to_parquet(output_parquet)            
     
+    return df
+
+
+def run_ts_for_rpos(
+    ts_struct: dict[str, tuple[Mol, list, str]],
+    *,
+    n_confs: int | None = None,
+    n_cores: int = 4,
+    mem_gb: int = 20,
+    debug: bool = False,
+    top_n: int = 10,
+    out_dir: str | None = None,
+    work_dir: str | None = None,
+    output_parquet: str | None = None,
+    save_output_dir: bool = True,
+    DFT: bool = False,
+):
+    import re
+    pattern = re.compile(
+    r'^(?:(?P<prefix>(?:TS|INT)\d*|Mols)\()?'
+    r'(?P<ligand>.+?)_rpos\('        
+    r'(?P<rpos>\d+)\)\)?$'           
+    )
+
+    name = list(ts_struct.keys())[0]
+    m = pattern.match(name)
+    ts_type = m.group("prefix")
+    
+    embedded = embed_ts(ts_struct, ts_type=ts_type, n_confs=n_confs, optimize=not debug)
+
+    ligand_smiles = list(ts_struct.values())[0][2]
+
+    step = Stepper(
+    ligand_smiles,
+    n_cores=n_cores,
+    memory_gb=mem_gb,
+    debug=debug,
+    output_base=out_dir,
+    save_calc_dirs=True,
+    save_output_dir=save_output_dir,
+    work_dir=work_dir,
+    )
+    
+    df = step.build_initial_df(embedded)
+    df = step.xtb(df, options={"gfnff": None, "opt": None}, constraint=True)
+    df = step.xtb(df, options={"gfn": 2})
+    df = step.xtb(df, options={"gfn": 2, "opt": None}, constraint=True, lowest=top_n)
+
+    functional      = "wB97X-D3" # wB97X-D3, wB97M-V
+    basisset        = "6-31G**" # 6-31G**, def2-TZVPD
+    basisset_solv   = "6-31+G**" # 6-31+G**, def2-TZVPD
+    freq            = "Freq" # NumFreq, Freq
+
+    df = step.orca(df, name="DFT-pre-SP", options={
+        functional  : None,
+        basisset    : None,
+        "TightSCF"  : None,
+        "SP"        : None,
+        "NoSym"     : None,
+    })
+
+    if not DFT:
+        last_energy = [c for c in df.columns if c.endswith("_energy")][-1]
+        df = (df.sort_values(["ligand_name", "rpos", last_energy]
+                            ).groupby(["ligand_name", "rpos"]).head(1))
+        
+        if output_parquet:
+            df.to_parquet(output_parquet)            
+        return df
+
+    # ↓↓↓↓↓↓↓↓ This code only executes if DFT is True ↓↓↓↓↓↓↓↓
+    df = step.orca(df, name="DFT-pre-Opt", options={
+        functional : None,
+        basisset   : None,
+        "TightSCF" : None,
+        "SlowConv" : None,
+        "Opt"      : None,
+        "NoSym"    : None,
+    }, constraint=True, lowest=1)
+
+    if ts_type.upper() == "INT3":
+        opt = "Opt"
+    else:
+        opt = "OptTS"
+
+    df = step.orca(df, name="DFT", options={
+        functional : None,
+        basisset   : None,
+        "TightSCF" : None,
+        "SlowConv" : None,
+        opt        : None,
+        freq       : None,
+        "NoSym"    : None,
+    }, lowest=1)
+
+    df = step.orca(df, name="DFT-SP", options={
+        functional      : None,
+        basisset_solv   : None,
+        "TightSCF"      : None,
+        "SP"            : None,
+        "NoSym"         : None,
+    }, xtra_inp_str="""%CPCM\nSMD TRUE\nSMDSOLVENT "chloroform"\nend""")
+    
+    if output_parquet:
+        df.to_parquet(output_parquet)
+
     return df
 
 
