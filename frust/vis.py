@@ -1,5 +1,5 @@
 from typing import Optional, List, Union, Any
-from tooltoad.vis import MolTo3DGrid, RxnTo3DGrid
+from tooltoad.vis import MolTo3DGrid, RxnTo3DGrid, DrawMolSvg
 from tooltoad.chemutils import ac2mol
 import pandas as pd
 import numpy as np
