@@ -375,10 +375,10 @@ def plot_vibs(
 
 def plot_regression_outliers(
     df: pd.DataFrame,
-    x_col: str = "dG",
-    y_col: str = "dE",
-    xlabel: str = "dG, kcal/mol",
-    ylabel: str = "dE, kcal/mol",
+    x_col: str = "dE",
+    y_col: str = "dG",
+    xlabel: str = "dE, kcal/mol",
+    ylabel: str = "dG, kcal/mol",
     font_size: int = 14,
     label_col: str = "ligand_name",
     rpos_col: str = "rpos",
