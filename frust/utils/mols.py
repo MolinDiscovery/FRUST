@@ -1,5 +1,6 @@
 # frust/utils/mols.py
 import numpy as np
+import pandas as pd
 from rdkit import Chem
 from rdkit.Chem import rdchem, rdDetermineBonds
 from rdkit.Geometry.rdGeometry import Point3D
@@ -309,3 +310,154 @@ def create_ts_per_rpos(
         ts_structs_list.append({k:i})   
 
     return ts_structs_list
+
+
+def _extract_rpos_from_df(df):
+    from IPython.display import display
+    from frust.vis import DrawUniqueChGrid
+    rpos_list = []
+    for _, row in df.iterrows():
+
+        rpos_in  = row["rpos"]
+        smi      = row["smiles"]
+        rpos_out = None
+
+        if rpos_in is None:
+            rpos_out = find_unique_ch(smi)
+        if pd.isna(rpos_in):
+            rpos_out = find_unique_ch(smi)
+        elif ";" in rpos_in:
+            l_str = rpos_in.split(";")
+            try:
+                rpos_out = tuple(int(i) for i in l_str)
+            except ValueError as e:
+                raise ValueError("rpos must be given in the format of 2;3") from e
+        else:
+            try:
+                rpos_out = (int(rpos_in), )
+            except (ValueError, TypeError) as e:
+                raise ValueError("rpos error: rpos format must be either a single integer or a series of \n" \
+                "integers seperated by ;") from e
+
+        for ch in rpos_out:
+            valid_ch = find_ch(smi)
+
+            if ch not in valid_ch:
+                display(DrawUniqueChGrid(smi))
+                raise ValueError(
+                    f"Invalid CH index {rpos_out} for SMILES: {smi}\n"
+                    f"Valid aromatic CH positions: {valid_ch}"
+                )
+            
+        rpos_list.append(rpos_out)
+            
+    return rpos_list
+
+
+def create_ts_per_rpos_v2(
+    ligand_smiles_df: pd.DataFrame,
+    ts_guess_xyz: str,
+    ) -> list[dict[str, Mol]]:
+    """
+    Generate transition-state (TS) structures for each ligand SMILES using a TS-guess
+    XYZ template.
+
+    Args:
+        ligand_smiles_df (pd.DataFrame): DataFrame containing at least a ``smiles``
+            column. Optionally includes an ``rpos`` column to specify one or more
+            aromatic C–H positions per molecule. Multiple positions can be given as a
+            semicolon-separated string, e.g. ``"2;3"``.
+
+            Example CSV::
+
+            ,smiles,rpos
+            0,CN1C=CC=C1,2
+            1,N1(CC2=CC=CC=C2)C=CC=C1,8;5
+
+        ts_guess_xyz (str): Path to an XYZ file containing the TS-guess geometry.
+            The TS type (e.g., ``TS1``, ``TS2``, ``TS3``, ``TS4``) is inferred from
+            the XYZ comment line.
+
+    Returns:
+        list[dict[str, rdkit.Chem.Mol]]: A list of dictionaries mapping a TS
+            identifier (e.g., a reaction-position key) to an RDKit ``Mol`` for the
+            generated TS.
+    """
+
+    ligand_smiles_list = list(dict.fromkeys(ligand_smiles_df["smiles"]))
+
+    rpos_list = None
+    if "rpos" in ligand_smiles_df.columns:
+        rpos_list = _extract_rpos_from_df(ligand_smiles_df)
+
+    ts_type = read_ts_type_from_xyz(ts_guess_xyz)
+
+    if ts_type == 'TS1':
+        from frust.transformers import transformer_ts1
+        transformer_ts = transformer_ts1
+    elif ts_type == 'TS2':
+        from frust.transformers import transformer_ts2
+        transformer_ts = transformer_ts2
+    elif ts_type == 'TS3':
+        from frust.transformers import transformer_ts3
+        transformer_ts = transformer_ts3
+    elif ts_type == 'TS4':
+        from frust.transformers import transformer_ts4
+        transformer_ts = transformer_ts4
+    elif ts_type == 'INT3':
+        from frust.transformers import transformer_int3
+        transformer_ts = transformer_int3        
+    else:
+        raise ValueError(f"Unrecognized TS type: {ts_type}")
+
+    ts_structs = {}
+    if rpos_list is None:
+        for smi in ligand_smiles_list:
+            ts_mols = transformer_ts(smi, ts_guess_xyz)
+            ts_structs.update(ts_mols)
+    else:
+        for smi, rpos in zip(ligand_smiles_list, rpos_list):
+            ts_mols = transformer_ts(smi, ts_guess_xyz, rpos_list=rpos)
+            ts_structs.update(ts_mols)
+
+    ts_structs_list = []
+    for k, i in ts_structs.items():
+        ts_structs_list.append({k:i})   
+
+    return ts_structs_list
+
+def find_unique_ch(smi: str):
+    # --- Find unique positions and check that they are valid cH --- #
+    lig_mol = Chem.MolFromSmiles(smi)
+    lig_mol = Chem.AddHs(lig_mol)
+
+    cH_patt = Chem.MolFromSmarts('[cH]')
+    matches = lig_mol.GetSubstructMatches(cH_patt)
+    cH_atoms = [ind[0] for ind in matches]
+
+    atom_rank = list(Chem.CanonicalRankAtoms(lig_mol,breakTies=False))
+
+    def find_unique_atoms(lst):
+        seen = set()
+        result = []
+        for i, x in enumerate(lst):
+            if x not in seen:
+                result.append(i)
+                seen.add(x)
+        return result
+
+    unique_atoms = find_unique_atoms(atom_rank)
+    unique_cH = set(unique_atoms).intersection(set(cH_atoms))
+    unique_cH = tuple(unique_cH)
+    return unique_cH
+
+
+def find_ch(smi: str):
+    lig_mol = Chem.MolFromSmiles(smi)
+    lig_mol = Chem.AddHs(lig_mol)
+
+    cH_patt = Chem.MolFromSmarts("[cH]")
+    matches = lig_mol.GetSubstructMatches(cH_patt)
+
+    cH_atoms = tuple(ind[0] for ind in matches)
+    return cH_atoms
