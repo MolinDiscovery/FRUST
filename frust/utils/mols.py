@@ -318,7 +318,7 @@ def _extract_rpos_from_df(df):
     rpos_list = []
     for _, row in df.iterrows():
 
-        rpos_in  = row["rpos"]
+        rpos_in  = str(row["rpos"])
         smi      = row["smiles"]
         rpos_out = None
 

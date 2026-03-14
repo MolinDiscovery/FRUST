@@ -203,6 +203,7 @@ def transformer_ts2(
     ts_guess_struct     = "ts2.xyz",
     pre_name            = "TS2",
     embed_ready         = True,
+    rpos_list           = None,
 ):
     try:
         with open(ts_guess_struct, 'r') as file:
@@ -245,6 +246,21 @@ def transformer_ts2(
     unique_atoms = find_unique_atoms(atom_rank)
     unique_cH = set(unique_atoms).intersection(set(cH_atoms))
     unique_cH = tuple(unique_cH)
+
+    # If explicit CH positions are provided, validate and use them
+    if rpos_list is not None:
+        from frust.utils.mols import find_ch
+
+        valid_positions = find_ch(ligand_smiles)
+        invalid = set(rpos_list) - set(valid_positions)
+
+        if invalid:
+            raise ValueError(
+                f"Invalid rpos values {sorted(invalid)} for SMILES {ligand_smiles}. "
+                f"Valid cH positions: {valid_positions}"
+            )
+
+        unique_cH = rpos_list    
 
     ts_rw = RWMol(ts)
     ts_rw_origin = copy(ts_rw)
@@ -348,6 +364,7 @@ def transformer_ts3(
     bonds_to_remove = [(10, 11), (10,20)],
     pre_name="TS3",
     embed_ready=True,
+    rpos_list=None,
 ):
     # --- Read TS Guess Structure --- #
     try:
@@ -403,6 +420,21 @@ def transformer_ts3(
     unique_atoms = find_unique_atoms(atom_rank)
     unique_cH = set(unique_atoms).intersection(set(cH_atoms))
     unique_cH = tuple(unique_cH)
+
+    # If explicit CH positions are provided, validate and use them
+    if rpos_list is not None:
+        from frust.utils.mols import find_ch
+
+        valid_positions = find_ch(ligand_smiles)
+        invalid = set(rpos_list) - set(valid_positions)
+
+        if invalid:
+            raise ValueError(
+                f"Invalid rpos values {sorted(invalid)} for SMILES {ligand_smiles}. "
+                f"Valid cH positions: {valid_positions}"
+            )
+
+        unique_cH = rpos_list    
 
     # --- Create aligned maps --- #
     old_active_site = old_ring_match[0:3]
@@ -519,6 +551,7 @@ def transformer_ts4(
     bonds_to_remove = [(11,23)],
     pre_name="TS4",
     embed_ready=True,
+    rpos_list=None,
 ):
     # --- Read TS Guess Structure --- #
     try:
@@ -574,6 +607,21 @@ def transformer_ts4(
     unique_atoms = find_unique_atoms(atom_rank)
     unique_cH = set(unique_atoms).intersection(set(cH_atoms))
     unique_cH = tuple(unique_cH)
+
+        # If explicit CH positions are provided, validate and use them
+    if rpos_list is not None:
+        from frust.utils.mols import find_ch
+
+        valid_positions = find_ch(ligand_smiles)
+        invalid = set(rpos_list) - set(valid_positions)
+
+        if invalid:
+            raise ValueError(
+                f"Invalid rpos values {sorted(invalid)} for SMILES {ligand_smiles}. "
+                f"Valid cH positions: {valid_positions}"
+            )
+
+        unique_cH = rpos_list
 
     # --- Create aligned maps --- #
     old_active_site = old_ring_match[0:3]
@@ -708,6 +756,7 @@ def transformer_int3(
     bonds_to_remove = [(10, 19)],
     pre_name="INT3",
     embed_ready=True,
+    rpos_list=None,
 ):
 
     # --- Read TS Guess Structure --- #
@@ -764,6 +813,21 @@ def transformer_int3(
     unique_atoms = find_unique_atoms(atom_rank)
     unique_cH = set(unique_atoms).intersection(set(cH_atoms))
     unique_cH = tuple(unique_cH)
+
+    # If explicit CH positions are provided, validate and use them
+    if rpos_list is not None:
+        from frust.utils.mols import find_ch
+
+        valid_positions = find_ch(ligand_smiles)
+        invalid = set(rpos_list) - set(valid_positions)
+
+        if invalid:
+            raise ValueError(
+                f"Invalid rpos values {sorted(invalid)} for SMILES {ligand_smiles}. "
+                f"Valid cH positions: {valid_positions}"
+            )
+
+        unique_cH = rpos_list
 
     # --- Create aligned maps --- #
     old_active_site = old_ring_match[0:3]
