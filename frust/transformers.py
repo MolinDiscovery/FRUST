@@ -1067,7 +1067,7 @@ def transformer_mols(
             if isinstance(mol, list):
                 for m, i in mol:
                     mols_dict[f"{name}_rpos({i})"] = m
-            elif not only_uniques:
+            elif not only_uniques or name == names[2]:
                 mols_dict[name] = mol
 
     iupac_ligand_name = names[2]

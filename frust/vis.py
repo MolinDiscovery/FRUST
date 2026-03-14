@@ -235,12 +235,14 @@ def plot_vibs(
     freq_label: bool = True,
     legends: list[str] | None = None,
     legend_screen_offset: dict | None = None,  # e.g. {'x': 10, 'y': 6}
+    export_HTML: str = ""
 ):
     from tooltoad.vis import show_vibs, ac2xyz
     import math
     import py3Dmol
 
     vibs_col = [c for c in df.columns if "vibs" in c][-1]
+    print(f"vibs col {vibs_col}")
     vibs_col_pre = vibs_col.split("vibs")[0]
     coords_col = vibs_col_pre + "opt_coords"
     if custom_coords_col_name:
@@ -270,6 +272,7 @@ def plot_vibs(
             fps,
             reps,
             background_color=bg,
+            export_HTML=export_HTML,
         )
 
         if freq_label:

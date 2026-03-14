@@ -14,7 +14,8 @@ import cairosvg
 def summarize_ts_vibrations(
     df: pd.DataFrame,
     col: str = "DFT-wB97X-D3-6-31G**-OptTS-vibs",
-    max_rows: int = 5
+    max_rows: int = 5,
+    output_latex: bool = False
 ):
     true_ts_count = 0
     non_ts_count = 0
@@ -30,7 +31,7 @@ def summarize_ts_vibrations(
         pos_freqs = [f for f in freqs if f >= 0]
 
         is_true_ts = len(neg_freqs) == 1
-        status = "✅ True TS" if is_true_ts else f"❌ Not TS ({len(neg_freqs)} neg)"
+        status = "True TS" if is_true_ts else f"Not TS ({len(neg_freqs)} neg)"
 
         if is_true_ts:
             true_ts_count += 1
@@ -42,16 +43,14 @@ def summarize_ts_vibrations(
             if len(neg_freqs) > 3:
                 neg_str += " ..."
         else:
-            neg_str = "No negatives"
-        neg_str += " |"
+            neg_str = "None"
 
         if pos_freqs:
             pos_str = ", ".join(f"{f:.1f}" for f in pos_freqs[:3])
             if len(pos_freqs) > 3:
                 pos_str += " ..."
         else:
-            pos_str = "No positives"
-        pos_str += " |"
+            pos_str = "None"
 
         rows.append({
             "Structure": idx,
@@ -64,13 +63,40 @@ def summarize_ts_vibrations(
 
     result_df = pd.DataFrame(rows)
 
-    print(result_df.head(max_rows).to_string(index=False))
-    if len(result_df) > max_rows:
-        print(f"\n... and {len(result_df) - max_rows} more rows.")
+    if not output_latex:
+        print(result_df.head(max_rows).to_string(index=False))
+        if len(result_df) > max_rows:
+            print(f"\n... and {len(result_df) - max_rows} more rows.")
 
-    print("\nSummary:")
-    print(f"  ✅ True TSs : {true_ts_count}")
-    print(f"  ❌ Non-TSs  : {non_ts_count}")
+        print("\nSummary:")
+        print(f"  True TSs : {true_ts_count}")
+        print(f"  Non-TSs  : {non_ts_count}")
+
+    else:
+        latex_df = result_df.head(max_rows).copy()
+
+        for col_name in latex_df.columns:
+            latex_df[col_name] = latex_df[col_name].astype(str).str.replace(
+                "_", r"\_", regex=False
+            )
+
+        latex_table = latex_df.to_latex(
+            index=False,
+            escape=False,
+            column_format="llllll"
+        )
+
+        print("\\begin{table}[p]")
+        print(r"""\caption{\textbf{TSX} Vibrational frequency analysis of the optimized transition-state
+        structures used in the benchmarking study. All structures were
+        optimized at the $\omega\mathrm{B97XD}$/6-31G** level and verified by
+        analytic frequency calculations. True transition states exhibit a
+        single imaginary frequency corresponding to the reaction coordinate.
+        The lowest imaginary frequency and lowest positive
+        vibrational frequencies are reported for each structure.}""")
+        print("\\label{tab:SI:freqstsX}")
+        print(latex_table)
+        print("\\end{table}")
 
 
 # # an old more simple function for annotation
@@ -2190,3 +2216,52 @@ def main_merge_parquet(argv: Sequence[str] | None = None) -> int:
         return 1
     print(f"Merged files into '{out}'.")
     return 0
+
+
+def find_highest_energy_step(
+    df: pd.DataFrame,
+    cols: list[str] | None = None,
+    prefix: str | None = None,
+    value_col: str = "energy_highest",
+    step_col: str = "energy_high_step",
+    strip_prefix: bool = False,
+) -> pd.DataFrame:
+    """Find the highest energy value and corresponding step for each row.
+
+    Args:
+        df (pd.DataFrame): Input DataFrame containing energy columns.
+        cols (list[str] | None, optional): Explicit list of columns to use.
+            Defaults to None.
+        prefix (str | None, optional): Prefix used to identify energy columns
+            if cols is not supplied. Defaults to None.
+        value_col (str, optional): Name of output column holding the highest
+            value. Defaults to "energy_highest".
+        step_col (str, optional): Name of output column holding the step name.
+            Defaults to "energy_high_step".
+        strip_prefix (bool, optional): Whether to remove prefix from the step
+            label in the output. Defaults to False.
+
+    Returns:
+        pd.DataFrame: Copy of the input DataFrame with added columns for the
+            highest energy value and the corresponding step.
+
+    Raises:
+        ValueError: If neither cols nor prefix is supplied, or if no matching
+            columns are found.
+    """
+    if cols is None:
+        if prefix is None:
+            raise ValueError("Supply either cols or prefix.")
+        cols = [col for col in df.columns if col.startswith(prefix)]
+
+    if not cols:
+        raise ValueError("No energy columns found.")
+
+    df_out = df.copy()
+    df_out[value_col] = df_out[cols].max(axis=1)
+    df_out[step_col] = df_out[cols].idxmax(axis=1)
+
+    if strip_prefix and prefix is not None:
+        df_out[step_col] = df_out[step_col].str.removeprefix(prefix)
+
+    return df_out
