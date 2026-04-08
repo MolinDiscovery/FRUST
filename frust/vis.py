@@ -10,6 +10,7 @@ from scipy.interpolate import PchipInterpolator
 from scipy.stats import linregress, spearmanr
 from tooltoad.chemutils import ac2mol
 from tooltoad.vis import DrawMolSvg, MolTo3DGrid, RxnTo3DGrid
+from frust.utils.RMSD import compare_xyz_rmsd
 
 darkmode: bool = False
 
