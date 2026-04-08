@@ -37,7 +37,7 @@ def plot_mols(
     rpos_filter: Optional[List[Union[str, int]]] = None,
     exclude_coords: Optional[List[str]] = None,
     include_coords: Optional[List[str]] = None,
-    coord_indices: Optional[Union[List[int], slice]] = None,
+    coord_indices: Optional[Union[List[int], slice]] = slice(-1, None),
     dark: bool = False,
     **molto3d_kwargs: Any
 ) -> None:
@@ -152,7 +152,7 @@ def plot_mols(
         'show_confs': True,
         #'background_color': 'black' if darkmode else 'white',
         'cell_size': (400, 400),
-        'columns': len(coord_columns),
+        'columns': len(coord_columns) if coord_indices is None else 4,
         'linked': False,
         'kekulize': True,
         'show_charges': True,
@@ -166,7 +166,7 @@ def plot_row(
     df: pd.DataFrame,
     row_index: int = 0,
     exclude_coords: Optional[List[str]] = None,
-    coord_indices: Optional[Union[List[int], slice]] = None,
+    coord_indices: Optional[Union[List[int], slice]] = slice(-1, None),
     **kwargs: Any
 ) -> None:
     """Display all coordinate types for a single row."""
@@ -183,7 +183,7 @@ def plot_lig(
     df: pd.DataFrame,
     ligand_names: Union[str, List[str]],
     exclude_coords: Optional[List[str]] = None,
-    coord_indices: Optional[Union[List[int], slice]] = None,
+    coord_indices: Optional[Union[List[int], slice]] = slice(-1, None),
     **kwargs: Any
 ) -> None:
     """Display molecules filtered by ligand name(s)."""
@@ -203,7 +203,7 @@ def plot_rpos(
     df: pd.DataFrame,
     rpos_values: Union[str, int, List[Union[str, int]]],
     exclude_coords: Optional[List[str]] = None,
-    coord_indices: Optional[Union[List[int], slice]] = None,
+    coord_indices: Optional[Union[List[int], slice]] = slice(-1, None),
     **kwargs: Any
 ) -> None:
     """Display molecules filtered by rpos value(s)."""
@@ -843,19 +843,20 @@ def plot_energy_profile(
                     if isinstance(spec, (tuple, list)) and len(spec) == 2:
                         return spec[0], spec[1]
                     return spec, spec
-
+    
             elif isinstance(overlay_colors, (list, tuple)):
                 if overlay_idx < len(overlay_colors):
                     spec = overlay_colors[overlay_idx]
                     if isinstance(spec, (tuple, list)) and len(spec) == 2:
                         return spec[0], spec[1]
                     return spec, spec
-
+    
         if is_reference:
             return "C0", "C1"
-
-        main_color = _next_color(ax)
-        side_color = _next_color(ax) if needs_side else main_color
+    
+        base_idx = 2 * overlay_idx + 1
+        main_color = f"C{base_idx % 10}"
+        side_color = f"C{(base_idx + 1) % 10}" if needs_side else main_color
         return main_color, side_color
 
     def _build_energy_map(entries):
