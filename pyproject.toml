@@ -18,6 +18,7 @@ dependencies = [
     "tooltoad @ git+https://github.com/MolinDiscovery/tool-toad.git",
     "tqdm",
     "pyarrow",
+    "pubchempy",
 ]
 
 [project.optional-dependencies]
