@@ -76,24 +76,49 @@ def run_init(
         "SP"        : None,
         "NoSym"     : None,
     })
-
-    # last_energy = [c for c in df.columns if c.endswith("_energy")][-1]
-    # df = (df.sort_values(["ligand_name", "rpos", last_energy]
-    #                     ).groupby(["ligand_name", "rpos"]).head(1))
-
-    df = step.orca(df, name="DFT-Opt", options={
-        FUNCTIONAL : None,
-        BASISSET   : None,
-        "TightSCF" : None,
-        "SlowConv" : None,
-        "Opt"      : None,
-        "NoSym"    : None,
-    }, constraint=True, lowest=1)
     
     fn_name = inspect.currentframe().f_code.co_name
     parquet_name = fn_name.split("_")[1]
     df.to_parquet(f"{save_dir}/{parquet_name}.parquet")
     
+    return df
+
+
+def run_Opt(
+    parquet_path: str,
+    *,
+    n_cores: int = 8,
+    mem_gb: int = 40,
+    debug: bool = False,
+    save_dir: str | None = None,
+    work_dir: str | None = None,
+):
+    df = pd.read_parquet(f"{save_dir}/{parquet_path}")
+
+    ligand_smiles = list(dict.fromkeys(df["smiles"].tolist()))
+    step = Stepper(
+        ligand_smiles,
+        n_cores=n_cores,
+        memory_gb=mem_gb,
+        debug=debug,
+        output_base=save_dir,
+        save_output_dir=True,
+        work_dir=work_dir,
+    )
+
+    df = step.orca(df, name="OptTS", options={
+        FUNCTIONAL: None,
+        BASISSET: None,
+        "TightSCF": None,
+        "SlowConv": None,
+        "Opt": None,
+        "NoSym": None,
+    }, lowest=1)
+
+    stem = parquet_path.rsplit('.', 1)[0]
+    out_parquet = stem + ".opt.parquet"
+    df.to_parquet(f"{save_dir}/{out_parquet}")
+
     return df
 
 
