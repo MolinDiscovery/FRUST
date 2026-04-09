@@ -99,7 +99,7 @@ Most core Python dependencies are installed automatically, including (but not li
 - `pandas` – data handling and analysis
 - `matplotlib` – basic plotting / visualization
 - `scipy` – interpolation and statistics used by visualization helpers
-- `tooltoad` – xTB / ORCA integration and chemistry helper functions
+- `tooltoad` – xTB / ORCA integration and chemistry helper functions, installed directly from GitHub during FRUST installation
 - `tqdm` – progress bars and basic CLI feedback
 
 Optional extras are available for more specialized workflows:
