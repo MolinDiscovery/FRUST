@@ -263,7 +263,7 @@ def fix_cat_frag(mol: Chem.Mol, bh_len: float = 1.19) -> Chem.Mol:
     return rw.GetMol()
 
 
-def create_ts_per_rpos(
+def create_ts_per_rpos_old(
     ligand_smiles_list: list[str],
     ts_guess_xyz: str,
     ) -> list[dict[str, Mol]]:
@@ -354,7 +354,7 @@ def _extract_rpos_from_df(df):
     return rpos_list
 
 
-def create_ts_per_rpos_v2(
+def create_ts_per_rpos(
     ligand_smiles_df: pd.DataFrame,
     ts_guess_xyz: str,
     ) -> list[dict[str, Mol]]:
