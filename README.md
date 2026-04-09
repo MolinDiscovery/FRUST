@@ -68,7 +68,19 @@ Although originally developed for **FLP-mediated C–H activation and borylation
 
 The exact installation of xTB/ORCA is environment- and cluster-specific and is not handled by this package.
 
-### Install from Source
+### Install Directly from GitHub
+
+```bash
+pip install "FRUST @ git+https://github.com/<owner>/<repo>.git"
+```
+
+To install notebook, analytics, or cluster-related extras in the same step:
+
+```bash
+pip install "FRUST[analytics,cluster,notebooks] @ git+https://github.com/<owner>/<repo>.git"
+```
+
+### Install from a Local Clone
 
 ```bash
 git clone <repository-url>
@@ -86,9 +98,17 @@ Most core Python dependencies are installed automatically, including (but not li
 - `numpy` – numerical computations
 - `pandas` – data handling and analysis
 - `matplotlib` – basic plotting / visualization
+- `scipy` – interpolation and statistics used by visualization helpers
+- `tooltoad` – xTB / ORCA integration and chemistry helper functions
 - `tqdm` – progress bars and basic CLI feedback
 
-You may also have additional, more specialized dependencies depending on which parts of the package you use (e.g. optional ML/backend tooling).
+Optional extras are available for more specialized workflows:
+
+- `analytics` – installs `cairosvg`
+- `cluster` – installs `submitit` and `nuse`
+- `notebooks` – installs `ipython` and `py3Dmol`
+
+External executables such as xTB and ORCA are still managed separately from Python packaging.
 
 ---
 

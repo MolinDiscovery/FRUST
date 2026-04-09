@@ -10,16 +10,31 @@ readme = "README.md"
 requires-python = ">=3.10"
 authors = [{ name = "Jacob Molin Nielsen", email = "jacob.molin@me.com" }]
 dependencies = [
-    "rdkit",
     "numpy",
     "pandas",
     "matplotlib",
+    "rdkit",
+    "scipy",
+    "tooltoad",
     "tqdm",
     "pyarrow",
 ]
 
-[tool.setuptools]
-packages = ["frust"]
+[project.optional-dependencies]
+analytics = [
+    "cairosvg",
+]
+cluster = [
+    "submitit",
+    "nuse",
+]
+notebooks = [
+    "ipython",
+    "py3Dmol",
+]
+
+[tool.setuptools.packages.find]
+include = ["frust*"]
 
 [project.scripts]
 merge_parquet = "frust.utils.analytics:main_merge_parquet"
