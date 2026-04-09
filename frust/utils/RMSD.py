@@ -394,7 +394,7 @@ def compare_xyz_rmsd(
     show_overlay_plot: bool = False,
     show_deviation_overlay: bool = False,
     show_table: bool = False,
-    top_n: int = 10,
+    top_n: int = 2,
     table_rows: int = 15,
     print_summary: bool = True,
 ) -> dict[str, Any]:
