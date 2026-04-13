@@ -357,7 +357,7 @@ def _extract_rpos_from_df(df):
 def create_ts_per_rpos(
     ligand_smiles_df: pd.DataFrame,
     ts_guess_xyz: str,
-    return_format = "list",
+    return_format: str = "list",
     ) -> list[dict[str, Mol]]:
     """
     Generate transition-state (TS) structures for each ligand SMILES using a TS-guess
