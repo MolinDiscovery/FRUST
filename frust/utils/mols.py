@@ -357,6 +357,7 @@ def _extract_rpos_from_df(df):
 def create_ts_per_rpos(
     ligand_smiles_df: pd.DataFrame,
     ts_guess_xyz: str,
+    return_format: "list",
     ) -> list[dict[str, Mol]]:
     """
     Generate transition-state (TS) structures for each ligand SMILES using a TS-guess
@@ -420,11 +421,14 @@ def create_ts_per_rpos(
             ts_mols = transformer_ts(smi, ts_guess_xyz, rpos_list=rpos)
             ts_structs.update(ts_mols)
 
-    ts_structs_list = []
-    for k, i in ts_structs.items():
-        ts_structs_list.append({k:i})   
+    if return_format == "dict":
+        return ts_structs
 
-    return ts_structs_list
+    if return_format == "list":
+        ts_structs_list = []
+        for k, i in ts_structs.items():
+            ts_structs_list.append({k:i})   
+        return ts_structs_list
 
 def find_unique_ch(smi: str):
     # --- Find unique positions and check that they are valid cH --- #

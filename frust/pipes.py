@@ -4,6 +4,8 @@ from frust.stepper import Stepper
 from frust.embedder import embed_ts, embed_mols
 from frust.transformers import transformer_mols
 from frust.utils.io import read_ts_type_from_xyz
+from frust.utils.mols import create_ts_per_rpos
+import pandas as pd
 
 from rdkit.Chem.rdchem import Mol
 
@@ -14,55 +16,6 @@ try:
         start_monitoring(filter_cgroup=True)
 except ImportError:
     pass
-
-
-def create_ts_per_rpos(
-    ligand_smiles_list: list[str],
-    ts_guess_xyz: str,        
-    ) -> list[dict[str, Mol]]:
-    """
-    Generate transition state (TS) structures for each ligand SMILES using a TS guess XYZ template.
-
-    Args:
-        ligand_smiles_list (List[str]): List of ligand SMILES strings for which to create TS structures.
-        ts_guess_xyz (str): Path to an XYZ file containing the TS guess geometry. The TS type
-            (e.g., 'TS1', 'TS2', 'TS3', 'TS4') is inferred from the comment line.
-
-    Returns:
-        List[Dict[str, rdkit.Chem.Mol]]: A list of dictionaries, each mapping a TS identifier
-            (e.g., reaction position key) to an RDKit Mol object representing the generated TS.
-    """
-
-    ts_type = read_ts_type_from_xyz(ts_guess_xyz)
-
-    if ts_type == 'TS1':
-        from frust.transformers import transformer_ts1
-        transformer_ts = transformer_ts1
-    elif ts_type == 'TS2':
-        from frust.transformers import transformer_ts2
-        transformer_ts = transformer_ts2
-    elif ts_type == 'TS3':
-        from frust.transformers import transformer_ts3
-        transformer_ts = transformer_ts3
-    elif ts_type == 'TS4':
-        from frust.transformers import transformer_ts4
-        transformer_ts = transformer_ts4
-    elif ts_type == 'INT3':
-        from frust.transformers import transformer_int3
-        transformer_ts = transformer_int3        
-    else:
-        raise ValueError(f"Unrecognized TS type: {ts_type}")
-
-    ts_structs = {}
-    for smi in ligand_smiles_list:
-        ts_mols = transformer_ts(smi, ts_guess_xyz)
-        ts_structs.update(ts_mols)
-
-    ts_structs_list = []
-    for k, i in ts_structs.items():
-        ts_structs_list.append({k:i})   
-
-    return ts_structs_list
 
 
 def run_ts_per_rpos(
@@ -328,7 +281,7 @@ def run_ts_per_rpos_UMA_short(
 
 
 def run_ts_per_lig(
-    ligand_smiles_list: list[str],
+    ligand_smiles_df: pd.DataFrame,
     ts_guess_xyz: str,
     *,
     n_confs: int | None = None,
@@ -341,37 +294,85 @@ def run_ts_per_lig(
     save_output_dir: bool = True,
     DFT: bool = False,
 ):
+    """Run the TS workflow for each ligand in a ligand table.
+
+    The function expands each ligand into TS structures using the
+    transition-state guess geometry, generates conformers, runs the XTB
+    pre-screening steps, and optionally performs ORCA DFT refinement.
+
+    Parameters
+    ----------
+    ligand_smiles_df : pandas.DataFrame
+        Input table containing at least a ``smiles`` column with ligand
+        SMILES strings.
+    ts_guess_xyz : str
+        Path to the XYZ file containing the transition-state guess geometry.
+        The TS type is inferred from this file.
+    n_confs : int or None, optional
+        Number of conformers to generate per TS structure. If ``None``, the
+        embedder default is used.
+    n_cores : int, optional
+        Number of CPU cores to use for downstream calculations.
+    mem_gb : int, optional
+        Memory limit in gigabytes passed to :class:`frust.stepper.Stepper`.
+    debug : bool, optional
+        If ``True``, disables conformer optimization and keeps the workflow
+        lighter for debugging.
+    top_n : int, optional
+        Number of lowest-energy structures retained after the XTB screening
+        stage.
+    out_dir : str or None, optional
+        Base output directory for calculation artifacts.
+    output_parquet : str or None, optional
+        If provided, write the resulting dataframe to this Parquet file.
+    save_output_dir : bool, optional
+        Whether to keep the output directory structure created by the stepper.
+    DFT : bool, optional
+        If ``True``, continue from the XTB screen into the DFT refinement
+        stages. If ``False``, return after the pre-screening workflow.
+
+    Returns
+    -------
+    pandas.DataFrame
+        DataFrame containing the screened or DFT-refined TS candidates.
+
+    """
+    ts_structs = create_ts_per_rpos(
+        ligand_smiles_df,
+        ts_guess_xyz,
+        return_format="dict",
+    )
     
     ts_type = read_ts_type_from_xyz(ts_guess_xyz)
-    print(ts_type)
+    # print(ts_type)
 
-    if ts_type == 'TS1':
-        from frust.transformers import transformer_ts1
-        transformer_ts = transformer_ts1
-    elif ts_type == 'TS2':
-        from frust.transformers import transformer_ts2
-        transformer_ts = transformer_ts2
-    elif ts_type == 'TS3':
-        from frust.transformers import transformer_ts3
-        transformer_ts = transformer_ts3
-    elif ts_type == 'TS4':
-        from frust.transformers import transformer_ts4
-        transformer_ts = transformer_ts4
-    elif ts_type == 'INT3':
-        from frust.transformers import transformer_int3
-        transformer_ts = transformer_int3
-    else:
-        raise ValueError(f"Unrecognized TS type: {ts_type}")
+    # if ts_type == 'TS1':
+    #     from frust.transformers import transformer_ts1
+    #     transformer_ts = transformer_ts1
+    # elif ts_type == 'TS2':
+    #     from frust.transformers import transformer_ts2
+    #     transformer_ts = transformer_ts2
+    # elif ts_type == 'TS3':
+    #     from frust.transformers import transformer_ts3
+    #     transformer_ts = transformer_ts3
+    # elif ts_type == 'TS4':
+    #     from frust.transformers import transformer_ts4
+    #     transformer_ts = transformer_ts4
+    # elif ts_type == 'INT3':
+    #     from frust.transformers import transformer_int3
+    #     transformer_ts = transformer_int3
+    # else:
+    #     raise ValueError(f"Unrecognized TS type: {ts_type}")
 
-    ts_structs = {}
-    for smi in ligand_smiles_list:
-        ts_mols = transformer_ts(smi, ts_guess_xyz)
-        ts_structs.update(ts_mols)
+    # ts_structs = {}
+    # for smi in ligand_smiles_list:
+    #     ts_mols = transformer_ts(smi, ts_guess_xyz)
+    #     ts_structs.update(ts_mols)
 
     embedded = embed_ts(ts_structs, ts_type=ts_type, n_confs=n_confs, optimize=not debug)
 
     step = Stepper(
-    ligand_smiles_list,
+    ligand_smiles_df["smiles"].to_list(),
     n_cores=n_cores,
     memory_gb=mem_gb,
     debug=debug,
@@ -881,5 +882,4 @@ if __name__ == '__main__':
     # ts_mols = create_ts_per_rpos(["CN1C=CC=C1"], ts_guess_xyz=f"{FRUST_path}/structures/ts1.xyz")
     # for ts_rpos in ts_mols:
     #     run_ts_per_rpos_UMA_short(ts_rpos, out_dir="noob", save_output_dir=True, n_confs=2)    
-
 
