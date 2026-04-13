@@ -4,7 +4,7 @@ from frust.stepper import Stepper
 from frust.embedder import embed_ts, embed_mols
 from frust.transformers import transformer_mols
 from frust.utils.io import read_ts_type_from_xyz
-from frust.utils.mols import create_ts_per_rpos
+from frust.utils.mols import create_ts_per_rpos, create_mol_per_rpos
 import pandas as pd
 
 from rdkit.Chem.rdchem import Mol
@@ -16,6 +16,24 @@ try:
         start_monitoring(filter_cgroup=True)
 except ImportError:
     pass
+
+
+def _normalize_smiles_input(
+    ligand_smiles_df: pd.DataFrame | list[str],
+) -> tuple[pd.DataFrame, list[str]]:
+    """Normalize molecule pipeline input to a DataFrame and unique SMILES list."""
+    if isinstance(ligand_smiles_df, pd.DataFrame):
+        df = ligand_smiles_df.copy()
+        if "smiles" not in df.columns:
+            raise ValueError("ligand_smiles_df must contain a 'smiles' column")
+    else:
+        df = pd.DataFrame({"smiles": list(ligand_smiles_df)})
+
+    if df["smiles"].isna().any():
+        raise ValueError("ligand_smiles_df['smiles'] contains missing values")
+
+    unique_smiles = list(dict.fromkeys(df["smiles"].tolist()))
+    return df, unique_smiles
 
 
 def run_ts_per_rpos(
@@ -443,7 +461,7 @@ def run_ts_per_lig(
 
 # ──────────────────────  catalytic-cycle molecules  ──────────────────────
 def run_mols(
-    ligand_smiles_list: list[str],
+    ligand_smiles_df: pd.DataFrame | list[str],
     *,
     n_confs: int | None = 5,
     n_cores: int = 4,
@@ -456,19 +474,14 @@ def run_mols(
     DFT: bool = False,
     select_mols: str | list[str] = "all",  # "all", "uniques", "generics", or specific names
 ):
-    # 1) build generic-cycle molecules (with optional selection)
-    mols = {}
-    for smi in ligand_smiles_list:
-        if select_mols == "all":
-            tmp = transformer_mols(ligand_smiles=smi)
-        elif select_mols == "uniques":
-            tmp = transformer_mols(ligand_smiles=smi, only_uniques=True)
-        elif select_mols == "generics":
-            tmp = transformer_mols(ligand_smiles=smi, only_generics=True)
-        else:
-            tmp = transformer_mols(ligand_smiles=smi, select=select_mols)
+    ligand_smiles_df, ligand_smiles_list = _normalize_smiles_input(ligand_smiles_df)
 
-        mols.update(tmp)
+    # 1) build generic-cycle molecules (with optional selection)
+    mols = create_mol_per_rpos(
+        ligand_smiles_df,
+        return_format="dict",
+        select_mols=select_mols,
+    )
 
     # 2) embed
     embedded = embed_mols(mols, n_confs=n_confs, n_cores=n_cores)
@@ -534,7 +547,7 @@ def run_mols(
 
 
 def run_mols_UMA(
-    ligand_smiles_list: list[str],
+    ligand_smiles_df: pd.DataFrame | list[str],
     *,
     n_confs: int = 5,
     n_cores: int = 4,
@@ -547,20 +560,14 @@ def run_mols_UMA(
     DFT: bool = False,
     select_mols: str | list[str] = "all",  # "all", "uniques", "generics", or specific names
 ):
-    
-    # 1) build generic-cycle molecules (with optional selection)
-    mols = {}
-    for smi in ligand_smiles_list:
-        if select_mols == "all":
-            tmp = transformer_mols(ligand_smiles=smi)
-        elif select_mols == "uniques":
-            tmp = transformer_mols(ligand_smiles=smi, only_uniques=True)
-        elif select_mols == "generics":
-            tmp = transformer_mols(ligand_smiles=smi, only_generics=True)
-        else:
-            tmp = transformer_mols(ligand_smiles=smi, select=select_mols)
+    ligand_smiles_df, ligand_smiles_list = _normalize_smiles_input(ligand_smiles_df)
 
-        mols.update(tmp)
+    # 1) build generic-cycle molecules (with optional selection)
+    mols = create_mol_per_rpos(
+        ligand_smiles_df,
+        return_format="dict",
+        select_mols=select_mols,
+    )
 
     # 2) embed
     embedded = embed_mols(mols, n_confs=n_confs, n_cores=n_cores)
@@ -882,4 +889,3 @@ if __name__ == '__main__':
     # ts_mols = create_ts_per_rpos(["CN1C=CC=C1"], ts_guess_xyz=f"{FRUST_path}/structures/ts1.xyz")
     # for ts_rpos in ts_mols:
     #     run_ts_per_rpos_UMA_short(ts_rpos, out_dir="noob", save_output_dir=True, n_confs=2)    
-

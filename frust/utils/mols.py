@@ -313,8 +313,6 @@ def create_ts_per_rpos_old(
 
 
 def _extract_rpos_from_df(df):
-    from IPython.display import display
-    from frust.vis import DrawUniqueChGrid
     rpos_list = []
     for _, row in df.iterrows():
 
@@ -343,7 +341,12 @@ def _extract_rpos_from_df(df):
             valid_ch = find_ch(smi)
 
             if ch not in valid_ch:
-                display(DrawUniqueChGrid(smi))
+                try:
+                    from IPython.display import display
+                    from frust.vis import DrawUniqueChGrid
+                    display(DrawUniqueChGrid(smi))
+                except ImportError:
+                    pass
                 raise ValueError(
                     f"Invalid CH index {rpos_out} for SMILES: {smi}\n"
                     f"Valid aromatic CH positions: {valid_ch}"
@@ -429,6 +432,91 @@ def create_ts_per_rpos(
         for k, i in ts_structs.items():
             ts_structs_list.append({k:i})   
         return ts_structs_list
+
+
+def create_mol_per_rpos(
+    ligand_smiles_df: pd.DataFrame,
+    return_format: str = "dict",
+    select_mols: str | list[str] = "all",
+) -> list[dict[str, Mol]] | dict[str, Mol]:
+    """Generate catalytic-cycle molecules for each unique ligand SMILES.
+
+    Parameters
+    ----------
+    ligand_smiles_df : pandas.DataFrame
+        Input table containing a ``smiles`` column with ligand SMILES strings.
+        Duplicate SMILES entries are ignored after the first occurrence.
+    return_format : str, optional
+        Output format. Use ``"dict"`` to return a merged dictionary of
+        molecule names to RDKit molecules, or ``"list"`` to return a list of
+        single-item dictionaries.
+    select_mols : str or list[str], optional
+        Molecule selection passed through to :func:`frust.transformers.transformer_mols`.
+        Supported string values are ``"all"``, ``"uniques"``, and ``"generics"``.
+
+    Returns
+    -------
+    dict[str, rdkit.Chem.Mol] or list[dict[str, rdkit.Chem.Mol]]
+        Catalytic-cycle molecule structures keyed by their generated names.
+
+    Raises
+    ------
+    ValueError
+        If ``ligand_smiles_df`` does not contain a ``smiles`` column or if
+        ``return_format`` is unsupported.
+    """
+    if "smiles" not in ligand_smiles_df.columns:
+        raise ValueError("ligand_smiles_df must contain a 'smiles' column")
+
+    smiles_series = ligand_smiles_df["smiles"]
+    if smiles_series.isna().any():
+        raise ValueError("ligand_smiles_df['smiles'] contains missing values")
+
+    from frust.transformers import transformer_mols
+
+    ligand_smiles_list = list(dict.fromkeys(smiles_series.tolist()))
+    rpos_map: dict[str, tuple[int, ...]] = {}
+
+    if "rpos" in ligand_smiles_df.columns:
+        extracted_rpos = _extract_rpos_from_df(ligand_smiles_df)
+        grouped_rpos: dict[str, list[int]] = {}
+
+        for smi, rpos_tuple in zip(smiles_series.tolist(), extracted_rpos):
+            grouped_rpos.setdefault(smi, [])
+            for rpos in rpos_tuple:
+                if rpos not in grouped_rpos[smi]:
+                    grouped_rpos[smi].append(rpos)
+
+        rpos_map = {smi: tuple(rpos_list) for smi, rpos_list in grouped_rpos.items()}
+
+    mols: dict[str, Mol] = {}
+    for smi in ligand_smiles_list:
+        transformer_kwargs = {"ligand_smiles": smi}
+        if smi in rpos_map:
+            transformer_kwargs["rpos_list"] = rpos_map[smi]
+
+        if select_mols == "all":
+            tmp = transformer_mols(**transformer_kwargs)
+        elif select_mols == "uniques":
+            tmp = transformer_mols(**transformer_kwargs, only_uniques=True)
+        elif select_mols == "generics":
+            tmp = transformer_mols(**transformer_kwargs, only_generics=True)
+        else:
+            tmp = transformer_mols(**transformer_kwargs, select=select_mols)
+
+        mols.update(tmp)
+
+    if return_format == "dict":
+        return mols
+
+    if return_format == "list":
+        mols_list = []
+        for k, i in mols.items():
+            mols_list.append({k: i})
+        return mols_list
+
+    raise ValueError(f"Unrecognized return_format: {return_format!r}")
+
 
 def find_unique_ch(smi: str):
     # --- Find unique positions and check that they are valid cH --- #

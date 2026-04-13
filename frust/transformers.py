@@ -971,6 +971,7 @@ def transformer_mols(
     show_IUPAC = True,
     select: str | list[str] | None = None,
     key_prefix: str | None = None,
+    rpos_list: tuple[int, ...] | list[int] | None = None,
 ):
     """
     Build the standard set of cycle molecules:
@@ -1047,6 +1048,22 @@ def transformer_mols(
                 seen.add(x); out.append(i)
         return out
     unique_cH = set(find_unique_atoms(atom_rank)).intersection(cH_atoms)
+    unique_cH = tuple(unique_cH)
+
+    # If explicit CH positions are provided, validate and use them.
+    if rpos_list is not None:
+        from frust.utils.mols import find_ch
+
+        valid_positions = find_ch(ligand_smiles)
+        invalid = set(rpos_list) - set(valid_positions)
+
+        if invalid:
+            raise ValueError(
+                f"Invalid rpos values {sorted(invalid)} for SMILES {ligand_smiles}. "
+                f"Valid cH positions: {valid_positions}"
+            )
+
+        unique_cH = tuple(rpos_list)
 
     ############################################
     ### Create intermediate 2 and molecule 2 ###
