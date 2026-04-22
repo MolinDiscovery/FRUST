@@ -51,10 +51,8 @@ def run_init(
     
     embedded = embed_ts(ts_struct, ts_type=ts_type, n_confs=n_confs, optimize=not debug)
 
-    ligand_smiles = list(ts_struct.values())[0][2]
-
     step = Stepper(
-    ligand_smiles,
+    step_type="INT3",
     n_cores=n_cores,
     memory_gb=mem_gb,
     debug=debug,
@@ -94,9 +92,8 @@ def run_Opt(
 ):
     df = pd.read_parquet(f"{save_dir}/{parquet_path}")
 
-    ligand_smiles = list(dict.fromkeys(df["smiles"].tolist()))
     step = Stepper(
-        ligand_smiles,
+        step_type="INT3",
         n_cores=n_cores,
         memory_gb=mem_gb,
         debug=debug,
@@ -132,9 +129,8 @@ def run_freq(
 ):
     df = pd.read_parquet(f"{save_dir}/{parquet_path}")
 
-    ligand_smiles = list(dict.fromkeys(df["smiles"].tolist()))
     step = Stepper(
-        ligand_smiles,
+        step_type="INT3",
         n_cores=n_cores,
         memory_gb=mem_gb,
         debug=debug,
@@ -170,9 +166,8 @@ def run_solv(
 ):
     df = pd.read_parquet(f"{save_dir}/{parquet_path}")
 
-    ligand_smiles = list(dict.fromkeys(df["smiles"].tolist()))
     step = Stepper(
-        ligand_smiles,
+        step_type="INT3",
         n_cores=n_cores,
         memory_gb=mem_gb,
         debug=debug,

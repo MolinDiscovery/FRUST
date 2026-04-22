@@ -63,10 +63,8 @@ def run_ts_per_rpos(
     
     embedded = embed_ts(ts_struct, ts_type=ts_type, n_confs=n_confs, optimize=not debug)
 
-    ligand_smiles = list(ts_struct.values())[0][2]
-
     step = Stepper(
-    ligand_smiles,
+    step_type=ts_type,
     n_cores=n_cores,
     memory_gb=mem_gb,
     debug=debug,
@@ -168,10 +166,8 @@ def run_ts_per_rpos_UMA(
     
     embedded = embed_ts(ts_struct, ts_type=ts_type, n_confs=n_confs, optimize=not debug)
 
-    ligand_smiles = list(ts_struct.values())[0][2]
-
     step = Stepper(
-    ligand_smiles,
+    step_type=ts_type,
     n_cores=n_cores,
     memory_gb=mem_gb,
     debug=debug,
@@ -275,10 +271,8 @@ def run_ts_per_rpos_UMA_short(
     
     embedded = embed_ts(ts_struct, ts_type=ts_type, n_confs=n_confs, optimize=not debug)
 
-    ligand_smiles = list(ts_struct.values())[0][2]
-
     step = Stepper(
-    ligand_smiles,
+    step_type=ts_type,
     n_cores=n_cores,
     memory_gb=mem_gb,
     debug=debug,
@@ -390,7 +384,7 @@ def run_ts_per_lig(
     embedded = embed_ts(ts_structs, ts_type=ts_type, n_confs=n_confs, optimize=not debug)
 
     step = Stepper(
-    ligand_smiles_df["smiles"].to_list(),
+    step_type=ts_type,
     n_cores=n_cores,
     memory_gb=mem_gb,
     debug=debug,
@@ -488,7 +482,7 @@ def run_mols(
 
     # 3) xTB cascade
     step = Stepper(
-        ligand_smiles_list,
+        step_type="MOLS",
         n_cores=n_cores,
         memory_gb=mem_gb,
         debug=debug,
@@ -574,7 +568,7 @@ def run_mols_UMA(
 
     # 3) cascade
     step = Stepper(
-        ligand_smiles_list,
+        step_type="MOLS",
         n_cores=n_cores,
         memory_gb=mem_gb,
         debug=debug,
@@ -625,7 +619,7 @@ def run_test(
 
     # 3) xTB cascade
     step = Stepper(
-        ligand_smiles_list,
+        step_type="MOLS",
         n_cores=n_cores,
         debug=debug,
         output_base=out_dir,
@@ -685,7 +679,7 @@ def run_small_test(
     mols_dict_embedded = embed_mols(mol_dict, n_confs=n_confs)
 
     step = Stepper(
-        [smi],
+        step_type="MOLS",
         n_cores=n_cores,
         memory_gb=2,
         debug=False,
@@ -721,13 +715,12 @@ def run_orca_smoke_test(
         mol = xyz2mol(xyz_block)
         mols[f.stem] = (mol, [0])
 
-    step = Stepper(list(mols.keys()), step_type="mol", save_output_dir=False)
+    step = Stepper(step_type="MOLS", save_output_dir=False)
     df = step.build_initial_df(mols)
 
     name = df["custom_name"].iloc[0]
 
-    step = Stepper([name],
-                    step_type="none",
+    step = Stepper(step_type=None,
                     debug=debug,
                     save_output_dir=save_output_dir,
                     output_base=out_dir,
@@ -779,10 +772,8 @@ def run_ts_for_rpos(
     
     embedded = embed_ts(ts_struct, ts_type=ts_type, n_confs=n_confs, optimize=not debug)
 
-    ligand_smiles = list(ts_struct.values())[0][2]
-
     step = Stepper(
-    ligand_smiles,
+    step_type=ts_type,
     n_cores=n_cores,
     memory_gb=mem_gb,
     debug=debug,

@@ -1,8 +1,7 @@
 # frustactivation/stepper.py
 import logging
-logger = logging.getLogger(__name__)
-
-import sys, os
+import sys
+import os
 from pathlib import Path
 import re
 import textwrap
@@ -11,14 +10,36 @@ import numpy as np
 import pandas as pd
 from pandas import Series
 from inspect import signature
-
 from frust.utils.dirs import make_step_dir, prepare_base_dir
 from frust.utils.slurm import detect_job_id
+
+def _make_logger(name: str, debug: bool) -> logging.Logger:
+    """Create an instance-local logger so debug settings don't leak globally."""
+    inst_logger = logging.getLogger(name)
+    inst_logger.propagate = False
+    inst_logger.setLevel(logging.DEBUG if debug else logging.INFO)
+
+    if not inst_logger.handlers:
+        handler = logging.StreamHandler(sys.stdout)
+        fmt = logging.Formatter(
+            "%(asctime)s %(levelname)-5s %(name)s: %(message)s",
+            datefmt="%Y-%m-%d %H:%M:%S",
+        )
+        handler.setFormatter(fmt)
+        inst_logger.addHandler(handler)
+
+    return inst_logger
+
+
+def _logger_name(step_type: str | None, job_id: int | None) -> str:
+    """Build a readable, stable logger name for one Stepper instance."""
+    step_label = (step_type or "generic").upper()
+    job_label = f"job{job_id}" if job_id is not None else "jobunknown"
+    return f"{__name__}.{step_label}.{job_label}"
 
 class Stepper:
     def __init__(
         self,
-        ligands_smiles: list[str],
         step_type: str | None = None,
         output_base: Path | str | None = None,
         job_id: int | None = None,
@@ -31,19 +52,23 @@ class Stepper:
         work_dir: str | None = None,        
         **kwargs
     ):
-        self.ligands_smiles = ligands_smiles
-        self.step_type      = step_type
+        if kwargs:
+            unknown = ", ".join(sorted(kwargs))
+            raise TypeError(f"Unexpected Stepper keyword arguments: {unknown}")
+
+        self.step_type      = step_type.upper() if step_type is not None else None
         self.debug          = debug
         job_id              = detect_job_id(job_id, True)
+        self.job_id         = job_id
+        self.logger         = _make_logger(_logger_name(self.step_type, self.job_id), debug)
         self.dump_each_step = dump_each_step
         self.n_cores        = n_cores
         self.memory_gb      = memory_gb
         self.save_calc_dirs = save_calc_dirs
         self.save_output    = save_output_dir
+        self.output_base    = Path(output_base) if output_base is not None else None
 
-        self.base_dir = Path(output_base) if output_base is not None else Path(".")
-        if save_output_dir:
-            self.base_dir = prepare_base_dir(output_base, ligands_smiles, job_id)
+        self.base_dir = self.output_base if self.output_base is not None else Path(".")
 
         if self.debug:
             from tooltoad.xtb import mock_xtb_calculate
@@ -56,39 +81,125 @@ class Stepper:
             self.xtb_fn  = xtb_calculate
             self.orca_fn = orca_calculate
 
-        if self.debug:
-            logger.setLevel(logging.DEBUG)
-        else:
-            logger.setLevel(logging.INFO)
-
-        if not logger.handlers:
-            handler = logging.StreamHandler(sys.stdout)
-            fmt = logging.Formatter(
-                "%(asctime)s %(levelname)-5s %(name)s: %(message)s",
-                datefmt="%Y-%m-%d %H:%M:%S",
-            )
-            handler.setFormatter(fmt)
-            logger.addHandler(handler)
-
         if work_dir:
             self.work_dir = work_dir
             os.makedirs(self.work_dir, exist_ok=True)
-            logger.info(f"Working dir: {self.work_dir}")
+            self.logger.info(f"Working dir: {self.work_dir}")
         else:
             try:
                 self.work_dir = os.environ["SCRATCH"]
-            except:
+            except Exception:
                 self.work_dir = "."
             os.makedirs(self.work_dir, exist_ok=True)
-            logger.info(f"Working dir: {self.work_dir}")
+            self.logger.info(f"Working dir: {self.work_dir}")
+
+    def _ensure_base_dir(self) -> Path:
+        """Create the output directory lazily on first use."""
+        if self.save_output and not getattr(self, "_base_dir_prepared", False):
+            self.base_dir = prepare_base_dir(self.output_base, self.job_id)
+            self._base_dir_prepared = True
+        return self.base_dir
 
     @staticmethod
-    def _last_coord_col(df: pd.DataFrame) -> str:
-        """Return the name of the last column containing 'coords'."""
-        cols = [c for c in df.columns if "coords" in c]
+    def _coord_columns(df: pd.DataFrame) -> list[str]:
+        preferred = []
+        if "coords_embedded" in df.columns:
+            preferred.append("coords_embedded")
+        preferred.extend([c for c in df.columns if c.endswith("-opt_coords")])
+        preferred.extend(
+            [c for c in df.columns if "coords" in c and c not in preferred]
+        )
+        return preferred
+
+    @classmethod
+    def _last_coord_col(cls, df: pd.DataFrame) -> str:
+        """Return the most specific available coordinate column."""
+        cols = cls._coord_columns(df)
         if not cols:
-            raise ValueError("No column containing 'coords' found")
+            raise ValueError(
+                "DataFrame must contain coordinates in 'coords_embedded' or a '*-opt_coords' column"
+            )
         return cols[-1]
+
+    def _step_type_upper(self) -> str:
+        """Normalize step_type for callers that only need TS dispatch."""
+        return (self.step_type or "").upper()
+
+    def _validate_constraint_request(self, df: pd.DataFrame) -> str:
+        """Validate that constraint mode is fully specified."""
+        step_type = self._step_type_upper()
+        if not step_type:
+            raise ValueError(
+                "`constraint=True` requires `Stepper(step_type=...)` so the correct TS/INT constraints can be selected"
+            )
+        if step_type not in {"TS1", "TS2", "TS3", "TS4", "INT3"}:
+            raise ValueError(
+                f"`constraint=True` is only supported for TS1/TS2/TS3/TS4/INT3, got {self.step_type!r}"
+            )
+        if "constraint_atoms" not in df.columns:
+            raise ValueError(
+                "`constraint=True` requires a 'constraint_atoms' column in the input DataFrame"
+            )
+        return step_type
+
+    @staticmethod
+    def _validate_required_columns(
+        df: pd.DataFrame,
+        *,
+        needs_grouping: bool = False,
+        needs_hessian: bool = False,
+    ) -> None:
+        missing = [col for col in ("atoms",) if col not in df.columns]
+        if missing:
+            raise ValueError(
+                f"Input DataFrame is missing required columns: {', '.join(missing)}"
+            )
+
+        Stepper._last_coord_col(df)
+
+        if needs_grouping and "ligand_name" not in df.columns:
+            raise ValueError(
+                "`lowest=` requires a 'ligand_name' column so conformers can be grouped before filtering"
+            )
+
+        if needs_hessian and not any(col.endswith(".hess") for col in df.columns):
+            raise ValueError(
+                "`use_last_hess=True` requires a prior '*.hess' column in the input DataFrame"
+            )
+
+    @staticmethod
+    def _row_name(row: Series, index: object) -> str:
+        """Pick a stable human-readable row label from available metadata."""
+        for key in ("custom_name", "ligand_name", "moltype"):
+            value = row.get(key)
+            if value is not None and not pd.isna(value):
+                return str(value)
+        return f"row_{index}"
+
+    @staticmethod
+    def _row_conf_id(row: Series, index: object) -> str:
+        """Pick a stable conformer/run identifier when cid is unavailable."""
+        value = row.get("cid")
+        if value is not None and not pd.isna(value):
+            return str(value)
+        return str(index)
+
+    @staticmethod
+    def _constraint_atoms(row: Series, min_size: int = 6) -> list[int]:
+        """Validate and return constraint atoms for TS/INT workflows."""
+        atoms = row.get("constraint_atoms")
+        if atoms is None:
+            raise ValueError("Missing 'constraint_atoms' for a constrained row")
+        if not isinstance(atoms, (list, tuple, np.ndarray)):
+            if pd.isna(atoms):
+                raise ValueError("Missing 'constraint_atoms' for a constrained row")
+            raise ValueError("'constraint_atoms' must be a sequence of atom indices")
+        atoms = list(atoms)
+        if len(atoms) < min_size:
+            raise ValueError(
+                f"'constraint_atoms' must contain at least {min_size} entries for constrained workflows"
+            )
+        return atoms
 
     def build_initial_df(self, embedded_dict: dict) -> pd.DataFrame:
         """
@@ -132,6 +243,7 @@ class Stepper:
         )
 
         for name, val in embedded_dict.items():
+            prefix = None
             if len(val) == 2:
                 mol, cids = val
                 keep_idxs = None
@@ -157,16 +269,6 @@ class Stepper:
                 else:
                     ligand_name = name
                 rpos = pd.NA
-
-            if self.step_type == None:
-                try:
-                    if prefix:
-                        self.step_type = prefix
-                    else:
-                        self.step_type = "MOLS"
-                except Exception:
-                    self.step_type = "unknown"
-                    logger.warning("\n\nwarning: No calculation type identified.\nwarning: This is fine if you don't calculate a transition state.\n")
 
             e_map: dict[int,float] = {cid_val: e_val for (e_val, cid_val) in energies} if energies else {}
 
@@ -211,11 +313,16 @@ class Stepper:
         import pandas as _pd
 
         df_out    = df.copy()
+        self._validate_required_columns(
+            df_out,
+            needs_grouping=lowest is not None,
+            needs_hessian=use_last_hess,
+        )
         coord_col = self._last_coord_col(df_out)
         all_row_data: list[dict[str, object]] = []
 
         if lowest is not None and lowest < 1:
-            logger.warning(f"ignoring lowest={lowest!r}, must be ≥1")
+            self.logger.warning(f"ignoring lowest={lowest!r}, must be ≥1")
             lowest = None
 
         if lowest:
@@ -248,11 +355,15 @@ class Stepper:
                 })
                 continue
 
+            row_save_files = save_files
             save_full_calc = (self.save_calc_dirs and self.save_output) or save_step
-            save_partial   = save_files is not None and not save_step
+            save_partial   = row_save_files is not None and not save_step
 
             if save_full_calc or save_partial:
-                dir_name    = f"{row['custom_name']}_{row['cid']}"
+                self._ensure_base_dir()
+                row_name = self._row_name(row, i)
+                row_conf_id = self._row_conf_id(row, i)
+                dir_name = f"{row_name}_{row_conf_id}"
                 engine_base = self.base_dir / prefix
                 engine_base.mkdir(parents=True, exist_ok=True)
                 created_dir = str(make_step_dir(engine_base, dir_name))
@@ -262,7 +373,7 @@ class Stepper:
             if save_full_calc:
                 calc_dir   = created_dir
                 save_dir   = created_dir
-                save_files = None
+                row_save_files = None
             elif save_partial:
                 calc_dir   = None
                 save_dir   = created_dir
@@ -271,7 +382,7 @@ class Stepper:
                 save_dir   = None
             
             if use_last_hess:
-                last_hess_col = [col for col in df.columns if ".hess" in col][-1]
+                last_hess_col = [col for col in df.columns if col.endswith(".hess")][-1]
                 last_hess = {"private_input.hess": row[last_hess_col]}
 
             base_args = {
@@ -286,8 +397,8 @@ class Stepper:
                 base_args["calc_dir"] = calc_dir
             if save_dir is not None:
                 base_args["save_dir"] = save_dir
-            if save_files is not None:
-                base_args["save_files"] = save_files
+            if row_save_files is not None:
+                base_args["save_files"] = row_save_files
 
             inputs = {**base_args, **build_inputs(row)}
 
@@ -298,49 +409,56 @@ class Stepper:
                 if self.debug:
                     dropped = sorted(set(inputs) - set(filtered))
                     if dropped:
-                        logger.debug(f"[{prefix}] dropped unsupported kwargs: {dropped}")
+                        self.logger.debug(f"[{prefix}] dropped unsupported kwargs: {dropped}")
                 inputs = filtered
             except Exception:
                 # If introspection fails for any reason, fall back to original inputs
                 pass
 
             # step 3: run engine, catch exceptions
-            logger.info(f"[{prefix}] row {i} ({row['custom_name']})…")
+            row_name = self._row_name(row, i)
+            self.logger.info(f"[{prefix}] row {i} ({row_name})…")
             try:
                 out = engine_fn(**inputs) or {}
             except Exception as e:
-                if self.debug:
-                    print(f"  → engine error: {e}")
-                out = {"normal_termination": False}
+                self.logger.exception(f"[{prefix}] row {i} ({row_name}) failed: {e}")
+                out = {
+                    "normal_termination": False,
+                    "error": f"{type(e).__name__}: {e}",
+                }
             finally:
                 if save_step and save_dir:
                     try:
                         import shutil
                         from pathlib import Path
 
-                        dir_name = f"{row['custom_name']}_{row['cid']}"
+                        row_conf_id = self._row_conf_id(row, i)
+                        dir_name = f"{row_name}_{row_conf_id}"
 
                         candidates = list(Path(self.work_dir).rglob(dir_name))
                         src = max(candidates, key=lambda p: len(p.parts)) if candidates else None
 
                         if src is None:
-                            logger.warning(f"No calc dir named '{dir_name}' found under {self.work_dir}")
+                            self.logger.warning(f"No calc dir named '{dir_name}' found under {self.work_dir}")
                         else:
+                            save_path = Path(save_dir)
+                            if src.resolve() == save_path.resolve():
+                                continue
                             for p in src.iterdir():
-                                dst = Path(save_dir) / p.name
+                                dst = save_path / p.name
                                 if p.is_dir():
                                     shutil.copytree(p, dst, dirs_exist_ok=True)
                                 else:
                                     shutil.copy2(p, dst)
                     except Exception as e:
-                        logger.error(f"Failed to stage files from '{src}' to '{save_dir}': {e}")
+                        self.logger.error(f"Failed to stage files from '{src}' to '{save_dir}': {e}")
 
             # step 4: enforce defaults
             out.setdefault("normal_termination", False)
             if out["normal_termination"]:
                 out.setdefault("electronic_energy", np.nan)
             # step 5: pick only the keys we know how to handle
-            allowed = {"normal_termination", "electronic_energy", "opt_coords", "vibs"}
+            allowed = {"normal_termination", "electronic_energy", "opt_coords", "vibs", "error"}
             def _filelike(k: str) -> bool:
                 # Accept only filename-ish keys (no spaces), or our private_* stash
                 if not isinstance(k, str) or " " in k:
@@ -362,7 +480,7 @@ class Stepper:
                 ignored = sorted([k for k in out.keys()
                                 if '.' in k and k not in allowed])
                 if ignored:
-                    logger.debug(f"[{prefix}] ignoring non-file dot-keys: {ignored}")
+                    self.logger.debug(f"[{prefix}] ignoring non-file dot-keys: {ignored}")
 
             row_data: dict[str, object] = {}
             for key in allowed:
@@ -386,6 +504,8 @@ class Stepper:
                         column_arrays[col].append(False)
                     elif col.endswith("-electronic_energy") or col.endswith("-gibbs_energy"):
                         column_arrays[col].append(np.nan)
+                    elif col.endswith("-error"):
+                        column_arrays[col].append(None)
                     else:
                         column_arrays[col].append(None)
 
@@ -400,7 +520,7 @@ class Stepper:
         name: str = "xtb",
         options: dict | None = None,
         detailed_inp_str: str = "",
-        constraint: bool = True,
+        constraint: bool = False,
         save_step: bool = False,
         lowest: int | None = None,
         n_cores: int | None = None,
@@ -446,6 +566,8 @@ class Stepper:
                 computed
         """
         opts = dict(options) if options else {"gfn": 0}
+        if constraint:
+            self._validate_constraint_request(df)
         keys = list(opts)
         level = keys[0]
         # check for optimization flag among the remaining keys
@@ -454,6 +576,7 @@ class Stepper:
 
         def build_xtb(row: pd.Series) -> dict:
             inp: dict[str, object] = {"options": opts}
+            step_type = self._step_type_upper()
 
             # Per-call override: only affects xTB, not ORCA.
             if n_cores is not None:
@@ -466,9 +589,9 @@ class Stepper:
 
             block = None
 
-            if self.step_type.upper() == "TS1" and constraint:
+            if step_type == "TS1" and constraint:
                 B, N, H, C = 0, 1, 4, 5
-                atom = [x + 1 for x in row["constraint_atoms"]]
+                atom = [x + 1 for x in self._constraint_atoms(row)]
                 block = textwrap.dedent(f"""
                 $constrain
                 force constant=50
@@ -482,9 +605,9 @@ class Stepper:
                 $end
                 """).strip()
 
-            if self.step_type.upper() == "TS2" and constraint:
-                BCat10, N17, H40, H41, C46 = 0, 1, 4, 3, 5
-                atom = [x + 1 for x in row["constraint_atoms"]]
+            if step_type == "TS2" and constraint:
+                BCat10, N17, H40, H41, C46 = 0, 1, 4, 3, 5  # noqa: F841
+                atom = [x + 1 for x in self._constraint_atoms(row)]
                 block = textwrap.dedent(f"""
                 $constrain
                 force constant=50
@@ -495,9 +618,9 @@ class Stepper:
                 $end
                 """).strip()
 
-            if self.step_type.upper() == "TS3" and constraint:
+            if step_type == "TS3" and constraint:
                 BCat10, H11, BPin22, H21, C = 0, 2, 3, 4, 5
-                atom = [x + 1 for x in row["constraint_atoms"]]
+                atom = [x + 1 for x in self._constraint_atoms(row)]
                 block = textwrap.dedent(f"""
                 $constrain
                 force constant=50
@@ -512,9 +635,9 @@ class Stepper:
                 $end
                 """).strip()
 
-            if self.step_type.upper() == "TS4" and constraint:
-                BCat11, H12, H13, BPin37, C = 0, 2, 3, 4, 5
-                atom = [x + 1 for x in row["constraint_atoms"]]
+            if step_type == "TS4" and constraint:
+                BCat11, H12, H13, BPin37, C = 0, 2, 3, 4, 5 # noqa: F841
+                atom = [x + 1 for x in self._constraint_atoms(row)]
                 block = textwrap.dedent(f"""
                 $constrain
                 force constant=50
@@ -529,9 +652,9 @@ class Stepper:
                 $end
                 """).strip()
 
-            if self.step_type.upper() == "INT3" and constraint:
+            if step_type == "INT3" and constraint:
                 BCat10, BPin42, H11, C = 0, 3, 4, 5
-                atom = [x + 1 for x in row["constraint_atoms"]]
+                atom = [x + 1 for x in self._constraint_atoms(row)]
                 block = textwrap.dedent(f"""
                 $constrain
                 force constant=50
@@ -565,7 +688,7 @@ class Stepper:
         xtra_inp_str: str = "",
         constraint: bool = False,
         save_step: bool = False,
-        save_files: list[str] | None = ["orca.out"],
+        save_files: list[str] | None = None,
         lowest: int | None = None,
         uma: str | None = None,
         read_files: list | None = None,
@@ -599,6 +722,13 @@ class Stepper:
                 - '{name}-{method}-gibbs_energy' (float) if frequencies computed
         """
         opts = options or {}
+        if kw:
+            unknown = ", ".join(sorted(kw))
+            raise TypeError(f"Unexpected orca() keyword arguments: {unknown}")
+        if constraint:
+            self._validate_constraint_request(df)
+        if save_files is None and self.save_output:
+            save_files = ["orca.out"]
         keys = list(opts)
         if len(keys) < 1:
             raise ValueError("`options` must include at least one ORCA method key")
@@ -611,6 +741,7 @@ class Stepper:
             prefix = f"{name}-{func}-{basis}" + (f"-{opt_flag}" if opt_flag else "")
 
         def build_orca(row: Series) -> dict:
+            step_type = self._step_type_upper()
             inp = {
                 "options": opts,
                 "xtra_inp_str": xtra_inp_str.strip(),
@@ -638,8 +769,8 @@ class Stepper:
                 ).strip()
                 inp["xtra_inp_str"] += ("\n\n" + block) if inp["xtra_inp_str"] else block
 
-            if constraint and self.step_type.upper() == "TS1":
-                atom = row["constraint_atoms"]
+            if constraint and step_type == "TS1":
+                atom = self._constraint_atoms(row)
                 B, N, H, C = atom[0], atom[1], atom[4], atom[5]
                 block = textwrap.dedent(f"""
                     %geom Constraints
@@ -655,8 +786,8 @@ class Stepper:
                 """).strip()
                 inp["xtra_inp_str"] += ("\n\n" + block) if inp["xtra_inp_str"] else block
 
-            if constraint and self.step_type.upper() == "TS2":
-                atom = row["constraint_atoms"]
+            if constraint and step_type == "TS2":
+                atom = self._constraint_atoms(row)
                 BCat, N17, H40, H41 = atom[0], atom[1], atom[4], atom[3]
                 block = textwrap.dedent(f"""
                     %geom Constraints
@@ -669,8 +800,8 @@ class Stepper:
                 """).strip()
                 inp["xtra_inp_str"] += ("\n\n" + block) if inp["xtra_inp_str"] else block
 
-            if constraint and self.step_type.upper() == "TS3":
-                atom = row["constraint_atoms"]
+            if constraint and step_type == "TS3":
+                atom = self._constraint_atoms(row)
                 BCat, H11, BPin, H21, C = atom[0], atom[2], atom[3], atom[4], atom[5]
                 block = textwrap.dedent(f"""
                     %geom Constraints
@@ -687,9 +818,9 @@ class Stepper:
                 """).strip()
                 inp["xtra_inp_str"] += ("\n\n" + block) if inp["xtra_inp_str"] else block
 
-            if constraint and self.step_type.upper() == "TS4":
-                atom = row["constraint_atoms"]
-                BCat, H12, H13, BPin, C = atom[0], atom[2], atom[3], atom[4], atom[5]
+            if constraint and step_type == "TS4":
+                atom = self._constraint_atoms(row)
+                BCat, H12, H13, BPin, C = atom[0], atom[2], atom[3], atom[4], atom[5]  # noqa: F841
                 block = textwrap.dedent(f"""
                     %geom Constraints
                       {{B {BCat} {BPin} 2.219 C}}
@@ -705,8 +836,8 @@ class Stepper:
                 """).strip()
                 inp["xtra_inp_str"] += ("\n\n" + block) if inp["xtra_inp_str"] else block
 
-            if constraint and self.step_type.upper() == "INT3":
-                atom = row["constraint_atoms"]
+            if constraint and step_type == "INT3":
+                atom = self._constraint_atoms(row)
                 BCat, BPin, H11, C = atom[0], atom[3], atom[4], atom[5]
                 block = textwrap.dedent(f"""
                     %geom Constraints
@@ -746,160 +877,3 @@ class Stepper:
                 inp["xtra_inp_str"] = (xin + "\n\n" + client_block).strip() if xin else client_block
                 return inp
             return self._run_engine(df, self.orca_fn, prefix, build_orca_uma, save_step, lowest, save_files)
-        
-
-
-    # def xtb(
-    #     self,
-    #     df: pd.DataFrame,
-    #     name: str = "xtb",
-    #     options: dict | None = None,
-    #     detailed_inp_str: str = "",
-    #     constraint: bool = True,
-    #     save_step = False,
-    #     lowest: int | None = None,
-    # ) -> pd.DataFrame:
-    #     """Embed multiple conformers with xTB and optionally optimize and/or compute frequencies.
-
-    #     Args:
-    #         df (pd.DataFrame): A DataFrame containing embedded conformers. Required columns:
-    #             - 'coords_embedded': list of 3D coordinate tuples for each conformer.
-    #             - 'atoms': list of atomic symbols.
-    #             - 'constraint_atoms' (optional): list of atom indices to constrain during optimization.
-    #         name (str): Base name for the xTB step, used to prefix result columns.
-    #         options (dict, optional): xTB driver options, e.g. {'gfn': 2, 'opt': None}. Defaults to {'gfn': 0}.
-    #         detailed_inp_str (str, optional): Additional xTB input block (cards) to include. Defaults to "".
-    #         constraint (bool, optional): If True, applies predefined distance/angle constraints for TS steps. Defaults to False.
-    #         save_step (bool, optional): If True, saves calculation directories for each conformer. Defaults to False.
-    #         lowest (int or None, optional): If set, retains only the lowest-energy N conformers per ligand/rpos group. Defaults to None.
-
-    #     Returns:
-    #         pd.DataFrame: The input DataFrame augmented with columns for each xTB result:
-    #             - '{name}-{method}-normal_termination' (bool)
-    #             - '{name}-{method}-electronic_energy' (float)
-    #             - '{name}-{method}-opt_coords' (list of coords) if optimization run
-    #             - '{name}-{method}-vibs' (vibrational modes) if frequencies computed
-    #             - '{name}-{method}-gibbs_energy' (float) if frequencies computed
-    #     """        
-    #     opts = options or {"gfn": 0}
-    #     keys = list(opts)
-    #     level = keys[0]
-    #     # check for optimization flag among the remaining keys
-    #     opt_flag = next((k for k in keys[1:] if k in ("opt", "ohess")), None)
-    #     prefix = f"{name}-{level}" + (f"-{opt_flag}" if opt_flag else "")
-        
-    #     def build_xtb(row: pd.Series) -> dict:
-    #         inp: dict[str, object] = {"options": opts}
-
-    #         # Only add the user‐provided card if it's non‐empty
-    #         base_str = detailed_inp_str.strip()
-    #         if base_str:
-    #             inp["detailed_input_str"] = base_str
-
-    #         block = None
-
-    #         if self.step_type.upper() == "TS1" and constraint:
-    #             B, N, H, C = 0, 1, 4, 5
-    #             atom = [x+1 for x in row["constraint_atoms"]]
-    #             block = textwrap.dedent(f"""
-    #             $constrain
-    #               force constant=50
-    #               distance: {atom[B]}, {atom[H]}, 2.07696
-    #               distance: {atom[N]}, {atom[H]}, 1.5127
-    #               distance: {atom[H]}, {atom[C]}, 1.29095
-    #               distance: {atom[B]}, {atom[C]}, 1.68461
-    #               distance: {atom[B]}, {atom[N]}, 3.06223
-    #               angle: {atom[N]}, {atom[H]}, {atom[C]}, 170.1342
-    #               angle: {atom[H]}, {atom[C]}, {atom[B]}, 87.4870
-    #             $end
-    #             """).strip()
-
-    #         # Old TS2
-    #         # if self.step_type.upper() == "TS2" and constraint:
-    #         #     BCat, BPin, H, C = 0, 3, 4, 5
-    #         #     atom = [x+1 for x in row["constraint_atoms"]]
-    #         #     block = textwrap.dedent(f"""
-    #         #     $constrain
-    #         #       force constant=50
-    #         #       distance: {atom[BCat]}, {atom[H]}, 1.335
-    #         #       distance: {atom[BPin]}, {atom[H]}, 2.168
-    #         #       distance: {atom[H]}, {atom[C]}, 2.424
-    #         #       distance: {atom[BCat]}, {atom[C]}, 1.335
-    #         #       distance: {atom[BPin]}, {atom[C]}, 1.956
-    #         #       distance: {atom[BPin]}, {atom[H]}, 2.168
-    #         #       distance: {atom[BCat]}, {atom[BPin]}, 2.063
-    #         #       angle: {atom[BPin]}, {atom[C]}, {atom[BCat]}, 65.36
-    #         #       angle: {atom[BPin]}, {atom[H]}, {atom[BCat]}, 67.39
-    #         #     $end
-    #         #     """).strip()
-
-    #         if self.step_type.upper() == "TS2" and constraint:
-    #             BCat10, N17, H40, H41, C46 = 0, 1, 4, 3, 5
-    #             atom = [x+1 for x in row["constraint_atoms"]]
-    #             block = textwrap.dedent(f"""
-    #             $constrain
-    #               force constant=50
-    #               distance: {atom[BCat10]}, {atom[H41]}, 1.656
-    #               distance: {atom[N17]}, {atom[H40]}, 1.961
-    #               distance: {atom[BCat10]}, {atom[N17]}, 3.080
-    #               angle: {atom[BCat10]}, {atom[H41]}, {atom[N17]}, 86.58
-    #             $end
-    #             """).strip()
-
-    #         if self.step_type.upper() == "TS3" and constraint:
-    #             BCat10, H11, BPin22, H21, C = 0, 2, 3, 4, 5
-    #             atom = [x+1 for x in row["constraint_atoms"]]
-    #             block = textwrap.dedent(f"""
-    #             $constrain
-    #               force constant=50
-    #               distance: {atom[H21]}, {atom[BCat10]}, 1.376
-    #               distance: {atom[H21]}, {atom[BPin22]}, 1.264
-    #               distance: {atom[H21]}, {atom[C]}, 2.477
-    #               distance: {atom[BCat10]}, {atom[C]}, 1.616
-    #               distance: {atom[BPin22]}, {atom[C]}, 2.180
-    #               distance: {atom[BPin22]}, {atom[BCat10]}, 2.007
-    #               angle: {atom[BCat10]}, {atom[H21]}, {atom[BPin22]}, 98.89
-    #               angle: {atom[BCat10]}, {atom[C]}, {atom[BPin22]}, 61.75
-    #             $end
-    #             """).strip()
-
-    #         if self.step_type.upper() == "TS4" and constraint:
-    #             BCat11, H12, H13, BPin37, C = 0, 2, 3, 4, 5
-    #             atom = [x+1 for x in row["constraint_atoms"]]
-    #             block = textwrap.dedent(f"""
-    #             $constrain
-    #               force constant=50
-    #               distance: {atom[BCat11]}, {atom[BPin37]}, 2.219
-    #               distance: {atom[BPin37]}, {atom[H13]}, 1.868
-    #               distance: {atom[C]}, {atom[H13]}, 2.489
-    #               distance: {atom[BCat11]}, {atom[H13]}, 1.216
-    #               distance: {atom[BCat11]}, {atom[C]}, 1.946
-    #               distance: {atom[BPin37]}, {atom[C]}, 1.585
-    #               angle: {atom[BCat11]}, {atom[H13]}, {atom[BPin37]}, 89.48
-    #               angle: {atom[BCat11]}, {atom[C]}, {atom[BPin37]}, 77.13
-    #             $end
-    #             """).strip()
-
-    #         if self.step_type.upper() == "INT3" and constraint:
-    #             BCat10, BPin42, H11, C = 0, 3, 4, 5
-    #             atom = [x+1 for x in row["constraint_atoms"]]
-    #             block = textwrap.dedent(f"""
-    #             $constrain
-    #               force constant=50
-    #               distance: {atom[BCat10]}, {atom[H11]}, 1.279
-    #               distance: {atom[BCat10]}, {atom[C]}, 1.688
-    #               distance: {atom[BPin42]}, {atom[H11]}, 1.378
-    #               distance: {atom[BPin42]}, {atom[C]}, 1.749
-    #               angle: {atom[BCat10]}, {atom[H11]}, {atom[BPin42]}, 89.85
-    #               angle: {atom[BCat10]}, {atom[C]}, {atom[BPin42]}, 66.22
-    #             $end
-    #             """).strip()                 
-
-    #         if "detailed_input_str" in inp:
-    #             inp["detailed_input_str"] += "\n\n" + block
-    #         else:
-    #             inp["detailed_input_str"] = block
-
-    #         return inp
-
-    #     return self._run_engine(df, self.xtb_fn, prefix, build_xtb, save_step, lowest)        

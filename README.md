@@ -1,86 +1,21 @@
-# FRUST – Frustrated Activation Pipeline
+# FRUST
 
-A computational pipeline for automated **frustrated Lewis pair (FLP) activation** and related **transition-state (TS) workflows**, built for high-throughput, reproducible calculations on both laptops and HPC clusters.
-
----
+FRUST is a research codebase for building and screening frustrated Lewis pair substrates. In practice, it is the layer between substrate inputs and calculation outputs: template-based structure generation, conformer handling, staged xTB and ORCA runs, and dataframe/parquet results that are easy to inspect later.
 
 ## Status
 
-> ⚠️ **Early Development Phase**  
->
-> The API and internal structure are still evolving. Expect breaking changes between versions while the research project is ongoing.
+This is active research software. It is useful now, but it is still evolving, and the API should not be treated as fixed. A lot of the workflow development still happens in notebooks, and external tools such as xTB and ORCA are expected to exist in the environment already.
 
----
+## What It Does
 
-## Overview
-
-**FRUST** (Frustrated Activation) is a research tool that automates much of the dirty work involved in exploring FLP-type activation mechanisms and related reactions:
-
-- Generate and transform molecules from simple input (e.g. SMILES, TS templates)
-- Enumerate conformers and pre-optimize them
-- Build transition-state guesses for specific activation patterns
-- Run xTB/DFT workflows (often via ORCA) in a structured, restartable way
-- Collect results into tidy tables (Parquet/CSV) ready for downstream analysis
-
-The package is designed around *pipelines* and *steps* that can be chained, composed, and re-used, making it easier to go from "a list of ligands" to "TS energies, geometries, and diagnostics" without dozens of ad-hoc scripts.
-
-Although originally developed for **FLP-mediated C–H activation and borylation systems**, FRUST is intended to be general enough for other small-molecule TS studies.
-
----
-
-## Key Features
-
-- 🧩 **Automated molecular transformations**
-    - Build FLP activation scenarios from SMILES and TS templates
-    - Define bonds to break/form and generate TS-like guess structures
-- 🧬 **Conformational sampling**
-    - RDKit-based conformer generation
-    - UFF (and optionally xTB) pre-optimization
-- ⛰️ **Transition state workflows**
-    - TS guess generation for different “TS stages” (e.g. TS1, TS3, TS4 etc.)
-    - XTB pre-scans and ORCA DFT refinements
-    - Support for constrained optimizations and follow-up SP/frequency steps
-- ⚙️ **Tight integration with quantum chemistry codes**
-    - [xTB] for fast pre-screening and geometry optimization
-    - [ORCA] for DFT single-points, optimizations, and vibrational analysis
-    - Structured directory layouts and restart-friendly job files
-- 🧵 **HPC-friendly execution**
-    - Explicit control over cores and memory per step
-    - Designed to play well with Slurm job arrays and batch workflows
-    - Results collected into `.parquet` files for large-scale analysis
-- 📦 **Data-centric outputs**
-    - Pandas-friendly tables with energies, geometries, metadata
-
-> Note: Machine-learned accelerators (e.g. UMA) can be integrated via ORCA's external interfaces in some workflows, but this is considered advanced usage and may not be fully stable yet.
-
----
+- builds TS and related structures from templates and substrate inputs
+- embeds, filters, and carries conformers through screening workflows
+- runs staged xTB and ORCA calculations through dataframe-based pipelines
+- stores energies, geometries, and metadata in parquet-friendly tables
 
 ## Installation
 
-### Prerequisites
-
-- **Python** 3.10+
-- **Recommended**: a Conda or mamba environment
-- **RDKit** (for conformer generation and molecular manipulation)
-- Optional but strongly recommended:
-    - [xTB] installed and available on `PATH`
-    - [ORCA] installed and accessible (especially on HPC)
-
-The exact installation of xTB/ORCA is environment- and cluster-specific and is not handled by this package.
-
-### Install Directly from GitHub
-
-```bash
-pip install "FRUST @ git+https://github.com/<owner>/<repo>.git"
-```
-
-To install notebook, analytics, or cluster-related extras in the same step:
-
-```bash
-pip install "FRUST[analytics,cluster,notebooks] @ git+https://github.com/<owner>/<repo>.git"
-```
-
-### Install from a Local Clone
+FRUST requires Python 3.10+.
 
 ```bash
 git clone <repository-url>
@@ -88,257 +23,70 @@ cd FRUST
 pip install -e .
 ```
 
-This installs FRUST in **editable** ("development") mode so code changes are picked up without reinstalling.
+If you want the optional extras used in notebooks, analytics, or cluster runs:
 
-### Dependencies
+```bash
+pip install -e ".[analytics,cluster,notebooks]"
+```
 
-Most core Python dependencies are installed automatically, including (but not limited to):
+What this does not install for you:
 
-- `rdkit` – molecular manipulation and conformer generation
-- `numpy` – numerical computations
-- `pandas` – data handling and analysis
-- `matplotlib` – basic plotting / visualization
-- `scipy` – interpolation and statistics used by visualization helpers
-- `tooltoad` – xTB / ORCA integration and chemistry helper functions, installed directly from GitHub during FRUST installation
-- `tqdm` – progress bars and basic CLI feedback
+- xTB
+- ORCA
+- machine- or cluster-specific environment setup
 
-Optional extras are available for more specialized workflows:
+The only packaged CLI entry point at the moment is `merge_parquet`.
 
-- `analytics` – installs `cairosvg`
-- `cluster` – installs `submitit` and `nuse`
-- `notebooks` – installs `ipython` and `py3Dmol`
+## Where To Start
 
-External executables such as xTB and ORCA are still managed separately from Python packaging.
+If you want the high-level workflow API, start with [frust/pipes.py](/Users/jacobmolinnielsen/Developer/FrustActivationProject/FRUST/frust/pipes.py). That is where the project-level entry points live, including `run_ts_per_rpos`, `run_ts_per_lig`, and `run_mols`.
 
----
+If you want more control over individual stages, use [frust/stepper.py](/Users/jacobmolinnielsen/Developer/FrustActivationProject/FRUST/frust/stepper.py). `Stepper` is the lower-level dataframe workflow layer for chaining xTB and ORCA calculations one step at a time.
 
-## Quick Start
-
-Right now FRUST is primarily driven through **Python** and **Jupyter notebooks**. The CLI is intentionally minimal while the APIs stabilize.
-
-### Minimal Python Example
-
-Example: generate TS jobs for a set of ligands and run a single TS pipeline entry using xTB/DFT.
+High-level example:
 
 ```python
 import pandas as pd
+from frust.pipes import run_ts_per_lig
 
-from frust.pipes import create_ts_per_rpos, run_ts_per_rpos
+ligands = pd.DataFrame({"smiles": ["CCO", "c1ccccc1"]})
 
-# Example input data: SMILES + rpos information
-df = pd.read_csv("datasets/ir_borylation.csv")
-smiles_list = list(dict.fromkeys(df["smiles"]))
-
-# A TS template structure (e.g. from a reference calculation)
-TS_TEMPLATE_XYZ = "structures/ts1_template.xyz"
-
-# 1) Build per-ligand job descriptions
-job_inputs = create_ts_per_rpos(smiles_list, TS_TEMPLATE_XYZ)
-
-# Pick one job (e.g. index 0) and run a small test
-job = job_inputs[0]
-tag = list(job.keys())[0]
-
-results_df = run_ts_per_rpos(
-    job,
-    n_confs=1,          # small number of conformers for testing
-    n_cores=10,         # cores for xTB/ORCA
-    mem_gb=30,          # memory budget in GB
-    debug=False,
-    DFT=True,           # enable DFT refinement
-    out_dir="test_run",
-    output_parquet=f"test_run/{tag}.parquet",
-    save_output_dir=True,
-    work_dir="local_test",
+df = run_ts_per_lig(
+    ligands,
+    ts_guess_xyz="structures/ts1.xyz",
+    n_confs=2,
+    DFT=False,
+    save_output_dir=False,
 )
-
-print(results_df.head())
 ```
 
-This pattern is typical for FRUST:
-
-1. Build a **list of jobs** from simple input (SMILES + TS template).
-2. Run a **pipeline function** that handles individual jobs (xTB → DFT, etc.).
-3. Get a nice **DataFrame / Parquet file** you can analyze further.
-
----
-
-## Project Structure (High-Level)
-
-The exact layout may evolve, but the repo is roughly organized as:
-
-- `frust/`  
-
-  Core Python package with:
-    - Pipeline and step definitions (`frust.pipes`)
-    - Embedding / transformation utilities (`embedder.py`, `transformers.py`)
-    - Execution helpers (`stepper.py`, monitoring, simple I/O utilities)
-- `scripts/`  
-
-  Small command-line helpers and submission scripts, e.g.:
-    - `submit.py`, `submit2.py`, `submit3.py` – Slurm/HPC helpers
-    - Utility scripts to merge `.parquet` outputs, test jobs, etc.
-- `playground/`  
-
-  Local scratch space for results, dev experiments, and temporary runs.  
-
-  (Only selected `.py` / `.ipynb` files are tracked; most large output trees are intentionally **not** under version control.)
-- `dev/`  
-
-  Development notebooks and prototypes (see next section).
-- `datasets/`  
-
-  Example input data and reference datasets, e.g.:
-    - `ir_borylation.csv` – FLP borylation dataset with SMILES and active sites
-
-No formal `tests/` directory yet – validation currently happens through targeted development / playground notebooks and small smoke scripts. A pytest suite will be added once core APIs stabilize.
-
-Because this is active research code, some directories are intentionally lightly structured and used as a "lab bench" (especially `playground/` and `dev/`).
-
----
-
-## Development Notebooks
-
-Several Jupyter notebooks live under `dev/` and act as both documentation and integration tests for the core pipeline:
-
-- `dev0_pipe_init.ipynb` – pipeline initialization / basic wiring
-- `dev1_generic_lig_identi.ipynb` – ligand identification / mapping logic
-- `dev2_pipe_fix_dirs.ipynb` – directory and output layout experiments
-- `dev3_pipe_test_run.ipynb` – first end-to-end test runs
-- `dev4_pipe_test_constrains.ipynb` – constrained optimizations and edge cases
-
-These notebooks are not part of the public API, but they are useful references for how the system is intended to be used.
-
----
-
-## Pipeline Workflow
-
-A typical FRUST pipeline for an FLP activation study looks like:
-
-1. **Molecular transformation** – Take input structures (SMILES + TS template / reference TS), apply bond-breaking / bond-forming rules to build TS-like guess structures, and map ligand positions (`rpos`) into the TS template.
-2. **Conformer generation** – Enumerate conformers using RDKit and apply filters and pre-selection (energy windows, RMSD pruning, etc.).
-3. **Pre-optimization** – Use UFF or xTB (e.g. GFN-FF / GFN2-xTB) to get reasonable geometries and optionally use constraints to preserve key activation motifs.
-4. **Quantum chemical refinement** – ORCA DFT optimizations and/or single-point calculations, frequency calculations when needed (e.g. to confirm TS nature), and optional external-method hooks (e.g. UMA or other ML potentials).
-5. **Analysis & output** – Collect energies, geometries, and metadata into pandas DataFrames, write `.parquet` and/or `.csv` files, and provide hooks for plotting, filtering, and ranking candidates.
-
-Different reactions (e.g. "TS1", "TS3", "TS4" stages of a catalytic cycle) may correspond to different pipeline variants in `frust.pipes`.
-
----
-
-## Environment Variables & External Tools
-
-There is currently no global configuration object. Most resource controls (e.g. `n_cores`, `mem_gb`, `debug`) are passed directly as keyword arguments to pipeline functions such as `run_ts_per_rpos` and `run_mols`.
-
-Some advanced workflows (UMA-integrated optimizations) require the environment variable `UMA_TOOLS` to be set to the path of ORCA's external tools directory. Add this to your `~/.env` or shell profile, e.g.:
-
-```bash
-export UMA_TOOLS="/path/to/orca/external-tools"
-```
-
-If `UMA_TOOLS` is missing, UMA-related functions will raise a runtime error.
-
-> A lightweight configuration layer may return later; for now explicit arguments keep runs transparent while the API evolves.
-
-## Stepper Showcase (xTB / ORCA Chaining)
-
-`Stepper` composes calculation stages by returning a new DataFrame every time
-
-you call `xtb(...)` or `orca(...)`. Each stage adds columns with a predictable
-
-prefix; changing the workflow is just reordering calls, tweaking `options`,
-
-or dropping columns.
-
-Minimal pattern (see `examples/stepper_showcase.py` for full version):
+Lower-level example:
 
 ```python
-from rdkit import Chem
+import pandas as pd
 from frust.embedder import embed_mols
 from frust.stepper import Stepper
+from frust.utils.mols import create_mol_per_rpos
 
-smis = ["CCO", "c1ccccc1"]
-embedded = embed_mols({"mol0": Chem.MolFromSmiles(smis[0])}, n_confs=3)
-step = Stepper(smis, debug=True, save_output_dir=False)
+ligands = pd.DataFrame({"smiles": ["CCO"]})
+mols = create_mol_per_rpos(ligands, return_format="dict", select_mols="all")
+embedded = embed_mols(mols, n_confs=2)
+
+step = Stepper(step_type="MOLS", save_output_dir=False)
 df = step.build_initial_df(embedded)
-
-# Chain xTB levels
-df = step.xtb(df, options={"gfnff": None, "opt": None})      # pre-opt
-df = step.xtb(df, options={"gfn": 2})                         # SP
-df = step.xtb(df, options={"gfn": 2, "opt": None}, lowest=1) # keep lowest per ligand
-
-# Add ORCA stages (mock in debug mode)
+df = step.xtb(df, options={"gfn": 2})
 df = step.orca(df, options={"HF": None, "STO-3G": None, "SP": None})
-df = step.orca(df, name="dft", options={"wB97X-D3": None, "6-31G**": None, "Opt": None})
-
-# Remove a stage (drop columns) & refine
-dft_cols = [c for c in df.columns if c.startswith("dft-")]
-df = df.drop(columns=dft_cols)
-df = step.orca(df, name="sp_refine", options={"wB97X-D3": None, "6-31G**": None, "SP": None})
 ```
 
-Highlights:
+## Repository Layout
 
-- Functional chaining; original rows preserved unless filtered by `lowest=`.
-- Adjust cores per xTB call with `n_cores` (arg on `xtb` only).
-- Column prefixes (`xtb-gfn2-opt`, `orca-wB97X-D3-6-31G**-Opt`, etc.) make it trivial to select or remove stages.
-- UMA external optimizations: provide `uma="task@profile"` in `orca(...)` once `UMA_TOOLS` is set.
+- [frust/](/Users/jacobmolinnielsen/Developer/FrustActivationProject/FRUST/frust) contains the package code
+- [frust/pipes.py](/Users/jacobmolinnielsen/Developer/FrustActivationProject/FRUST/frust/pipes.py) and [frust/pipelines/](/Users/jacobmolinnielsen/Developer/FrustActivationProject/FRUST/frust/pipelines) contain workflow entry points
+- [dev/](/Users/jacobmolinnielsen/Developer/FrustActivationProject/FRUST/dev) contains exploratory notebooks and development runs
+- [structures/](/Users/jacobmolinnielsen/Developer/FrustActivationProject/FRUST/structures) contains TS templates and related structural inputs
+- [datasets/](/Users/jacobmolinnielsen/Developer/FrustActivationProject/FRUST/datasets) contains project input tables
+- [scripts/](/Users/jacobmolinnielsen/Developer/FrustActivationProject/FRUST/scripts) contains supporting helpers outside the packaged API
 
-This modular approach avoids large monolithic driver scripts and encourages rapid iteration.
+## Using And Contributing
 
----
-
-## Research Context
-
-FRUST is being developed as part of an ongoing PhD project on **computational catalyst discovery**, with a focus on:
-
-- Frustrated Lewis pair (FLP) activation mechanisms
-- Automated transition-state generation for small-molecule reactions
-- High-throughput ligand screening for catalytic systems
-- Integration with active-learning and genetic algorithm workflows
-
-The code is research-grade rather than polished "product" software: clarity, reproducibility, and flexibility are prioritized over backward compatibility.
-
----
-
-## Contributing
-
-While this is primarily a research codebase, contributions and feedback are very welcome, especially if you:
-
-- Want to use FRUST in your own FLP / TS studies
-- Have ideas for making the pipelines more general or robust
-- Spot bugs or edge cases in RDKit/xTB/ORCA handling
-
-Suggested contribution flow:
-
-1. Fork the repository and create a feature branch.
-2. Install in development mode: `pip install -e .`
-3. Run a small smoke example (e.g. the Quick Start snippet) to ensure your environment works.
-4. If adding new logic, mirror usage in a dev or playground notebook; when a formal test suite is introduced, include pytest coverage.
-5. Open a pull request with a clear description of the change and its motivation.
-
----
-
-## License
-
-This project is licensed under the **MIT License**.  
-
-See the [`LICENSE`](LICENSE) file for the full text.
-
----
-
-## Author
-
-**Jacob Molin Nielsen**  
-
-Email: <jacob.molin@me.com>
-
----
-
-## Acknowledgments
-
-- Jensen Group and collaborators for scientific discussions and support  
-- RDKit developers for the molecular modeling toolkit  
-- xTB and ORCA teams for the quantum chemistry engines FRUST relies on  
-- The frustrated Lewis pair and computational catalysis communities for continuous inspiration
-
-> *Note: This project is under active development. APIs, internal structure, and supported workflows may change significantly as the research evolves.*
+FRUST is meant to be practical for collaborators, not polished for every possible user. The best way to get oriented is to read the pipeline functions, look at the notebooks in `dev/`, and treat the code and examples together as the documentation. If you run into bugs or want to build on it, issues and contributions are welcome.
