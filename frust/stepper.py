@@ -38,6 +38,18 @@ def _logger_name(step_type: str | None, job_id: int | None) -> str:
     return f"{__name__}.{step_label}.{job_label}"
 
 class Stepper:
+    """Chain xTB and ORCA calculations over dataframe-based conformer tables.
+
+    `Stepper` is the low-level workflow layer used after structures have
+    already been generated and embedded. It operates on pandas DataFrames,
+    adds calculation outputs as new columns, and optionally manages run
+    directories and saved engine files.
+
+    The class does not generate molecules itself. For higher-level workflows
+    that create TS or ground-state structures from ligand inputs, prefer the
+    pipeline functions in :mod:`frust.pipes`.
+    """
+
     def __init__(
         self,
         step_type: str | None = None,
@@ -52,6 +64,52 @@ class Stepper:
         work_dir: str | None = None,        
         **kwargs
     ):
+        """Configure a Stepper instance.
+
+        Parameters
+        ----------
+        step_type : str or None, optional
+            Workflow label used for built-in constrained TS/INT calculations.
+            Supported constrained values are ``TS1``, ``TS2``, ``TS3``,
+            ``TS4``, and ``INT3``. If ``None``, unconstrained workflows still
+            work, but ``constraint=True`` in :meth:`xtb` or :meth:`orca` will
+            raise an error.
+        output_base : Path or str or None, optional
+            Base directory under which saved outputs are created. The final run
+            directory is created lazily on first save request, not at
+            construction time.
+        job_id : int or None, optional
+            Optional job identifier used in output-directory naming and logger
+            naming. If omitted, :func:`frust.utils.slurm.detect_job_id` is used
+            to infer one when possible.
+        debug : bool, optional
+            If ``True``, use mock xTB and ORCA backends instead of the real
+            engines and enable debug logging.
+        dump_each_step : bool, optional
+            Reserved for dataframe dumping workflows. Stored on the instance
+            but not currently consumed by :class:`Stepper` itself.
+        n_cores : int, optional
+            Default core count passed to engine calls unless overridden on an
+            individual :meth:`xtb` or :meth:`orca` call.
+        memory_gb : float, optional
+            Default memory setting in gigabytes used for ORCA calls.
+        save_calc_dirs : bool, optional
+            If ``True``, preserve full calculation directories for each row
+            when output saving is enabled.
+        save_output_dir : bool, optional
+            If ``True``, enable output-directory creation and file saving.
+            When ``False``, calculations still run but no output tree is
+            created unless a caller explicitly requests per-step saving.
+        work_dir : str or None, optional
+            Scratch or working directory passed to the engine wrappers. If
+            omitted, ``$SCRATCH`` is used when available, otherwise the current
+            directory.
+
+        Raises
+        ------
+        TypeError
+            If unexpected keyword arguments are supplied.
+        """
         if kwargs:
             unknown = ", ".join(sorted(kwargs))
             raise TypeError(f"Unexpected Stepper keyword arguments: {unknown}")
@@ -306,9 +364,49 @@ class Stepper:
         """
         Generic runner for xTB or ORCA or any other engine.
 
-        - Rows with missing coords (None or NaN) are auto‐skipped and get
-        normal_termination=False / electronic_energy=NaN.
-        - Only rows with valid coords are passed to engine_fn.
+        Parameters
+        ----------
+        df : pandas.DataFrame
+            Input dataframe containing at least ``atoms`` and one coordinate
+            column. Depending on the options used, additional columns may be
+            required, such as ``ligand_name`` for ``lowest=`` filtering or a
+            ``*.hess`` column for Hessian reuse.
+        engine_fn : callable
+            Backend calculation function such as the wrapped xTB or ORCA
+            driver.
+        prefix : str
+            Prefix used to name output columns for this calculation stage.
+        build_inputs : callable
+            Row-wise callback that returns backend-specific keyword arguments.
+            These inputs are merged with the generic engine inputs assembled by
+            :class:`Stepper`.
+        save_step : bool
+            If ``True``, preserve the full saved directory for each processed
+            row.
+        lowest : int or None
+            If set, keep only the lowest-energy rows per ligand grouping before
+            passing data to the engine.
+        save_files : list of str or None, optional
+            Specific files to save from the engine output when partial saving is
+            requested.
+        use_last_hess : bool, optional
+            If ``True``, reuse the most recent ``*.hess`` column from the
+            dataframe by passing it back into the engine as an input file.
+
+        Returns
+        -------
+        pandas.DataFrame
+            A copy of the input dataframe with new stage-prefixed output
+            columns added.
+
+        Notes
+        -----
+        - Rows with missing coordinates are skipped and receive
+          ``*-normal_termination=False`` and ``*-electronic_energy=NaN``.
+        - Engine exceptions are caught, logged, and stored as a stage-specific
+          ``*-error`` column instead of aborting the whole dataframe run.
+        - Output directories are created lazily and only when saving is
+          requested.
         """
         import pandas as _pd
 
@@ -529,41 +627,43 @@ class Stepper:
         compute frequencies.
 
         Args:
-            df (pd.DataFrame): A DataFrame containing embedded conformers.
-                Required columns:
-                - 'coords_embedded': list of 3D coordinate tuples for each
-                    conformer.
-                - 'atoms': list of atomic symbols.
-                - 'constraint_atoms' (optional): list of atom indices to
-                    constrain during optimization.
+            df (pd.DataFrame): A DataFrame containing conformers. Required
+                columns:
+                - ``atoms``: list of atomic symbols
+                - one coordinate column, typically ``coords_embedded`` or a
+                  prior ``*-opt_coords`` column
+                - ``constraint_atoms`` when ``constraint=True``
+                - ``ligand_name`` when ``lowest`` is used
             name (str): Base name for the xTB step, used to prefix result
                 columns.
-            options (dict, optional): xTB driver options, e.g. {'gfn': 2,
-                'opt': None}. Defaults to {'gfn': 0}.
+            options (dict, optional): xTB driver options, e.g. ``{'gfn': 2,
+                'opt': None}``. Defaults to ``{'gfn': 0}``.
             detailed_inp_str (str, optional): Additional xTB input block
-                (cards) to include. Defaults to "".
-            constraint (bool, optional): If True, applies predefined
-                distance/angle constraints for TS steps. Defaults to False.
-            save_step (bool, optional): If True, saves calculation
-                directories for each conformer. Defaults to False.
+                (cards) to include. Defaults to ``""``.
+            constraint (bool, optional): If ``True``, applies predefined
+                distance and angle constraints for supported ``step_type``
+                values. Requires ``Stepper(step_type=...)`` with one of
+                ``TS1``, ``TS2``, ``TS3``, ``TS4``, or ``INT3``. Defaults to
+                ``False``.
+            save_step (bool, optional): If ``True``, saves calculation
+                directories for each conformer. Defaults to ``False``.
             lowest (int or None, optional): If set, retains only the
-                lowest-energy N conformers per ligand/rpos group. Defaults
-                to None.
+                lowest-energy ``N`` conformers per ligand/rpos group. Defaults
+                to ``None``.
             n_cores (int or None, optional): If set, overrides the Stepper’s
-                default core count **for xTB only**. ORCA continues to use
-                `self.n_cores`. Defaults to None.
+                default core count for this xTB call only. Defaults to
+                ``None``.
 
         Returns:
-            pd.DataFrame: The input DataFrame augmented with columns for each
-            xTB result:
-                - '{name}-{method}-normal_termination' (bool)
-                - '{name}-{method}-electronic_energy' (float)
-                - '{name}-{method}-opt_coords' (list of coords) if
-                optimization run
-                - '{name}-{method}-vibs' (vibrational modes) if frequencies
-                computed
-                - '{name}-{method}-gibbs_energy' (float) if frequencies
-                computed
+            pd.DataFrame: The input DataFrame augmented with stage-prefixed xTB
+            result columns, typically including:
+                - ``{prefix}-normal_termination``
+                - ``{prefix}-electronic_energy``
+                - ``{prefix}-opt_coords`` for optimization jobs
+                - ``{prefix}-vibs`` and ``{prefix}-gibbs_energy`` for
+                  frequency jobs
+                - ``{prefix}-error`` when a row-level engine failure occurs
+                - saved file-content columns when the backend returns them
         """
         opts = dict(options) if options else {"gfn": 0}
         if constraint:
@@ -693,33 +793,64 @@ class Stepper:
         uma: str | None = None,
         read_files: list | None = None,
         use_last_hess: bool = False,
+        n_cores: int | None = None,
         **kw        
     ) -> pd.DataFrame:
-        """Run ORCA calculations (SP, OptTS, Freq) and attach results to the DataFrame.
+        """Run ORCA calculations and attach results to the DataFrame.
 
         Args:
             df (pd.DataFrame): DataFrame of conformers to compute. Must include:
-                - 'coords_embedded': list of 3D coordinate tuples for each conformer.
-                - 'atoms': list of atomic symbols.
-            name (str): Base name for the ORCA step, used to prefix result columns.
-            options (dict): ORCA input keywords, e.g. {'wB97X-D3': None, '6-31G**': None, 'OptTS': None, 'Freq': None}.
-            xtra_inp_str (str, optional): Additional ORCA input block (e.g. CPCM or Calc_Hess). Defaults to "".
-            constraint (bool, optional): If True, applies predefined distance/angle constraints for TS steps. Defaults to False.
-            save_step (bool, optional): If True, saves ORCA run directories for inspection. Defaults to False.
-            lowest (int or None, optional): If set, keeps only the lowest-energy conformer per ligand/rpos group. Defaults to None.
-            read_files (list or None, optional): Deposit contents from files in the work_dir directly in the dataframe, \
-            e.g ["input.hess"].
-            use_last_hess (bool, optional): If True, will scan the dataframe for a *.hess column with contents fror a .hess file. In order to do this \
-            a frequency calculation must be done with the `read_files` argument set to ["input.hess"] in order to save the \
-            hessian into the dataframe.
+                - ``atoms``: list of atomic symbols
+                - one coordinate column, typically ``coords_embedded`` or a
+                  prior ``*-opt_coords`` column
+                - ``constraint_atoms`` when ``constraint=True``
+                - ``ligand_name`` when ``lowest`` is used
+                - a prior ``*.hess`` column when ``use_last_hess=True``
+            name (str): Base name for the ORCA step, used to prefix result
+                columns.
+            options (dict): ORCA input keywords, e.g.
+                ``{'wB97X-D3': None, '6-31G**': None, 'OptTS': None,
+                'Freq': None}``.
+            xtra_inp_str (str, optional): Additional ORCA input block such as
+                CPCM settings or custom geometry directives. Defaults to
+                ``""``.
+            constraint (bool, optional): If ``True``, applies predefined
+                distance and angle constraints for supported ``step_type``
+                values. Requires ``Stepper(step_type=...)`` with one of
+                ``TS1``, ``TS2``, ``TS3``, ``TS4``, or ``INT3``. Defaults to
+                ``False``.
+            save_step (bool, optional): If ``True``, saves ORCA run
+                directories for inspection. Defaults to ``False``.
+            save_files (list[str] or None, optional): Specific ORCA output
+                files to retain when partial saving is enabled. If omitted and
+                instance-level output saving is enabled, defaults to
+                ``["orca.out"]``.
+            lowest (int or None, optional): If set, keeps only the
+                lowest-energy conformer per ligand/rpos group. Defaults to
+                ``None``.
+            uma (str or None, optional): Optional UMA task/profile identifier
+                used to inject ORCA external optimization settings. Defaults to
+                ``None``.
+            read_files (list or None, optional): Deposit contents from files in
+                the work directory directly into the dataframe, e.g.
+                ``["input.hess"]``.
+            use_last_hess (bool, optional): If ``True``, scan the dataframe for
+                the most recent ``*.hess`` column and feed it back to ORCA as
+                ``private_input.hess``. Defaults to ``False``.
+            n_cores (int or None, optional): If set, overrides the Stepper's
+                default core count for this ORCA call only. Defaults to
+                ``None``.
 
         Returns:
-            pd.DataFrame: The input DataFrame extended with ORCA output columns:
-                - '{name}-{method}-normal_termination' (bool)
-                - '{name}-{method}-electronic_energy' (float)
-                - '{name}-{method}-opt_coords' (list of coords) if optimization run
-                - '{name}-{method}-vibs' (vibrational modes) if frequencies computed
-                - '{name}-{method}-gibbs_energy' (float) if frequencies computed
+            pd.DataFrame: The input DataFrame extended with stage-prefixed ORCA
+            output columns, typically including:
+                - ``{prefix}-normal_termination``
+                - ``{prefix}-electronic_energy``
+                - ``{prefix}-opt_coords`` for optimization jobs
+                - ``{prefix}-vibs`` and ``{prefix}-gibbs_energy`` for
+                  frequency jobs
+                - ``{prefix}-error`` when a row-level engine failure occurs
+                - saved file-content columns when ORCA returns them
         """
         opts = options or {}
         if kw:
@@ -746,7 +877,7 @@ class Stepper:
                 "options": opts,
                 "xtra_inp_str": xtra_inp_str.strip(),
                 "memory": self.memory_gb,
-                "n_cores": self.n_cores,
+                "n_cores": int(n_cores) if n_cores is not None else self.n_cores,
                 "read_files": read_files,
             }
 
