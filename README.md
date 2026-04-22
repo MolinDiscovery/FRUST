@@ -49,7 +49,7 @@ High-level example:
 import pandas as pd
 from frust.pipes import run_ts_per_lig
 
-ligands = pd.DataFrame({"smiles": ["CCO", "c1ccccc1"]})
+ligands = pd.DataFrame({"smiles": ["C1=CC=CN1", "c1ccccc1"]})
 
 df = run_ts_per_lig(
     ligands,
@@ -68,8 +68,8 @@ from frust.embedder import embed_mols
 from frust.stepper import Stepper
 from frust.utils.mols import create_mol_per_rpos
 
-ligands = pd.DataFrame({"smiles": ["CCO"]})
-mols = create_mol_per_rpos(ligands, return_format="dict", select_mols="all")
+ligands = pd.DataFrame({"smiles": ["COc1cccc(OC)c1", "Cc1cccc(N(C)C)c1"]})
+mols = create_mol_per_rpos(ligands)
 embedded = embed_mols(mols, n_confs=2)
 
 step = Stepper(step_type="MOLS", save_output_dir=False)
