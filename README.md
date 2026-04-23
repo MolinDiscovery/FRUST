@@ -78,6 +78,43 @@ df = step.xtb(df, options={"gfn": 2})
 df = step.orca(df, options={"HF": None, "STO-3G": None, "SP": None})
 ```
 
+## Cluster Submission
+
+FRUST also includes a small packaged submission layer for running workflows through `submitit` on either Slurm or a local executor. The public surface is:
+
+```python
+from frust.cluster import submit_jobs, submit_chain, ClusterConfig, Resources
+```
+
+Independent jobs:
+
+```python
+from frust.cluster import submit_jobs, ClusterConfig, Resources
+
+submit_jobs(
+    csv_path="datasets/example.csv",
+    pipeline="run_mols",
+    out_dir="runs/example",
+    cluster=ClusterConfig(backend="slurm", partition="kemi1", log_dir="logs/example"),
+    resources=Resources(cpus=16, mem_gb=50, timeout_min=14400),
+)
+```
+
+Dependent stage chain:
+
+```python
+from frust.cluster import submit_chain, ClusterConfig, Resources
+
+submit_chain(
+    csv_path="datasets/example.csv",
+    preset="ts_per_rpos",
+    ts_xyz="structures/ts1.xyz",
+    out_dir="runs/ts1",
+    cluster=ClusterConfig(backend="slurm", partition="kemi1", log_dir="logs/ts1"),
+    stage_resources={"run_init": Resources(cpus=24, mem_gb=20, timeout_min=7200)},
+)
+```
+
 ## Repository Layout
 
 - [frust/](/Users/jacobmolinnielsen/Developer/FrustActivationProject/FRUST/frust) contains the package code
