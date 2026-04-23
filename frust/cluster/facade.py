@@ -26,6 +26,51 @@ def submit_jobs(
     select_mols: str | list[str] = "all",
     work_dir: str | Path | None = None,
 ) -> JobSubmissionResult:
+    """Submit independent FRUST workflow jobs from a CSV input file.
+
+    Parameters
+    ----------
+    csv_path : str or pathlib.Path
+        Path to a CSV file containing at least a ``smiles`` column.
+    pipeline : str
+        High-level pipeline name from :mod:`frust.pipes`.
+    out_dir : str or pathlib.Path
+        Output directory under which parquet files and run outputs are written.
+    cluster : frust.cluster.config.ClusterConfig
+        Shared cluster or local-executor configuration.
+    resources : frust.cluster.config.Resources
+        CPU, memory, and timeout settings for every submitted job in this
+        submission call.
+    ts_xyz : str or pathlib.Path or None, optional
+        TS template XYZ file required by TS-dependent pipelines.
+    debug : bool, optional
+        Forwarded to the selected FRUST pipeline.
+    production : bool, optional
+        If ``True`` and ``n_confs`` is ``None``, preserve the pipeline default
+        conformer behavior.
+    n_confs : int or None, optional
+        Conformer count forwarded to the selected pipeline when supported.
+    save_output_dir : bool, optional
+        Forwarded to the selected FRUST pipeline.
+    dft : bool, optional
+        Forwarded to the selected FRUST pipeline as ``DFT`` when supported.
+    select_mols : str or list[str], optional
+        Molecule selection forwarded to ``run_mols`` when supported.
+    work_dir : str or pathlib.Path or None, optional
+        Optional work directory override. If omitted, ``cluster.work_dir`` is
+        used.
+
+    Returns
+    -------
+    frust.cluster.config.JobSubmissionResult
+        Summary of the submitted jobs, including scheduler ids and tags.
+
+    Raises
+    ------
+    ValueError
+        If the pipeline name is unsupported, if required TS inputs are
+        missing, or if the CSV input is invalid.
+    """
     prepared = prepare_pipeline_inputs(csv_path, pipeline, ts_xyz=ts_xyz, select_mols=select_mols)
     pipeline_fn = load_pipeline(pipeline)
     sig = inspect.signature(pipeline_fn)
@@ -97,6 +142,46 @@ def submit_chain(
     save_output_dir: bool = True,
     work_dir: str | Path | None = None,
 ) -> JobSubmissionResult:
+    """Submit a dependent stage chain from a CSV input file.
+
+    Parameters
+    ----------
+    csv_path : str or pathlib.Path
+        Path to a CSV file containing at least a ``smiles`` column.
+    preset : str or None, optional
+        Built-in FRUST chain preset, such as ``"ts_per_rpos"`` or
+        ``"int3_per_rpos"``. Use either ``preset`` or the custom
+        ``module_path``/``stage_order`` combination.
+    module_path : str or None, optional
+        Custom Python module containing stage functions for advanced use.
+    stage_order : list[str] or None, optional
+        Explicit stage order for custom chains.
+    ts_xyz : str or pathlib.Path
+        TS template XYZ file used to prepare dependent chain inputs.
+    out_dir : str or pathlib.Path
+        Root directory under which per-tag stage outputs are written.
+    cluster : frust.cluster.config.ClusterConfig
+        Shared cluster or local-executor configuration.
+    stage_resources : dict[str, Resources] or None, optional
+        Optional per-stage resource overrides.
+    debug : bool, optional
+        Forwarded to the stage functions when supported.
+    production : bool, optional
+        If ``True`` and ``n_confs`` is ``None``, preserve the stage default
+        conformer behavior.
+    n_confs : int or None, optional
+        Conformer count forwarded to initialization stages when supported.
+    save_output_dir : bool, optional
+        Forwarded to initialization stages when supported.
+    work_dir : str or pathlib.Path or None, optional
+        Optional work directory override. If omitted, ``cluster.work_dir`` is
+        used.
+
+    Returns
+    -------
+    frust.cluster.config.JobSubmissionResult
+        Summary of the submitted chain jobs.
+    """
     return submit_chain_jobs(
         csv_path=csv_path,
         preset=preset,
@@ -112,4 +197,3 @@ def submit_chain(
         save_output_dir=save_output_dir,
         work_dir=work_dir,
     )
-

@@ -25,6 +25,23 @@ def _resolve_chain_definition(
     module_path: str | None,
     stage_order: list[str] | None,
 ):
+    """Resolve preset or custom chain configuration into one internal shape.
+
+    Parameters
+    ----------
+    preset : str or None
+        Built-in chain preset.
+    module_path : str or None
+        Custom module path for advanced chains.
+    stage_order : list[str] or None
+        Explicit stage order for custom chains.
+
+    Returns
+    -------
+    dict
+        Dictionary containing resolved preset metadata, module path, stage
+        order, and default resources.
+    """
     if preset is not None and (module_path is not None or stage_order is not None):
         raise ValueError("Use either `preset` or `module_path`/`stage_order`, not both")
     if preset is None and (module_path is None or stage_order is None):
@@ -48,6 +65,20 @@ def _resolve_chain_definition(
 
 
 def _resolve_stage_functions(module_path: str, stage_order: list[str]):
+    """Load and validate stage callables from a chain module.
+
+    Parameters
+    ----------
+    module_path : str
+        Python module path containing stage functions.
+    stage_order : list[str]
+        Explicit stage names to load from the module.
+
+    Returns
+    -------
+    dict[str, callable]
+        Mapping of stage name to validated callable.
+    """
     mod = importlib.import_module(module_path)
     funcs = {}
     for stage_name in stage_order:
@@ -76,6 +107,42 @@ def submit_chain_jobs(
     save_output_dir: bool = True,
     work_dir: str | Path | None = None,
 ) -> JobSubmissionResult:
+    """Submit a dependent stage chain through submitit.
+
+    Parameters
+    ----------
+    csv_path : str or pathlib.Path
+        CSV input containing at least a ``smiles`` column.
+    preset : str or None
+        Built-in FRUST chain preset.
+    module_path : str or None
+        Custom stage module path for advanced chains.
+    stage_order : list[str] or None
+        Explicit stage order for custom chains.
+    ts_xyz : str or pathlib.Path
+        TS template file used to generate initial stage inputs.
+    out_dir : str or pathlib.Path
+        Root output directory for the chain submission.
+    cluster : frust.cluster.config.ClusterConfig
+        Shared executor configuration.
+    stage_resources : dict[str, Resources] or None, optional
+        Optional per-stage resource overrides.
+    debug : bool, optional
+        Forwarded to stage functions when supported.
+    production : bool, optional
+        Preserve stage defaults when ``True`` and ``n_confs`` is ``None``.
+    n_confs : int or None, optional
+        Conformer count forwarded to initialization stages.
+    save_output_dir : bool, optional
+        Forwarded to initialization stages when supported.
+    work_dir : str or pathlib.Path or None, optional
+        Optional work directory override.
+
+    Returns
+    -------
+    frust.cluster.config.JobSubmissionResult
+        Summary of all submitted stage jobs for all prepared tags.
+    """
     resolved = _resolve_chain_definition(
         preset=preset,
         module_path=module_path,
@@ -152,4 +219,3 @@ def submit_chain_jobs(
         mode=preset or "custom",
         backend=cluster.backend,
     )
-

@@ -25,6 +25,24 @@ SUPPORTED_PIPELINES = TS_PIPELINES | DATAFRAME_PIPELINES
 
 
 def load_csv_input(csv_path: str | Path) -> pd.DataFrame:
+    """Load and validate a CSV input table for cluster submission.
+
+    Parameters
+    ----------
+    csv_path : str or pathlib.Path
+        Path to the CSV file.
+
+    Returns
+    -------
+    pandas.DataFrame
+        Loaded dataframe containing at least a ``smiles`` column.
+
+    Raises
+    ------
+    ValueError
+        If the file is missing, the ``smiles`` column is absent, or that
+        column contains missing values.
+    """
     path = Path(csv_path)
     if not path.exists():
         raise ValueError(f"CSV file not found: {path}")
@@ -37,6 +55,23 @@ def load_csv_input(csv_path: str | Path) -> pd.DataFrame:
 
 
 def load_pipeline(pipeline: str):
+    """Load a supported pipeline function from :mod:`frust.pipes`.
+
+    Parameters
+    ----------
+    pipeline : str
+        Pipeline function name.
+
+    Returns
+    -------
+    callable
+        Callable pipeline function from :mod:`frust.pipes`.
+
+    Raises
+    ------
+    ValueError
+        If the pipeline is not one of the supported submission targets.
+    """
     if pipeline not in SUPPORTED_PIPELINES:
         supported = ", ".join(sorted(SUPPORTED_PIPELINES))
         raise ValueError(f"Unknown pipeline {pipeline!r}. Supported pipelines: {supported}")
@@ -50,6 +85,25 @@ def prepare_pipeline_inputs(
     ts_xyz: str | Path | None = None,
     select_mols: str | list[str] = "all",
 ):
+    """Prepare submission payloads for independent FRUST jobs.
+
+    Parameters
+    ----------
+    csv_path : str or pathlib.Path
+        CSV input containing at least a ``smiles`` column.
+    pipeline : str
+        Supported pipeline name from :mod:`frust.pipes`.
+    ts_xyz : str or pathlib.Path or None, optional
+        TS template file for TS-dependent pipelines.
+    select_mols : str or list[str], optional
+        Molecule selection passthrough for molecule workflows.
+
+    Returns
+    -------
+    dict
+        Dictionary containing ``mode``, ``payloads``, ``tags``, and the loaded
+        input ``dataframe``.
+    """
     if pipeline not in SUPPORTED_PIPELINES:
         supported = ", ".join(sorted(SUPPORTED_PIPELINES))
         raise ValueError(f"Unknown pipeline {pipeline!r}. Supported pipelines: {supported}")
@@ -80,8 +134,24 @@ def prepare_pipeline_inputs(
 
 
 def prepare_chain_inputs(csv_path: str | Path, preset: str, ts_xyz: str | Path):
+    """Prepare TS payloads for dependent chain submission.
+
+    Parameters
+    ----------
+    csv_path : str or pathlib.Path
+        CSV input containing at least a ``smiles`` column.
+    preset : str
+        Chain preset label used for reporting the prepared mode.
+    ts_xyz : str or pathlib.Path
+        TS template file used to generate stage inputs.
+
+    Returns
+    -------
+    dict
+        Dictionary containing ``mode``, ``payloads``, ``tags``, and the loaded
+        input ``dataframe``.
+    """
     df = load_csv_input(csv_path)
     ts_jobs = create_ts_per_rpos(df, str(ts_xyz), return_format="list")
     tags = [sanitize_tag(list(job.keys())[0]) for job in ts_jobs]
     return {"mode": preset, "payloads": ts_jobs, "tags": tags, "dataframe": df}
-
