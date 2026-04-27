@@ -1,6 +1,13 @@
-import pandas as pd
-from pathlib import Path
 import re
+from pathlib import Path
+from typing import Mapping
+
+import pandas as pd
+from tooltoad.chemutils import ac2xyz
+from frust.vis import MolTo3DGrid
+from rdkit import Chem
+from rdkit.Chem import rdDetermineBonds
+
 
 def dump_df(df: pd.DataFrame, step: str, base_dir: Path) -> Path:
     """
@@ -53,3 +60,56 @@ def read_ts_type_from_xyz(xyz_file: str):
             "XYZ file must specify a structure type in the comments. "
             "Please include TSX or INTX in the comment (e.g. TS1, INT3)."
         )
+
+
+def write_xyz_structures(
+    df: pd.DataFrame,
+    path: Path | str,
+    coord_options: Mapping[str, str],
+    name_col: str = "custom_name",
+    atoms_col: str = "atoms",
+    show_mols: bool = False,
+    **molto3d_kwargs,
+) -> None:
+    """Write XYZ structure files from coordinate columns in a dataframe.
+
+    Args:
+        df: Dataframe containing atoms, names, and coordinate columns.
+        path: Base directory where the XYZ folders should be created.
+        coord_options: Mapping from output folder/suffix to coordinate column.
+            The key is used both as the subfolder name and filename suffix.
+        name_col: Column containing the base structure name.
+        atoms_col: Column containing atomic symbols.
+        show_mols: Whether to display the written structures.
+        **molto3d_kwargs: Additional keyword arguments passed to MolTo3DGrid.
+    """
+    path = Path(path)
+
+    for option in coord_options:
+        (path / option).mkdir(parents=True, exist_ok=True)
+
+    mols = []
+    legends = []
+
+    for _, row in df.iterrows():
+        name = row[name_col]
+        atoms = row[atoms_col]
+
+        for option, coord_col in coord_options.items():
+            coords = row[coord_col]
+            xyz_str = ac2xyz(atoms, coords)
+
+            xyz_path = path / option / f"{name}_{option}.xyz"
+
+            with open(xyz_path, "w") as f:
+                f.write(xyz_str)
+
+            if show_mols:
+                mol = Chem.MolFromXYZBlock(xyz_str)
+                if mol is not None:
+                    rdDetermineBonds.DetermineConnectivity(mol)
+                    mols.append(mol)
+                    legends.append(f"{name}_{option}")
+
+    if show_mols and mols:
+        MolTo3DGrid(mols, legends=legends, **molto3d_kwargs)
