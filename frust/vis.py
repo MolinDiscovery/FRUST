@@ -651,6 +651,7 @@ def plot_energy_profile(
     marker: str = "o",
     overlay_markers=None,
     show_legend: bool = True,
+    profile_label: str | None = None,
     overlay_colors=None,
     same_energy_tol: float = 1e-3,
     same_energy_mode: str = "hide",  # "hide" | "tag"
@@ -737,20 +738,32 @@ def plot_energy_profile(
 
         side_anchor_label = None
         side_connector_rise_frac = None
+        embedded_side_label = None
 
         for item in profile_states:
             if isinstance(item, str):
-                s = item.lower().strip()
+                side_spec, legend_spec = (
+                    item.split("#", 1)
+                    if "#" in item
+                    else (item, None)
+                )
+                parsed_legend = (
+                    legend_spec.strip()
+                    if legend_spec is not None and legend_spec.strip()
+                    else None
+                )
+                s = side_spec.lower().strip()
 
                 if s == token:
+                    embedded_side_label = parsed_legend
                     seg = 1
                     continue
 
                 if s.startswith(token + "@") or s.startswith(token + ":"):
                     rest = (
-                        item.split("@", 1)[1]
-                        if "@" in item
-                        else item.split(":", 1)[1]
+                        side_spec.split("@", 1)[1]
+                        if "@" in side_spec
+                        else side_spec.split(":", 1)[1]
                     )
                     parts = [p.strip() for p in str(rest).split("@") if p.strip()]
 
@@ -759,12 +772,14 @@ def plot_energy_profile(
                     if len(parts) >= 2:
                         side_connector_rise_frac = float(parts[1])
 
+                    embedded_side_label = parsed_legend
                     seg = 1
                     continue
 
                 raise ValueError(
                     f"Unknown string entry in states: {item!r}. "
-                    f"Only {side_token!r} (optionally with @{'<label>'}) is supported."
+                    f"Only {side_token!r} (optionally with @{'<label>'} and "
+                    "a #legend suffix) is supported."
                 )
 
             label = item[0]
@@ -774,7 +789,13 @@ def plot_energy_profile(
             entries.append((label, energy, placement))
             seg_ids.append(seg)
 
-        return entries, seg_ids, side_anchor_label, side_connector_rise_frac
+        return (
+            entries,
+            seg_ids,
+            side_anchor_label,
+            side_connector_rise_frac,
+            embedded_side_label,
+        )
 
     def _compute_x_single(entries):
         names = [e[0] for e in entries]
@@ -866,6 +887,12 @@ def plot_energy_profile(
             out[_norm_label(lab)] = float(en)
         return out
 
+    def _side_legend_from_state(profile_states):
+        _, seg_ids, _, _, side_label = _parse_entries(profile_states)
+        if not any(sid == 1 for sid in seg_ids):
+            return None
+        return side_label
+
     def _annotate_energy_only(
         ax_,
         xi,
@@ -938,7 +965,13 @@ def plot_energy_profile(
         ref_energy_map,
         overlay_idx,
     ):
-        entries, seg_ids, side_anchor_label, side_connector_rise_frac = _parse_entries(
+        (
+            entries,
+            seg_ids,
+            side_anchor_label,
+            side_connector_rise_frac,
+            _,
+        ) = _parse_entries(
             profile_states
         )
 
@@ -1467,8 +1500,71 @@ def plot_energy_profile(
                 )
                 handles.append(h)
                 labels.append(str(name))
+            for i, (name, st) in enumerate(profiles):
+                side_label = _side_legend_from_state(st)
+                if side_label is None:
+                    continue
+
+                is_reference = i == 0
+                _, side_color = _resolve_colors(
+                    name,
+                    is_reference,
+                    max(0, i - 1),
+                    True,
+                )
+                a = 1.0 if is_reference else overlay_alpha
+
+                if is_reference:
+                    m = marker
+                elif isinstance(overlay_markers, dict):
+                    m = overlay_markers.get(name, marker)
+                else:
+                    m = marker
+
+                h = plt.Line2D(
+                    [0],
+                    [0],
+                    color=side_color,
+                    alpha=a,
+                    marker=m,
+                    linestyle="-",
+                )
+                handles.append(h)
+                labels.append(str(side_label))
             if handles:
                 ax.legend(handles, labels, frameon=False)
+
+    if not multi and show_legend:
+        handles = []
+        labels = []
+
+        if profile_label is not None:
+            h = plt.Line2D(
+                [0],
+                [0],
+                color="C0",
+                alpha=1.0,
+                marker=marker,
+                linestyle="-",
+            )
+            handles.append(h)
+            labels.append(str(profile_label))
+
+        side_label = _side_legend_from_state(states)
+        if side_label is not None:
+            h = plt.Line2D(
+                [0],
+                [0],
+                color="C1",
+                alpha=1.0,
+                marker=marker,
+                linestyle="-",
+            )
+            handles.append(h)
+            labels.append(str(side_label))
+
+        if handles:
+            ax.legend(handles, labels, frameon=False)
 
     ax.set_ylabel(ylabel)
 
@@ -1476,7 +1572,7 @@ def plot_energy_profile(
     if show_state_labels:
         # Use reference ordering if available (multi); otherwise derive from single.
         if ref_ordered is None:
-            entries, _, _, _ = _parse_entries(states)
+            entries, _, _, _, _ = _parse_entries(states)
             x_single = _compute_x_single(entries)
             ref_ordered = [(float(xi), str(lab)) for xi, (lab, _, _) in zip(x_single, entries)]
 
