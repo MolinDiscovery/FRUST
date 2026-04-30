@@ -11,6 +11,7 @@ from scipy.stats import linregress, spearmanr
 from tooltoad.chemutils import ac2mol
 from tooltoad.vis import DrawMolSvg, MolTo3DGrid, RxnTo3DGrid
 from frust.utils.RMSD import compare_xyz_rmsd
+from frust.schema import latest_opt_coords_column, normalize_dataframe
 
 darkmode: bool = False
 
@@ -34,7 +35,7 @@ def use_darkmode(on: bool = True):
 def plot_mols(
     df: pd.DataFrame,
     row_indices: Optional[List[int]] = None,
-    ligand_filter: Optional[List[str]] = None,
+    substrate_filter: Optional[List[str]] = None,
     rpos_filter: Optional[List[Union[str, int]]] = None,
     exclude_coords: Optional[List[str]] = None,
     include_coords: Optional[List[str]] = None,
@@ -49,7 +50,7 @@ def plot_mols(
         df: DataFrame with molecular data
         row_indices: List of row indices to display (if None, displays all
             rows)
-        ligand_filter: List of ligand names to include (if None, includes all)
+        substrate_filter: List of substrate names to include (if None, includes all)
         rpos_filter: List of rpos values to include (if None, includes all)
         exclude_coords: List of coordinate column patterns to exclude
         include_coords: List of coordinate column patterns to include
@@ -63,14 +64,14 @@ def plot_mols(
     Returns:
         None
     """
-    filtered_df = df.copy()
+    filtered_df = normalize_dataframe(df)
 
     if row_indices is not None:
         filtered_df = filtered_df.iloc[row_indices]
 
-    if ligand_filter is not None:
+    if substrate_filter is not None:
         filtered_df = filtered_df[
-            filtered_df['ligand_name'].isin(ligand_filter)
+            filtered_df['substrate_name'].isin(substrate_filter)
         ]
 
     if rpos_filter is not None:
@@ -80,7 +81,10 @@ def plot_mols(
         print("No molecules match the specified filters.")
         return
 
-    coord_columns = [c for c in df.columns if "coords" in c]
+    coord_columns = [
+        c for c in filtered_df.columns
+        if "coords" in c or str(c).endswith("-oc") or str(c).endswith("-opt_coords")
+    ]
 
     if coord_indices is not None:
         if isinstance(coord_indices, slice):
@@ -113,7 +117,7 @@ def plot_mols(
 
     for idx, row in filtered_df.iterrows():
         atoms = row["atoms"]
-        ligand_name = row["ligand_name"]
+        substrate_name = row["substrate_name"]
         rpos = row["rpos"]
 
         for coord_col in coord_columns:
@@ -134,10 +138,10 @@ def plot_mols(
 
                         coord_type = (coord_col.replace("coords_", "")
                                       .replace("_coords", ""))
-                        if rpos is None:
-                            legend = f"{ligand_name}\n{coord_type}"
+                        if rpos is None or pd.isna(rpos):
+                            legend = f"{substrate_name}\n{coord_type}"
                         else:
-                            legend = f"{ligand_name} r{rpos}\n{coord_type}"
+                            legend = f"{substrate_name} r{rpos}\n{coord_type}"
                         all_legends.append(legend)
 
     if not all_mols:
@@ -182,18 +186,18 @@ def plot_row(
 
 def plot_lig(
     df: pd.DataFrame,
-    ligand_names: Union[str, List[str]],
+    substrate_names: Union[str, List[str]],
     exclude_coords: Optional[List[str]] = None,
     coord_indices: Optional[Union[List[int], slice]] = slice(-1, None),
     **kwargs: Any
 ) -> None:
-    """Display molecules filtered by ligand name(s)."""
-    if isinstance(ligand_names, str):
-        ligand_names = [ligand_names]
+    """Display molecules filtered by substrate name(s)."""
+    if isinstance(substrate_names, str):
+        substrate_names = [substrate_names]
 
     plot_mols(
         df,
-        ligand_filter=ligand_names,
+        substrate_filter=substrate_names,
         exclude_coords=exclude_coords,
         coord_indices=coord_indices,
         **kwargs
@@ -248,7 +252,7 @@ def plot_vibs(
     vibs_col = [c for c in df.columns if "vibs" in c][-1]
     print(f"vibs col {vibs_col}")
     vibs_col_pre = vibs_col.split("vibs")[0]
-    coords_col = vibs_col_pre + "opt_coords"
+    coords_col = latest_opt_coords_column(vibs_col_pre, df) or vibs_col_pre + "oc"
     if custom_coords_col_name:
         coords_col = custom_coords_col_name
 
@@ -387,7 +391,7 @@ def plot_regression_outliers(
     xlabel: str = "dE, kcal/mol",
     ylabel: str = "dG, kcal/mol",
     font_size: int = 14,
-    label_col: str = "ligand_name",
+    label_col: str = "substrate_name",
     rpos_col: str = "rpos",
     method: str = "spearman",
     num_outliers: int = 2,
@@ -402,7 +406,7 @@ def plot_regression_outliers(
         x_col (str): Name of the column to use for x values. Defaults to "dG".
         y_col (str): Name of the column to use for y values. Defaults to "dE".
         label_col (str): Column used for point labels. Defaults to
-            "ligand_name".
+            "substrate_name".
         rpos_col (str): Column used for position annotations. Defaults to
             "rpos".
         method (str, optional): Scoring method, "pearson" or "spearman".

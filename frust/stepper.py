@@ -12,6 +12,13 @@ from pandas import Series
 from inspect import signature
 from frust.utils.dirs import make_step_dir, prepare_base_dir
 from frust.utils.slurm import detect_job_id
+from frust.schema import (
+    energy_columns,
+    infer_group_columns,
+    metadata_from_mapping,
+    normalize_dataframe,
+    output_column,
+)
 
 def _make_logger(name: str, debug: bool) -> logging.Logger:
     """Create an instance-local logger so debug settings don't leak globally."""
@@ -163,10 +170,14 @@ class Stepper:
         preferred = []
         if "coords_embedded" in df.columns:
             preferred.append("coords_embedded")
-        preferred.extend([c for c in df.columns if c.endswith("-opt_coords")])
         preferred.extend(
-            [c for c in df.columns if "coords" in c and c not in preferred]
+            [
+                c
+                for c in df.columns
+                if "coords" in c and c not in preferred and not c.endswith("-opt_coords")
+            ]
         )
+        preferred.extend([c for c in df.columns if c.endswith("-opt_coords") or c.endswith("-oc")])
         return preferred
 
     @classmethod
@@ -175,7 +186,7 @@ class Stepper:
         cols = cls._coord_columns(df)
         if not cols:
             raise ValueError(
-                "DataFrame must contain coordinates in 'coords_embedded' or a '*-opt_coords' column"
+                "DataFrame must contain coordinates in 'coords_embedded' or a '*-oc'/'*-opt_coords' column"
             )
         return cols[-1]
 
@@ -215,9 +226,9 @@ class Stepper:
 
         Stepper._last_coord_col(df)
 
-        if needs_grouping and "ligand_name" not in df.columns:
+        if needs_grouping and "substrate_name" not in df.columns:
             raise ValueError(
-                "`lowest=` requires a 'ligand_name' column so conformers can be grouped before filtering"
+                "`lowest=` requires a 'substrate_name' column so conformers can be grouped before filtering"
             )
 
         if needs_hessian and not any(col.endswith(".hess") for col in df.columns):
@@ -228,7 +239,7 @@ class Stepper:
     @staticmethod
     def _row_name(row: Series, index: object) -> str:
         """Pick a stable human-readable row label from available metadata."""
-        for key in ("custom_name", "ligand_name", "moltype"):
+        for key in ("custom_name", "substrate_name", "moltype"):
             value = row.get(key)
             if value is not None and not pd.isna(value):
                 return str(value)
@@ -275,17 +286,20 @@ class Stepper:
             key = 'some_name'
             value = (Mol, cids)
 
-        In the TS case we parse out `ligand_name` and `rpos` from the key;
-        in the plain‐mol case we set ligand_name=key and rpos=None.
+        In legacy-input cases, structure metadata is parsed from the key as a
+        fallback. New generated records should carry metadata directly.
 
         Returns
         -------
         pd.DataFrame
             One row per conformer with columns
-              - custom_name         (the original dict key)
-              - ligand_name         (parsed or just the key)
+              - structure_id        (stable structure identifier)
+              - custom_name         (the original display/file key)
+              - substrate_name      (parsed substrate identity)
+              - structure_type      (MOL, TS1, TS2, TS3, TS4, INT3)
+              - molecule_role       (ts, ligand, int2, mol2, ...)
               - rpos                (int or None)
-              - constraint_atoms    (list[int] or empty list)
+              - constraint_atoms    (list[int] or NA)
               - cid                 (conformer ID)
               - smiles              (str or None)
               - atoms               (list of atomic symbols)
@@ -294,39 +308,29 @@ class Stepper:
         """
         rows: list[dict] = []
 
-        pattern = re.compile(
-            r'^(?:(?P<prefix>(?:TS|INT)\d*|Mols)\()?'
-            r'(?P<ligand>.+?)_rpos\('        
-            r'(?P<rpos>\d+)\)\)?$'
-        )
-
         for name, val in embedded_dict.items():
-            prefix = None
             if len(val) == 2:
                 mol, cids = val
                 keep_idxs = None
                 smi = None
                 energies: list[tuple[float,int]] = []
+                metadata = None
+            elif len(val) == 3 and isinstance(val[2], dict):
+                mol, cids, metadata = val
+                keep_idxs = None
+                smi = metadata.get("smiles") or metadata.get("input_smiles")
+                energies = []
             elif len(val) == 4:
                 mol, cids, keep_idxs, smi = val
                 energies = []
+                metadata = None
             elif len(val) == 5:
                 mol, cids, keep_idxs, smi, energies = val
+                metadata = None
             else:
                 raise ValueError(f"Bad tuple length for {name}")
 
-            m = pattern.match(name)
-            if m:
-                prefix = m.group("prefix")
-                raw = m.group("ligand")
-                ligand_name = raw.split("_", 1)[1] if "_" in raw else raw
-                rpos = int(m.group("rpos"))
-            else:
-                if "_" in name:
-                    ligand_name = name.split("_", 1)[1]
-                else:
-                    ligand_name = name
-                rpos = pd.NA
+            meta = metadata_from_mapping(metadata, fallback_name=name, smiles=smi)
 
             e_map: dict[int,float] = {cid_val: e_val for (e_val, cid_val) in energies} if energies else {}
 
@@ -337,12 +341,16 @@ class Stepper:
                 coords = [tuple(conf.GetAtomPosition(i)) for i in range(mol.GetNumAtoms())]
 
                 rows.append({
-                    "custom_name":      name,
-                    "ligand_name":      ligand_name,
-                    "rpos":             rpos,
+                    "structure_id":     meta.structure_id,
+                    "custom_name":      meta.custom_name,
+                    "substrate_name":   meta.substrate_name,
+                    "structure_type":   meta.structure_type,
+                    "molecule_role":    meta.molecule_role,
+                    "rpos":             meta.rpos,
                     "constraint_atoms": keep_idxs,
                     "cid":              cid,
-                    "smiles":           smi,
+                    "smiles":           meta.smiles or smi,
+                    "input_smiles":     meta.input_smiles or smi,
                     "atoms":            atom_syms,
                     "coords_embedded":  coords,
                     "energy_uff":       e_map.get(cid, None)
@@ -369,7 +377,7 @@ class Stepper:
         df : pandas.DataFrame
             Input dataframe containing at least ``atoms`` and one coordinate
             column. Depending on the options used, additional columns may be
-            required, such as ``ligand_name`` for ``lowest=`` filtering or a
+            required, such as ``substrate_name`` for ``lowest=`` filtering or a
             ``*.hess`` column for Hessian reuse.
         engine_fn : callable
             Backend calculation function such as the wrapped xTB or ORCA
@@ -384,7 +392,7 @@ class Stepper:
             If ``True``, preserve the full saved directory for each processed
             row.
         lowest : int or None
-            If set, keep only the lowest-energy rows per ligand grouping before
+            If set, keep only the lowest-energy rows per structure grouping before
             passing data to the engine.
         save_files : list of str or None, optional
             Specific files to save from the engine output when partial saving is
@@ -402,7 +410,7 @@ class Stepper:
         Notes
         -----
         - Rows with missing coordinates are skipped and receive
-          ``*-normal_termination=False`` and ``*-electronic_energy=NaN``.
+          ``*-NT=False`` and ``*-EE=NaN``.
         - Engine exceptions are caught, logged, and stored as a stage-specific
           ``*-error`` column instead of aborting the whole dataframe run.
         - Output directories are created lazily and only when saving is
@@ -410,7 +418,8 @@ class Stepper:
         """
         import pandas as _pd
 
-        df_out    = df.copy()
+        df_out    = normalize_dataframe(df)
+        df_out.attrs.update(getattr(df, "attrs", {}))
         self._validate_required_columns(
             df_out,
             needs_grouping=lowest is not None,
@@ -424,15 +433,14 @@ class Stepper:
             lowest = None
 
         if lowest:
-            energy_cols = [c for c in df_out.columns if c.endswith("_energy")]
-            if not energy_cols:
-                raise ValueError("cannot apply `lowest=` filter: no *_energy column found")
-            last_energy = energy_cols[-1]
+            e_cols = energy_columns(df_out)
+            if not e_cols:
+                raise ValueError("cannot apply `lowest=` filter: no energy column found")
+            last_energy = e_cols[-1]
 
-            # build the list of grouping keys: always ligand_name, optionally rpos
-            group_keys = ["ligand_name"]
-            if "rpos" in df_out.columns:
-                group_keys.append("rpos")
+            group_keys = infer_group_columns(df_out)
+            if not group_keys:
+                raise ValueError("cannot apply `lowest=` filter: no structure identity columns found")
 
             sort_keys = group_keys + [last_energy]
             df_out = (
@@ -448,8 +456,8 @@ class Stepper:
             # if coords is None or (_pd.isna(coords) if not isinstance(coords, (list, tuple)) else False):
             if coords is None or (_pd.isna(coords) if not isinstance(coords, (list, tuple, np.ndarray)) else False):            
                 all_row_data.append({
-                    f"{prefix}-normal_termination": False,
-                    f"{prefix}-electronic_energy":  np.nan
+                    output_column(prefix, "normal_termination"): False,
+                    output_column(prefix, "electronic_energy"):  np.nan
                 })
                 continue
 
@@ -583,7 +591,7 @@ class Stepper:
             row_data: dict[str, object] = {}
             for key in allowed:
                 if key in out:
-                    col = f"{prefix}-{key}"
+                    col = output_column(prefix, key)
                     row_data[col] = out[key]
 
             all_row_data.append(row_data)
@@ -598,9 +606,9 @@ class Stepper:
                     column_arrays[col].append(rd[col])
                 else:
                     # fill defaults for skipped rows
-                    if col.endswith("-normal_termination"):
+                    if col.endswith("-NT") or col.endswith("-normal_termination"):
                         column_arrays[col].append(False)
-                    elif col.endswith("-electronic_energy") or col.endswith("-gibbs_energy"):
+                    elif col.endswith("-EE") or col.endswith("-GE") or col.endswith("-electronic_energy") or col.endswith("-gibbs_energy"):
                         column_arrays[col].append(np.nan)
                     elif col.endswith("-error"):
                         column_arrays[col].append(None)
@@ -609,6 +617,10 @@ class Stepper:
 
         for col, vals in column_arrays.items():
             df_out[col] = vals
+
+        steps = dict(df_out.attrs.get("frust_steps", {}))
+        steps[prefix] = {"engine": prefix.split("-", 1)[0], "columns": sorted(column_arrays)}
+        df_out.attrs["frust_steps"] = steps
 
         return df_out
 
@@ -631,9 +643,9 @@ class Stepper:
                 columns:
                 - ``atoms``: list of atomic symbols
                 - one coordinate column, typically ``coords_embedded`` or a
-                  prior ``*-opt_coords`` column
+                  prior ``*-oc`` column
                 - ``constraint_atoms`` when ``constraint=True``
-                - ``ligand_name`` when ``lowest`` is used
+                - ``substrate_name`` when ``lowest`` is used
             name (str): Base name for the xTB step, used to prefix result
                 columns.
             options (dict, optional): xTB driver options, e.g. ``{'gfn': 2,
@@ -648,7 +660,7 @@ class Stepper:
             save_step (bool, optional): If ``True``, saves calculation
                 directories for each conformer. Defaults to ``False``.
             lowest (int or None, optional): If set, retains only the
-                lowest-energy ``N`` conformers per ligand/rpos group. Defaults
+                lowest-energy ``N`` conformers per structure group. Defaults
                 to ``None``.
             n_cores (int or None, optional): If set, overrides the Stepper’s
                 default core count for this xTB call only. Defaults to
@@ -657,10 +669,10 @@ class Stepper:
         Returns:
             pd.DataFrame: The input DataFrame augmented with stage-prefixed xTB
             result columns, typically including:
-                - ``{prefix}-normal_termination``
-                - ``{prefix}-electronic_energy``
-                - ``{prefix}-opt_coords`` for optimization jobs
-                - ``{prefix}-vibs`` and ``{prefix}-gibbs_energy`` for
+                - ``{prefix}-NT``
+                - ``{prefix}-EE``
+                - ``{prefix}-oc`` for optimization jobs
+                - ``{prefix}-vibs`` and ``{prefix}-GE`` for
                   frequency jobs
                 - ``{prefix}-error`` when a row-level engine failure occurs
                 - saved file-content columns when the backend returns them
@@ -669,10 +681,12 @@ class Stepper:
         if constraint:
             self._validate_constraint_request(df)
         keys = list(opts)
-        level = keys[0]
-        # check for optimization flag among the remaining keys
-        opt_flag = next((k for k in keys[1:] if k in ("opt", "ohess")), None)
-        prefix = f"{name}-{level}" + (f"-{opt_flag}" if opt_flag else "")
+        if name != "xtb":
+            prefix = name
+        else:
+            level = keys[0]
+            opt_flag = next((k for k in keys[1:] if k in ("opt", "ohess")), None)
+            prefix = f"{name}-{level}" + (f"-{opt_flag}" if opt_flag else "")
 
         def build_xtb(row: pd.Series) -> dict:
             inp: dict[str, object] = {"options": opts}
@@ -775,9 +789,13 @@ class Stepper:
 
             return inp
 
-        return self._run_engine(
+        result = self._run_engine(
             df, self.xtb_fn, prefix, build_xtb, save_step, lowest
         )
+        result.attrs.setdefault("frust_steps", {}).setdefault(prefix, {}).update(
+            {"engine": "xtb", "options": opts}
+        )
+        return result
 
 
     def orca(
@@ -802,9 +820,9 @@ class Stepper:
             df (pd.DataFrame): DataFrame of conformers to compute. Must include:
                 - ``atoms``: list of atomic symbols
                 - one coordinate column, typically ``coords_embedded`` or a
-                  prior ``*-opt_coords`` column
+                  prior ``*-oc`` column
                 - ``constraint_atoms`` when ``constraint=True``
-                - ``ligand_name`` when ``lowest`` is used
+                - ``substrate_name`` when ``lowest`` is used
                 - a prior ``*.hess`` column when ``use_last_hess=True``
             name (str): Base name for the ORCA step, used to prefix result
                 columns.
@@ -826,7 +844,7 @@ class Stepper:
                 instance-level output saving is enabled, defaults to
                 ``["orca.out"]``.
             lowest (int or None, optional): If set, keeps only the
-                lowest-energy conformer per ligand/rpos group. Defaults to
+                lowest-energy conformer per structure group. Defaults to
                 ``None``.
             uma (str or None, optional): Optional UMA task/profile identifier
                 used to inject ORCA external optimization settings. Defaults to
@@ -844,10 +862,10 @@ class Stepper:
         Returns:
             pd.DataFrame: The input DataFrame extended with stage-prefixed ORCA
             output columns, typically including:
-                - ``{prefix}-normal_termination``
-                - ``{prefix}-electronic_energy``
-                - ``{prefix}-opt_coords`` for optimization jobs
-                - ``{prefix}-vibs`` and ``{prefix}-gibbs_energy`` for
+                - ``{prefix}-NT``
+                - ``{prefix}-EE``
+                - ``{prefix}-oc`` for optimization jobs
+                - ``{prefix}-vibs`` and ``{prefix}-GE`` for
                   frequency jobs
                 - ``{prefix}-error`` when a row-level engine failure occurs
                 - saved file-content columns when ORCA returns them
@@ -864,7 +882,9 @@ class Stepper:
         if len(keys) < 1:
             raise ValueError("`options` must include at least one ORCA method key")
 
-        if len(keys) == 1:
+        if name != "orca":
+            prefix = name
+        elif len(keys) == 1:
             prefix = f"{name}-{keys[0]}"
         else:
             func, basis = keys[0], keys[1]
@@ -910,11 +930,11 @@ class Stepper:
                       {{B {H} {C} 1.29095 C}}
                       {{B {B} {C} 1.68461 C}}
                       {{B {B} {N} 3.06223 C}}
-                      {{A {N} {H} {C} 170.1342 C}}
+                      {{A {N} {H} {C} C}}
                       {{A {H} {C} {B} 87.4870 C}}
                     end
                     end
-                """).strip()
+                """).strip() # {{A {N} {H} {C} 170.1342 C}}
                 inp["xtra_inp_str"] += ("\n\n" + block) if inp["xtra_inp_str"] else block
 
             if constraint and step_type == "TS2":
@@ -986,7 +1006,11 @@ class Stepper:
             return inp
 
         if uma is None:
-            return self._run_engine(df, self.orca_fn, prefix, build_orca, save_step, lowest, save_files, use_last_hess)
+            result = self._run_engine(df, self.orca_fn, prefix, build_orca, save_step, lowest, save_files, use_last_hess)
+            result.attrs.setdefault("frust_steps", {}).setdefault(prefix, {}).update(
+                {"engine": "orca", "options": opts}
+            )
+            return result
         
         from frust.utils.uma import _uma_server
         from frust.config import UMA_TOOLS as TOOLS
@@ -1007,4 +1031,8 @@ class Stepper:
                 xin = inp.get("xtra_inp_str", "")
                 inp["xtra_inp_str"] = (xin + "\n\n" + client_block).strip() if xin else client_block
                 return inp
-            return self._run_engine(df, self.orca_fn, prefix, build_orca_uma, save_step, lowest, save_files)
+            result = self._run_engine(df, self.orca_fn, prefix, build_orca_uma, save_step, lowest, save_files)
+            result.attrs.setdefault("frust_steps", {}).setdefault(prefix, {}).update(
+                {"engine": "orca", "options": opts, "uma": uma}
+            )
+            return result

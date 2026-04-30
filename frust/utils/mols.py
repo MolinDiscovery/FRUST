@@ -438,7 +438,7 @@ def create_mol_per_rpos(
     ligand_smiles_df: pd.DataFrame,
     return_format: str = "dict",
     select_mols: str | list[str] = "all",
-) -> list[dict[str, Mol]] | dict[str, Mol]:
+) -> list[dict[str, Mol | tuple[Mol, dict]]] | dict[str, Mol | tuple[Mol, dict]]:
     """Generate catalytic-cycle molecules for each unique ligand SMILES.
 
     Parameters
@@ -456,8 +456,9 @@ def create_mol_per_rpos(
 
     Returns
     -------
-    dict[str, rdkit.Chem.Mol] or list[dict[str, rdkit.Chem.Mol]]
-        Catalytic-cycle molecule structures keyed by their generated names.
+    dict[str, tuple[rdkit.Chem.Mol, dict]] or list[dict[str, tuple[rdkit.Chem.Mol, dict]]]
+        Catalytic-cycle molecule structures plus dataframe metadata keyed by
+        their generated names.
 
     Raises
     ------
@@ -496,13 +497,13 @@ def create_mol_per_rpos(
             transformer_kwargs["rpos_list"] = rpos_map[smi]
 
         if select_mols == "all":
-            tmp = transformer_mols(**transformer_kwargs)
+            tmp = transformer_mols(**transformer_kwargs, return_metadata=True)
         elif select_mols == "uniques":
-            tmp = transformer_mols(**transformer_kwargs, only_uniques=True)
+            tmp = transformer_mols(**transformer_kwargs, only_uniques=True, return_metadata=True)
         elif select_mols == "generics":
-            tmp = transformer_mols(**transformer_kwargs, only_generics=True)
+            tmp = transformer_mols(**transformer_kwargs, only_generics=True, return_metadata=True)
         else:
-            tmp = transformer_mols(**transformer_kwargs, select=select_mols)
+            tmp = transformer_mols(**transformer_kwargs, select=select_mols, return_metadata=True)
 
         mols.update(tmp)
 

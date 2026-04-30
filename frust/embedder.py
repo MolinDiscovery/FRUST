@@ -1,7 +1,7 @@
 import logging
 logger = logging.getLogger(__name__)
 
-from typing import Dict, Tuple, List, Union
+from typing import Any, Dict, Tuple, List, Union
 from rdkit import Chem
 from rdkit.Chem import AllChem, rdmolops, rdDistGeom, rdMolDescriptors
 from rdkit.Chem.rdchem import Mol, RWMol
@@ -213,12 +213,12 @@ def embed_ts(
 
 
 def embed_mols(
-    mols_dict: Dict[str, Chem.Mol],
+    mols_dict: Dict[str, Chem.Mol | tuple[Chem.Mol, dict[str, Any]]],
     n_confs: int | None = None,
     n_cores: int = 5,
     optimization: str = 'none',
     max_iters: int = 100
-) -> Dict[str, Tuple[Chem.Mol, List[int]]]:
+) -> Dict[str, Tuple[Chem.Mol, List[int]] | Tuple[Chem.Mol, List[int], dict[str, Any]]]:
     """
     For each molecule in `mols_dict`:
       1. Add explicit Hs.
@@ -234,9 +234,13 @@ def embed_mols(
       with a warning.
     - If `name.lower() == "dimer"`, we skip UFF entirely (by design), but still embed.
     """
-    mols_dict_embedded: Dict[str, Tuple[Chem.Mol, List[int]]] = {}
+    mols_dict_embedded: Dict[str, Tuple[Chem.Mol, List[int]] | Tuple[Chem.Mol, List[int], dict[str, Any]]] = {}
 
-    for name, raw_mol in mols_dict.items():
+    for name, raw_value in mols_dict.items():
+        metadata = None
+        raw_mol = raw_value
+        if isinstance(raw_value, tuple) and len(raw_value) == 2 and isinstance(raw_value[1], dict):
+            raw_mol, metadata = raw_value
         mol = Chem.AddHs(raw_mol)
 
         confs_to_use = n_confs
@@ -275,14 +279,14 @@ def embed_mols(
 
         except Exception as e:
             logger.warning(f"[{name}] EmbedMultipleConfs failed: {e}")
-            mols_dict_embedded[name] = (mol, [])
+            mols_dict_embedded[name] = (mol, [], metadata) if metadata else (mol, [])
             continue
 
         if len(cids) == 0:
             logger.warning(
                 f"[{name}] Embedding produced no conformers."
             )
-            mols_dict_embedded[name] = (mol, [])
+            mols_dict_embedded[name] = (mol, [], metadata) if metadata else (mol, [])
             continue
 
         opt_method = optimization.strip().upper()
@@ -327,7 +331,7 @@ def embed_mols(
                         f"[{name}][conf {cid}] UFF Minimize return code {rc}"
                     )
 
-        mols_dict_embedded[name] = (mol, list(cids))
+        mols_dict_embedded[name] = (mol, list(cids), metadata) if metadata else (mol, list(cids))
 
     return mols_dict_embedded
 

@@ -7,6 +7,7 @@ import os
 import inspect
 import pandas as pd
 import numpy as np
+from frust.schema import energy_columns, normalize_dataframe
 
 # ─── SHARED SETTINGS (inherit across steps) ─────────────────────────────
 FUNCTIONAL = "wB97X-D3" # "wB97X-D3"
@@ -21,9 +22,11 @@ except ImportError:
     pass
 
 def _best_rows(df):
-    last_energy = [c for c in df.columns if c.endswith("_energy")][-1]
-    return (df.sort_values(["ligand_name", "rpos", last_energy])
-              .groupby(["ligand_name", "rpos"]).head(1))
+    df = normalize_dataframe(df)
+    last_energy = energy_columns(df)[-1]
+    group_cols = ["substrate_name", "structure_type", "molecule_role", "rpos"]
+    return (df.sort_values(group_cols + [last_energy])
+              .groupby(group_cols, dropna=False).head(1))
 
 
 def run_init(
@@ -62,9 +65,9 @@ def run_init(
     )
     
     df = step.build_initial_df(embedded)
-    df = step.xtb(df, options={"gfnff": None, "opt": None}, constraint=True, n_cores=2)
-    df = step.xtb(df, options={"gfn": 2}, n_cores=2)
-    df = step.xtb(df, options={"gfn": 2, "opt": None}, constraint=True, lowest=top_n, n_cores=2)
+    df = step.xtb(df, name="xtb_preopt", options={"gfnff": None, "opt": None}, constraint=True, n_cores=2)
+    df = step.xtb(df, name="xtb_sp", options={"gfn": 2}, n_cores=2)
+    df = step.xtb(df, name="xtb_opt", options={"gfn": 2, "opt": None}, constraint=True, lowest=top_n, n_cores=2)
 
     df = step.orca(df, name="DFT-pre-SP", options={
         FUNCTIONAL  : None,
@@ -90,7 +93,7 @@ def run_Opt(
     save_dir: str | None = None,
     work_dir: str | None = None,
 ):
-    df = pd.read_parquet(f"{save_dir}/{parquet_path}")
+    df = normalize_dataframe(pd.read_parquet(f"{save_dir}/{parquet_path}"))
 
     step = Stepper(
         step_type="INT3",
@@ -127,7 +130,7 @@ def run_freq(
     save_dir: str | None = None,
     work_dir: str | None = None,        
 ):
-    df = pd.read_parquet(f"{save_dir}/{parquet_path}")
+    df = normalize_dataframe(pd.read_parquet(f"{save_dir}/{parquet_path}"))
 
     step = Stepper(
         step_type="INT3",
@@ -164,7 +167,7 @@ def run_solv(
     save_dir: str | None = None,
     work_dir: str | None = None,        
 ):
-    df = pd.read_parquet(f"{save_dir}/{parquet_path}")
+    df = normalize_dataframe(pd.read_parquet(f"{save_dir}/{parquet_path}"))
 
     step = Stepper(
         step_type="INT3",
@@ -217,7 +220,7 @@ def run_cleanup(save_dir):
 
     for f in kept:
         try:
-            df = pd.read_parquet(f)
+            df = normalize_dataframe(pd.read_parquet(f))
         except Exception as e:
             print(f"[WARN]: Could not read {f}: {e}")
             continue

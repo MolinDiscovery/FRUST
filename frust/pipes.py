@@ -5,6 +5,7 @@ from frust.embedder import embed_ts, embed_mols
 from frust.transformers import transformer_mols
 from frust.utils.io import read_ts_type_from_xyz
 from frust.utils.mols import create_ts_per_rpos, create_mol_per_rpos
+from frust.schema import energy_columns
 import pandas as pd
 
 from rdkit.Chem.rdchem import Mol
@@ -75,9 +76,9 @@ def run_ts_per_rpos(
     )
     
     df = step.build_initial_df(embedded)
-    df = step.xtb(df, options={"gfnff": None, "opt": None}, constraint=True)
-    df = step.xtb(df, options={"gfn": 2})
-    df = step.xtb(df, options={"gfn": 2, "opt": None}, constraint=True, lowest=top_n)
+    df = step.xtb(df, name="xtb_preopt", options={"gfnff": None, "opt": None}, constraint=True)
+    df = step.xtb(df, name="xtb_sp", options={"gfn": 2})
+    df = step.xtb(df, name="xtb_opt", options={"gfn": 2, "opt": None}, constraint=True, lowest=top_n)
 
     functional      = "wB97X-D3" # wB97X-D3, wB97M-V
     basisset        = "6-31G**" # 6-31G**, def2-TZVPD
@@ -93,9 +94,9 @@ def run_ts_per_rpos(
     })
 
     if not DFT:
-        last_energy = [c for c in df.columns if c.endswith("_energy")][-1]
-        df = (df.sort_values(["ligand_name", "rpos", last_energy]
-                            ).groupby(["ligand_name", "rpos"]).head(1))
+        last_energy = energy_columns(df)[-1]
+        df = (df.sort_values(["substrate_name", "structure_type", "molecule_role", "rpos", last_energy]
+                            ).groupby(["substrate_name", "structure_type", "molecule_role", "rpos"], dropna=False).head(1))
         
         if output_parquet:
             df.to_parquet(output_parquet)            
@@ -176,14 +177,14 @@ def run_ts_per_rpos_UMA(
     )
     
     df = step.build_initial_df(embedded)
-    df = step.xtb(df, options={"gfnff": None, "opt": None}, constraint=True)
-    df = step.xtb(df, options={"gfn": 2})
-    df = step.xtb(df, options={"gfn": 2, "opt": None}, constraint=True, lowest=top_n)
+    df = step.xtb(df, name="xtb_preopt", options={"gfnff": None, "opt": None}, constraint=True)
+    df = step.xtb(df, name="xtb_sp", options={"gfn": 2})
+    df = step.xtb(df, name="xtb_opt", options={"gfn": 2, "opt": None}, constraint=True, lowest=top_n)
 
-    last_energy = [c for c in df.columns if c.endswith("_energy")][-1]
+    last_energy = energy_columns(df)[-1]
     df3_filt = (
-        df.sort_values(["ligand_name", "rpos", last_energy])
-           .groupby(["ligand_name", "rpos"])
+        df.sort_values(["substrate_name", "structure_type", "molecule_role", "rpos", last_energy])
+           .groupby(["substrate_name", "structure_type", "molecule_role", "rpos"], dropna=False)
            .head(1)
     )
     
@@ -282,10 +283,10 @@ def run_ts_per_rpos_UMA_short(
     )
     
     df = step.build_initial_df(embedded)
-    df = step.xtb(df, options={"gfnff": None, "opt": None}, constraint=True, n_cores=2)
-    df = step.xtb(df, options={"gfn": 2}, lowest=20, n_cores=2)
-    df = step.orca(df, options={"ExtOpt": None, "Opt": None}, constraint=True, lowest=10, uma="omol@uma-s-1p1")
-    df = step.orca(df, options={"ExtOpt": None, "OptTS": None, "NumFreq": None}, lowest=1, uma="omol@uma-s-1p1")
+    df = step.xtb(df, name="xtb_preopt", options={"gfnff": None, "opt": None}, constraint=True, n_cores=2)
+    df = step.xtb(df, name="xtb_sp", options={"gfn": 2}, lowest=20, n_cores=2)
+    df = step.orca(df, name="uma_opt", options={"ExtOpt": None, "Opt": None}, constraint=True, lowest=10, uma="omol@uma-s-1p1")
+    df = step.orca(df, name="uma_tsopt", options={"ExtOpt": None, "OptTS": None, "NumFreq": None}, lowest=1, uma="omol@uma-s-1p1")
     
     if output_parquet:
         df.to_parquet(output_parquet)
@@ -392,9 +393,9 @@ def run_ts_per_lig(
     save_output_dir=save_output_dir,
     )
     df = step.build_initial_df(embedded)
-    df = step.xtb(df, options={"gfnff": None, "opt": None}, constraint=True)
-    df = step.xtb(df, options={"gfn": 2})
-    df = step.xtb(df, options={"gfn": 2, "opt": None}, constraint=True, lowest=top_n)
+    df = step.xtb(df, name="xtb_preopt", options={"gfnff": None, "opt": None}, constraint=True)
+    df = step.xtb(df, name="xtb_sp", options={"gfn": 2})
+    df = step.xtb(df, name="xtb_opt", options={"gfn": 2, "opt": None}, constraint=True, lowest=top_n)
 
     functional      = "wB97X-D3" # wB97X-D3, wB97M-V
     basisset        = "6-31G**" # 6-31G**, def2-TZVPD
@@ -491,9 +492,9 @@ def run_mols(
         save_calc_dirs=False,
     )
     df = step.build_initial_df(embedded)
-    df = step.xtb(df, options={"gfnff": None, "opt": None}, n_cores=2)
-    df = step.xtb(df, options={"gfn": 2}, n_cores=2)
-    df = step.xtb(df, options={"gfn": 2, "opt": None}, lowest=top_n, n_cores=2)
+    df = step.xtb(df, name="xtb_preopt", options={"gfnff": None, "opt": None}, n_cores=2)
+    df = step.xtb(df, name="xtb_sp", options={"gfn": 2}, n_cores=2)
+    df = step.xtb(df, name="xtb_opt", options={"gfn": 2, "opt": None}, lowest=top_n, n_cores=2)
 
     functional      = "wB97X-D3" # wB97X-D3, wB97M-V
     basisset        = "6-31G**" # 6-31G**, def2-TZVPD
@@ -527,7 +528,7 @@ def run_mols(
         "NoSym"     : None,
     }, lowest=1)
 
-    df = step.orca(df, options={
+    df = step.orca(df, name="DFT-SP", options={
         functional      : None,
         basisset_solv   : None,
         "TightSCF"      : None,
@@ -576,9 +577,9 @@ def run_mols_UMA(
         save_output_dir=save_output_dir,
     )
     df = step.build_initial_df(embedded)
-    df = step.xtb(df, options={"gfnff": None, "opt": None}, n_cores=1)
-    df = step.xtb(df, options={"gfn": 2}, n_cores=1)
-    df = step.orca(df, options={"ExtOpt": None, "Opt": None}, uma="omol", lowest=10)
+    df = step.xtb(df, name="xtb_preopt", options={"gfnff": None, "opt": None}, n_cores=1)
+    df = step.xtb(df, name="xtb_sp", options={"gfn": 2}, n_cores=1)
+    df = step.orca(df, name="uma_opt", options={"ExtOpt": None, "Opt": None}, uma="omol", lowest=10)
     #df = step.orca(df, options={"ExtOpt": None, "NumFreq": None}, uma="omol@uma-s-1p1", lowest=1)
     
     if output_parquet:
@@ -641,7 +642,7 @@ def run_test(
         "NoSym":   None,
     }
     print(df0)
-    df5 = step.orca(df0, options=orca_opts, xtra_inp_str=detailed_inp)
+    df5 = step.orca(df0, name="DFT-Opt", options=orca_opts, xtra_inp_str=detailed_inp)
 
     # b) single-point with solvent model
     detailed_inp = """%CPCM\nSMD TRUE\nSMDSOLVENT "chloroform"\nend"""
@@ -652,7 +653,7 @@ def run_test(
         "SP":       None,
         "NoSym":    None,
     }
-    df6 = step.orca(df5, options=orca_opts, xtra_inp_str=detailed_inp)
+    df6 = step.orca(df5, name="DFT-SP", options=orca_opts, xtra_inp_str=detailed_inp)
 
     if output_parquet:
         df6.to_parquet(output_parquet)
@@ -688,8 +689,8 @@ def run_small_test(
     )
     df0 = step.build_initial_df(mols_dict_embedded)
 
-    df1 = step.xtb(df0, options={"gfn": 2})
-    df2 = step.orca(df0, options={"HF": None, "STO-3G": None})
+    df1 = step.xtb(df0, name="xtb_sp", options={"gfn": 2})
+    df2 = step.orca(df0, name="orca_test", options={"HF": None, "STO-3G": None})
 
 
 def run_orca_smoke_test(
@@ -729,8 +730,8 @@ def run_orca_smoke_test(
                     work_dir=work_dir,
                     save_calc_dirs=True)
     
-    df = step.xtb(df, options={"gfn": 2, "opt": None})
-    df = step.orca(df, options={
+    df = step.xtb(df, name="xtb_opt", options={"gfn": 2, "opt": None})
+    df = step.orca(df, name="DFT-SP", options={
         "wB97X-D3":     None,
         "6-31G**":      None,
         "TightSCF":     None,
@@ -784,9 +785,9 @@ def run_ts_for_rpos(
     )
     
     df = step.build_initial_df(embedded)
-    df = step.xtb(df, options={"gfnff": None, "opt": None}, constraint=True)
-    df = step.xtb(df, options={"gfn": 2})
-    df = step.xtb(df, options={"gfn": 2, "opt": None}, constraint=True, lowest=top_n)
+    df = step.xtb(df, name="xtb_preopt", options={"gfnff": None, "opt": None}, constraint=True)
+    df = step.xtb(df, name="xtb_sp", options={"gfn": 2})
+    df = step.xtb(df, name="xtb_opt", options={"gfn": 2, "opt": None}, constraint=True, lowest=top_n)
 
     functional      = "wB97X-D3" # wB97X-D3, wB97M-V
     basisset        = "6-31G**" # 6-31G**, def2-TZVPD
@@ -802,9 +803,9 @@ def run_ts_for_rpos(
     })
 
     if not DFT:
-        last_energy = [c for c in df.columns if c.endswith("_energy")][-1]
-        df = (df.sort_values(["ligand_name", "rpos", last_energy]
-                            ).groupby(["ligand_name", "rpos"]).head(1))
+        last_energy = energy_columns(df)[-1]
+        df = (df.sort_values(["substrate_name", "structure_type", "molecule_role", "rpos", last_energy]
+                            ).groupby(["substrate_name", "structure_type", "molecule_role", "rpos"], dropna=False).head(1))
         
         if output_parquet:
             df.to_parquet(output_parquet)            

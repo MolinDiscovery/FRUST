@@ -9,7 +9,11 @@ import math
 import base64
 import io
 import zipfile
-import cairosvg
+try:
+    import cairosvg
+except ImportError:
+    cairosvg = None
+from frust.schema import normal_termination_columns, normalize_dataframe
 
 def summarize_ts_vibrations(
     df: pd.DataFrame,
@@ -22,7 +26,7 @@ def summarize_ts_vibrations(
     rows = []
 
     for idx, row in df.iterrows():
-        ligand = row.get("ligand_name", "")
+        ligand = row.get("substrate_name", row.get("ligand_name", ""))
         rpos   = row.get("rpos", "")
         vibs   = row[col]
 
@@ -1087,7 +1091,7 @@ def _svg_annotated_smi(
 
 def build_annotated_montage(
     df: pd.DataFrame,
-    ligand_col: str = "ligand_name",
+    ligand_col: str = "substrate_name",
     smi_col: str = "smiles",
     pos_col: str = "rpos",
     energy_col: str = "dE",
@@ -1278,7 +1282,7 @@ def build_annotated_montage(
 
 def build_annotated_frame(
     df: pd.DataFrame,
-    ligand_col: str = "ligand_name",
+    ligand_col: str = "substrate_name",
     smi_col: str = "smiles",
     pos_col: str = "rpos",
     energy_col: str = "dE",
@@ -1444,16 +1448,16 @@ def merge_parquet_dir(
     normal_term_cols: Sequence[str] | None = None,
     recursive: bool = False,
 ) -> Path:
-    """Merge multiple Parquet files with identical schemas into one file.
+    """Merge multiple Parquet files, normalizing old FRUST schemas first.
 
     Args:
         input_dir: Directory containing .parquet files to merge.
         output: Output Parquet file path.
         require_normal_termination: If True, skip any file whose DataFrame
-            has a column ending with 'normal_termination' containing any
+            has a column ending with 'NT' or 'normal_termination' containing any
             False (or NaN). If no such column exists, the file is kept.
         normal_term_cols: Optional explicit list of columns to treat as
-            'normal_termination' columns. If None, columns ending with
+            normal-termination columns. If None, columns ending with 'NT' or
             'normal_termination' are auto-detected.
         recursive: If True, also include .parquet files found in
             subdirectories (uses rglob).
@@ -1480,12 +1484,11 @@ def merge_parquet_dir(
 
     dfs: list[pd.DataFrame] = []
     for fp in files:
-        df = pd.read_parquet(str(fp))
+        df = normalize_dataframe(pd.read_parquet(str(fp)))
         if require_normal_termination:
             cols = (list(normal_term_cols)
                     if normal_term_cols is not None
-                    else [c for c in df.columns
-                          if str(c).endswith("normal_termination")])
+                    else normal_termination_columns(df))
             if cols:
                 subset = (df[cols]
                           .replace({None: False})
@@ -1514,7 +1517,7 @@ def merge_parquet_dir(
 
 def build_annotated_grid(
     df: pd.DataFrame,
-    ligand_col: str = "ligand_name",
+    ligand_col: str = "substrate_name",
     smi_col: str = "smiles",
     pos_col: str = "rpos",
     energy_col: str = "dE",
@@ -1824,6 +1827,8 @@ def build_annotated_grid(
         fmt = str(download_format).strip().lower()
         if fmt not in {"png", "svg"}:
             raise ValueError("download_format must be 'png' or 'svg'")
+        if fmt == "png" and cairosvg is None:
+            raise ImportError("PNG downloads require the optional 'cairosvg' dependency.")
 
         def _safe_name(s: str) -> str:
             safe = re.sub(r"[^A-Za-z0-9._-]+", "_", s).strip("_")
@@ -2185,14 +2190,14 @@ def main_merge_parquet(argv: Sequence[str] | None = None) -> int:
     parser.add_argument(
         "--require-normal-termination",
         action="store_true",
-        help=("Skip any file where a '*normal_termination' column contains "
+        help=("Skip any file where a '*NT' or '*normal_termination' column contains "
               "False/NaN."),
     )
     parser.add_argument(
         "--normal-term-cols",
         nargs="*",
         default=None,
-        help=("Explicit columns to treat as normal_termination (override "
+        help=("Explicit columns to treat as normal termination (override "
               "auto-detect)."),
     )
     parser.add_argument(

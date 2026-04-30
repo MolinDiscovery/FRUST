@@ -972,6 +972,7 @@ def transformer_mols(
     select: str | list[str] | None = None,
     key_prefix: str | None = None,
     rpos_list: tuple[int, ...] | list[int] | None = None,
+    return_metadata: bool = False,
 ):
     """
     Build the standard set of cycle molecules:
@@ -1140,18 +1141,37 @@ def transformer_mols(
     ]
 
     mols_dict: dict[str, Chem.Mol] = {}
+    metadata_dict: dict[str, dict] = {}
+    iupac_substrate_name = names[2]
+
+    def _add_entry(key: str, mol: Chem.Mol, role: str, rpos: int | None = None) -> None:
+        mols_dict[key] = mol
+        metadata_dict[key] = {
+            "custom_name": key,
+            "substrate_name": iupac_substrate_name,
+            "input_smiles": ligand_smiles,
+            "smiles": ligand_smiles,
+            "structure_type": "MOL",
+            "molecule_role": role,
+            "rpos": rpos,
+            "structure_id": (
+                f"MOL:{iupac_substrate_name}:{role}:r{rpos}"
+                if rpos is not None
+                else f"MOL:{iupac_substrate_name}:{role}"
+            ),
+        }
+
     for name, mol in zip(names, mols):
         if only_generics:
             if name not in [names[2], 'int2', 'mol2', 'HBpin-ligand']:
-                mols_dict[name] = mol
+                _add_entry(name, mol, name)
         else:
             if isinstance(mol, list):
                 for m, i in mol:
-                    mols_dict[f"{name}_rpos({i})"] = m
+                    _add_entry(f"{name}_rpos({i})", m, name, i)
             elif not only_uniques or name == names[2]:
-                mols_dict[name] = mol
-
-    iupac_ligand_name = names[2]
+                role = "ligand" if name == names[2] else name
+                _add_entry(name, mol, role)
 
     # --- apply select filter if requested ---
     if select is not None:
@@ -1159,7 +1179,7 @@ def transformer_mols(
         for choice in select:
             actual = choice
             if choice == "ligand" and show_IUPAC:
-                actual = iupac_ligand_name
+                actual = iupac_substrate_name
             for key, m in mols_dict.items():
                 if key == actual or key.startswith(f"{actual}_rpos"):
                     filtered[key] = m
@@ -1168,7 +1188,19 @@ def transformer_mols(
     if key_prefix is None:
         key_prefix = ligand_smiles
     if key_prefix:
-        mols_dict = {f"{key_prefix}_{k}": m for k, m in mols_dict.items()}
+        prefixed_mols: dict[str, Chem.Mol] = {}
+        prefixed_metadata: dict[str, dict] = {}
+        for key, mol in mols_dict.items():
+            prefixed_key = f"{key_prefix}_{key}"
+            prefixed_mols[prefixed_key] = mol
+            meta = dict(metadata_dict[key])
+            meta["custom_name"] = prefixed_key
+            prefixed_metadata[prefixed_key] = meta
+        mols_dict = prefixed_mols
+        metadata_dict = prefixed_metadata
+
+    if return_metadata:
+        return {key: (mol, metadata_dict[key]) for key, mol in mols_dict.items()}
 
     return mols_dict
 

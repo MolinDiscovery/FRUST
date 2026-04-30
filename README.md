@@ -74,8 +74,8 @@ embedded = embed_mols(mols, n_confs=2)
 
 step = Stepper(step_type="MOLS", save_output_dir=False)
 df = step.build_initial_df(embedded)
-df = step.xtb(df, options={"gfn": 2})
-df = step.orca(df, options={"HF": None, "STO-3G": None, "SP": None})
+df = step.xtb(df, name="xtb_sp", options={"gfn": 2})
+df = step.orca(df, name="hf_sp", options={"HF": None, "STO-3G": None, "SP": None})
 ```
 
 ## Cluster Submission
