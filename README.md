@@ -57,6 +57,8 @@ xTB installs do not advertise `--gxtb`. OET 2.0.0's `oet_gxtb` wrapper is not
 used here because it targets the older standalone `gxtb` executable and
 `.gxtb/.eeq/.basisq` parameter-file interface.
 
+See [docs/gxtb.md](/Users/jacobmolinnielsen/Developer/FrustActivationProject/FRUST/docs/gxtb.md) for the FRUST g-xTB API and setup notes.
+
 ## Where To Start
 
 If you want the high-level workflow API, start with [frust/pipes.py](/Users/jacobmolinnielsen/Developer/FrustActivationProject/FRUST/frust/pipes.py). That is where the project-level entry points live, including `run_ts_per_rpos`, `run_ts_per_lig`, and `run_mols`.
