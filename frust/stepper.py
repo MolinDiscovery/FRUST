@@ -812,6 +812,14 @@ class Stepper:
         read_files: list | None = None,
         use_last_hess: bool = False,
         n_cores: int | None = None,
+        uma_server: bool = True,
+        uma_device: str = "cpu",
+        uma_cache_dir: str | None = None,
+        uma_offline: bool = False,
+        uma_server_cores: int | None = None,
+        uma_memory_per_thread_mib: int = 500,
+        uma_keep_logs: bool | str = "on_failure",
+        uma_log_dir: str | None = None,
         **kw        
     ) -> pd.DataFrame:
         """Run ORCA calculations and attach results to the DataFrame.
@@ -858,6 +866,28 @@ class Stepper:
             n_cores (int or None, optional): If set, overrides the Stepper's
                 default core count for this ORCA call only. Defaults to
                 ``None``.
+            uma_server (bool, optional): If ``True``, runs UMA through OET's
+                server/client mode. If ``False``, uses standalone ``oet_uma``.
+                Defaults to ``True``.
+            uma_device (str, optional): OET UMA device argument, typically
+                ``"cpu"`` or ``"cuda"``. Defaults to ``"cpu"``.
+            uma_cache_dir (str or None, optional): Optional FairChem cache
+                directory passed to OET UMA. Defaults to ``None``.
+            uma_offline (bool, optional): If ``True``, asks OET UMA to use
+                offline mode. Defaults to ``False``.
+            uma_server_cores (int or None, optional): Total core budget passed
+                to ``oet_server --nthreads``. Defaults to this ORCA call's
+                core count.
+            uma_memory_per_thread_mib (int, optional): Memory budget passed to
+                ``oet_server --memory-per-thread``. Defaults to ``500``.
+            uma_keep_logs (bool or str, optional): Server-log retention policy:
+                ``"on_failure"`` preserves logs only when the UMA-backed ORCA
+                step fails, ``True``/``"always"`` keeps logs, and
+                ``False``/``"never"`` removes them. Defaults to
+                ``"on_failure"``.
+            uma_log_dir (str or None, optional): Directory for preserved UMA
+                server logs. If omitted, transient logs are written to a temp
+                directory and preserved failures are copied to ``UMA-logs``.
 
         Returns:
             pd.DataFrame: The input DataFrame extended with stage-prefixed ORCA
@@ -1012,27 +1042,61 @@ class Stepper:
             )
             return result
         
-        from frust.utils.uma import _uma_server
-        from frust.config import UMA_TOOLS as TOOLS
-        with _uma_server(task=uma, log_dir="UMA-logs") as (port, _slog):
-            client_block = f"""
-    %method
-    ProgExt "{TOOLS}/umaclient.sh"
-    Ext_Params "-b 127.0.0.1:{port}"
-    end
-    %output
-    Print[P_EXT_OUT] 1
-    Print[P_EXT_GRAD] 1
-    end
-    """.strip()
+        from frust.utils.uma import parse_uma_spec, uma_orca_block, uma_server as run_uma_server
+
+        spec = parse_uma_spec(
+            uma,
+            device=uma_device,
+            cache_dir=uma_cache_dir,
+            offline=uma_offline,
+        )
+
+        def run_with_uma_block(client_block: str) -> pd.DataFrame:
             orig_build = build_orca
+
             def build_orca_uma(row: Series) -> dict:
                 inp = orig_build(row)
                 xin = inp.get("xtra_inp_str", "")
                 inp["xtra_inp_str"] = (xin + "\n\n" + client_block).strip() if xin else client_block
                 return inp
+
             result = self._run_engine(df, self.orca_fn, prefix, build_orca_uma, save_step, lowest, save_files)
             result.attrs.setdefault("frust_steps", {}).setdefault(prefix, {}).update(
-                {"engine": "orca", "options": opts, "uma": uma}
+                {
+                    "engine": "orca",
+                    "options": opts,
+                    "uma": uma,
+                    "uma_task": spec.task,
+                    "uma_model": spec.model,
+                    "uma_server": uma_server,
+                }
             )
+            return result
+
+        def uma_result_failed(result: pd.DataFrame) -> bool:
+            nt_col = output_column(prefix, "normal_termination")
+            err_col = output_column(prefix, "error")
+            if nt_col in result and result[nt_col].eq(False).any():
+                return True
+            if err_col in result and result[err_col].notna().any():
+                return True
+            return False
+
+        if not uma_server:
+            client_block = uma_orca_block(spec, server=False)
+            return run_with_uma_block(client_block)
+
+        effective_cores = int(n_cores) if n_cores is not None else self.n_cores
+        server_cores = uma_server_cores if uma_server_cores is not None else effective_cores
+        with run_uma_server(
+            log_dir=uma_log_dir,
+            keep_logs=uma_keep_logs,
+            use_gpu=uma_device == "cuda",
+            server_cores=server_cores,
+            memory_per_thread_mib=uma_memory_per_thread_mib,
+        ) as server_handle:
+            client_block = uma_orca_block(spec, server=True, bind=server_handle.bind)
+            result = run_with_uma_block(client_block)
+            if uma_keep_logs == "on_failure" and uma_result_failed(result):
+                server_handle.preserve()
             return result
