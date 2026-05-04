@@ -50,10 +50,14 @@ UMA server logs are transient by default. `uma_keep_logs="on_failure"` preserves
 logs only when the UMA-backed ORCA stage fails; use `uma_keep_logs=True` and
 `uma_log_dir="UMA-logs"` when you want to keep every server log.
 
-g-xTB support is intentionally deferred. OET 2.0.0 includes an `oet_gxtb`
-wrapper that requests gradients, but it targets the older standalone `gxtb`
-executable and `.gxtb/.eeq/.basisq` parameter-file interface. Current upstream
-g-xTB v2 uses `xtb --gxtb --grad`, so FRUST should integrate that separately.
+g-xTB v2 runs through Tooltoad's dedicated g-xTB calculator, exposed as
+`Stepper.gxtb(...)`. Set `GXTB_EXE` to the special g-xTB `xtb` binary from
+upstream g-xTB v2; FRUST does not reuse `XTB_EXE` automatically because common
+xTB installs do not advertise `--gxtb`. OET 2.0.0's `oet_gxtb` wrapper is not
+used here because it targets the older standalone `gxtb` executable and
+`.gxtb/.eeq/.basisq` parameter-file interface.
+
+See [docs/gxtb.md](/Users/jacobmolinnielsen/Developer/FrustActivationProject/FRUST/docs/gxtb.md) for the FRUST g-xTB API and setup notes.
 
 ## Where To Start
 
