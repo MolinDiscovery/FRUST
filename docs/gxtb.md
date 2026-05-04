@@ -115,24 +115,32 @@ df_ohess = step.gxtb(
 )
 ```
 
-Transition-state optimization:
+Transition-state optimization is not handled by direct `Stepper.gxtb(...)`.
+Use ORCA-driven g-xTB instead, so ORCA owns the `OptTS` search and g-xTB only
+provides energies and gradients:
 
 ```python
-df_ts = step.gxtb(
+df_ts = step.orca(
     df,
-    options={"opt": "ts"},
+    name="gxtb-OptTS",
+    options={"OptTS": None},
+    gxtb=True,
 )
 ```
 
-Mode-following transition-state optimization:
+Mode-specific TS setup should also go through ORCA input blocks:
 
 ```python
-df_ts = step.gxtb(
+df_ts = step.orca(
     df,
-    options={
-        "opt": "ts",
-        "modef": 1,
-    },
+    name="gxtb-OptTS",
+    options={"OptTS": None},
+    gxtb=True,
+    xtra_inp_str="""
+%geom
+  TS_Mode {B 0 1} end
+end
+""",
 )
 ```
 
@@ -219,6 +227,42 @@ df_low = step.gxtb(
 
 `lowest=` uses the same shared FRUST behavior as `Stepper.xtb(...)` and
 `Stepper.orca(...)`.
+
+## ORCA-Driven TS Optimization
+
+For transition states, use ORCA's external optimization interface:
+
+```python
+step = Stepper(step_type="TS1", n_cores=8, save_output_dir=False)
+
+df_ts = step.orca(
+    df,
+    name="gxtb-OptTS",
+    options={"OptTS": None},
+    gxtb=True,
+)
+```
+
+FRUST automatically inserts `ExtOpt` and an OET `%method` block pointing to
+`oet_gxtb`. OET then calls the `GXTB_EXE` binary as `xtb --gxtb --grad` for
+each ORCA gradient request. This is the correct route for `OptTS`, `NEB-TS`,
+and other ORCA optimizer workflows.
+
+You can still pass normal ORCA geometry blocks:
+
+```python
+df_ts = step.orca(
+    df,
+    name="gxtb-OptTS",
+    options={"OptTS": None},
+    gxtb=True,
+    xtra_inp_str="""
+%geom
+  Calc_Hess true
+end
+""",
+)
+```
 
 ## Constraints
 
@@ -313,8 +357,9 @@ print(result["grad"].shape)
 - FRUST does not automatically reuse `XTB_EXE`; the normal local xTB binary may
   not support `--gxtb`.
 - Tooltoad always adds `--gxtb`, so do not include `"gxtb": None` yourself.
-- TS optimization is requested as `options={"opt": "ts"}`, not as a separate
-  `optts` option.
+- Direct `Stepper.gxtb(...)` is not the TS optimization route. Use
+  `Stepper.orca(..., options={"OptTS": None}, gxtb=True)` for ORCA-driven TS
+  searches.
 - The installed upstream README notes that not all xTB features are supported by
   g-xTB yet.
 - The macOS g-xTB README warns about parallel numerical Hessians. Prefer
