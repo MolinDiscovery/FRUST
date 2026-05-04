@@ -33,9 +33,27 @@ What this does not install for you:
 
 - xTB
 - ORCA
+- ORCA-External-Tools, UMA, or g-xTB
 - machine- or cluster-specific environment setup
 
 The only packaged CLI entry point at the moment is `merge_parquet`.
+
+## External Tools
+
+UMA runs through ORCA-External-Tools 2.x. Set `OET_TOOLS` to the
+orca-external-tools root; the legacy `UMA_TOOLS` environment variable is also
+accepted for existing setups. `Stepper.orca(..., uma="omol@uma-s-1p1")` keeps
+the compact FRUST shorthand, but FRUST translates it to OET's native `-t omol
+-m uma-s-1p1` arguments.
+
+UMA server logs are transient by default. `uma_keep_logs="on_failure"` preserves
+logs only when the UMA-backed ORCA stage fails; use `uma_keep_logs=True` and
+`uma_log_dir="UMA-logs"` when you want to keep every server log.
+
+g-xTB support is intentionally deferred. OET 2.0.0 includes an `oet_gxtb`
+wrapper that requests gradients, but it targets the older standalone `gxtb`
+executable and `.gxtb/.eeq/.basisq` parameter-file interface. Current upstream
+g-xTB v2 uses `xtb --gxtb --grad`, so FRUST should integrate that separately.
 
 ## Where To Start
 
