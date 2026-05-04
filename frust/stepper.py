@@ -1050,6 +1050,11 @@ class Stepper:
             raise TypeError(f"Unexpected orca() keyword arguments: {unknown}")
         if uma is not None and gxtb:
             raise ValueError("orca() cannot use both UMA and g-xTB external methods")
+        if gxtb and "Freq" in opts:
+            raise ValueError(
+                "ORCA Freq is not compatible with g-xTB ExtOpt. "
+                "Use NumFreq for finite-difference frequencies with external g-xTB gradients."
+            )
         if gxtb and "ExtOpt" not in opts:
             opts = {"ExtOpt": None, **opts}
         if constraint:
@@ -1066,7 +1071,7 @@ class Stepper:
             prefix = f"{name}-{keys[0]}"
         else:
             func, basis = keys[0], keys[1]
-            opt_flag = next((k for k in keys[2:] if k in ("OptTS", "Freq", "NoSym")), None)
+            opt_flag = next((k for k in keys[2:] if k in ("OptTS", "Freq", "NumFreq", "NoSym")), None)
             prefix = f"{name}-{func}-{basis}" + (f"-{opt_flag}" if opt_flag else "")
 
         def build_orca(row: Series) -> dict:

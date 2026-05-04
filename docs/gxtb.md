@@ -128,13 +128,18 @@ df_ts = step.orca(
 )
 ```
 
+Use `NumFreq`, not `Freq`, when you want frequencies with ORCA-driven g-xTB.
+`Freq` uses ORCA's analytic frequency machinery, which is not compatible with
+the external g-xTB method. `NumFreq` uses finite differences of the external
+gradients.
+
 Mode-specific TS setup should also go through ORCA input blocks:
 
 ```python
 df_ts = step.orca(
     df,
     name="gxtb-OptTS",
-    options={"OptTS": None},
+    options={"OptTS": None, "NumFreq": None},
     gxtb=True,
     xtra_inp_str="""
 %geom
@@ -360,6 +365,9 @@ print(result["grad"].shape)
 - Direct `Stepper.gxtb(...)` is not the TS optimization route. Use
   `Stepper.orca(..., options={"OptTS": None}, gxtb=True)` for ORCA-driven TS
   searches.
+- ORCA `Freq` is not compatible with `gxtb=True` because g-xTB is supplied as
+  an external method through `ExtOpt`. Use `NumFreq` for finite-difference
+  frequencies.
 - The installed upstream README notes that not all xTB features are supported by
   g-xTB yet.
 - The macOS g-xTB README warns about parallel numerical Hessians. Prefer

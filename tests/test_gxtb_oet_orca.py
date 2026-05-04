@@ -97,6 +97,42 @@ class GxtbOetOrcaTests(unittest.TestCase):
         with self.assertRaisesRegex(ValueError, "both UMA and g-xTB"):
             step.orca(_df(), options={"OptTS": None}, uma="omol", gxtb=True)
 
+    def test_orca_gxtb_rejects_analytic_freq(self):
+        step = Stepper(step_type="MOLS", debug=True, save_output_dir=False)
+        with self.assertRaisesRegex(ValueError, "Use NumFreq"):
+            step.orca(_df(), options={"OptTS": None, "Freq": None}, gxtb=True)
+
+    def test_orca_gxtb_allows_numfreq(self):
+        calls = []
+
+        def fake_orca(
+            atoms,
+            coords,
+            n_cores,
+            scr,
+            data2file,
+            options,
+            xtra_inp_str,
+            memory,
+            read_files,
+        ):
+            calls.append(options)
+            return {
+                "normal_termination": True,
+                "electronic_energy": -1.0,
+                "opt_coords": coords,
+            }
+
+        with tempfile.TemporaryDirectory() as td:
+            oet, gxtb = _fake_paths(Path(td))
+            with patch.dict(os.environ, {"UMA_TOOLS": str(oet), "GXTB_EXE": str(gxtb)}):
+                step = Stepper(step_type="MOLS", debug=True, save_output_dir=False)
+                step.orca_fn = fake_orca
+                out = step.orca(_df(), options={"OptTS": None, "NumFreq": None}, gxtb=True)
+
+        self.assertEqual(calls[0], {"ExtOpt": None, "OptTS": None, "NumFreq": None})
+        self.assertIn("orca-ExtOpt-OptTS-NumFreq-NT", out.columns)
+
 
 if __name__ == "__main__":
     unittest.main()
