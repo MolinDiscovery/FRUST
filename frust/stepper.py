@@ -138,13 +138,17 @@ class Stepper:
         if self.debug:
             from tooltoad.xtb import mock_xtb_calculate
             from tooltoad.orca import mock_orca_calculate
+            from tooltoad.gxtb import mock_gxtb_calculate
             self.xtb_fn  = mock_xtb_calculate
             self.orca_fn = mock_orca_calculate
+            self.gxtb_fn = mock_gxtb_calculate
         else:
             from tooltoad.xtb import xtb_calculate
             from tooltoad.orca import orca_calculate
+            from tooltoad.gxtb import gxtb_calculate
             self.xtb_fn  = xtb_calculate
             self.orca_fn = orca_calculate
+            self.gxtb_fn = gxtb_calculate
 
         if work_dir:
             self.work_dir = work_dir
@@ -794,6 +798,135 @@ class Stepper:
         )
         result.attrs.setdefault("frust_steps", {}).setdefault(prefix, {}).update(
             {"engine": "xtb", "options": opts}
+        )
+        return result
+
+    def gxtb(
+        self,
+        df: pd.DataFrame,
+        name: str = "gxtb",
+        options: dict | None = None,
+        detailed_inp_str: str = "",
+        constraint: bool = False,
+        save_step: bool = False,
+        lowest: int | None = None,
+        n_cores: int | None = None,
+    ) -> pd.DataFrame:
+        """Run g-xTB v2 calculations through Tooltoad's g-xTB calculator."""
+        opts = dict(options) if options else {}
+        if constraint:
+            self._validate_constraint_request(df)
+        keys = list(opts)
+        if name != "gxtb":
+            prefix = name
+        else:
+            opt_flag = next((k for k in keys if k in ("opt", "ohess")), None)
+            prefix = f"{name}" + (f"-{opt_flag}" if opt_flag else "")
+
+        def build_gxtb(row: pd.Series) -> dict:
+            inp: dict[str, object] = {"options": opts}
+            step_type = self._step_type_upper()
+
+            if n_cores is not None:
+                inp["n_cores"] = int(n_cores)
+
+            base_str = detailed_inp_str.strip()
+            if base_str:
+                inp["detailed_input_str"] = base_str
+
+            block = None
+
+            if step_type == "TS1" and constraint:
+                B, N, H, C = 0, 1, 4, 5
+                atom = [x + 1 for x in self._constraint_atoms(row)]
+                block = textwrap.dedent(f"""
+                $constrain
+                force constant=50
+                distance: {atom[B]}, {atom[H]}, 2.07696
+                distance: {atom[N]}, {atom[H]}, 1.5127
+                distance: {atom[H]}, {atom[C]}, 1.29095
+                distance: {atom[B]}, {atom[C]}, 1.68461
+                distance: {atom[B]}, {atom[N]}, 3.06223
+                angle: {atom[N]}, {atom[H]}, {atom[C]}, 170.1342
+                angle: {atom[H]}, {atom[C]}, {atom[B]}, 87.4870
+                $end
+                """).strip()
+
+            if step_type == "TS2" and constraint:
+                BCat10, N17, H40, H41, C46 = 0, 1, 4, 3, 5  # noqa: F841
+                atom = [x + 1 for x in self._constraint_atoms(row)]
+                block = textwrap.dedent(f"""
+                $constrain
+                force constant=50
+                distance: {atom[BCat10]}, {atom[H41]}, 1.656
+                distance: {atom[N17]}, {atom[H40]}, 1.961
+                distance: {atom[BCat10]}, {atom[N17]}, 3.080
+                angle: {atom[BCat10]}, {atom[H41]}, {atom[N17]}, 86.58
+                $end
+                """).strip()
+
+            if step_type == "TS3" and constraint:
+                BCat10, H11, BPin22, H21, C = 0, 2, 3, 4, 5
+                atom = [x + 1 for x in self._constraint_atoms(row)]
+                block = textwrap.dedent(f"""
+                $constrain
+                force constant=50
+                distance: {atom[H21]}, {atom[BCat10]}, 1.376
+                distance: {atom[H21]}, {atom[BPin22]}, 1.264
+                distance: {atom[H21]}, {atom[C]}, 2.477
+                distance: {atom[BCat10]}, {atom[C]}, 1.616
+                distance: {atom[BPin22]}, {atom[C]}, 2.180
+                distance: {atom[BPin22]}, {atom[BCat10]}, 2.007
+                angle: {atom[BCat10]}, {atom[H21]}, {atom[BPin22]}, 98.89
+                angle: {atom[BCat10]}, {atom[C]}, {atom[BPin22]}, 61.75
+                $end
+                """).strip()
+
+            if step_type == "TS4" and constraint:
+                BCat11, H12, H13, BPin37, C = 0, 2, 3, 4, 5  # noqa: F841
+                atom = [x + 1 for x in self._constraint_atoms(row)]
+                block = textwrap.dedent(f"""
+                $constrain
+                force constant=50
+                distance: {atom[BCat11]}, {atom[BPin37]}, 2.219
+                distance: {atom[BPin37]}, {atom[H13]}, 1.868
+                distance: {atom[C]}, {atom[H13]}, 2.489
+                distance: {atom[BCat11]}, {atom[H13]}, 1.216
+                distance: {atom[BCat11]}, {atom[C]}, 1.946
+                distance: {atom[BPin37]}, {atom[C]}, 1.585
+                angle: {atom[BCat11]}, {atom[H13]}, {atom[BPin37]}, 89.48
+                angle: {atom[BCat11]}, {atom[C]}, {atom[BPin37]}, 77.13
+                $end
+                """).strip()
+
+            if step_type == "INT3" and constraint:
+                BCat10, BPin42, H11, C = 0, 3, 4, 5
+                atom = [x + 1 for x in self._constraint_atoms(row)]
+                block = textwrap.dedent(f"""
+                $constrain
+                force constant=50
+                distance: {atom[BCat10]}, {atom[H11]}, 1.279
+                distance: {atom[BCat10]}, {atom[C]}, 1.688
+                distance: {atom[BPin42]}, {atom[H11]}, 1.378
+                distance: {atom[BPin42]}, {atom[C]}, 1.749
+                angle: {atom[BCat10]}, {atom[H11]}, {atom[BPin42]}, 89.85
+                angle: {atom[BCat10]}, {atom[C]}, {atom[BPin42]}, 66.22
+                $end
+                """).strip()
+
+            if block:
+                if "detailed_input_str" in inp:
+                    inp["detailed_input_str"] += "\n\n" + block
+                else:
+                    inp["detailed_input_str"] = block
+
+            return inp
+
+        result = self._run_engine(
+            df, self.gxtb_fn, prefix, build_gxtb, save_step, lowest
+        )
+        result.attrs.setdefault("frust_steps", {}).setdefault(prefix, {}).update(
+            {"engine": "gxtb", "options": opts}
         )
         return result
 
