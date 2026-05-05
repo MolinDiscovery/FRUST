@@ -552,14 +552,13 @@ class Stepper:
                             self.logger.warning(f"No calc dir named '{dir_name}' found under {self.work_dir}")
                         else:
                             save_path = Path(save_dir)
-                            if src.resolve() == save_path.resolve():
-                                continue
-                            for p in src.iterdir():
-                                dst = save_path / p.name
-                                if p.is_dir():
-                                    shutil.copytree(p, dst, dirs_exist_ok=True)
-                                else:
-                                    shutil.copy2(p, dst)
+                            if src.resolve() != save_path.resolve():
+                                for p in src.iterdir():
+                                    dst = save_path / p.name
+                                    if p.is_dir():
+                                        shutil.copytree(p, dst, dirs_exist_ok=True)
+                                    else:
+                                        shutil.copy2(p, dst)
                     except Exception as e:
                         self.logger.error(f"Failed to stage files from '{src}' to '{save_dir}': {e}")
 

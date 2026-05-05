@@ -147,6 +147,44 @@ end
         self.assertEqual(calls[0], {"ExtOpt": None, "OptTS": None, "NumFreq": None})
         self.assertIn("orca-ExtOpt-OptTS-NumFreq-NT", out.columns)
 
+    def test_save_step_preserves_engine_outputs_when_calc_dir_is_save_dir(self):
+        def fake_orca(
+            atoms,
+            coords,
+            n_cores,
+            scr,
+            data2file,
+            options,
+            xtra_inp_str,
+            memory,
+            read_files,
+            calc_dir=None,
+            save_dir=None,
+        ):
+            self.assertEqual(calc_dir, save_dir)
+            return {
+                "normal_termination": True,
+                "electronic_energy": -1.0,
+                "opt_coords": coords,
+            }
+
+        with tempfile.TemporaryDirectory() as td:
+            oet, gxtb = _fake_paths(Path(td))
+            with patch.dict(os.environ, {"UMA_TOOLS": str(oet), "GXTB_EXE": str(gxtb)}):
+                step = Stepper(
+                    step_type="MOLS",
+                    debug=True,
+                    save_output_dir=True,
+                    output_base=td,
+                )
+                step.orca_fn = fake_orca
+                out = step.orca(_df(), options={"Opt": None}, gxtb=True, save_step=True)
+
+        self.assertIn("orca-ExtOpt-Opt-EE", out.columns)
+        self.assertIn("orca-ExtOpt-Opt-NT", out.columns)
+        self.assertIn("orca-ExtOpt-Opt-oc", out.columns)
+        self.assertTrue(out["orca-ExtOpt-Opt-NT"].iloc[0])
+
 
 if __name__ == "__main__":
     unittest.main()
