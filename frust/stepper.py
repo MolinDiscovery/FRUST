@@ -1212,7 +1212,14 @@ class Stepper:
                 return inp
 
             result = self._run_engine(
-                df, self.orca_fn, prefix, build_orca_gxtb, save_step, lowest, save_files
+                df,
+                self.orca_fn,
+                prefix,
+                build_orca_gxtb,
+                save_step,
+                lowest,
+                save_files,
+                use_last_hess,
             )
             result.attrs.setdefault("frust_steps", {}).setdefault(prefix, {}).update(
                 {

@@ -20,6 +20,12 @@ def _df() -> pd.DataFrame:
     )
 
 
+def _df_with_hessian() -> pd.DataFrame:
+    df = _df()
+    df["gxtb-hess-input.hess"] = ["$orca_hessian_file\n$end\n"]
+    return df
+
+
 def _fake_paths(root: Path) -> tuple[Path, Path]:
     oet = root / "oet"
     bin_dir = oet / "bin"
@@ -184,6 +190,54 @@ end
         self.assertIn("orca-ExtOpt-Opt-NT", out.columns)
         self.assertIn("orca-ExtOpt-Opt-oc", out.columns)
         self.assertTrue(out["orca-ExtOpt-Opt-NT"].iloc[0])
+
+    def test_orca_gxtb_forwards_last_hessian_to_engine(self):
+        calls = []
+
+        def fake_orca(
+            atoms,
+            coords,
+            n_cores,
+            scr,
+            data2file,
+            options,
+            xtra_inp_str,
+            memory,
+            read_files,
+        ):
+            calls.append(
+                {
+                    "data2file": data2file,
+                    "xtra_inp_str": xtra_inp_str,
+                    "options": options,
+                }
+            )
+            return {
+                "normal_termination": True,
+                "electronic_energy": -1.0,
+                "opt_coords": coords,
+            }
+
+        with tempfile.TemporaryDirectory() as td:
+            oet, gxtb = _fake_paths(Path(td))
+            with patch.dict(os.environ, {"UMA_TOOLS": str(oet), "GXTB_EXE": str(gxtb)}):
+                step = Stepper(step_type="MOLS", debug=True, save_output_dir=False)
+                step.orca_fn = fake_orca
+                out = step.orca(
+                    _df_with_hessian(),
+                    options={"OptTS": None},
+                    gxtb=True,
+                    use_last_hess=True,
+                )
+
+        self.assertEqual(
+            calls[0]["data2file"],
+            {"private_input.hess": "$orca_hessian_file\n$end\n"},
+        )
+        self.assertIn("inhess Read", calls[0]["xtra_inp_str"])
+        self.assertIn('InHessName "private_input.hess"', calls[0]["xtra_inp_str"])
+        self.assertEqual(calls[0]["options"], {"ExtOpt": None, "OptTS": None})
+        self.assertTrue(out["orca-ExtOpt-OptTS-NT"].iloc[0])
 
 
 if __name__ == "__main__":
