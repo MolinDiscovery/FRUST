@@ -253,21 +253,21 @@ FRUST automatically inserts `ExtOpt` and an OET `%method` block pointing to
 each ORCA gradient request. This is the correct route for `OptTS`, `NEB-TS`,
 and other ORCA optimizer workflows.
 
-You can still pass normal ORCA geometry blocks:
+Use `NumFreq` when you want ORCA to verify the optimized geometry with
+finite-difference frequencies:
 
 ```python
 df_ts = step.orca(
     df,
     name="gxtb-OptTS",
-    options={"OptTS": None},
+    options={"OptTS": None, "NumFreq": None},
     gxtb=True,
-    xtra_inp_str="""
-%geom
-  Calc_Hess true
-end
-""",
 )
 ```
+
+Do not add `%geom Calc_Hess true` for this external g-xTB route. With ORCA 6.1,
+that makes ORCA enter an internal Hessian/property-integral path that is not
+compatible with the external g-xTB method.
 
 ## Constraints
 
@@ -368,6 +368,9 @@ print(result["grad"].shape)
 - ORCA `Freq` is not compatible with `gxtb=True` because g-xTB is supplied as
   an external method through `ExtOpt`. Use `NumFreq` for finite-difference
   frequencies.
+- ORCA `%geom Calc_Hess true` is not compatible with `gxtb=True`; let `OptTS`
+  use the approximate Hessian, and add `NumFreq` only for the final numerical
+  frequency check.
 - The installed upstream README notes that not all xTB features are supported by
   g-xTB yet.
 - The macOS g-xTB README warns about parallel numerical Hessians. Prefer

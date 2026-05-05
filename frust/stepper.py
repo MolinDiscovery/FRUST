@@ -1055,6 +1055,12 @@ class Stepper:
                 "ORCA Freq is not compatible with g-xTB ExtOpt. "
                 "Use NumFreq for finite-difference frequencies with external g-xTB gradients."
             )
+        if gxtb and "calc_hess" in (xtra_inp_str or "").lower():
+            raise ValueError(
+                "ORCA %geom Calc_Hess is not compatible with g-xTB ExtOpt. "
+                "Use OptTS with the approximate Hessian, and add NumFreq only when you need "
+                "a post-optimization numerical frequency check."
+            )
         if gxtb and "ExtOpt" not in opts:
             opts = {"ExtOpt": None, **opts}
         if constraint:

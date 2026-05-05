@@ -102,6 +102,20 @@ class GxtbOetOrcaTests(unittest.TestCase):
         with self.assertRaisesRegex(ValueError, "Use NumFreq"):
             step.orca(_df(), options={"OptTS": None, "Freq": None}, gxtb=True)
 
+    def test_orca_gxtb_rejects_calc_hess_block(self):
+        step = Stepper(step_type="MOLS", debug=True, save_output_dir=False)
+        with self.assertRaisesRegex(ValueError, "Calc_Hess"):
+            step.orca(
+                _df(),
+                options={"OptTS": None},
+                gxtb=True,
+                xtra_inp_str="""
+%geom
+  Calc_Hess true
+end
+""",
+            )
+
     def test_orca_gxtb_allows_numfreq(self):
         calls = []
 
