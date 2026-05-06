@@ -552,14 +552,13 @@ class Stepper:
                             self.logger.warning(f"No calc dir named '{dir_name}' found under {self.work_dir}")
                         else:
                             save_path = Path(save_dir)
-                            if src.resolve() == save_path.resolve():
-                                continue
-                            for p in src.iterdir():
-                                dst = save_path / p.name
-                                if p.is_dir():
-                                    shutil.copytree(p, dst, dirs_exist_ok=True)
-                                else:
-                                    shutil.copy2(p, dst)
+                            if src.resolve() != save_path.resolve():
+                                for p in src.iterdir():
+                                    dst = save_path / p.name
+                                    if p.is_dir():
+                                        shutil.copytree(p, dst, dirs_exist_ok=True)
+                                    else:
+                                        shutil.copy2(p, dst)
                     except Exception as e:
                         self.logger.error(f"Failed to stage files from '{src}' to '{save_dir}': {e}")
 
@@ -953,6 +952,9 @@ class Stepper:
         uma_memory_per_thread_mib: int = 500,
         uma_keep_logs: bool | str = "on_failure",
         uma_log_dir: str | None = None,
+        gxtb: bool = False,
+        gxtb_exe: str | None = None,
+        gxtb_ext_params: str | None = None,
         **kw        
     ) -> pd.DataFrame:
         """Run ORCA calculations and attach results to the DataFrame.
@@ -1021,6 +1023,14 @@ class Stepper:
             uma_log_dir (str or None, optional): Directory for preserved UMA
                 server logs. If omitted, transient logs are written to a temp
                 directory and preserved failures are copied to ``UMA-logs``.
+            gxtb (bool, optional): If ``True``, runs ORCA with OET g-xTB v2 as
+                an external method provider. ORCA still owns ``Opt``,
+                ``OptTS``, ``NEB-TS``, and related run types. Defaults to
+                ``False``.
+            gxtb_exe (str or None, optional): Optional path to the g-xTB v2
+                ``xtb`` executable. If omitted, ``GXTB_EXE`` is used.
+            gxtb_ext_params (str or None, optional): Extra parameters appended
+                to OET ``oet_gxtb`` through ORCA ``Ext_Params``.
 
         Returns:
             pd.DataFrame: The input DataFrame extended with stage-prefixed ORCA
@@ -1033,10 +1043,25 @@ class Stepper:
                 - ``{prefix}-error`` when a row-level engine failure occurs
                 - saved file-content columns when ORCA returns them
         """
-        opts = options or {}
+        opts = dict(options or {})
         if kw:
             unknown = ", ".join(sorted(kw))
             raise TypeError(f"Unexpected orca() keyword arguments: {unknown}")
+        if uma is not None and gxtb:
+            raise ValueError("orca() cannot use both UMA and g-xTB external methods")
+        if gxtb and "Freq" in opts:
+            raise ValueError(
+                "ORCA Freq is not compatible with g-xTB ExtOpt. "
+                "Use NumFreq for finite-difference frequencies with external g-xTB gradients."
+            )
+        if gxtb and "calc_hess" in (xtra_inp_str or "").lower():
+            raise ValueError(
+                "ORCA %geom Calc_Hess is not compatible with g-xTB ExtOpt. "
+                "Use OptTS with the approximate Hessian, and add NumFreq only when you need "
+                "a post-optimization numerical frequency check."
+            )
+        if gxtb and "ExtOpt" not in opts:
+            opts = {"ExtOpt": None, **opts}
         if constraint:
             self._validate_constraint_request(df)
         if save_files is None and self.save_output:
@@ -1051,7 +1076,7 @@ class Stepper:
             prefix = f"{name}-{keys[0]}"
         else:
             func, basis = keys[0], keys[1]
-            opt_flag = next((k for k in keys[2:] if k in ("OptTS", "Freq", "NoSym")), None)
+            opt_flag = next((k for k in keys[2:] if k in ("OptTS", "Freq", "NumFreq", "NoSym")), None)
             prefix = f"{name}-{func}-{basis}" + (f"-{opt_flag}" if opt_flag else "")
 
         def build_orca(row: Series) -> dict:
@@ -1168,10 +1193,41 @@ class Stepper:
 
             return inp
 
-        if uma is None:
+        if uma is None and not gxtb:
             result = self._run_engine(df, self.orca_fn, prefix, build_orca, save_step, lowest, save_files, use_last_hess)
             result.attrs.setdefault("frust_steps", {}).setdefault(prefix, {}).update(
                 {"engine": "orca", "options": opts}
+            )
+            return result
+
+        if gxtb:
+            from frust.utils.gxtb import gxtb_orca_block
+
+            client_block = gxtb_orca_block(gxtb_exe=gxtb_exe, ext_params=gxtb_ext_params)
+
+            def build_orca_gxtb(row: Series) -> dict:
+                inp = build_orca(row)
+                xin = inp.get("xtra_inp_str", "")
+                inp["xtra_inp_str"] = (xin + "\n\n" + client_block).strip() if xin else client_block
+                return inp
+
+            result = self._run_engine(
+                df,
+                self.orca_fn,
+                prefix,
+                build_orca_gxtb,
+                save_step,
+                lowest,
+                save_files,
+                use_last_hess,
+            )
+            result.attrs.setdefault("frust_steps", {}).setdefault(prefix, {}).update(
+                {
+                    "engine": "orca",
+                    "options": opts,
+                    "gxtb": True,
+                    "gxtb_exe": gxtb_exe,
+                }
             )
             return result
         

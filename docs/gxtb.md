@@ -115,24 +115,59 @@ df_ohess = step.gxtb(
 )
 ```
 
-Transition-state optimization:
+Transition-state optimization is not handled by direct `Stepper.gxtb(...)`.
+Use ORCA-driven g-xTB instead, so ORCA owns the `OptTS` search and g-xTB only
+provides energies and gradients. For difficult TS searches, first compute a
+g-xTB Hessian directly and pass it into ORCA with `use_last_hess=True`:
 
 ```python
-df_ts = step.gxtb(
+df = step.gxtb(
     df,
-    options={"opt": "ts"},
+    name="gxtb-hess",
+    options={"hess": None},
+    save_step=True,
+)
+
+df_ts = step.orca(
+    df,
+    name="gxtb-OptTS",
+    options={"OptTS": None},
+    gxtb=True,
+    use_last_hess=True,
+    save_step=True,
 )
 ```
 
-Mode-following transition-state optimization:
+For a simpler first attempt, you can run ORCA `OptTS` without a supplied
+Hessian and let ORCA build its own initial guess:
 
 ```python
-df_ts = step.gxtb(
+df_ts = step.orca(
     df,
-    options={
-        "opt": "ts",
-        "modef": 1,
-    },
+    name="gxtb-OptTS",
+    options={"OptTS": None},
+    gxtb=True,
+)
+```
+
+Use `NumFreq`, not `Freq`, when you want frequencies with ORCA-driven g-xTB.
+`Freq` uses ORCA's analytic frequency machinery, which is not compatible with
+the external g-xTB method. `NumFreq` uses finite differences of the external
+gradients.
+
+Mode-specific TS setup should also go through ORCA input blocks:
+
+```python
+df_ts = step.orca(
+    df,
+    name="gxtb-OptTS",
+    options={"OptTS": None, "NumFreq": None},
+    gxtb=True,
+    xtra_inp_str="""
+%geom
+  TS_Mode {B 0 1} end
+end
+""",
 )
 ```
 
@@ -219,6 +254,76 @@ df_low = step.gxtb(
 
 `lowest=` uses the same shared FRUST behavior as `Stepper.xtb(...)` and
 `Stepper.orca(...)`.
+
+## ORCA-Driven TS Optimization
+
+For transition states, use ORCA's external optimization interface:
+
+```python
+step = Stepper(step_type="TS1", n_cores=8, save_output_dir=False)
+
+df_ts = step.orca(
+    df,
+    name="gxtb-OptTS",
+    options={"OptTS": None},
+    gxtb=True,
+)
+```
+
+FRUST automatically inserts `ExtOpt` and an OET `%method` block pointing to
+`oet_gxtb`. OET then calls the `GXTB_EXE` binary as `xtb --gxtb --grad` for
+each ORCA gradient request. This is the correct route for `OptTS`, `NEB-TS`,
+and other ORCA optimizer workflows.
+
+For TS searches that need a better starting Hessian, use a two-step workflow:
+
+```python
+df = step.gxtb(
+    df,
+    name="gxtb-hess",
+    options={"hess": None},
+    save_step=True,
+)
+
+df_ts = step.orca(
+    df,
+    name="gxtb-OptTS",
+    options={"OptTS": None},
+    gxtb=True,
+    use_last_hess=True,
+    save_step=True,
+)
+```
+
+`Stepper.gxtb(..., options={"hess": None})` asks the g-xTB binary for a
+numerical Cartesian Hessian. Tooltoad converts that xTB-style `hessian` file to
+an ORCA text `.hess` file and stores it in the dataframe, usually as
+`gxtb-hess-input.hess`. `use_last_hess=True` tells FRUST to write the latest
+`*.hess` dataframe column to ORCA as `private_input.hess` and add:
+
+```orca
+%geom
+  inhess Read
+  InHessName "private_input.hess"
+end
+```
+
+Use `NumFreq` when you want ORCA to verify the optimized geometry with
+finite-difference frequencies:
+
+```python
+df_ts = step.orca(
+    df,
+    name="gxtb-OptTS",
+    options={"OptTS": None, "NumFreq": None},
+    gxtb=True,
+)
+```
+
+Do not add `%geom Calc_Hess true` for this external g-xTB route. With ORCA 6.1,
+that makes ORCA enter an internal Hessian/property-integral path that is not
+compatible with the external g-xTB method. Use the `use_last_hess=True` route
+above when you want an initial g-xTB Hessian.
 
 ## Constraints
 
@@ -313,8 +418,16 @@ print(result["grad"].shape)
 - FRUST does not automatically reuse `XTB_EXE`; the normal local xTB binary may
   not support `--gxtb`.
 - Tooltoad always adds `--gxtb`, so do not include `"gxtb": None` yourself.
-- TS optimization is requested as `options={"opt": "ts"}`, not as a separate
-  `optts` option.
+- Direct `Stepper.gxtb(...)` is not the TS optimization route. Use
+  `Stepper.orca(..., options={"OptTS": None}, gxtb=True)` for ORCA-driven TS
+  searches.
+- ORCA `Freq` is not compatible with `gxtb=True` because g-xTB is supplied as
+  an external method through `ExtOpt`. Use `NumFreq` for finite-difference
+  frequencies.
+- ORCA `%geom Calc_Hess true` is not compatible with `gxtb=True`. Use
+  `Stepper.gxtb(..., options={"hess": None})` followed by
+  `Stepper.orca(..., gxtb=True, use_last_hess=True)` when you want an initial
+  g-xTB Hessian.
 - The installed upstream README notes that not all xTB features are supported by
   g-xTB yet.
 - The macOS g-xTB README warns about parallel numerical Hessians. Prefer

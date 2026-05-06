@@ -53,9 +53,10 @@ logs only when the UMA-backed ORCA stage fails; use `uma_keep_logs=True` and
 g-xTB v2 runs through Tooltoad's dedicated g-xTB calculator, exposed as
 `Stepper.gxtb(...)`. Set `GXTB_EXE` to the special g-xTB `xtb` binary from
 upstream g-xTB v2; FRUST does not reuse `XTB_EXE` automatically because common
-xTB installs do not advertise `--gxtb`. OET 2.0.0's `oet_gxtb` wrapper is not
-used here because it targets the older standalone `gxtb` executable and
-`.gxtb/.eeq/.basisq` parameter-file interface.
+xTB installs do not advertise `--gxtb`. For transition-state searches, use
+`Stepper.orca(..., options={"OptTS": None}, gxtb=True)` so ORCA drives `OptTS`
+through OET's g-xTB external-gradient wrapper. If you need frequencies on this
+external route, use ORCA `NumFreq` rather than `Freq`.
 
 See [docs/gxtb.md](/Users/jacobmolinnielsen/Developer/FrustActivationProject/FRUST/docs/gxtb.md) for the FRUST g-xTB API and setup notes.
 
