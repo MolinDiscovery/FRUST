@@ -7,20 +7,28 @@ automatically.
 
 ## Setup
 
-Set `GXTB_EXE` to the g-xTB v2 `xtb` executable. Do not point it at the normal
-`XTB_EXE` unless that binary advertises `--gxtb`.
+Put `GXTB_EXE` in `~/.env` and point it to the g-xTB v2 `xtb` executable. Do
+not point it at the normal `XTB_EXE` unless that binary advertises `--gxtb`.
 
-```bash
-export GXTB_EXE=/Users/jacobmolinnielsen/Library/g-xtb/xtb-6.7.1-gxtb-210426-macos-arm64/bin/xtb
+Use the g-xTB v2.0.0 release from Grimme lab:
+
+```text
+https://github.com/grimme-lab/g-xtb/releases/tag/v2.0.0
 ```
 
-The local setup also stores this in `~/.env`, which Tooltoad loads when it
-starts:
+FRUST uses the newer g-xTB v2 `xtb` binary, not older g-xTB workflows. For
+direct `Stepper.gxtb(...)`, Tooltoad calls this binary with `--gxtb`. For
+ORCA-driven g-xTB, the MolinDiscovery OET fork provides `oet_gxtb`; ORCA calls
+that OET wrapper, and the wrapper calls `GXTB_EXE` so g-xTB 2.0 can provide
+external energies and gradients back to ORCA.
 
 ```bash
-GXTB_ROOT=/Users/jacobmolinnielsen/Library/g-xtb/xtb-6.7.1-gxtb-210426-macos-arm64
-GXTB_EXE=/Users/jacobmolinnielsen/Library/g-xtb/xtb-6.7.1-gxtb-210426-macos-arm64/bin/xtb
+GXTB_ROOT=/path/to/g-xtb
+GXTB_EXE=/path/to/g-xtb/bin/xtb
 ```
+
+See [External tool setup](../getting-started/external-tool-setup.md) for the
+shared `.env` setup used by FRUST and Tooltoad.
 
 Quick check:
 

@@ -1,0 +1,57 @@
+site_name: FRUST
+site_description: Documentation for the FRUST computational chemistry workflow package.
+repo_url: https://github.com/MolinDiscovery/FRUST
+
+theme:
+  name: material
+  features:
+    - navigation.sections
+    - navigation.indexes
+    - content.code.copy
+    - search.suggest
+    - search.highlight
+
+plugins:
+  - search
+  - mkdocstrings:
+      handlers:
+        python:
+          paths: ["."]
+          options:
+            docstring_style: numpy
+            docstring_section_style: table
+            show_source: true
+            show_signature_annotations: true
+            separate_signature: true
+
+markdown_extensions:
+  - admonition
+  - attr_list
+  - def_list
+  - md_in_html
+  - pymdownx.details
+  - pymdownx.superfences
+  - pymdownx.tabbed:
+      alternate_style: true
+
+nav:
+  - Home: index.md
+  - Getting Started:
+      - Installation:
+          - Basic Installation: getting-started/installation.md
+          - External Tool Setup: getting-started/external-tool-setup.md
+      - Quickstart: getting-started/quickstart.md
+  - Workflows:
+      - Overview: workflows/overview.md
+      - DataFrames And Results: workflows/dataframes.md
+  - External Tools:
+      - UMA: external-tools/uma.md
+      - g-xTB: external-tools/gxtb.md
+  - Cluster:
+      - Submission: cluster/submission.md
+  - API Reference:
+      - Stepper: api/stepper.md
+      - Pipelines: api/pipes.md
+      - Cluster: api/cluster.md
+      - Schema: api/schema.md
+      - Utility Modules: api/utils.md

@@ -44,7 +44,7 @@ class GxtbOetOrcaTests(unittest.TestCase):
     def test_gxtb_orca_block_uses_oet_gxtb_and_exe(self):
         with tempfile.TemporaryDirectory() as td:
             oet, gxtb = _fake_paths(Path(td))
-            with patch.dict(os.environ, {"UMA_TOOLS": str(oet), "GXTB_EXE": str(gxtb)}):
+            with patch.dict(os.environ, {"OET_TOOLS": str(oet), "GXTB_EXE": str(gxtb)}):
                 block = gxtb_orca_block()
 
         self.assertIn('ProgExt "', block)
@@ -87,7 +87,7 @@ class GxtbOetOrcaTests(unittest.TestCase):
 
         with tempfile.TemporaryDirectory() as td:
             oet, gxtb = _fake_paths(Path(td))
-            with patch.dict(os.environ, {"UMA_TOOLS": str(oet), "GXTB_EXE": str(gxtb)}):
+            with patch.dict(os.environ, {"OET_TOOLS": str(oet), "GXTB_EXE": str(gxtb)}):
                 step = Stepper(step_type="MOLS", debug=True, save_output_dir=False)
                 step.orca_fn = fake_orca
                 out = step.orca(_df(), options={"OptTS": None}, gxtb=True)
@@ -145,7 +145,7 @@ end
 
         with tempfile.TemporaryDirectory() as td:
             oet, gxtb = _fake_paths(Path(td))
-            with patch.dict(os.environ, {"UMA_TOOLS": str(oet), "GXTB_EXE": str(gxtb)}):
+            with patch.dict(os.environ, {"OET_TOOLS": str(oet), "GXTB_EXE": str(gxtb)}):
                 step = Stepper(step_type="MOLS", debug=True, save_output_dir=False)
                 step.orca_fn = fake_orca
                 out = step.orca(_df(), options={"OptTS": None, "NumFreq": None}, gxtb=True)
@@ -176,7 +176,7 @@ end
 
         with tempfile.TemporaryDirectory() as td:
             oet, gxtb = _fake_paths(Path(td))
-            with patch.dict(os.environ, {"UMA_TOOLS": str(oet), "GXTB_EXE": str(gxtb)}):
+            with patch.dict(os.environ, {"OET_TOOLS": str(oet), "GXTB_EXE": str(gxtb)}):
                 step = Stepper(
                     step_type="MOLS",
                     debug=True,
@@ -220,7 +220,7 @@ end
 
         with tempfile.TemporaryDirectory() as td:
             oet, gxtb = _fake_paths(Path(td))
-            with patch.dict(os.environ, {"UMA_TOOLS": str(oet), "GXTB_EXE": str(gxtb)}):
+            with patch.dict(os.environ, {"OET_TOOLS": str(oet), "GXTB_EXE": str(gxtb)}):
                 step = Stepper(step_type="MOLS", debug=True, save_output_dir=False)
                 step.orca_fn = fake_orca
                 out = step.orca(
