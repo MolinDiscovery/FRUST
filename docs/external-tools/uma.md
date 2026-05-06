@@ -5,21 +5,14 @@ ORCA-External-Tools 2.
 
 ## Requirements
 
-FRUST expects ORCA-External-Tools to be installed and available through one of
-these environment variables:
+FRUST expects ORCA-External-Tools to be installed and available through
+`OET_TOOLS`. Put this in `~/.env`:
 
 ```bash
-OET_TOOLS=/Users/jacobmolinnielsen/Library/orca-external-tools
+OET_TOOLS=/path/to/orca-external-tools
 ```
 
-The old name still works:
-
-```bash
-UMA_TOOLS=/Users/jacobmolinnielsen/Library/orca-external-tools
-```
-
-If both are set, `OET_TOOLS` wins. The path is resolved only when UMA/OET
-functionality is used.
+The path is resolved only when UMA/OET functionality is used.
 
 The expected OET 2 executables are:
 
@@ -28,6 +21,9 @@ The expected OET 2 executables are:
 <OET_TOOLS>/bin/oet_client
 <OET_TOOLS>/bin/oet_uma
 ```
+
+See [External tool setup](../getting-started/external-tool-setup.md) for
+installation, `.env` setup, and smoke tests.
 
 ## Basic API
 
@@ -115,7 +111,7 @@ and injects an ORCA block like:
 
 ```orca
 %method
-ProgExt "/Users/jacobmolinnielsen/Library/orca-external-tools/bin/oet_client"
+   ProgExt "/path/to/orca-external-tools/bin/oet_client"
 Ext_Params "-b 127.0.0.1:54403 -t omol -m uma-s-1p1 -d cpu"
 end
 %output
@@ -126,9 +122,9 @@ end
 
 After ORCA finishes, FRUST shuts down the full UMA server process group.
 
-Server mode is used locally and on clusters. On Slurm, FRUST is already running
-inside the allocated job, so starting the server from FRUST means the server is
-started on the compute node that owns the calculation.
+Server mode is used locally and in submitted jobs. With the Slurm submitit
+backend, FRUST is already running inside the allocated job, so the server starts
+on the compute node that owns the calculation.
 
 ## Standalone Mode
 
@@ -148,7 +144,7 @@ This injects:
 
 ```orca
 %method
-ProgExt "/Users/jacobmolinnielsen/Library/orca-external-tools/bin/oet_uma"
+   ProgExt "/path/to/orca-external-tools/bin/oet_uma"
 Ext_Params "-t omol -m uma-s-1p1 -d cpu"
 end
 %output
@@ -445,4 +441,3 @@ and includes:
   current compute node, not for a shared network service.
 - If the server fails to start, FRUST raises an error pointing to the preserved
   UMA server log.
-

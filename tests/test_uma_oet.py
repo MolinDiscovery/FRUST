@@ -1,5 +1,6 @@
 import os
 import subprocess
+import sys
 import tempfile
 import unittest
 from pathlib import Path
@@ -25,35 +26,113 @@ def _fake_oet_root(tmp_path: Path) -> Path:
 
 
 class UmaOetTests(unittest.TestCase):
-    def test_get_oet_tools_prefers_oet_tools(self):
+    def test_get_oet_tools_uses_oet_tools(self):
         with tempfile.TemporaryDirectory() as td:
             tmp = Path(td)
-            oet_root = tmp / "new-oet"
-            uma_root = tmp / "legacy-uma"
+            oet_root = tmp / "oet"
             oet_root.mkdir()
-            uma_root.mkdir()
-            with patch.dict(
-                os.environ,
-                {"OET_TOOLS": str(oet_root), "UMA_TOOLS": str(uma_root)},
-                clear=False,
-            ):
+            with patch.dict(os.environ, {"OET_TOOLS": str(oet_root)}, clear=False):
                 self.assertEqual(get_oet_tools(), oet_root)
 
-    def test_get_oet_tools_falls_back_to_uma_tools(self):
+    def test_get_oet_tools_rejects_uma_tools(self):
         with tempfile.TemporaryDirectory() as td:
             tmp = Path(td)
-            uma_root = tmp / "legacy-uma"
-            uma_root.mkdir()
+            legacy_root = tmp / "legacy-uma"
+            legacy_root.mkdir()
             env = dict(os.environ)
             env.pop("OET_TOOLS", None)
-            env["UMA_TOOLS"] = str(uma_root)
+            env["UMA_TOOLS"] = str(legacy_root)
             with patch.dict(os.environ, env, clear=True):
-                self.assertEqual(get_oet_tools(), uma_root)
+                with self.assertRaisesRegex(RuntimeError, "Set OET_TOOLS"):
+                    get_oet_tools()
+
+    def test_get_oet_tools_loads_home_dotenv(self):
+        with tempfile.TemporaryDirectory() as td:
+            tmp = Path(td)
+            home = tmp / "home"
+            home.mkdir()
+            oet_root = tmp / "oet"
+            oet_root.mkdir()
+            (home / ".env").write_text(f"OET_TOOLS={oet_root}\n", encoding="utf-8")
+            env = dict(os.environ)
+            env.pop("OET_TOOLS", None)
+            env.pop("UMA_TOOLS", None)
+            env.pop("TOOLTOAD_DOTENV_PATH", None)
+            env["HOME"] = str(home)
+            result = subprocess.run(
+                [
+                    sys.executable,
+                    "-c",
+                    "from frust.config import get_oet_tools; print(get_oet_tools())",
+                ],
+                cwd=Path(__file__).resolve().parents[1],
+                env=env,
+                text=True,
+                capture_output=True,
+                check=True,
+            )
+            self.assertEqual(result.stdout.strip(), str(oet_root))
+
+    def test_get_oet_tools_loads_cwd_dotenv(self):
+        with tempfile.TemporaryDirectory() as td:
+            tmp = Path(td)
+            work = tmp / "work"
+            work.mkdir()
+            oet_root = tmp / "oet"
+            oet_root.mkdir()
+            (work / ".env").write_text(f"OET_TOOLS={oet_root}\n", encoding="utf-8")
+            env = dict(os.environ)
+            env.pop("OET_TOOLS", None)
+            env.pop("UMA_TOOLS", None)
+            env.pop("TOOLTOAD_DOTENV_PATH", None)
+            repo = Path(__file__).resolve().parents[1]
+            result = subprocess.run(
+                [
+                    sys.executable,
+                    "-c",
+                    (
+                        f"import sys; sys.path.insert(0, {str(repo)!r}); "
+                        "from frust.config import get_oet_tools; print(get_oet_tools())"
+                    ),
+                ],
+                cwd=work,
+                env=env,
+                text=True,
+                capture_output=True,
+                check=True,
+            )
+            self.assertEqual(result.stdout.strip(), str(oet_root))
+
+    def test_get_oet_tools_loads_configured_dotenv(self):
+        with tempfile.TemporaryDirectory() as td:
+            tmp = Path(td)
+            env_path = tmp / "frust.env"
+            oet_root = tmp / "oet"
+            oet_root.mkdir()
+            env_path.write_text(f"OET_TOOLS={oet_root}\n", encoding="utf-8")
+            env = dict(os.environ)
+            env.pop("OET_TOOLS", None)
+            env.pop("UMA_TOOLS", None)
+            env["TOOLTOAD_DOTENV_PATH"] = str(env_path)
+            result = subprocess.run(
+                [
+                    sys.executable,
+                    "-c",
+                    "from frust.config import get_oet_tools; print(get_oet_tools())",
+                ],
+                cwd=Path(__file__).resolve().parents[1],
+                env=env,
+                text=True,
+                capture_output=True,
+                check=True,
+            )
+            self.assertEqual(result.stdout.strip(), str(oet_root))
 
     def test_get_oet_tools_missing_is_lazy_failure(self):
         env = dict(os.environ)
         env.pop("OET_TOOLS", None)
         env.pop("UMA_TOOLS", None)
+        env.pop("TOOLTOAD_DOTENV_PATH", None)
         with patch.dict(os.environ, env, clear=True):
             with self.assertRaisesRegex(RuntimeError, "Set OET_TOOLS"):
                 get_oet_tools()
@@ -111,9 +190,9 @@ class UmaOetTests(unittest.TestCase):
         )
 
     def test_installed_oet_smoke(self):
-        root_value = os.environ.get("OET_TOOLS") or os.environ.get("UMA_TOOLS")
+        root_value = os.environ.get("OET_TOOLS")
         if not root_value:
-            self.skipTest("OET_TOOLS/UMA_TOOLS is not configured")
+            self.skipTest("OET_TOOLS is not configured")
         root = get_oet_tools()
         server = root / "bin" / "oet_server"
         client = root / "bin" / "oet_client"
@@ -132,9 +211,9 @@ class UmaOetTests(unittest.TestCase):
                 pass
 
     def test_uma_server_removes_success_log_with_on_failure_policy(self):
-        root_value = os.environ.get("OET_TOOLS") or os.environ.get("UMA_TOOLS")
+        root_value = os.environ.get("OET_TOOLS")
         if not root_value:
-            self.skipTest("OET_TOOLS/UMA_TOOLS is not configured")
+            self.skipTest("OET_TOOLS is not configured")
         root = get_oet_tools()
         if not (root / "bin" / "oet_server").exists():
             self.skipTest("OET 2 server script is not installed")
@@ -146,9 +225,9 @@ class UmaOetTests(unittest.TestCase):
             self.assertFalse(log_path.exists())
 
     def test_uma_server_preserves_failure_log_with_default_policy(self):
-        root_value = os.environ.get("OET_TOOLS") or os.environ.get("UMA_TOOLS")
+        root_value = os.environ.get("OET_TOOLS")
         if not root_value:
-            self.skipTest("OET_TOOLS/UMA_TOOLS is not configured")
+            self.skipTest("OET_TOOLS is not configured")
         root = get_oet_tools()
         if not (root / "bin" / "oet_server").exists():
             self.skipTest("OET 2 server script is not installed")

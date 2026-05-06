@@ -33,6 +33,11 @@ notebooks = [
     "ipython",
     "py3Dmol",
 ]
+docs = [
+    "mkdocs-material",
+    "mkdocstrings[python]",
+    "mkdocs-autorefs",
+]
 
 [tool.setuptools.packages.find]
 include = ["frust*"]
