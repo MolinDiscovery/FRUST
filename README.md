@@ -49,24 +49,16 @@ For direct staged control, start with `frust.stepper.Stepper`.
 
 ## Documentation
 
-Install the docs extras and preview the site locally:
+Read the documentation online:
+
+- [FRUST documentation](https://molindiscovery.github.io/FRUST/)
+
+To preview the docs locally while editing them:
 
 ```bash
 pip install -e ".[docs]"
 mkdocs serve
 ```
-
-Key pages:
-
-- [Installation](docs/getting-started/installation.md)
-- [External tool setup](docs/getting-started/external-tool-setup.md)
-- [Quickstart](docs/getting-started/quickstart.md)
-- [Workflow overview](docs/workflows/overview.md)
-- [DataFrames and results](docs/workflows/dataframes.md)
-- [UMA setup and usage](docs/external-tools/uma.md)
-- [g-xTB setup and usage](docs/external-tools/gxtb.md)
-- [Cluster submission](docs/cluster/submission.md)
-- [API reference](docs/api/stepper.md)
 
 ## Repository Layout
 

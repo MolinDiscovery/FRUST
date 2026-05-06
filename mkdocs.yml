@@ -1,5 +1,6 @@
 site_name: FRUST
 site_description: Documentation for the FRUST computational chemistry workflow package.
+site_url: https://molindiscovery.github.io/FRUST/
 repo_url: https://github.com/MolinDiscovery/FRUST
 
 theme:
