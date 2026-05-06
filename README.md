@@ -8,6 +8,8 @@ and dataframe/parquet outputs for later analysis.
 FRUST is active research software. It is useful now, but the API and workflow
 defaults should not be treated as fixed.
 
+[![Documentation](https://img.shields.io/badge/docs-online-blue?style=for-the-badge&logo=readthedocs)](https://molindiscovery.github.io/FRUST/)
+
 ## Install
 
 FRUST requires Python 3.10 or newer.
@@ -49,9 +51,12 @@ For direct staged control, start with `frust.stepper.Stepper`.
 
 ## Documentation
 
-Read the documentation online:
-
-- [FRUST documentation](https://molindiscovery.github.io/FRUST/)
+<a href="https://molindiscovery.github.io/FRUST/">
+  <img
+    src="https://img.shields.io/badge/Read_the_docs-FRUST_documentation-blue?style=for-the-badge&logo=readthedocs"
+    alt="FRUST documentation"
+  >
+</a>
 
 To preview the docs locally while editing them:
 
