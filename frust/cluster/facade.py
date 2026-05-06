@@ -139,6 +139,9 @@ def submit_chain(
     debug: bool = False,
     production: bool = True,
     n_confs: int | None = None,
+    functional: str | None = None,
+    basisset: str | None = None,
+    basisset_solv: str | None = None,
     save_output_dir: bool = True,
     work_dir: str | Path | None = None,
 ) -> JobSubmissionResult:
@@ -171,6 +174,15 @@ def submit_chain(
         conformer behavior.
     n_confs : int or None, optional
         Conformer count forwarded to initialization stages when supported.
+    functional : str or None, optional
+        ORCA functional override for preset stage modules. If omitted, the
+        preset module defaults are used.
+    basisset : str or None, optional
+        ORCA basis set override for gas-phase preset stages. If omitted, the
+        preset module defaults are used.
+    basisset_solv : str or None, optional
+        ORCA basis set override for solvent single-point preset stages. If
+        omitted, the preset module defaults are used.
     save_output_dir : bool, optional
         Forwarded to initialization stages when supported.
     work_dir : str or pathlib.Path or None, optional
@@ -194,6 +206,9 @@ def submit_chain(
         debug=debug,
         production=production,
         n_confs=n_confs,
+        functional=functional,
+        basisset=basisset,
+        basisset_solv=basisset_solv,
         save_output_dir=save_output_dir,
         work_dir=work_dir,
     )

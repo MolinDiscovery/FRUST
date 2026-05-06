@@ -14,6 +14,36 @@ FUNCTIONAL = "wB97X-D3" # "wB97X-D3"
 BASISSET = "6-31G**" # "6-31G**"
 BASISSET_SOLV = "6-31+G**"  # for solvent SP
 
+
+def _resolve_theory(
+    *,
+    functional: str | None = None,
+    basisset: str | None = None,
+    basisset_solv: str | None = None,
+) -> tuple[str, str, str]:
+    """Resolve workflow theory settings for the INT3 preset pipeline.
+
+    Parameters
+    ----------
+    functional : str or None, optional
+        ORCA functional override.
+    basisset : str or None, optional
+        ORCA gas-phase basis set override.
+    basisset_solv : str or None, optional
+        ORCA solvent single-point basis set override.
+
+    Returns
+    -------
+    tuple[str, str, str]
+        Functional, gas-phase basis set, and solvent basis set used for the
+        current stage call.
+    """
+    return (
+        functional or FUNCTIONAL,
+        basisset or BASISSET,
+        basisset_solv or BASISSET_SOLV,
+    )
+
 try:
     if "SLURM_JOB_ID" in os.environ:
         from nuse import start_monitoring
@@ -40,6 +70,9 @@ def run_init(
     save_dir: str | None = None,
     work_dir: str | None = None,
     save_output_dir: bool = True,
+    functional: str | None = None,
+    basisset: str | None = None,
+    basisset_solv: str | None = None,
 ):
     import re
     pattern = re.compile(
@@ -69,9 +102,15 @@ def run_init(
     df = step.xtb(df, name="xtb_sp", options={"gfn": 2}, n_cores=2)
     df = step.xtb(df, name="xtb_opt", options={"gfn": 2, "opt": None}, constraint=True, lowest=top_n, n_cores=2)
 
+    current_functional, current_basisset, _ = _resolve_theory(
+        functional=functional,
+        basisset=basisset,
+        basisset_solv=basisset_solv,
+    )
+
     df = step.orca(df, name="DFT-pre-SP", options={
-        FUNCTIONAL  : None,
-        BASISSET    : None,
+        current_functional: None,
+        current_basisset  : None,
         "TightSCF"  : None,
         "SP"        : None,
         "NoSym"     : None,
@@ -92,6 +131,9 @@ def run_Opt(
     debug: bool = False,
     save_dir: str | None = None,
     work_dir: str | None = None,
+    functional: str | None = None,
+    basisset: str | None = None,
+    basisset_solv: str | None = None,
 ):
     df = normalize_dataframe(pd.read_parquet(f"{save_dir}/{parquet_path}"))
 
@@ -105,9 +147,15 @@ def run_Opt(
         work_dir=work_dir,
     )
 
+    current_functional, current_basisset, _ = _resolve_theory(
+        functional=functional,
+        basisset=basisset,
+        basisset_solv=basisset_solv,
+    )
+
     df = step.orca(df, name="OptTS", options={
-        FUNCTIONAL: None,
-        BASISSET: None,
+        current_functional: None,
+        current_basisset: None,
         "TightSCF": None,
         "SlowConv": None,
         "Opt": None,
@@ -129,6 +177,9 @@ def run_freq(
     debug: bool = False,
     save_dir: str | None = None,
     work_dir: str | None = None,        
+    functional: str | None = None,
+    basisset: str | None = None,
+    basisset_solv: str | None = None,
 ):
     df = normalize_dataframe(pd.read_parquet(f"{save_dir}/{parquet_path}"))
 
@@ -142,9 +193,15 @@ def run_freq(
         work_dir=work_dir,
     )
 
+    current_functional, current_basisset, _ = _resolve_theory(
+        functional=functional,
+        basisset=basisset,
+        basisset_solv=basisset_solv,
+    )
+
     df = step.orca(df, name="Freq", options={
-        FUNCTIONAL: None,
-        BASISSET: None,
+        current_functional: None,
+        current_basisset: None,
         "TightSCF": None,
         "SlowConv": None,
         "Freq": None,
@@ -166,6 +223,9 @@ def run_solv(
     debug: bool = False,
     save_dir: str | None = None,
     work_dir: str | None = None,        
+    functional: str | None = None,
+    basisset: str | None = None,
+    basisset_solv: str | None = None,
 ):
     df = normalize_dataframe(pd.read_parquet(f"{save_dir}/{parquet_path}"))
 
@@ -179,9 +239,15 @@ def run_solv(
         work_dir=work_dir,
     )
 
+    current_functional, _, current_basisset_solv = _resolve_theory(
+        functional=functional,
+        basisset=basisset,
+        basisset_solv=basisset_solv,
+    )
+
     df = step.orca(df, name="DFT-solv", options={
-        FUNCTIONAL: None,
-        BASISSET_SOLV: None,
+        current_functional: None,
+        current_basisset_solv: None,
         "TightSCF": None,
         "SP": None,
         "NoSym": None,

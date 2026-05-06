@@ -224,6 +224,31 @@ result = submit_chain(
 )
 ```
 
+If you want to keep the same preset workflow but change the ORCA level of
+theory, pass it directly into `submit_chain(...)`:
+
+```python
+from frust.cluster import submit_chain, ClusterConfig
+
+result = submit_chain(
+    csv_path="datasets/example.csv",
+    preset="int3_per_rpos",
+    ts_xyz="structures/int3.xyz",
+    out_dir="runs/int3_chain_b3lyp",
+    cluster=ClusterConfig(
+        backend="slurm",
+        partition="kemi1",
+        log_dir="logs/int3_chain_b3lyp",
+    ),
+    functional="B3LYP",
+    basisset="def2-SVP",
+    basisset_solv="def2-SVPD",
+)
+```
+
+This keeps the same stage order and resource handling, but swaps the ORCA
+keywords used by the preset stages.
+
 ## Tutorial 6: Use a Custom Chain
 
 If you do not want to use a preset, you can specify the stage module and stage order directly.

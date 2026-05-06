@@ -104,6 +104,9 @@ def submit_chain_jobs(
     debug: bool = False,
     production: bool = True,
     n_confs: int | None = None,
+    functional: str | None = None,
+    basisset: str | None = None,
+    basisset_solv: str | None = None,
     save_output_dir: bool = True,
     work_dir: str | Path | None = None,
 ) -> JobSubmissionResult:
@@ -133,6 +136,15 @@ def submit_chain_jobs(
         Preserve stage defaults when ``True`` and ``n_confs`` is ``None``.
     n_confs : int or None, optional
         Conformer count forwarded to initialization stages.
+    functional : str or None, optional
+        ORCA functional override forwarded to preset stage modules when they
+        accept it.
+    basisset : str or None, optional
+        ORCA gas-phase basis set override forwarded to preset stage modules
+        when they accept it.
+    basisset_solv : str or None, optional
+        ORCA solvent single-point basis set override forwarded to preset stage
+        modules when they accept it.
     save_output_dir : bool, optional
         Forwarded to initialization stages when supported.
     work_dir : str or pathlib.Path or None, optional
@@ -184,6 +196,12 @@ def submit_chain_jobs(
             )
 
             kwargs = {"save_dir": save_dir, "work_dir": work_dir or cluster.work_dir, "debug": debug}
+            if functional is not None:
+                kwargs["functional"] = functional
+            if basisset is not None:
+                kwargs["basisset"] = basisset
+            if basisset_solv is not None:
+                kwargs["basisset_solv"] = basisset_solv
             if stage_name == "run_init":
                 kwargs.update(
                     {
