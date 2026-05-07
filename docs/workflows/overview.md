@@ -19,9 +19,25 @@ ligands = pd.DataFrame({"smiles": ["c1ccccc1", "COc1ccccc1"]})
 
 The details can get technical, but the mental model is simple:
 
-```text
-input table -> generated structures -> conformers -> calculation stages -> dataframe/parquet results
+```mermaid
+flowchart TD
+    A["Input table<br/>CSV or pandas DataFrame"]
+    B["Structure generation<br/>molecules, TS guesses, intermediates"]
+    C["Conformer embedding<br/>RDKit plus optional cleanup"]
+    D["Calculation stages<br/>xTB, g-xTB, ORCA, UMA"]
+    E["Result DataFrame<br/>stage-prefixed columns"]
+    F["Parquet outputs<br/>analysis and ranking"]
+    G["Chemical inspection<br/>frequencies, modes, conformers, failures"]
+
+    A --> B --> C --> D --> E --> F --> G
 ```
+
+!!! tip "Recommended reading order"
+
+    Start with this overview, then read
+    [TS Guess Generation](ts-guess-generation.md) and
+    [Optimization Pipeline](optimization-pipeline.md) before launching a large
+    TS screen.
 
 ## The Three Layers
 
@@ -105,18 +121,16 @@ See [Cluster Submission](../cluster/submission.md) for the submitit interface.
 
 If you are new, start here:
 
-```text
-Do you want the standard workflow?
-  yes -> use frust.pipes or frust.cluster.submit_jobs
-  no  -> use Stepper directly
-
-Do you want to run on Slurm?
-  yes -> use frust.cluster
-  no  -> call the pipeline or Stepper in Python
-
-Do you need dependent stages with different resources?
-  yes -> use submit_chain
-  no  -> use submit_jobs
+```mermaid
+flowchart TD
+    A["Do you want a standard FRUST workflow?"] -->|Yes| B["Use frust.pipes locally<br/>or submit_jobs on a cluster"]
+    A -->|No| C["Use Stepper directly"]
+    B --> D["Do you need Slurm?"]
+    D -->|No| E["Call the pipeline in Python"]
+    D -->|Yes| F["Use frust.cluster"]
+    F --> G["Do stages need dependencies<br/>or different resources?"]
+    G -->|Yes| H["submit_chain"]
+    G -->|No| I["submit_jobs"]
 ```
 
 In practice, choose the smallest layer that answers your question:
@@ -200,3 +214,6 @@ After a run, start with:
 
 For more detail on column names and dataframe conventions, see
 [DataFrames And Results](dataframes.md).
+
+For the chemical checks to run before trusting a result, see
+[Inspecting Results](inspecting-results.md).

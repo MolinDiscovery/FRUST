@@ -18,8 +18,14 @@ defaults may still change as the project evolves.
   high-level and `Stepper` workflows.
 - [Workflow overview](workflows/overview.md) explains when to use the high-level
   pipeline functions, staged cluster pipelines, or direct `Stepper` calls.
+- [TS guess generation](workflows/ts-guess-generation.md) explains how
+  templates, reactive positions, and conformers become TS inputs.
+- [Inspecting results](workflows/inspecting-results.md) gives the practical
+  checks to run before using a barrier or scope prediction.
 - [DataFrames and results](workflows/dataframes.md) documents the main input and
   output conventions used across workflows.
+- [Troubleshooting failed calculations](troubleshooting/failed-calculations.md)
+  starts from `*-NT`, `*-error`, and saved backend files.
 
 ## External Tools
 
