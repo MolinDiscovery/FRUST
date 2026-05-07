@@ -47,7 +47,11 @@ markdown_extensions:
   - def_list
   - md_in_html
   - pymdownx.details
-  - pymdownx.superfences
+  - pymdownx.superfences:
+      custom_fences:
+        - name: mermaid
+          class: mermaid
+          format: !!python/name:pymdownx.superfences.fence_code_format
   - pymdownx.tabbed:
       alternate_style: true
 
@@ -60,12 +64,20 @@ nav:
       - Quickstart: getting-started/quickstart.md
   - Workflows:
       - Overview: workflows/overview.md
+      - TS Guess Generation: workflows/ts-guess-generation.md
+      - Optimization Pipeline: workflows/optimization-pipeline.md
+      - Inspecting Results: workflows/inspecting-results.md
+      - Directory And Outputs: workflows/directory-outputs.md
       - DataFrames And Results: workflows/dataframes.md
   - External Tools:
       - UMA: external-tools/uma.md
       - g-xTB: external-tools/gxtb.md
   - Cluster:
       - Submission: cluster/submission.md
+  - Troubleshooting:
+      - Failed Calculations: troubleshooting/failed-calculations.md
+      - Transition States: troubleshooting/transition-states.md
+      - Cluster Runs: troubleshooting/cluster-runs.md
   - API Reference:
       - Stepper: api/stepper.md
       - Pipelines: api/pipes.md
