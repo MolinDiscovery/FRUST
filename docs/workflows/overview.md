@@ -3,10 +3,11 @@
 FRUST workflows are easiest to understand as a pipeline from a small input
 table to a results dataframe.
 
-You usually start with ligand or substrate information, often a CSV or a pandas
-dataframe with a `smiles` column. FRUST turns those inputs into molecular
-structures, embeds conformers, runs calculation stages, filters or ranks the
-results, and writes parquet files that can be inspected later.
+!!!info "Naming"
+
+    **Ligand** and **substrate** are used interchangeably for historical reasons.
+
+You usually start with ligand or substrate information, often a CSV or a pandas dataframe with a `smiles` column. FRUST turns those inputs into molecular structures, embeds conformers, runs calculation stages, filters or ranks the results, and writes parquet files that can be inspected later.
 
 For example, the input might be as small as:
 
