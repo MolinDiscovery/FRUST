@@ -35,8 +35,10 @@ flowchart TD
 
 ## Choosing The TS Entry Point
 
-Use `run_ts_per_lig(...)` when one TS template should be applied once per
-ligand:
+Use `run_ts_per_lig(...)` when you want the normal in-process TS workflow from
+a ligand table. Despite the name, this function expands each ligand over its
+reactive positions internally with `create_ts_per_rpos(...)`, then runs the
+resulting TS candidates sequentially in one workflow call.
 
 ```python
 from frust.pipes import run_ts_per_lig
@@ -49,18 +51,36 @@ df = run_ts_per_lig(
 )
 ```
 
-Use `run_ts_per_rpos(...)` when the same ligand can react at multiple positions:
+Use `run_ts_per_rpos(...)` when TS structures have already been generated and
+you want to run one pre-expanded reactive-position structure. This is mainly
+useful for distribution: the cluster submission layer can split a CSV into
+multiple `ts_struct` jobs and submit one job per generated reactive-position
+structure.
 
 ```python
 from frust.pipes import run_ts_per_rpos
+from frust.utils.mols import create_ts_per_rpos
 
-df = run_ts_per_rpos(
+ts_structs = create_ts_per_rpos(
     ligands,
     ts_guess_xyz="structures/ts2.xyz",
+    return_format="dict",
+)
+
+first_name = next(iter(ts_structs))
+df = run_ts_per_rpos(
+    {first_name: ts_structs[first_name]},
     n_confs=2,
     DFT=False,
 )
 ```
+
+!!! tip "Rule of thumb"
+
+    Use `run_ts_per_lig(...)` for a local or single-process Python workflow.
+    Use `run_ts_per_rpos(...)` when you deliberately want the reactive-position
+    expansion step to happen before execution, usually so each generated
+    structure can become a separate Slurm job.
 
 !!! tip "Use fewer conformers for wiring checks"
 
