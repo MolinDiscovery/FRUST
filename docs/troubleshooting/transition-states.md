@@ -16,7 +16,7 @@ useful TS.
 !!! warning "One imaginary frequency is not the whole test"
 
     A first-order saddle point can still correspond to the wrong motion. Always
-    inspect the imaginary mode before using the barrier.
+inspect the imaginary mode before using the barrier.
 
 ## Count Imaginary Frequencies
 
@@ -52,15 +52,24 @@ The imaginary mode is usually `vId=0`, because negative frequencies are listed
 first in typical parsed vibration output. If in doubt, inspect the frequencies
 in the `*-vibs` entry for that row.
 
+<iframe
+  src="../../assets/3methoxyphenol-ts1-imaginary-mode.html"
+  title="3-methoxyphenol TS1 imaginary-mode animation"
+  width="100%"
+  height="480"
+  loading="lazy"
+  style="border: 1px solid var(--md-default-fg-color--lightest); border-radius: 6px;"
+></iframe>
+
 ## Symptoms And Likely Causes
 
-| Symptom | Likely cause | Next check |
-| --- | --- | --- |
-| zero imaginary frequencies | optimization found a minimum | inspect geometry and rerun from a better TS guess |
-| more than one imaginary frequency | higher-order saddle point | inspect all imaginary modes |
-| imaginary mode is unrelated | wrong template or reactive position | check `rpos` and template mapping |
-| TS collapses during optimization | starting conformer too far from TS | use fewer bad conformers or improve template |
-| g-xTB ORCA frequency fails | analytic `Freq` used with external g-xTB | use `NumFreq` |
+| Symptom                           | Likely cause                             | Next check                                        |
+| --------------------------------- | ---------------------------------------- | ------------------------------------------------- |
+| zero imaginary frequencies        | optimization found a minimum             | inspect geometry and rerun from a better TS guess |
+| more than one imaginary frequency | higher-order saddle point                | inspect all imaginary modes                       |
+| imaginary mode is unrelated       | wrong template or reactive position      | check `rpos` and template mapping                 |
+| TS collapses during optimization  | starting conformer too far from TS       | use fewer bad conformers or improve template      |
+| g-xTB ORCA frequency fails        | analytic `Freq` used with external g-xTB | use `NumFreq`                                     |
 
 !!! example "Filter to true-TS candidates"
 
@@ -70,4 +79,4 @@ in the `*-vibs` entry for that row.
     ```
 
     This is a useful first filter, but still inspect the mode animation before
-    trusting the row.
+trusting the row.

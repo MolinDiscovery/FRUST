@@ -398,6 +398,9 @@ def plot_regression_outliers(
     size: tuple = (8, 6),
     plot_1x: bool = False,
     equal_axis: bool = False,
+    regression_text: str = "legend",
+    regression_text_loc: Union[str, Tuple[float, float]] = "best",
+    rmsd_unit: str = "kcal/mol",
 ) -> pd.DataFrame:
     """Plot x vs y with linear fit, score outliers, and annotate top points.
 
@@ -413,6 +416,16 @@ def plot_regression_outliers(
             Defaults to "spearman".
         num_outliers (int, optional): Number of top outliers to annotate.
             Defaults to 2.
+        regression_text (str, optional): Where to place regression statistics.
+            Use "legend" for the historical behavior, "plot" to place them
+            inside the axes, "both" for both locations, or "none" to hide
+            them. Defaults to "legend".
+        regression_text_loc (str or tuple, optional): Location for in-plot
+            regression text. Named locations are "best", "upper left",
+            "upper right", "lower left", and "lower right". A tuple is
+            interpreted as axes-fraction coordinates. Defaults to "best".
+        rmsd_unit (str, optional): Unit displayed after RMSD values. Use an
+            empty string to omit the unit. Defaults to "kcal/mol".
 
     Returns:
         pd.DataFrame: DataFrame of the top outliers sorted by score.
@@ -422,6 +435,8 @@ def plot_regression_outliers(
             raise ValueError(f"Column not found: {col}")
     if method not in ("pearson", "spearman"):
         raise ValueError(f"Invalid method: {method}")
+    if regression_text not in ("legend", "plot", "both", "none"):
+        raise ValueError(f"Invalid regression_text: {regression_text}")
 
     data = df.copy()
     x = data[x_col]
@@ -458,6 +473,14 @@ def plot_regression_outliers(
                  f"{abs(c):.2f}")
     print("[INFO]: Error relationship: ", eq2_label)
 
+    rmsd_unit_suffix = f" {rmsd_unit}" if rmsd_unit else ""
+    fit_stats_label = (f"$R^2$={lr.rvalue**2:.3f}, "
+                       f"spearman={rho:.3f}, "
+                       f"RMSD={rmsd_fit:.3f}{rmsd_unit_suffix}")
+    offset_stats_label = (f"$R^2$={r2_hat:.3f}, "
+                          f"spearman={rho_hat:.3f}, "
+                          f"RMSD={rmsd_hat:.3f}{rmsd_unit_suffix}")
+
     if method == "pearson":
         data["score"] = (y - y_fit).abs()
     else:
@@ -470,25 +493,23 @@ def plot_regression_outliers(
     style_ctx = (plt.style.context('dark_background')
                  if darkmode else nullcontext())
     with style_ctx:
-        plt.figure(figsize=size)
-        plt.scatter(x, y, alpha=0.7)
-        plt.plot(
+        fig, ax = plt.subplots(figsize=size)
+        ax.scatter(x, y, alpha=0.7)
+        ax.plot(
             x, y_fit, color="red", marker="",
-            label=(f"$R^2$={lr.rvalue**2:.3f}, "
-                   f"spearman={rho:.3f}, "
-                   f"RMSD={rmsd_fit:.3f}")
+            label=fit_stats_label
+            if regression_text in ("legend", "both") else "linear fit"
         )
         if plot_1x:
-            plt.plot(
+            ax.plot(
                 x, y_hat, marker="",
-                label=(f"$R^2$={r2_hat:.3f}, "
-                       f"spearman={rho_hat:.3f}, "
-                       f"RMSD={rmsd_hat:.3f}")
+                label=offset_stats_label
+                if regression_text in ("legend", "both") else "1:1 offset"
             )
             
         for _, row in outliers.iterrows():
             label = f"{row[label_col]}-r{int(row[rpos_col])}"
-            plt.annotate(
+            ax.annotate(
                 label,
                 (row[x_col], row[y_col]),
                 textcoords="offset points",
@@ -497,24 +518,109 @@ def plot_regression_outliers(
                 fontsize=8,
                 arrowprops=dict(arrowstyle="->", lw=0.5)
             )
-        plt.xlabel(xlabel, fontsize=font_size)
-        plt.ylabel(ylabel, fontsize=font_size)
-        plt.xticks(fontsize=font_size)
-        plt.yticks(fontsize=font_size)
-        plt.legend(fontsize=font_size)
-        plt.grid(True)
+        ax.set_xlabel(xlabel, fontsize=font_size)
+        ax.set_ylabel(ylabel, fontsize=font_size)
+        ax.tick_params(axis="both", labelsize=font_size)
+        ax.legend(fontsize=font_size)
+        ax.grid(True)
         if equal_axis:
             xmin = min(x.min(), y.min())
             xmax = max(x.max(), y.max())
 
-            plt.xlim(xmin, xmax)
-            plt.ylim(xmin, xmax)
-            plt.gca().set_aspect("equal", adjustable="box")        
+            ax.set_xlim(xmin, xmax)
+            ax.set_ylim(xmin, xmax)
+            ax.set_aspect("equal", adjustable="box")
 
-        plt.tight_layout()
+        if regression_text in ("plot", "both"):
+            text_lines = [
+                f"Fit: {eq_label}",
+                f"$R^2$={lr.rvalue**2:.3f}, spearman={rho:.3f}",
+                f"RMSD={rmsd_fit:.3f}{rmsd_unit_suffix}",
+            ]
+            if plot_1x:
+                text_lines.extend([
+                    f"Offset fit: {eq2_label}",
+                    f"$R^2$={r2_hat:.3f}, spearman={rho_hat:.3f}",
+                    f"RMSD={rmsd_hat:.3f}{rmsd_unit_suffix}",
+                ])
+
+            if isinstance(regression_text_loc, tuple):
+                x_text, y_text = regression_text_loc
+                ha = "left" if x_text <= 0.5 else "right"
+                va = "bottom" if y_text <= 0.5 else "top"
+            else:
+                loc_lookup = {
+                    "upper left": (0.03, 0.97, "left", "top"),
+                    "upper right": (0.97, 0.97, "right", "top"),
+                    "lower left": (0.03, 0.03, "left", "bottom"),
+                    "lower right": (0.97, 0.03, "right", "bottom"),
+                }
+                loc = regression_text_loc
+                if loc == "best":
+                    loc = _least_crowded_text_loc(x, y)
+                if loc not in loc_lookup:
+                    raise ValueError(
+                        f"Invalid regression_text_loc: {regression_text_loc}"
+                    )
+                x_text, y_text, ha, va = loc_lookup[loc]
+
+            ax.text(
+                x_text, y_text, "\n".join(text_lines),
+                transform=ax.transAxes,
+                ha=ha,
+                va=va,
+                fontsize=max(font_size - 2, 8),
+                bbox={
+                    "boxstyle": "round,pad=0.35",
+                    "facecolor": "black" if darkmode else "white",
+                    "edgecolor": "0.5",
+                    "alpha": 0.85,
+                },
+            )
+
+        fig.tight_layout()
         plt.show()
         
     return None
+
+
+def _least_crowded_text_loc(x: pd.Series, y: pd.Series) -> str:
+    """Find the least crowded plot corner for an annotation box.
+
+    Parameters
+    ----------
+    x
+        X values shown in the plot.
+    y
+        Y values shown in the plot.
+
+    Returns
+    -------
+    str
+        Matplotlib-style corner name.
+    """
+    x_arr = np.asarray(x, dtype=float)
+    y_arr = np.asarray(y, dtype=float)
+    x_span = np.ptp(x_arr)
+    y_span = np.ptp(y_arr)
+    if x_span == 0 or y_span == 0:
+        return "upper left"
+
+    x_norm = (x_arr - np.min(x_arr)) / x_span
+    y_norm = (y_arr - np.min(y_arr)) / y_span
+    corners = {
+        "upper left": (0.0, 1.0),
+        "upper right": (1.0, 1.0),
+        "lower left": (0.0, 0.0),
+        "lower right": (1.0, 0.0),
+    }
+
+    def score(corner: Tuple[float, float]) -> float:
+        x_corner, y_corner = corner
+        dist = np.hypot(x_norm - x_corner, y_norm - y_corner)
+        return float(np.sum(1.0 / np.maximum(dist, 0.08)))
+
+    return min(corners, key=lambda loc: score(corners[loc]))
 
 
 def _find_unique_atoms_from_ranks(ranks: Sequence[int]) -> List[int]:

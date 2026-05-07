@@ -19,7 +19,8 @@ def summarize_ts_vibrations(
     df: pd.DataFrame,
     col: str = "DFT-wB97X-D3-6-31G**-OptTS-vibs",
     max_rows: int = 5,
-    output_latex: bool = False
+    output_latex: bool = False,
+    show_pos_freqs = True,
 ):
     true_ts_count = 0
     non_ts_count = 0
@@ -35,7 +36,7 @@ def summarize_ts_vibrations(
         pos_freqs = [f for f in freqs if f >= 0]
 
         is_true_ts = len(neg_freqs) == 1
-        status = "True TS" if is_true_ts else f"Not TS ({len(neg_freqs)} neg)"
+        status = "Yes." if is_true_ts else f"No ({len(neg_freqs)})"
 
         if is_true_ts:
             true_ts_count += 1
@@ -56,14 +57,18 @@ def summarize_ts_vibrations(
         else:
             pos_str = "None"
 
-        rows.append({
+        row_data = {
             "Structure": idx,
             "Ligand": ligand,
             "RPOS": rpos,
-            "Status": status,
+            "1. img. freq.": status,
             "Neg. freqs": neg_str,
-            "Pos. freqs": pos_str
-        })
+        }
+
+        if show_pos_freqs:
+            row_data["Pos. freqs"] = pos_str
+            
+        rows.append(row_data)
 
     result_df = pd.DataFrame(rows)
 

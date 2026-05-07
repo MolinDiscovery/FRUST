@@ -1,0 +1,85 @@
+<html>
+<body style="margin: 0; padding: 0; display: block;">
+<div id="3dmolviewer_1778162434091444"  style="position: relative; width: 720px; height: 440px;">
+        <p id="3dmolwarning_1778162434091444" style="background-color:#ffcccc;color:black">3Dmol.js failed to load for some reason.  Please check your browser console for error messages.<br></p>
+        </div>
+<script>
+
+var loadScriptAsync = function(uri){
+  return new Promise((resolve, reject) => {
+    //this is to ignore the existence of requirejs amd
+    var savedexports, savedmodule;
+    if (typeof exports !== 'undefined') savedexports = exports;
+    else exports = {}
+    if (typeof module !== 'undefined') savedmodule = module;
+    else module = {}
+
+    var tag = document.createElement('script');
+    tag.src = uri;
+    tag.async = true;
+    tag.onload = () => {
+        exports = savedexports;
+        module = savedmodule;
+        resolve();
+    };
+  var firstScriptTag = document.getElementsByTagName('script')[0];
+  firstScriptTag.parentNode.insertBefore(tag, firstScriptTag);
+});
+};
+
+if(typeof $3Dmolpromise === 'undefined') {
+$3Dmolpromise = null;
+  $3Dmolpromise = loadScriptAsync('https://cdn.jsdelivr.net/npm/3dmol@2.5.4/build/3Dmol-min.js');
+}
+
+var viewer_1778162434091444 = null;
+var warn = document.getElementById("3dmolwarning_1778162434091444");
+if(warn) {
+    warn.parentNode.removeChild(warn);
+}
+$3Dmolpromise.then(function() {
+viewer_1778162434091444 = $3Dmol.createViewer(document.getElementById("3dmolviewer_1778162434091444"),{backgroundColor:"white"});
+viewer_1778162434091444.zoomTo();
+	viewer_1778162434091444.addModel("58\n\nC -1.52642300 0.65285000 0.98151200\nC -0.77983200 1.58565400 1.71833800\nC -1.49119700 2.37517500 2.64075900\nC -2.86136900 2.27852000 2.82109400\nC -3.58326500 1.35641000 2.06730300\nC -2.91514300 0.55285400 1.15659200\nH -0.92901100 3.09626700 3.23063700\nH -3.36688800 2.91394200 3.54335300\nH -4.65846100 1.25863400 2.18737200\nH -3.49033100 -0.16012500 0.58007000\nB 0.80125400 1.91488000 1.58959800\nN -0.81386000 -0.19545100 0.01728300\nC -1.04791500 0.22926800 -1.42669700\nC -0.94129400 -1.68955700 0.27934300\nC -2.35216400 -0.37621900 -1.98457200\nC -1.14873500 1.76069000 -1.49968100\nC 0.12634800 -0.20425900 -2.33648000\nC -2.20773600 -2.30111200 -0.36294200\nC -0.99715400 -1.96129500 1.78959600\nC 0.29870200 -2.43522600 -0.25502000\nH -2.41837000 -0.10980500 -3.04662100\nH -3.20902900 0.10254600 -1.49832900\nC -2.43391700 -1.89216400 -1.81662900\nH -0.24952700 2.23800400 -1.10433500\nH -1.25877600 2.04631700 -2.55058200\nH -2.01295800 2.14453300 -0.95541500\nH -0.03397100 -1.17775700 -2.80262600\nH 1.07281700 -0.24762500 -1.80047900\nH 0.23426100 0.51936700 -3.14939000\nH -2.12153600 -3.39189700 -0.29005900\nH -3.08389900 -2.03472000 0.23658300\nH -1.04091600 -3.04394100 1.94171700\nH -1.87619800 -1.52102200 2.26156100\nH -0.10818900 -1.58911100 2.30158800\nH 1.22813800 -1.96392600 0.07209600\nH 0.32203200 -2.51717500 -1.34076000\nH 0.28949500 -3.45390100 0.14312900\nH -1.69774600 -2.38551500 -2.46250600\nH -3.41167500 -2.25242400 -2.15439900\nH 0.98300500 2.92426300 0.94756200\nH 1.27133600 2.04694500 2.71852900\nH 0.67619800 0.26834700 0.46173700\nC 2.79441800 2.18298000 -2.30340300\nO 2.10861800 1.90282800 -1.09865800\nC 2.58861500 0.95995600 -0.27671000\nC 3.76569000 0.26408800 -0.52612900\nC 4.18359000 -0.70292900 0.39400600\nC 3.49187300 -0.96240700 1.56417800\nC 2.32112900 -0.24385300 1.80618100\nO 1.70586000 -0.43561200 2.97424500\nC 1.76278000 0.67733700 0.86465700\nH 2.20851000 2.95222600 -2.80580200\nH 2.85528100 1.29444400 -2.94295100\nH 3.80214300 2.56452100 -2.10634200\nH 4.36778000 0.45973000 -1.40413500\nH 5.10172500 -1.24837300 0.19198900\nH 3.85139400 -1.66859300 2.30322200\nH 1.11823300 0.33188000 3.11162200\n","xyz");
+	viewer_1778162434091444.mapAtomProperties([{"index": 0, "props": {"dx": -0.02512, "dy": -0.020432, "dz": -0.032085}}, {"index": 1, "props": {"dx": 0.011029, "dy": -0.034153, "dz": -0.01756}}, {"index": 2, "props": {"dx": 0.034466, "dy": -0.026197, "dz": -0.001656}}, {"index": 3, "props": {"dx": 0.031952, "dy": 0.0129, "dz": 0.023279}}, {"index": 4, "props": {"dx": -0.002122, "dy": 0.034202, "dz": 0.03606}}, {"index": 5, "props": {"dx": -0.025758, "dy": 0.032812, "dz": 0.02138}}, {"index": 6, "props": {"dx": 0.051873, "dy": -0.041159, "dz": 0.002044}}, {"index": 7, "props": {"dx": 0.066157, "dy": 0.025171, "dz": 0.036617}}, {"index": 8, "props": {"dx": -0.002658, "dy": 0.056136, "dz": 0.054398}}, {"index": 9, "props": {"dx": -0.040584, "dy": 0.044821, "dz": 0.01674}}, {"index": 10, "props": {"dx": 0.015787, "dy": 0.069521, "dz": 0.064768}}, {"index": 11, "props": {"dx": -0.172025, "dy": -0.054177, "dz": -0.060755}}, {"index": 12, "props": {"dx": -0.100951, "dy": -0.043139, "dz": -0.012746}}, {"index": 13, "props": {"dx": -0.111598, "dy": -0.003922, "dz": -0.043783}}, {"index": 14, "props": {"dx": -0.077386, "dy": -0.039439, "dz": -0.072106}}, {"index": 15, "props": {"dx": -0.077664, "dy": -0.038474, "dz": -0.016546}}, {"index": 16, "props": {"dx": -0.06526, "dy": -0.007571, "dz": 0.003573}}, {"index": 17, "props": {"dx": -0.085858, "dy": -0.051754, "dz": -0.0464}}, {"index": 18, "props": {"dx": -0.093762, "dy": -0.008779, "dz": -0.040644}}, {"index": 19, "props": {"dx": -0.080034, "dy": 0.00349, "dz": -0.004405}}, {"index": 20, "props": {"dx": -0.07597, "dy": -0.057819, "dz": -0.078144}}, {"index": 21, "props": {"dx": -0.090576, "dy": -0.050851, "dz": -0.07917}}, {"index": 22, "props": {"dx": -0.059302, "dy": -0.042727, "dz": -0.052317}}, {"index": 23, "props": {"dx": -0.074324, "dy": -0.0559, "dz": -0.000235}}, {"index": 24, "props": {"dx": -0.06225, "dy": -0.023597, "dz": -0.014933}}, {"index": 25, "props": {"dx": -0.072286, "dy": -0.01995, "dz": -0.019918}}, {"index": 26, "props": {"dx": -0.002218, "dy": -0.026335, "dz": 0.019725}}, {"index": 27, "props": {"dx": -0.081202, "dy": 0.048379, "dz": 0.03874}}, {"index": 28, "props": {"dx": -0.079193, "dy": -0.024263, "dz": -0.015851}}, {"index": 29, "props": {"dx": -0.096133, "dy": -0.054283, "dz": -0.052184}}, {"index": 30, "props": {"dx": -0.098149, "dy": -0.040866, "dz": -0.064583}}, {"index": 31, "props": {"dx": -0.084587, "dy": -0.008014, "dz": -0.028655}}, {"index": 32, "props": {"dx": -0.083024, "dy": -0.007577, "dz": -0.020975}}, {"index": 33, "props": {"dx": -0.084315, "dy": -0.004283, "dz": -0.060095}}, {"index": 34, "props": {"dx": -0.104375, "dy": 0.039578, "dz": 0.017087}}, {"index": 35, "props": {"dx": -0.039167, "dy": -0.000565, "dz": -0.003649}}, {"index": 36, "props": {"dx": -0.058788, "dy": 0.00223, "dz": -0.00315}}, {"index": 37, "props": {"dx": -0.035074, "dy": -0.033675, "dz": -0.033777}}, {"index": 38, "props": {"dx": -0.044313, "dy": -0.061354, "dz": -0.078555}}, {"index": 39, "props": {"dx": 0.053787, "dy": 0.028589, "dz": 0.02238}}, {"index": 40, "props": {"dx": 0.011615, "dy": 0.02321, "dz": 0.061495}}, {"index": 41, "props": {"dx": 0.555559, "dy": 0.248258, "dz": 0.233512}}, {"index": 42, "props": {"dx": 0.002007, "dy": -0.018837, "dz": -0.029851}}, {"index": 43, "props": {"dx": 0.067226, "dy": -0.00775, "dz": 0.019348}}, {"index": 44, "props": {"dx": 0.137814, "dy": 0.060455, "dz": 0.015279}}, {"index": 45, "props": {"dx": 0.139174, "dy": 0.071124, "dz": 0.040409}}, {"index": 46, "props": {"dx": 0.108656, "dy": 0.065259, "dz": 0.054881}}, {"index": 47, "props": {"dx": 0.127391, "dy": 0.048092, "dz": 0.066583}}, {"index": 48, "props": {"dx": 0.119561, "dy": 0.019881, "dz": 0.068457}}, {"index": 49, "props": {"dx": 0.044248, "dy": -0.024491, "dz": -0.005784}}, {"index": 50, "props": {"dx": 0.159763, "dy": 0.036788, "dz": 0.040963}}, {"index": 51, "props": {"dx": -0.055082, "dy": -0.059499, "dz": -0.022234}}, {"index": 52, "props": {"dx": -0.002135, "dy": -0.04235, "dz": 0.006477}}, {"index": 53, "props": {"dx": -0.006779, "dy": 0.02584, "dz": -0.078863}}, {"index": 54, "props": {"dx": 0.141088, "dy": 0.04204, "dz": 0.035924}}, {"index": 55, "props": {"dx": 0.09852, "dy": 0.050213, "dz": 0.047993}}, {"index": 56, "props": {"dx": 0.126776, "dy": 0.017252, "dz": 0.035791}}, {"index": 57, "props": {"dx": -0.078714, "dy": -0.111127, "dz": -0.048665}}]);
+	viewer_1778162434091444.vibrate(20,1,true);
+	viewer_1778162434091444.animate({"loop": "backAndForth", "interval": 50, "reps": 0});
+	viewer_1778162434091444.setStyle({"sphere": {"radius": 0.4}, "stick": {}});
+	viewer_1778162434091444.setBackgroundColor("0xeeeeee",0);
+	viewer_1778162434091444.zoomTo();
+
+window.saveView = function() {
+    const v = viewer_1778162434091444.getView();
+    console.log(JSON.stringify(v));
+    return v;
+};
+
+window.saveAllViews = function() {
+    const out = {"0,0": viewer_1778162434091444.getView()};
+    console.log(JSON.stringify(out, null, 2));
+    return out;
+};
+
+window.setViewForCell = function(row, col, view) {
+    viewer_1778162434091444.setView(view);
+    viewer_1778162434091444.render();
+};
+
+window.applyViews = function(viewMap) {
+    if (viewMap["0,0"]) {
+        viewer_1778162434091444.setView(viewMap["0,0"]);
+        viewer_1778162434091444.render();
+    }
+};
+
+const fixedViews = {
+    // "0,0": [1, 2, 3, 4, 5, 6, 7, 8],
+};
+
+applyViews(fixedViews);
+
+viewer_1778162434091444.render();
+});
+</script>
+</body>
+</html>
