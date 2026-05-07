@@ -5,10 +5,26 @@ repo_url: https://github.com/MolinDiscovery/FRUST
 
 theme:
   name: material
+  palette:
+    - scheme: default
+      primary: blue grey
+      accent: amber
+      toggle:
+        icon: material/weather-night
+        name: Switch to dark mode
+
+    - scheme: slate
+      primary: blue grey
+      accent: amber
+      toggle:
+        icon: material/weather-sunny
+        name: Switch to light mode
   features:
     - navigation.sections
     - navigation.indexes
+    - navigation.path
     - content.code.copy
+    - content.code.annotate
     - search.suggest
     - search.highlight
 
