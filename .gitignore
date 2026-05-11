@@ -12,6 +12,7 @@ build
 # Different files
 updatepypi.txt
 setup.py
+AGENTS.md
 
 # Different folders
 .vscode/
