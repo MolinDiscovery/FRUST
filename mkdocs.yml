@@ -69,6 +69,12 @@ nav:
       - Inspecting Results: workflows/inspecting-results.md
       - Directory And Outputs: workflows/directory-outputs.md
       - DataFrames And Results: workflows/dataframes.md
+  - Visualization:
+      - Overview: visualization/overview.md
+      - Molecular Grids: visualization/molecular-grids.md
+      - DataFrame Inspection: visualization/dataframe-inspection.md
+      - Vibrations: visualization/vibrations.md
+      - Energy Profiles: visualization/energy-profiles.md
   - External Tools:
       - UMA: external-tools/uma.md
       - g-xTB: external-tools/gxtb.md
@@ -79,6 +85,7 @@ nav:
       - Transition States: troubleshooting/transition-states.md
       - Cluster Runs: troubleshooting/cluster-runs.md
   - API Reference:
+      - Visualization: api/vis.md
       - Stepper: api/stepper.md
       - Pipelines: api/pipes.md
       - Cluster: api/cluster.md
