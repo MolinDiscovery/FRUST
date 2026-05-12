@@ -20,6 +20,7 @@ theme:
         icon: material/weather-sunny
         name: Switch to light mode
   features:
+    - navigation.tabs
     - navigation.sections
     - navigation.indexes
     - navigation.path
@@ -56,38 +57,41 @@ markdown_extensions:
       alternate_style: true
 
 nav:
-  - Home: index.md
-  - Getting Started:
-      - Installation:
-          - Basic Installation: getting-started/installation.md
-          - External Tool Setup: getting-started/external-tool-setup.md
-      - Quickstart: getting-started/quickstart.md
-  - Workflows:
-      - Overview: workflows/overview.md
-      - TS Guess Generation: workflows/ts-guess-generation.md
-      - Optimization Pipeline: workflows/optimization-pipeline.md
-      - Inspecting Results: workflows/inspecting-results.md
-      - Directory And Outputs: workflows/directory-outputs.md
-      - DataFrames And Results: workflows/dataframes.md
-  - Visualization:
-      - Overview: visualization/overview.md
-      - Molecular Grids: visualization/molecular-grids.md
-      - DataFrame Inspection: visualization/dataframe-inspection.md
-      - Vibrations: visualization/vibrations.md
-      - Energy Profiles: visualization/energy-profiles.md
-  - External Tools:
-      - UMA: external-tools/uma.md
-      - g-xTB: external-tools/gxtb.md
-  - Cluster:
-      - Submission: cluster/submission.md
-  - Troubleshooting:
-      - Failed Calculations: troubleshooting/failed-calculations.md
-      - Transition States: troubleshooting/transition-states.md
-      - Cluster Runs: troubleshooting/cluster-runs.md
-  - API Reference:
-      - Visualization: api/vis.md
-      - Stepper: api/stepper.md
-      - Pipelines: api/pipes.md
-      - Cluster: api/cluster.md
-      - Schema: api/schema.md
-      - Utility Modules: api/utils.md
+  - Documentation:
+      - Home: index.md
+      - Getting Started:
+          - Installation:
+              - Basic Installation: getting-started/installation.md
+              - External Tool Setup: getting-started/external-tool-setup.md
+          - Quickstart: getting-started/quickstart.md
+      - Workflows:
+          - Overview: workflows/overview.md
+          - TS Guess Generation: workflows/ts-guess-generation.md
+          - Optimization Pipeline: workflows/optimization-pipeline.md
+          - Inspecting Results: workflows/inspecting-results.md
+          - Directory And Outputs: workflows/directory-outputs.md
+          - DataFrames And Results: workflows/dataframes.md
+      - Visualization:
+          - Overview: visualization/overview.md
+          - Molecular Grids: visualization/molecular-grids.md
+          - DataFrame Inspection: visualization/dataframe-inspection.md
+          - Vibrations: visualization/vibrations.md
+          - Energy Profiles: visualization/energy-profiles.md
+      - External Tools:
+          - UMA: external-tools/uma.md
+          - g-xTB: external-tools/gxtb.md
+      - Cluster:
+          - Submission: cluster/submission.md
+      - Troubleshooting:
+          - Failed Calculations: troubleshooting/failed-calculations.md
+          - Transition States: troubleshooting/transition-states.md
+          - Cluster Runs: troubleshooting/cluster-runs.md
+      - API Reference:
+          - Visualization: api/vis.md
+          - Stepper: api/stepper.md
+          - Pipelines: api/pipes.md
+          - Cluster: api/cluster.md
+          - Schema: api/schema.md
+          - Utility Modules: api/utils.md
+  - Tutorials:
+      - Templates: tutorials/templates.md
