@@ -8,6 +8,68 @@ files for figures, external programs, or manual inspection.
 from frust.utils.io import write_xyz
 ```
 
+## Start from a structure dataframe
+
+`write_xyz` expects one structure per dataframe row. Think of the dataframe as
+the source table for the XYZ files:
+
+```text
+one dataframe row + one coordinate column -> one .xyz file
+```
+
+A typical filtered FRUST dataframe might look like this:
+
+| substrate_name | moltype | atoms | xtb_opt-oc | orca_opt-oc |
+| --- | --- | --- | --- | --- |
+| acetanilide | product(anin) | `["C", "O", "N", "H", ...]` | xTB coordinates | final DFT coordinates |
+| benzamide | product(anin) | `["C", "O", "N", "H", ...]` | xTB coordinates | final DFT coordinates |
+
+The important columns are:
+
+| Dataframe field | Used for |
+| --- | --- |
+| `substrate_name` | output filename |
+| `atoms` | XYZ atom symbols |
+| `xtb_opt-oc`, `orca_opt-oc`, or another coordinate column | XYZ coordinates |
+
+The export process is:
+
+```text
+row 0
+├── filename from substrate_name: acetanilide
+├── atom symbols from atoms: ["C", "O", "N", "H", ...]
+└── coordinates from orca_opt-oc: [(x, y, z), ...]
+    ↓
+acetanilide.xyz
+```
+
+Conceptually, the first row becomes an XYZ file with an atom count, a comment
+line, and one line per atom:
+
+```text
+4
+
+C 0.02000000 0.01000000 0.00000000
+O 1.22000000 0.02000000 0.00000000
+N 0.01000000 1.31000000 0.01000000
+H 0.00000000 1.91000000 0.81000000
+```
+
+!!! note "Coordinate arrays"
+    The number of atom symbols must match the number of coordinate rows. A
+    row with four atoms should have a coordinate array with shape `(4, 3)`.
+
+!!! info "Automatic coordinate selection"
+    If `coords_col` is omitted, FRUST uses the last coordinate-like column in
+    dataframe order. Coordinate-like columns contain `coords` or end in `-oc`
+    / `-opt_coords`. In a table with `xtb_opt-oc` followed by `orca_opt-oc`,
+    the default export uses `orca_opt-oc`.
+
+!!! tip "Older dataframe column names"
+    Older FRUST parquet files may use longer coordinate names such as
+    `xtb-gfn-opt-opt_coords` or
+    `DFT-wB97X-D3-6-31G**-OptTS-opt_coords`. `write_xyz` recognizes those too.
+
 ## Export the final geometry from a dataframe
 
 For the common case, pass a dataframe and an output directory. If you do not
@@ -19,7 +81,6 @@ df_write = df[df["moltype"] == "product(anin)"]
 paths = write_xyz(
     df_write,
     "structures/products",
-    name_col="ligand_name",
 )
 
 paths
@@ -42,12 +103,6 @@ structures/products/
 └── benzamide.xyz
 ```
 
-!!! info "Default coordinate selection"
-    If `coords_col` is omitted, FRUST uses the last coordinate-like column in
-    dataframe order. Coordinate-like columns are columns containing `coords` or
-    ending in `-oc` / `-opt_coords`. This usually corresponds to the latest
-    optimized geometry.
-
 ## Choose a specific coordinate column
 
 Use `coords_col` when you want a specific geometry instead of the automatic
@@ -57,8 +112,7 @@ latest-column choice.
 paths = write_xyz(
     df_write,
     "structures/products/dft",
-    coords_col="DFT-wB97X-D3-6-31G**-OptTS-opt_coords",
-    name_col="ligand_name",
+    coords_col="orca_opt-oc",
 )
 ```
 
@@ -86,10 +140,9 @@ paths = write_xyz(
     df_write,
     "structures/products",
     coords_col={
-        "DFT": "DFT-wB97X-D3-6-31G**-OptTS-opt_coords",
-        "xTB": "xtb-gfn-opt-opt_coords",
+        "DFT": "orca_opt-oc",
+        "xTB": "xtb_opt-oc",
     },
-    name_col="ligand_name",
 )
 ```
 
@@ -118,18 +171,33 @@ structures/products/
 
 ## Preview structures while exporting
 
-Set `show_mols=True` to display the written structures after export.
-Additional keyword arguments are passed to `MolTo3DGrid`.
+Set `show_mols=True` to display the written structures after export. FRUST
+opens the same interactive 3D grid used by `MolTo3DGrid`, so you can inspect
+the saved geometries immediately.
 
 ```python
 paths = write_xyz(
     df_write,
     "structures/products",
-    name_col="ligand_name",
     show_mols=True,
     columns=3,
 )
 ```
+
+<iframe
+  src="../../assets/xyz-export-structures.html"
+  title="Interactive 3D preview of the acetanilide and benzamide XYZ export examples"
+  width="100%"
+  height="310"
+  loading="lazy"
+  style="border: 1px solid var(--md-default-fg-color--lightest); border-radius: 6px;"
+></iframe>
+
+This is the same two-structure export shown above.
+
+!!! info "Preview layout"
+    Keyword arguments such as `columns` are forwarded to `MolTo3DGrid` and
+    only affect the preview grid, not the written `.xyz` files.
 
 The returned `paths` are still available even when the molecule grid is shown:
 
@@ -149,7 +217,6 @@ you want FRUST to stop instead.
 paths = write_xyz(
     df_write,
     "structures/products",
-    name_col="ligand_name",
     overwrite=False,
 )
 ```
@@ -173,9 +240,9 @@ If two rows produce the same filename stem, FRUST appends a stable numeric
 suffix:
 
 ```text
-ligand.xyz
-ligand_2.xyz
-ligand_3.xyz
+acetanilide.xyz
+acetanilide_2.xyz
+acetanilide_3.xyz
 ```
 
 This prevents multiple rows in the same export from silently overwriting each
