@@ -71,6 +71,7 @@ nav:
           - Inspecting Results: workflows/inspecting-results.md
           - Directory And Outputs: workflows/directory-outputs.md
           - DataFrames And Results: workflows/dataframes.md
+          - Exporting XYZ Structures: workflows/xyz-export.md
       - Visualization:
           - Overview: visualization/overview.md
           - Molecular Grids: visualization/molecular-grids.md
