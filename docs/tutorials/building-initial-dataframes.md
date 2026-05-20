@@ -158,15 +158,14 @@ import pandas as pd
 from frust.stepper import Stepper
 from frust.utils.mols import create_mol_per_rpos
 
-ligands = pd.DataFrame(
+substrates = pd.DataFrame(
     {
-        "substrate_name": ["anisole"],
-        "smiles": ["COc1ccccc1"],
-        "rpos": ["2"],
+        "substrate_name": ["phenol"],
+        "smiles": ["Oc1ccccc1"],
     }
 )
 
-mols = create_mol_per_rpos(ligands, select_mols="uniques")
+mols = create_mol_per_rpos(substrates)
 
 step = Stepper(step_type="MOLS", save_output_dir=False)
 df = step.build_initial_df(mols, n_confs=2)
@@ -178,23 +177,42 @@ Output:
 
 | substrate_name | structure_type | molecule_role | rpos | cid |
 | --- | --- | --- | ---: | ---: |
-| anisole | MOL | ligand |  | 0 |
-| anisole | MOL | ligand |  | 1 |
+| phenol | MOL | ligand |  | 0 |
+| phenol | MOL | int2 | 2 | 0 |
+| phenol | MOL | int2 | 3 | 0 |
+| phenol | MOL | mol2 | 2 | 0 |
+| phenol | MOL | mol2 | 3 | 0 |
+
+Because the input dataframe has no `rpos` column, FRUST expands the workflow
+structures over the valid aromatic C-H positions it finds for the substrate.
+
+!!! tip "Restrict expansion with `rpos`"
+
+    Add an `rpos` column when you only want selected positions:
+
+    ```python
+    substrates = pd.DataFrame(
+        {
+            "substrate_name": ["phenol"],
+            "smiles": ["Oc1ccccc1"],
+            "rpos": ["2;3"],
+        }
+    )
+    ```
 
 If you want one compact call, use the explicit workflow flag:
 
 ```python
 df = step.build_initial_df(
-    ligands,
+    substrates,
     workflow="mols",
-    select_mols="uniques",
     n_confs=2,
 )
 ```
 
 !!! warning "Do not hide workflow expansion behind bare SMILES"
 
-    `build_initial_df("COc1ccccc1")` creates plain anisole. Use
+    `build_initial_df("Oc1ccccc1")` creates plain phenol. Use
     `workflow="mols"` or `create_mol_per_rpos(...)` when you want FRUST's
     workflow molecule set.
 
@@ -210,15 +228,14 @@ import pandas as pd
 from frust.stepper import Stepper
 from frust.utils.mols import create_ts_per_rpos
 
-ligands = pd.DataFrame(
+substrates = pd.DataFrame(
     {
         "smiles": ["CN1C=CC=C1"],
-        "rpos": ["2"],
     }
 )
 
 ts_structs = create_ts_per_rpos(
-    ligands,
+    substrates,
     ts_guess_xyz="structures/ts1.xyz",
     return_format="dict",
 )
@@ -243,6 +260,11 @@ Output:
 | custom_name | structure_type | rpos | constraint_atoms | cid | coords_embedded |
 | --- | --- | ---: | --- | ---: | --- |
 | `TS1(1-methylpyrrole_rpos(2))` | TS1 | 2 | `[10, 11, 39, 40, 41, 44]` | 0 | 54 x 3 coordinates |
+| `TS1(1-methylpyrrole_rpos(3))` | TS1 | 3 | `[10, 11, 39, 40, 41, 44]` | 0 | 54 x 3 coordinates |
+
+As with the molecule workflow, omitting `rpos` lets FRUST expand over the valid
+aromatic C-H positions. Add an `rpos` column when a template check or production
+screen should target only selected positions.
 
 `step_type="auto"` infers the constrained type from the dataframe. If the
 dataframe contains only `TS1` rows, later constrained calculations use the
