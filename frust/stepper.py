@@ -13,6 +13,13 @@ from inspect import signature
 from rdkit import Chem
 from rdkit.Chem.rdchem import Mol
 from frust.utils.dirs import make_step_dir, prepare_base_dir
+from frust.utils.provenance import (
+    calculator_provenance,
+    env_executable,
+    env_path,
+    gxtb_executable,
+    oet_executable,
+)
 from frust.utils.slurm import detect_job_id
 from frust.schema import (
     energy_columns,
@@ -201,6 +208,10 @@ class Stepper:
     def _step_type_upper(self) -> str:
         """Normalize step_type for callers that only need TS dispatch."""
         return (self.step_type or "").upper()
+
+    def _effective_n_cores(self, n_cores: int | None = None) -> int:
+        """Return the effective core count for one calculator call."""
+        return int(n_cores) if n_cores is not None else int(self.n_cores)
 
     def _validate_constraint_request(self, df: pd.DataFrame) -> str:
         """Validate that constraint mode is fully specified."""
@@ -1159,6 +1170,7 @@ class Stepper:
                 - saved file-content columns when the backend returns them
         """
         opts = dict(options) if options else {"gfn": 0}
+        effective_n_cores = self._effective_n_cores(n_cores)
         if constraint:
             self._validate_constraint_request(df)
         keys = list(opts)
@@ -1175,7 +1187,7 @@ class Stepper:
 
             # Per-call override: only affects xTB, not ORCA.
             if n_cores is not None:
-                inp["n_cores"] = int(n_cores)
+                inp["n_cores"] = effective_n_cores
 
             # Only add the user‐provided card if it's non‐empty
             base_str = detailed_inp_str.strip()
@@ -1274,7 +1286,19 @@ class Stepper:
             df, self.xtb_fn, prefix, build_xtb, save_step, lowest
         )
         result.attrs.setdefault("frust_steps", {}).setdefault(prefix, {}).update(
-            {"engine": "xtb", "options": opts}
+            {
+                "engine": "xtb",
+                "options": opts,
+                "calculator": calculator_provenance(
+                    name="xtb",
+                    mode="direct",
+                    backend=self.xtb_fn,
+                    resources={"n_cores": effective_n_cores},
+                    executables={
+                        "xtb": env_executable("XTB_EXE", fallback_command="xtb"),
+                    },
+                ),
+            }
         )
         return result
 
@@ -1291,6 +1315,7 @@ class Stepper:
     ) -> pd.DataFrame:
         """Run g-xTB v2 calculations through Tooltoad's g-xTB calculator."""
         opts = dict(options) if options else {}
+        effective_n_cores = self._effective_n_cores(n_cores)
         if constraint:
             self._validate_constraint_request(df)
         keys = list(opts)
@@ -1305,7 +1330,7 @@ class Stepper:
             step_type = self._step_type_upper()
 
             if n_cores is not None:
-                inp["n_cores"] = int(n_cores)
+                inp["n_cores"] = effective_n_cores
 
             base_str = detailed_inp_str.strip()
             if base_str:
@@ -1403,7 +1428,19 @@ class Stepper:
             df, self.gxtb_fn, prefix, build_gxtb, save_step, lowest
         )
         result.attrs.setdefault("frust_steps", {}).setdefault(prefix, {}).update(
-            {"engine": "gxtb", "options": opts}
+            {
+                "engine": "gxtb",
+                "options": opts,
+                "calculator": calculator_provenance(
+                    name="gxtb",
+                    mode="direct_gxtb",
+                    backend=self.gxtb_fn,
+                    resources={"n_cores": effective_n_cores},
+                    executables={
+                        "gxtb": gxtb_executable(),
+                    },
+                ),
+            }
         )
         return result
 
@@ -1557,13 +1594,51 @@ class Stepper:
             opt_flag = next((k for k in keys[2:] if k in ("OptTS", "Freq", "NumFreq", "NoSym")), None)
             prefix = f"{name}-{func}-{basis}" + (f"-{opt_flag}" if opt_flag else "")
 
+        effective_n_cores = self._effective_n_cores(n_cores)
+
+        def build_orca_calculator(
+            mode: str,
+            *,
+            executables: dict[str, object] | None = None,
+            resources: dict[str, object] | None = None,
+            uma_metadata: dict[str, object] | None = None,
+        ) -> dict[str, object]:
+            execs = {
+                "orca": env_executable("ORCA_EXE"),
+                "xtb": env_executable("XTB_EXE", fallback_command="xtb"),
+            }
+            execs.update(executables or {})
+
+            resource_data: dict[str, object] = {
+                "n_cores": effective_n_cores,
+                "memory_gb": self.memory_gb,
+            }
+            resource_data.update(resources or {})
+
+            metadata = {}
+            if uma_metadata is not None:
+                metadata["uma"] = uma_metadata
+
+            return calculator_provenance(
+                name="orca",
+                mode=mode,
+                backend=self.orca_fn,
+                resources=resource_data,
+                executables=execs,
+                environment={
+                    "OPEN_MPI_DIR": env_path("OPEN_MPI_DIR"),
+                    "XTBPATH": env_path("XTBPATH"),
+                },
+                **metadata,
+            )
+
         def build_orca(row: Series) -> dict:
             step_type = self._step_type_upper()
             inp = {
                 "options": opts,
                 "xtra_inp_str": xtra_inp_str.strip(),
                 "memory": self.memory_gb,
-                "n_cores": int(n_cores) if n_cores is not None else self.n_cores,
+                "n_cores": effective_n_cores,
                 "read_files": read_files,
             }
 
@@ -1674,14 +1749,18 @@ class Stepper:
         if uma is None and not gxtb:
             result = self._run_engine(df, self.orca_fn, prefix, build_orca, save_step, lowest, save_files, use_last_hess)
             result.attrs.setdefault("frust_steps", {}).setdefault(prefix, {}).update(
-                {"engine": "orca", "options": opts}
+                {
+                    "engine": "orca",
+                    "options": opts,
+                    "calculator": build_orca_calculator("direct"),
+                }
             )
             return result
 
         if gxtb:
             from frust.utils.gxtb import gxtb_orca_block, resolve_gxtb_exe
 
-            resolved_gxtb_exe, gxtb_exe_source = resolve_gxtb_exe(gxtb_exe)
+            resolved_gxtb_exe, _gxtb_exe_source = resolve_gxtb_exe(gxtb_exe)
             client_block = gxtb_orca_block(gxtb_exe=str(resolved_gxtb_exe), ext_params=gxtb_ext_params)
 
             def build_orca_gxtb(row: Series) -> dict:
@@ -1705,10 +1784,21 @@ class Stepper:
                     "engine": "orca",
                     "options": opts,
                     "gxtb": True,
-                    "gxtb_exe": str(resolved_gxtb_exe),
-                    "gxtb_exe_source": gxtb_exe_source,
+                    "calculator": build_orca_calculator(
+                        "orca_external_gxtb",
+                        executables={
+                            "oet_gxtb": oet_executable("oet_gxtb"),
+                            "gxtb": gxtb_executable(
+                                gxtb_exe,
+                                resolved_path=resolved_gxtb_exe,
+                            ),
+                        },
+                    ),
                 }
             )
+            calc_gxtb = result.attrs["frust_steps"][prefix]["calculator"]["executables"]["gxtb"]
+            result.attrs["frust_steps"][prefix]["gxtb_exe"] = calc_gxtb["path"]
+            result.attrs["frust_steps"][prefix]["gxtb_exe_source"] = calc_gxtb["source"]
             return result
         
         from frust.utils.uma import parse_uma_spec, uma_orca_block, uma_server as run_uma_server
@@ -1720,7 +1810,35 @@ class Stepper:
             offline=uma_offline,
         )
 
-        def run_with_uma_block(client_block: str) -> pd.DataFrame:
+        def uma_calculator(
+            *,
+            server: bool,
+            resources: dict[str, object] | None = None,
+        ) -> dict[str, object]:
+            executable_entries = (
+                {
+                    "oet_client": oet_executable("oet_client"),
+                    "oet_server": oet_executable("oet_server"),
+                }
+                if server
+                else {"oet_uma": oet_executable("oet_uma")}
+            )
+            return build_orca_calculator(
+                "orca_external_uma",
+                executables=executable_entries,
+                resources=resources,
+                uma_metadata={
+                    "spec": uma,
+                    "task": spec.task,
+                    "model": spec.model,
+                    "device": spec.device,
+                    "cache_dir": spec.cache_dir,
+                    "offline": spec.offline,
+                    "server": server,
+                },
+            )
+
+        def run_with_uma_block(client_block: str, calculator: dict[str, object]) -> pd.DataFrame:
             orig_build = build_orca
 
             def build_orca_uma(row: Series) -> dict:
@@ -1738,6 +1856,7 @@ class Stepper:
                     "uma_task": spec.task,
                     "uma_model": spec.model,
                     "uma_server": uma_server,
+                    "calculator": calculator,
                 }
             )
             return result
@@ -1753,10 +1872,9 @@ class Stepper:
 
         if not uma_server:
             client_block = uma_orca_block(spec, server=False)
-            return run_with_uma_block(client_block)
+            return run_with_uma_block(client_block, uma_calculator(server=False))
 
-        effective_cores = int(n_cores) if n_cores is not None else self.n_cores
-        server_cores = uma_server_cores if uma_server_cores is not None else effective_cores
+        server_cores = uma_server_cores if uma_server_cores is not None else effective_n_cores
         with run_uma_server(
             log_dir=uma_log_dir,
             keep_logs=uma_keep_logs,
@@ -1765,7 +1883,16 @@ class Stepper:
             memory_per_thread_mib=uma_memory_per_thread_mib,
         ) as server_handle:
             client_block = uma_orca_block(spec, server=True, bind=server_handle.bind)
-            result = run_with_uma_block(client_block)
+            result = run_with_uma_block(
+                client_block,
+                uma_calculator(
+                    server=True,
+                    resources={
+                        "uma_server_cores": int(server_cores),
+                        "uma_memory_per_thread_mib": int(uma_memory_per_thread_mib),
+                    },
+                ),
+            )
             if uma_keep_logs == "on_failure" and uma_result_failed(result):
                 server_handle.preserve()
             return result

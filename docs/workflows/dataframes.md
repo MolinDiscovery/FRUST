@@ -86,14 +86,53 @@ Calculation stages use a separate `frust_steps` block:
 
 ```python
 df = step.gxtb(df, name="gxtb_opt", options={"opt": None})
-df.attrs["frust_steps"]
+df.attrs["frust_steps"]["gxtb_opt"]
+```
+
+Output:
+
+```python
+{
+    "engine": "gxtb",
+    "columns": ["gxtb_opt-EE", "gxtb_opt-NT", "gxtb_opt-oc"],
+    "options": {"opt": None},
+    "calculator": {
+        "name": "gxtb",
+        "mode": "direct_gxtb",
+        "backend": "tooltoad.gxtb.gxtb_calculate",
+        "resources": {"n_cores": 8},
+        "executables": {
+            "gxtb": {
+                "path": "/cluster/apps/g-xtb-2.0.0/bin/xtb",
+                "configured": "/cluster/apps/g-xtb-2.0.0/bin/xtb",
+                "source": "GXTB_EXE",
+                "resolved": True,
+            }
+        },
+    },
+}
 ```
 
 `frust_initial_df` describes input construction. `frust_steps` describes
-calculation stages and their result columns. FRUST does not store raw molecule
-objects or full input dictionaries in dataframe attributes; row-level identity
-stays in columns such as `substrate_name`, `smiles`, `structure_type`, `rpos`,
-and `cid`.
+calculation stages, result columns, and calculator provenance. The nested
+`calculator` block is the preferred place to inspect which backend, resources,
+and external executables were used. FRUST does not store raw molecule objects
+or full input dictionaries in dataframe attributes; row-level identity stays in
+columns such as `substrate_name`, `smiles`, `structure_type`, `rpos`, and `cid`.
+
+Common executable sources:
+
+| Calculator path | Source |
+| --- | --- |
+| Normal xTB | `XTB_EXE`, or `xtb` resolved from `PATH` |
+| Direct g-xTB | `GXTB_EXE` |
+| ORCA | `ORCA_EXE` |
+| OET wrappers | `OET_TOOLS/bin/...` |
+
+!!! note
+    Provenance is best effort. If an executable is not discoverable, FRUST keeps
+    the configured value and records `resolved=False` instead of turning
+    metadata collection into a new failure mode.
 
 ## Coordinates
 
@@ -275,7 +314,13 @@ for name, meta in df.attrs.get("frust_steps", {}).items():
 ```
 
 This can tell you which engine was used, what options were passed, and whether
-special routes such as UMA or g-xTB were active.
+special routes such as UMA or g-xTB were active. For executable provenance,
+prefer the nested calculator block:
+
+```python
+meta = df.attrs["frust_steps"]["gxtb_opt"]
+meta["calculator"]["executables"]["gxtb"]
+```
 
 This metadata is useful when you come back to an old parquet file and need to
 remember how it was produced.

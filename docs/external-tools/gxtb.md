@@ -291,22 +291,24 @@ and other ORCA optimizer workflows.
 You can check which g-xTB executable FRUST used from the step metadata:
 
 ```python
-df_ts.attrs["frust_steps"]["gxtb-OptTS"]
+df_ts.attrs["frust_steps"]["gxtb-OptTS"]["calculator"]["executables"]["gxtb"]
 ```
 
 Example:
 
 ```python
 {
-    "engine": "orca",
-    "gxtb": True,
-    "gxtb_exe": "/cluster/apps/g-xtb-2.0.0/bin/xtb",
-    "gxtb_exe_source": "GXTB_EXE",
+    "path": "/cluster/apps/g-xtb-2.0.0/bin/xtb",
+    "configured": "/cluster/apps/g-xtb-2.0.0/bin/xtb",
+    "source": "GXTB_EXE",
+    "resolved": True,
 }
 ```
 
-`gxtb_exe_source` is `"GXTB_EXE"` when FRUST used the environment variable and
+`source` is `"GXTB_EXE"` when FRUST used the environment variable and
 `"gxtb_exe"` when you passed `gxtb_exe=...` directly to `step.orca(...)`.
+For compatibility, ORCA-driven g-xTB stages also keep the flat aliases
+`gxtb_exe` and `gxtb_exe_source` on the stage metadata.
 
 For TS searches that need a better starting Hessian, use a two-step workflow:
 

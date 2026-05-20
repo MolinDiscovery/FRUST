@@ -100,6 +100,12 @@ class GxtbOetOrcaTests(unittest.TestCase):
         self.assertTrue(meta["gxtb"])
         self.assertEqual(meta["gxtb_exe"], str(gxtb.resolve()))
         self.assertEqual(meta["gxtb_exe_source"], "GXTB_EXE")
+        calc = meta["calculator"]
+        self.assertEqual(calc["name"], "orca")
+        self.assertEqual(calc["mode"], "orca_external_gxtb")
+        self.assertEqual(calc["executables"]["gxtb"]["path"], str(gxtb.resolve()))
+        self.assertEqual(calc["executables"]["gxtb"]["source"], "GXTB_EXE")
+        self.assertEqual(calc["executables"]["oet_gxtb"]["path"], str((oet / "bin" / "oet_gxtb").resolve()))
 
     def test_orca_gxtb_attrs_record_explicit_exe_source(self):
         def fake_orca(
@@ -134,6 +140,8 @@ class GxtbOetOrcaTests(unittest.TestCase):
         meta = out.attrs["frust_steps"]["orca-ExtOpt-OptTS"]
         self.assertEqual(meta["gxtb_exe"], str(gxtb.resolve()))
         self.assertEqual(meta["gxtb_exe_source"], "gxtb_exe")
+        self.assertEqual(meta["calculator"]["executables"]["gxtb"]["path"], str(gxtb.resolve()))
+        self.assertEqual(meta["calculator"]["executables"]["gxtb"]["source"], "gxtb_exe")
 
     def test_orca_rejects_uma_and_gxtb_together(self):
         step = Stepper(step_type="MOLS", debug=True, save_output_dir=False)
