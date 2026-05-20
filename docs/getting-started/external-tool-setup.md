@@ -126,13 +126,15 @@ that contains `bin/`.
 
 ## g-xTB
 
-Install or unpack the [g-xTB 2.0.0](https://github.com/grimme-lab/g-xtb/releases/tag/v2.0.0) distribution somewhere stable. The final executable
-should be the special g-xTB-capable `xtb`, not the normal xTB executable.
+Install or unpack the latest [g-xTB v2 release](https://github.com/grimme-lab/g-xtb/releases)
+somewhere stable. The final executable should be the special g-xTB-capable
+`xtb`, not the normal xTB executable.
 
 Example layout:
 
 ```text
-${HOME}/.local/g-xtb/bin/xtb
+${HOME}/.local/g-xtb-2.0.1/bin/xtb
+${HOME}/.local/g-xtb -> ${HOME}/.local/g-xtb-2.0.1
 ```
 
 Make it executable:
@@ -150,6 +152,12 @@ GXTB_EXE=${GXTB_ROOT}/bin/xtb
 
 FRUST does not automatically reuse `XTB_EXE` for g-xTB because normal xTB
 installs usually do not support `--gxtb`.
+
+!!! note
+    g-xTB v2 is still a preliminary release and may receive frequent patch
+    releases. Keeping `GXTB_ROOT` as a stable symlink makes updates easier: you
+    can unpack a new version into a versioned directory, repoint the symlink,
+    and leave `GXTB_EXE=${GXTB_ROOT}/bin/xtb` unchanged.
 
 ## Smoke Tests
 
@@ -256,6 +264,40 @@ python install.py \
   --venv-dir "$OET_TOOLS/.venv" \
   --script-dir "$OET_TOOLS/bin" \
   -e uma
+```
+
+### Update g-xTB
+
+Update g-xTB by unpacking the new release next to the old one, then repoint
+`GXTB_ROOT` or the symlink used by `GXTB_EXE`.
+
+Example for a versioned install:
+
+```bash
+# Pick the version you downloaded from the g-xTB release page.
+GXTB_VERSION=2.0.1
+GXTB_INSTALL_ROOT=${HOME}/.local
+
+# After unpacking the archive, move or rename it to a versioned directory.
+# Adjust the source directory name to match the archive you downloaded.
+mv g-xtb-* "${GXTB_INSTALL_ROOT}/g-xtb-${GXTB_VERSION}"
+chmod +x "${GXTB_INSTALL_ROOT}/g-xtb-${GXTB_VERSION}/bin/xtb"
+
+# Keep one stable path in ~/.env.
+ln -sfn "${GXTB_INSTALL_ROOT}/g-xtb-${GXTB_VERSION}" "${GXTB_INSTALL_ROOT}/g-xtb"
+```
+
+Your `~/.env` can stay stable:
+
+```bash
+GXTB_ROOT=${HOME}/.local/g-xtb
+GXTB_EXE=${GXTB_ROOT}/bin/xtb
+```
+
+If you do not use a symlink, update `GXTB_EXE` directly:
+
+```bash
+GXTB_EXE=${HOME}/.local/g-xtb-2.0.1/bin/xtb
 ```
 
 Run the smoke tests again after updating.

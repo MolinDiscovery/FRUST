@@ -10,11 +10,17 @@ automatically.
 Put `GXTB_EXE` in `~/.env` and point it to the g-xTB v2 `xtb` executable. Do
 not point it at the normal `XTB_EXE` unless that binary advertises `--gxtb`.
 
-Use the g-xTB v2.0.0 release from Grimme lab:
+Install or unpack the latest g-xTB v2 release from Grimme lab:
 
 ```text
-https://github.com/grimme-lab/g-xtb/releases/tag/v2.0.0
+https://github.com/grimme-lab/g-xtb/releases
 ```
+
+!!! note
+    g-xTB v2 is still a preliminary release and may receive frequent patch
+    releases. Prefer a versioned install directory with a stable symlink, so
+    `GXTB_EXE` does not need to change every time you update from, for example,
+    `2.0.0` to `2.0.1`.
 
 FRUST uses the newer g-xTB v2 `xtb` binary, not older g-xTB workflows. For
 direct `Stepper.gxtb(...)`, Tooltoad calls this binary with `--gxtb`. For
@@ -24,11 +30,12 @@ external energies and gradients back to ORCA.
 
 ```bash
 GXTB_ROOT=/path/to/g-xtb
-GXTB_EXE=/path/to/g-xtb/bin/xtb
+GXTB_EXE=${GXTB_ROOT}/bin/xtb
 ```
 
 See [External tool setup](../getting-started/external-tool-setup.md) for the
-shared `.env` setup used by FRUST and Tooltoad.
+shared `.env` setup used by FRUST and Tooltoad, including a
+[g-xTB update workflow](../getting-started/external-tool-setup.md#update-g-xtb).
 
 Quick check:
 
@@ -298,8 +305,8 @@ Example:
 
 ```python
 {
-    "path": "/cluster/apps/g-xtb-2.0.0/bin/xtb",
-    "configured": "/cluster/apps/g-xtb-2.0.0/bin/xtb",
+    "path": "/cluster/apps/g-xtb/bin/xtb",
+    "configured": "/cluster/apps/g-xtb/bin/xtb",
     "source": "GXTB_EXE",
     "resolved": True,
 }
