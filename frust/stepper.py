@@ -1679,9 +1679,10 @@ class Stepper:
             return result
 
         if gxtb:
-            from frust.utils.gxtb import gxtb_orca_block
+            from frust.utils.gxtb import gxtb_orca_block, resolve_gxtb_exe
 
-            client_block = gxtb_orca_block(gxtb_exe=gxtb_exe, ext_params=gxtb_ext_params)
+            resolved_gxtb_exe, gxtb_exe_source = resolve_gxtb_exe(gxtb_exe)
+            client_block = gxtb_orca_block(gxtb_exe=str(resolved_gxtb_exe), ext_params=gxtb_ext_params)
 
             def build_orca_gxtb(row: Series) -> dict:
                 inp = build_orca(row)
@@ -1704,7 +1705,8 @@ class Stepper:
                     "engine": "orca",
                     "options": opts,
                     "gxtb": True,
-                    "gxtb_exe": gxtb_exe,
+                    "gxtb_exe": str(resolved_gxtb_exe),
+                    "gxtb_exe_source": gxtb_exe_source,
                 }
             )
             return result

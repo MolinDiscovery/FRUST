@@ -5,16 +5,41 @@ from pathlib import Path
 from frust.config import get_oet_tools
 
 
-def get_gxtb_exe(gxtb_exe: str | None = None) -> Path:
-    """Return the g-xTB v2 xtb executable path."""
-    value = gxtb_exe or os.environ.get("GXTB_EXE")
+def resolve_gxtb_exe(gxtb_exe: str | None = None) -> tuple[Path, str]:
+    """Return the resolved g-xTB executable path and configuration source.
+
+    Parameters
+    ----------
+    gxtb_exe : str or None, optional
+        Explicit path passed by the caller. If omitted, ``GXTB_EXE`` is used.
+
+    Returns
+    -------
+    tuple[pathlib.Path, str]
+        The resolved executable path and the source label, either
+        ``"gxtb_exe"`` or ``"GXTB_EXE"``.
+    """
+    if gxtb_exe:
+        value = gxtb_exe
+        source = "gxtb_exe"
+    else:
+        value = os.environ.get("GXTB_EXE")
+        source = "GXTB_EXE"
+
     if not value:
         raise RuntimeError("Set GXTB_EXE to the g-xTB v2 xtb executable.")
+
     path = Path(value).expanduser()
     if not path.exists():
         raise RuntimeError(f"g-xTB executable does not exist: {path}")
     if not os.access(path, os.X_OK):
         raise RuntimeError(f"g-xTB executable is not executable: {path}")
+    return path.resolve(), source
+
+
+def get_gxtb_exe(gxtb_exe: str | None = None) -> Path:
+    """Return the resolved g-xTB v2 xtb executable path."""
+    path, _source = resolve_gxtb_exe(gxtb_exe)
     return path
 
 

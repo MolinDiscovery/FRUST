@@ -288,6 +288,26 @@ FRUST automatically inserts `ExtOpt` and an OET `%method` block pointing to
 each ORCA gradient request. This is the correct route for `OptTS`, `NEB-TS`,
 and other ORCA optimizer workflows.
 
+You can check which g-xTB executable FRUST used from the step metadata:
+
+```python
+df_ts.attrs["frust_steps"]["gxtb-OptTS"]
+```
+
+Example:
+
+```python
+{
+    "engine": "orca",
+    "gxtb": True,
+    "gxtb_exe": "/cluster/apps/g-xtb-2.0.0/bin/xtb",
+    "gxtb_exe_source": "GXTB_EXE",
+}
+```
+
+`gxtb_exe_source` is `"GXTB_EXE"` when FRUST used the environment variable and
+`"gxtb_exe"` when you passed `gxtb_exe=...` directly to `step.orca(...)`.
+
 For TS searches that need a better starting Hessian, use a two-step workflow:
 
 ```python

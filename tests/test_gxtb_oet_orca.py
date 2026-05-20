@@ -49,7 +49,7 @@ class GxtbOetOrcaTests(unittest.TestCase):
 
         self.assertIn('ProgExt "', block)
         self.assertIn("/bin/oet_gxtb", block)
-        self.assertIn(f"Ext_Params \"--exe {gxtb}\"", block)
+        self.assertIn(f"Ext_Params \"--exe {gxtb.resolve()}\"", block)
         self.assertIn("Print[P_EXT_GRAD] 1", block)
 
     def test_orca_gxtb_injects_extopt_and_method_block(self):
@@ -94,9 +94,46 @@ class GxtbOetOrcaTests(unittest.TestCase):
 
         self.assertEqual(calls[0]["options"], {"ExtOpt": None, "OptTS": None})
         self.assertIn("/bin/oet_gxtb", calls[0]["xtra_inp_str"])
-        self.assertIn(f"--exe {gxtb}", calls[0]["xtra_inp_str"])
+        self.assertIn(f"--exe {gxtb.resolve()}", calls[0]["xtra_inp_str"])
         self.assertIn("orca-ExtOpt-OptTS-NT", out.columns)
-        self.assertTrue(out.attrs["frust_steps"]["orca-ExtOpt-OptTS"]["gxtb"])
+        meta = out.attrs["frust_steps"]["orca-ExtOpt-OptTS"]
+        self.assertTrue(meta["gxtb"])
+        self.assertEqual(meta["gxtb_exe"], str(gxtb.resolve()))
+        self.assertEqual(meta["gxtb_exe_source"], "GXTB_EXE")
+
+    def test_orca_gxtb_attrs_record_explicit_exe_source(self):
+        def fake_orca(
+            atoms,
+            coords,
+            n_cores,
+            scr,
+            data2file,
+            options,
+            xtra_inp_str,
+            memory,
+            read_files,
+        ):
+            return {
+                "normal_termination": True,
+                "electronic_energy": -1.0,
+                "opt_coords": coords,
+            }
+
+        with tempfile.TemporaryDirectory() as td:
+            oet, gxtb = _fake_paths(Path(td))
+            with patch.dict(os.environ, {"OET_TOOLS": str(oet)}):
+                step = Stepper(step_type="MOLS", debug=True, save_output_dir=False)
+                step.orca_fn = fake_orca
+                out = step.orca(
+                    _df(),
+                    options={"OptTS": None},
+                    gxtb=True,
+                    gxtb_exe=str(gxtb),
+                )
+
+        meta = out.attrs["frust_steps"]["orca-ExtOpt-OptTS"]
+        self.assertEqual(meta["gxtb_exe"], str(gxtb.resolve()))
+        self.assertEqual(meta["gxtb_exe_source"], "gxtb_exe")
 
     def test_orca_rejects_uma_and_gxtb_together(self):
         step = Stepper(step_type="MOLS", debug=True, save_output_dir=False)
