@@ -357,30 +357,6 @@ def run_ts_per_lig(
     )
     
     ts_type = read_ts_type_from_xyz(ts_guess_xyz)
-    # print(ts_type)
-
-    # if ts_type == 'TS1':
-    #     from frust.transformers import transformer_ts1
-    #     transformer_ts = transformer_ts1
-    # elif ts_type == 'TS2':
-    #     from frust.transformers import transformer_ts2
-    #     transformer_ts = transformer_ts2
-    # elif ts_type == 'TS3':
-    #     from frust.transformers import transformer_ts3
-    #     transformer_ts = transformer_ts3
-    # elif ts_type == 'TS4':
-    #     from frust.transformers import transformer_ts4
-    #     transformer_ts = transformer_ts4
-    # elif ts_type == 'INT3':
-    #     from frust.transformers import transformer_int3
-    #     transformer_ts = transformer_int3
-    # else:
-    #     raise ValueError(f"Unrecognized TS type: {ts_type}")
-
-    # ts_structs = {}
-    # for smi in ligand_smiles_list:
-    #     ts_mols = transformer_ts(smi, ts_guess_xyz)
-    #     ts_structs.update(ts_mols)
 
     embedded = embed_ts(ts_structs, ts_type=ts_type, n_confs=n_confs, optimize=not debug)
 

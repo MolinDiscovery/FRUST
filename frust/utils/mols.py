@@ -362,30 +362,33 @@ def create_ts_per_rpos(
     ts_guess_xyz: str,
     return_format: str = "list",
     ) -> list[dict[str, Mol]]:
-    """
-    Generate transition-state (TS) structures for each ligand SMILES using a TS-guess
-    XYZ template.
+    """Generate TS structures from a dataframe of SMILES and optional reactive positions.
 
-    Args:
-        ligand_smiles_df (pd.DataFrame): DataFrame containing at least a ``smiles``
-            column. Optionally includes an ``rpos`` column to specify one or more
-            aromatic C–H positions per molecule. Multiple positions can be given as a
-            semicolon-separated string, e.g. ``"2;3"``.
+    Parameters
+    ----------
+    ligand_smiles_df : pandas.DataFrame
+        Dataframe containing a ``smiles`` column. If present, the ``rpos``
+        column specifies one or more aromatic C-H positions per row. Multiple
+        positions may be given as a semicolon-separated string such as
+        ``"2;3"``.
+    ts_guess_xyz : str
+        Path to a TS-guess XYZ file. The TS type is inferred from the comment
+        line in the file.
+    return_format : str, optional
+        Output format. Use ``"list"`` to return a list of single-item
+        dictionaries, or ``"dict"`` to return one merged dictionary.
 
-            Example CSV::
+    Returns
+    -------
+    list[dict[str, rdkit.Chem.Mol]] or dict[str, rdkit.Chem.Mol]
+        Generated TS structures keyed by their TS identifiers. Duplicate
+        SMILES entries in ``ligand_smiles_df`` are ignored after the first
+        occurrence.
 
-            ,smiles,rpos
-            0,CN1C=CC=C1,2
-            1,N1(CC2=CC=CC=C2)C=CC=C1,8;5
-
-        ts_guess_xyz (str): Path to an XYZ file containing the TS-guess geometry.
-            The TS type (e.g., ``TS1``, ``TS2``, ``TS3``, ``TS4``) is inferred from
-            the XYZ comment line.
-
-    Returns:
-        list[dict[str, rdkit.Chem.Mol]]: A list of dictionaries mapping a TS
-            identifier (e.g., a reaction-position key) to an RDKit ``Mol`` for the
-            generated TS.
+    Notes
+    -----
+    The ``rpos`` values are validated against the aromatic C-H positions for
+    each SMILES string before the corresponding transformer is called.
     """
 
     ligand_smiles_list = list(dict.fromkeys(ligand_smiles_df["smiles"]))
