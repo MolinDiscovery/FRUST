@@ -46,6 +46,25 @@ df = step.gxtb(df, name="gxtb_opt", options={"opt": None})
 df[["substrate_name", "cid", "gxtb_opt-NT", "gxtb_opt-EE", "gxtb_opt-oc"]]
 ```
 
+The dataframe attributes keep lightweight provenance:
+
+```python
+df.attrs["frust_initial_df"]
+```
+
+Output:
+
+```python
+{
+    "input_kind": "smiles",
+    "workflow": None,
+    "n_confs": 1,
+    "optimization": "none",
+    "resolved_step_type": None,
+    ...
+}
+```
+
 !!! note "Plain SMILES means plain molecule"
 
     `step.build_initial_df("CCO")` means the ethanol molecule. It does not

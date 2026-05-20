@@ -525,6 +525,37 @@ class Stepper:
             raise ValueError(f"`ts_type=` must be one of TS1/TS2/TS3/TS4/INT3, got {ts_type!r}")
         return inferred
 
+    def _with_initial_df_attrs(
+        self,
+        df: pd.DataFrame,
+        *,
+        input_kind: str,
+        workflow: str | None,
+        n_confs: int | None,
+        n_cores: int,
+        optimization: str | None = None,
+        max_iters: int | None = None,
+        select_mols: str | list[str] | None = None,
+        ts_type: str | None = None,
+        ts_optimize: bool | None = None,
+    ) -> pd.DataFrame:
+        """Attach normalized initial-dataframe provenance to attrs."""
+        configured_step_type = "auto" if self._auto_step_type else self.step_type
+        df.attrs["frust_initial_df"] = {
+            "input_kind": input_kind,
+            "workflow": workflow,
+            "n_confs": n_confs,
+            "n_cores": n_cores,
+            "optimization": optimization,
+            "max_iters": max_iters,
+            "select_mols": select_mols,
+            "ts_type": ts_type,
+            "ts_optimize": ts_optimize,
+            "step_type": configured_step_type,
+            "resolved_step_type": self.step_type,
+        }
+        return df
+
     def build_initial_df(
         self,
         structures: Any,
@@ -627,7 +658,13 @@ class Stepper:
             if kind == "embedded":
                 df = self._build_initial_df_from_embedded(structures)
                 self._resolve_auto_step_type(df)
-                return df
+                return self._with_initial_df_attrs(
+                    df,
+                    input_kind="embedded_dict",
+                    workflow=workflow,
+                    n_confs=None,
+                    n_cores=embed_cores,
+                )
             if kind == "raw_mol":
                 from frust.embedder import embed_mols
 
@@ -640,7 +677,17 @@ class Stepper:
                 )
                 df = self._build_initial_df_from_embedded(embedded)
                 self._resolve_auto_step_type(df)
-                return df
+                input_kind = f"workflow_{workflow}" if workflow else "raw_mol_dict"
+                return self._with_initial_df_attrs(
+                    df,
+                    input_kind=input_kind,
+                    workflow=workflow,
+                    n_confs=n_confs,
+                    n_cores=embed_cores,
+                    optimization=optimization,
+                    max_iters=max_iters,
+                    select_mols=select_mols if workflow else None,
+                )
             if kind == "raw_ts":
                 from frust.embedder import embed_ts
 
@@ -656,33 +703,54 @@ class Stepper:
                 )
                 df = self._build_initial_df_from_embedded(embedded)
                 self._resolve_auto_step_type(df)
-                return df
+                return self._with_initial_df_attrs(
+                    df,
+                    input_kind="raw_ts_dict",
+                    workflow=workflow,
+                    n_confs=n_confs,
+                    n_cores=embed_cores,
+                    ts_type=inferred_ts_type,
+                    ts_optimize=ts_optimize,
+                )
             if kind == "smiles":
                 raw_mols = self._raw_smiles_input_to_mols(
                     structures,
                     name=name,
                     names=names,
                 )
-                return self.build_initial_df(
+                df = self.build_initial_df(
                     raw_mols,
                     n_confs=n_confs,
                     n_cores=embed_cores,
                     optimization=optimization,
                     max_iters=max_iters,
                 )
+                df.attrs["frust_initial_df"]["input_kind"] = "smiles_dict"
+                return df
 
         raw_mols = self._raw_smiles_input_to_mols(
             structures,
             name=name,
             names=names,
         )
-        return self.build_initial_df(
+        if isinstance(structures, str):
+            input_kind = "smiles"
+        elif isinstance(structures, pd.DataFrame):
+            input_kind = "smiles_dataframe"
+        elif isinstance(structures, (list, tuple)):
+            input_kind = "smiles_list"
+        else:
+            input_kind = "smiles"
+
+        df = self.build_initial_df(
             raw_mols,
             n_confs=n_confs,
             n_cores=embed_cores,
             optimization=optimization,
             max_iters=max_iters,
         )
+        df.attrs["frust_initial_df"]["input_kind"] = input_kind
+        return df
 
     def _build_initial_df_from_embedded(self, embedded_dict: dict) -> pd.DataFrame:
         """

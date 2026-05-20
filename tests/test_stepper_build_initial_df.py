@@ -43,6 +43,22 @@ class StepperBuildInitialDfTests(unittest.TestCase):
         self.assertEqual(df["smiles"].iloc[0], "CCO")
         self.assertIn("O", df["atoms"].iloc[0])
         self.assertEqual(step.step_type, None)
+        self.assertEqual(
+            df.attrs["frust_initial_df"],
+            {
+                "input_kind": "smiles",
+                "workflow": None,
+                "n_confs": 1,
+                "n_cores": 8,
+                "optimization": "none",
+                "max_iters": 100,
+                "select_mols": None,
+                "ts_type": None,
+                "ts_optimize": None,
+                "step_type": None,
+                "resolved_step_type": None,
+            },
+        )
 
     def test_batch_smiles_inputs_use_expected_labels(self):
         step = Stepper(debug=True, save_output_dir=False)
@@ -109,6 +125,9 @@ class StepperBuildInitialDfTests(unittest.TestCase):
         create.assert_called_once()
         self.assertEqual(create.call_args.kwargs["select_mols"], "uniques")
         self.assertEqual(df["substrate_name"].iloc[0], "ethanol")
+        self.assertEqual(df.attrs["frust_initial_df"]["input_kind"], "workflow_mols")
+        self.assertEqual(df.attrs["frust_initial_df"]["workflow"], "mols")
+        self.assertEqual(df.attrs["frust_initial_df"]["select_mols"], "uniques")
 
     def test_raw_ts_dictionary_embeds_and_resolves_auto_step_type(self):
         step = Stepper(step_type="auto", debug=True, save_output_dir=False)
@@ -130,6 +149,20 @@ class StepperBuildInitialDfTests(unittest.TestCase):
         self.assertTrue(embed.call_args.kwargs["optimize"])
         self.assertEqual(step.step_type, "TS1")
         self.assertEqual(df["structure_type"].iloc[0], "TS1")
+        self.assertEqual(df.attrs["frust_initial_df"]["input_kind"], "raw_ts_dict")
+        self.assertEqual(df.attrs["frust_initial_df"]["ts_type"], "TS1")
+        self.assertTrue(df.attrs["frust_initial_df"]["ts_optimize"])
+        self.assertEqual(df.attrs["frust_initial_df"]["step_type"], "auto")
+        self.assertEqual(df.attrs["frust_initial_df"]["resolved_step_type"], "TS1")
+
+    def test_existing_embedded_dictionary_records_initial_attrs(self):
+        step = Stepper(debug=True, save_output_dir=False)
+        mol = _mol_with_conformer()
+
+        df = step.build_initial_df({"ethanol": (mol, [0])})
+
+        self.assertEqual(df.attrs["frust_initial_df"]["input_kind"], "embedded_dict")
+        self.assertIsNone(df.attrs["frust_initial_df"]["n_confs"])
 
     def test_explicit_step_type_mismatch_fails(self):
         step = Stepper(step_type="TS2", debug=True, save_output_dir=False)

@@ -54,6 +54,47 @@ Common identity columns include:
 These columns are not just labels. FRUST uses them for grouping, especially
 when keeping only the lowest-energy conformers.
 
+## DataFrame Attributes
+
+FRUST stores lightweight provenance in `df.attrs`. The initial dataframe builder
+records how the starting rows were made:
+
+```python
+df = step.build_initial_df("CCO", name="ethanol")
+df.attrs["frust_initial_df"]
+```
+
+Output:
+
+```python
+{
+    "input_kind": "smiles",
+    "workflow": None,
+    "n_confs": 1,
+    "n_cores": 8,
+    "optimization": "none",
+    "max_iters": 100,
+    "select_mols": None,
+    "ts_type": None,
+    "ts_optimize": None,
+    "step_type": None,
+    "resolved_step_type": None,
+}
+```
+
+Calculation stages use a separate `frust_steps` block:
+
+```python
+df = step.gxtb(df, name="gxtb_opt", options={"opt": None})
+df.attrs["frust_steps"]
+```
+
+`frust_initial_df` describes input construction. `frust_steps` describes
+calculation stages and their result columns. FRUST does not store raw molecule
+objects or full input dictionaries in dataframe attributes; row-level identity
+stays in columns such as `substrate_name`, `smiles`, `structure_type`, `rpos`,
+and `cid`.
+
 ## Coordinates
 
 Most `Stepper` stages need:
