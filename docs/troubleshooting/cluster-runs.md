@@ -29,6 +29,26 @@ result = submit_jobs(
     pipeline names, and basic Python imports. Use Slurm for real ORCA and xTB
     workloads.
 
+## Reading Stepper Log Names
+
+Stepper loggers include the workflow label and the job context:
+
+```text
+frust.stepper.GENERIC.local
+frust.stepper.TS1.job123456
+```
+
+The final part tells you where the calculation is running:
+
+| Context | Logger suffix |
+| --- | --- |
+| Local Python or local submitit run | `.local` |
+| Explicit `Stepper(job_id=42)` | `.job42` |
+| Slurm allocation with `SLURM_JOB_ID=123456` | `.job123456` |
+
+Seeing `.local` in a log is expected outside Slurm. It means FRUST did not find
+a scheduler job id and did not invent a fake one.
+
 ## Common Errors
 
 ??? question "Missing `smiles` column"

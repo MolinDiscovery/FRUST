@@ -49,6 +49,14 @@ df = run_ts_per_lig(
 
 For direct staged control, start with `frust.stepper.Stepper`.
 
+```python
+from frust.stepper import Stepper
+
+step = Stepper(save_output_dir=False)
+df = step.build_initial_df("CCO", name="ethanol")
+df = step.gxtb(df, name="gxtb_opt", options={"opt": None})
+```
+
 ## Documentation
 
 <a href="https://molindiscovery.github.io/FRUST/">

@@ -39,17 +39,18 @@ Quick check:
 
 ## Basic API
 
-Use `Stepper.gxtb(...)` on a normal FRUST dataframe with `atoms` and a coordinate
-column such as `coords_embedded` or a prior `*-oc` column.
+Start by building a FRUST dataframe, then pass it to `Stepper.gxtb(...)`.
+For a quick tool check, a single SMILES string is enough:
 
 ```python
 from frust.stepper import Stepper
 
 step = Stepper(
-    step_type="MOLS",
     n_cores=8,
     save_output_dir=False,
 )
+
+df = step.build_initial_df("CCO", name="ethanol")
 
 df_gxtb = step.gxtb(
     df,
@@ -57,6 +58,10 @@ df_gxtb = step.gxtb(
     n_cores=8,
 )
 ```
+
+For larger workflows, `Stepper.gxtb(...)` consumes the same dataframe shape:
+`atoms` plus a coordinate column such as `coords_embedded` or a prior `*-oc`
+column.
 
 This runs the equivalent of:
 

@@ -95,4 +95,5 @@ nav:
           - Schema: api/schema.md
           - Utility Modules: api/utils.md
   - Tutorials:
+      - Building Initial DataFrames: tutorials/building-initial-dataframes.md
       - Templates: tutorials/templates.md

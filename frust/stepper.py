@@ -5,11 +5,13 @@ import os
 from pathlib import Path
 import re
 import textwrap
-from typing import Callable
+from typing import Any, Callable
 import numpy as np
 import pandas as pd
 from pandas import Series
 from inspect import signature
+from rdkit import Chem
+from rdkit.Chem.rdchem import Mol
 from frust.utils.dirs import make_step_dir, prepare_base_dir
 from frust.utils.slurm import detect_job_id
 from frust.schema import (
@@ -18,6 +20,7 @@ from frust.schema import (
     metadata_from_mapping,
     normalize_dataframe,
     output_column,
+    parse_structure_name,
 )
 
 def _make_logger(name: str, debug: bool) -> logging.Logger:
@@ -41,20 +44,17 @@ def _make_logger(name: str, debug: bool) -> logging.Logger:
 def _logger_name(step_type: str | None, job_id: int | None) -> str:
     """Build a readable, stable logger name for one Stepper instance."""
     step_label = (step_type or "generic").upper()
-    job_label = f"job{job_id}" if job_id is not None else "jobunknown"
+    job_label = f"job{job_id}" if job_id is not None else "local"
     return f"{__name__}.{step_label}.{job_label}"
 
 class Stepper:
     """Chain xTB and ORCA calculations over dataframe-based conformer tables.
 
-    `Stepper` is the low-level workflow layer used after structures have
-    already been generated and embedded. It operates on pandas DataFrames,
-    adds calculation outputs as new columns, and optionally manages run
-    directories and saved engine files.
-
-    The class does not generate molecules itself. For higher-level workflows
-    that create TS or ground-state structures from ligand inputs, prefer the
-    pipeline functions in :mod:`frust.pipes`.
+    `Stepper` operates on pandas DataFrames, adds calculation outputs as new
+    columns, and optionally manages run directories and saved engine files.
+    :meth:`build_initial_df` can also build the initial dataframe from simple
+    chemistry inputs such as SMILES strings or raw FRUST structure
+    dictionaries.
     """
 
     def __init__(
@@ -78,9 +78,11 @@ class Stepper:
         step_type : str or None, optional
             Workflow label used for built-in constrained TS/INT calculations.
             Supported constrained values are ``TS1``, ``TS2``, ``TS3``,
-            ``TS4``, and ``INT3``. If ``None``, unconstrained workflows still
-            work, but ``constraint=True`` in :meth:`xtb` or :meth:`orca` will
-            raise an error.
+            ``TS4``, and ``INT3``. Use ``"auto"`` to infer one constrained
+            type from the dataframe built by :meth:`build_initial_df`. If
+            ``None``, unconstrained workflows still work, but
+            ``constraint=True`` in :meth:`xtb` or :meth:`orca` will raise an
+            error.
         output_base : Path or str or None, optional
             Base directory under which saved outputs are created. The final run
             directory is created lazily on first save request, not at
@@ -121,11 +123,13 @@ class Stepper:
             unknown = ", ".join(sorted(kwargs))
             raise TypeError(f"Unexpected Stepper keyword arguments: {unknown}")
 
-        self.step_type      = step_type.upper() if step_type is not None else None
+        self._auto_step_type = step_type is not None and step_type.lower() == "auto"
+        self.step_type      = None if self._auto_step_type else (step_type.upper() if step_type is not None else None)
         self.debug          = debug
         job_id              = detect_job_id(job_id, True)
         self.job_id         = job_id
-        self.logger         = _make_logger(_logger_name(self.step_type, self.job_id), debug)
+        logger_step_type    = "AUTO" if self._auto_step_type else self.step_type
+        self.logger         = _make_logger(_logger_name(logger_step_type, self.job_id), debug)
         self.dump_each_step = dump_each_step
         self.n_cores        = n_cores
         self.memory_gb      = memory_gb
@@ -274,7 +278,413 @@ class Stepper:
             )
         return atoms
 
-    def build_initial_df(self, embedded_dict: dict) -> pd.DataFrame:
+    @staticmethod
+    def _plain_molecule_metadata(label: str, smiles: str) -> dict[str, Any]:
+        """Build schema metadata for a plain molecule input."""
+        return {
+            "structure_id": f"MOL:{label}:structure",
+            "custom_name": label,
+            "substrate_name": label,
+            "structure_type": "MOL",
+            "molecule_role": "structure",
+            "rpos": pd.NA,
+            "smiles": smiles,
+            "input_smiles": smiles,
+        }
+
+    @staticmethod
+    def _smiles_to_mol(smiles: str, label: str) -> Mol:
+        """Parse a SMILES string into an RDKit molecule with a clear error."""
+        mol = Chem.MolFromSmiles(str(smiles))
+        if mol is None:
+            raise ValueError(f"Invalid SMILES for {label!r}: {smiles!r}")
+        return mol
+
+    @classmethod
+    def _smiles_records_to_raw_mols(
+        cls,
+        smiles_values: list[str],
+        labels: list[str],
+    ) -> dict[str, tuple[Mol, dict[str, Any]]]:
+        """Convert named SMILES records into raw molecules plus metadata."""
+        raw: dict[str, tuple[Mol, dict[str, Any]]] = {}
+        for smiles, label in zip(smiles_values, labels):
+            if pd.isna(smiles):
+                raise ValueError(f"Missing SMILES for {label!r}")
+            smiles_text = str(smiles)
+            raw[label] = (
+                cls._smiles_to_mol(smiles_text, label),
+                cls._plain_molecule_metadata(label, smiles_text),
+            )
+        return raw
+
+    @staticmethod
+    def _sequence_is_cids(value: Any) -> bool:
+        """Return True for conformer-id sequences in embedded tuple values."""
+        if isinstance(value, (str, bytes, dict)):
+            return False
+        if not isinstance(value, (list, tuple, np.ndarray)):
+            return False
+        return all(isinstance(item, (int, np.integer)) for item in value)
+
+    @classmethod
+    def _dict_value_kind(cls, value: Any) -> str:
+        """Classify one build_initial_df dictionary value."""
+        if isinstance(value, str):
+            return "smiles"
+        if isinstance(value, Mol):
+            return "raw_mol"
+        if not isinstance(value, tuple):
+            return "unknown"
+        if len(value) == 2:
+            first, second = value
+            if isinstance(first, Mol) and isinstance(second, dict):
+                return "raw_mol"
+            if isinstance(first, Mol) and cls._sequence_is_cids(second):
+                return "embedded_mol"
+        if len(value) == 3:
+            first, second, third = value
+            if isinstance(first, Mol) and cls._sequence_is_cids(second) and isinstance(third, dict):
+                return "embedded_mol"
+            if isinstance(first, Mol) and cls._sequence_is_cids(second) and isinstance(third, str):
+                return "raw_ts"
+        if len(value) == 4:
+            first, second, third, fourth = value
+            if (
+                isinstance(first, Mol)
+                and cls._sequence_is_cids(second)
+                and isinstance(third, (list, tuple, np.ndarray))
+                and isinstance(fourth, str)
+            ):
+                return "embedded_ts"
+        if len(value) == 5:
+            first, second, third, fourth, fifth = value
+            if (
+                isinstance(first, Mol)
+                and cls._sequence_is_cids(second)
+                and isinstance(third, (list, tuple, np.ndarray))
+                and isinstance(fourth, str)
+                and isinstance(fifth, (list, tuple))
+            ):
+                return "embedded_ts"
+        return "unknown"
+
+    @classmethod
+    def _dict_kind(cls, data: dict[str, Any]) -> str:
+        """Classify a dictionary input by requiring one consistent value kind."""
+        if not data:
+            raise ValueError("build_initial_df received an empty dictionary")
+        kinds = {cls._dict_value_kind(value) for value in data.values()}
+        if "unknown" in kinds:
+            raise ValueError(
+                "Could not classify build_initial_df dictionary input; expected SMILES, raw molecules, raw TS/INT structures, or embedded structures"
+            )
+        embedded = {"embedded_mol", "embedded_ts"}
+        if kinds <= embedded:
+            return "embedded"
+        if len(kinds) > 1:
+            raise ValueError(
+                "Mixed build_initial_df dictionary input is not supported; pass one kind of input at a time"
+            )
+        return kinds.pop()
+
+    @staticmethod
+    def _labels_from_names(
+        count: int,
+        *,
+        name: str | None,
+        names: list[str] | tuple[str, ...] | None,
+        allow_name: bool,
+        allow_names: bool,
+    ) -> list[str]:
+        """Resolve single or batch names into stable molecule labels."""
+        if name is not None:
+            if not allow_name or count != 1:
+                raise ValueError("`name=` is only valid for a single SMILES string input")
+            return [str(name)]
+        if names is not None:
+            if not allow_names:
+                raise ValueError("`names=` is only valid for batch SMILES list inputs")
+            if len(names) != count:
+                raise ValueError(
+                    f"`names=` must contain {count} labels, got {len(names)}"
+                )
+            return [str(item) for item in names]
+        return [f"mol_{i}" for i in range(count)]
+
+    @staticmethod
+    def _df_labels(df: pd.DataFrame) -> list[str]:
+        """Choose labels for a SMILES dataframe input."""
+        for col in ("substrate_name", "name", "custom_name"):
+            if col in df.columns:
+                return [str(value) for value in df[col].tolist()]
+        return [f"mol_{i}" for i in range(len(df))]
+
+    def _raw_smiles_input_to_mols(
+        self,
+        structures: Any,
+        *,
+        name: str | None,
+        names: list[str] | tuple[str, ...] | None,
+    ) -> dict[str, tuple[Mol, dict[str, Any]]]:
+        """Normalize SMILES-like user inputs into raw molecule dictionaries."""
+        if isinstance(structures, str):
+            labels = self._labels_from_names(
+                1,
+                name=name,
+                names=names,
+                allow_name=True,
+                allow_names=False,
+            )
+            return self._smiles_records_to_raw_mols([structures], labels)
+
+        if isinstance(structures, pd.DataFrame):
+            if name is not None or names is not None:
+                raise ValueError(
+                    "Use dataframe columns such as 'substrate_name' to label dataframe inputs; `name=` and `names=` are not accepted with dataframe input"
+                )
+            if "smiles" not in structures.columns:
+                raise ValueError("DataFrame input to build_initial_df must contain a 'smiles' column")
+            labels = self._df_labels(structures)
+            return self._smiles_records_to_raw_mols(structures["smiles"].tolist(), labels)
+
+        if isinstance(structures, (list, tuple)):
+            if not all(isinstance(item, str) for item in structures):
+                raise ValueError("List input to build_initial_df must contain only SMILES strings")
+            labels = self._labels_from_names(
+                len(structures),
+                name=name,
+                names=names,
+                allow_name=False,
+                allow_names=True,
+            )
+            return self._smiles_records_to_raw_mols(list(structures), labels)
+
+        if isinstance(structures, dict) and self._dict_kind(structures) == "smiles":
+            if name is not None or names is not None:
+                raise ValueError("Named SMILES dictionaries already provide labels; do not pass `name=` or `names=`")
+            return self._smiles_records_to_raw_mols(
+                [str(value) for value in structures.values()],
+                [str(key) for key in structures.keys()],
+            )
+
+        raise TypeError(f"Unsupported SMILES input type: {type(structures).__name__}")
+
+    @staticmethod
+    def _unique_constrained_types(df: pd.DataFrame) -> set[str]:
+        """Return constrained TS/INT structure types present in a dataframe."""
+        if "structure_type" not in df.columns:
+            return set()
+        constrained = {"TS1", "TS2", "TS3", "TS4", "INT3"}
+        return {
+            str(value).upper()
+            for value in df["structure_type"].dropna().unique()
+            if str(value).upper() in constrained
+        }
+
+    def _resolve_auto_step_type(self, df: pd.DataFrame) -> None:
+        """Resolve or validate the Stepper constraint type from dataframe metadata."""
+        constrained_types = self._unique_constrained_types(df)
+        if self._auto_step_type:
+            if len(constrained_types) > 1:
+                types = ", ".join(sorted(constrained_types))
+                raise ValueError(f"Cannot infer one step_type from mixed constrained structure types: {types}")
+            if constrained_types:
+                self.step_type = next(iter(constrained_types))
+            return
+
+        if self.step_type in {"TS1", "TS2", "TS3", "TS4", "INT3"} and constrained_types:
+            if constrained_types != {self.step_type}:
+                types = ", ".join(sorted(constrained_types))
+                raise ValueError(
+                    f"Stepper(step_type={self.step_type!r}) does not match dataframe structure_type values: {types}"
+                )
+
+    def _infer_ts_type(self, raw_ts_dict: dict[str, Any], ts_type: str | None) -> str:
+        """Choose the TS/INT embedding type for raw TS dictionary inputs."""
+        constrained = {"TS1", "TS2", "TS3", "TS4", "INT3"}
+        if ts_type is not None:
+            inferred = ts_type.upper()
+        elif self.step_type in constrained:
+            inferred = self.step_type
+        else:
+            parsed_types = {
+                parse_structure_name(name).structure_type.upper()
+                for name in raw_ts_dict
+            }
+            parsed_types = parsed_types & constrained
+            if len(parsed_types) != 1:
+                types = ", ".join(sorted(parsed_types)) or "none"
+                raise ValueError(
+                    "Raw TS/INT dictionaries require one inferable TS type "
+                    f"or an explicit `ts_type=`, got {types}"
+                )
+            inferred = next(iter(parsed_types))
+
+        if inferred not in constrained:
+            raise ValueError(f"`ts_type=` must be one of TS1/TS2/TS3/TS4/INT3, got {ts_type!r}")
+        return inferred
+
+    def build_initial_df(
+        self,
+        structures: Any,
+        *,
+        name: str | None = None,
+        names: list[str] | tuple[str, ...] | None = None,
+        n_confs: int | None = 1,
+        n_cores: int | None = None,
+        optimization: str = "none",
+        max_iters: int = 100,
+        workflow: str | None = None,
+        select_mols: str | list[str] = "all",
+        ts_type: str | None = None,
+        ts_optimize: bool | None = None,
+        optimize: bool | None = None,
+    ) -> pd.DataFrame:
+        """Build a FRUST conformer dataframe from embedded or raw structures.
+
+        Parameters
+        ----------
+        structures : dict, str, list[str], pandas.DataFrame
+            Input structures. Existing embedded dictionaries keep the previous
+            behavior. Raw SMILES inputs, raw molecule dictionaries, and raw
+            TS/INT dictionaries are embedded before dataframe construction.
+        name : str, optional
+            Label for a single SMILES input. Written to ``substrate_name``.
+        names : list[str], optional
+            Labels for a batch SMILES list.
+        n_confs : int or None, optional
+            Number of conformers generated for raw inputs. Defaults to ``1``
+            for quick calculator-style setup. Use ``None`` for FRUST's
+            rotatable-bond heuristic.
+        n_cores : int or None, optional
+            Core count for RDKit embedding. Defaults to ``self.n_cores``.
+        optimization : str, optional
+            Force-field optimization passed to :func:`frust.embedder.embed_mols`
+            for plain molecule inputs.
+        workflow : str or None, optional
+            Explicit workflow expansion for SMILES inputs. Currently only
+            ``"mols"`` is supported; bare SMILES always means a plain molecule.
+        select_mols : str or list[str], optional
+            Selection forwarded to ``create_mol_per_rpos`` when
+            ``workflow="mols"``.
+        ts_type : str or None, optional
+            Explicit TS/INT embedding type for raw TS dictionaries when it
+            cannot be inferred from structure names.
+        ts_optimize : bool or None, optional
+            Whether raw TS/INT embedding should run constrained UFF
+            optimization. Defaults to ``False``.
+        optimize : bool or None, optional
+            Backward-friendly alias for ``ts_optimize``.
+
+        Returns
+        -------
+        pandas.DataFrame
+            One row per conformer with FRUST structure metadata, atoms, and
+            ``coords_embedded``.
+        """
+        embed_cores = self.n_cores if n_cores is None else n_cores
+
+        if workflow is not None:
+            workflow_name = workflow.lower()
+            if workflow_name != "mols":
+                raise ValueError(f"Unsupported build_initial_df workflow: {workflow!r}")
+            from frust.utils.mols import create_mol_per_rpos
+
+            if isinstance(structures, pd.DataFrame):
+                if name is not None or names is not None:
+                    raise ValueError(
+                        "Use dataframe columns such as 'substrate_name' to label dataframe inputs; `name=` and `names=` are not accepted with dataframe input"
+                    )
+                if "smiles" not in structures.columns:
+                    raise ValueError("DataFrame input to build_initial_df must contain a 'smiles' column")
+                ligand_df = structures.copy()
+            else:
+                smiles_mols = self._raw_smiles_input_to_mols(
+                    structures,
+                    name=name,
+                    names=names,
+                )
+                ligand_df = pd.DataFrame(
+                    {
+                        "smiles": [
+                            metadata["input_smiles"]
+                            for _, metadata in smiles_mols.values()
+                        ],
+                    }
+                )
+            raw_mols = create_mol_per_rpos(
+                ligand_df,
+                return_format="dict",
+                select_mols=select_mols,
+            )
+            structures = raw_mols
+            name = None
+            names = None
+
+        if isinstance(structures, dict):
+            kind = self._dict_kind(structures)
+            if kind == "embedded":
+                df = self._build_initial_df_from_embedded(structures)
+                self._resolve_auto_step_type(df)
+                return df
+            if kind == "raw_mol":
+                from frust.embedder import embed_mols
+
+                embedded = embed_mols(
+                    structures,
+                    n_confs=n_confs,
+                    n_cores=embed_cores,
+                    optimization=optimization,
+                    max_iters=max_iters,
+                )
+                df = self._build_initial_df_from_embedded(embedded)
+                self._resolve_auto_step_type(df)
+                return df
+            if kind == "raw_ts":
+                from frust.embedder import embed_ts
+
+                if ts_optimize is None:
+                    ts_optimize = bool(optimize) if optimize is not None else False
+                inferred_ts_type = self._infer_ts_type(structures, ts_type)
+                embedded = embed_ts(
+                    structures,
+                    ts_type=inferred_ts_type,
+                    n_confs=n_confs,
+                    n_cores=embed_cores,
+                    optimize=ts_optimize,
+                )
+                df = self._build_initial_df_from_embedded(embedded)
+                self._resolve_auto_step_type(df)
+                return df
+            if kind == "smiles":
+                raw_mols = self._raw_smiles_input_to_mols(
+                    structures,
+                    name=name,
+                    names=names,
+                )
+                return self.build_initial_df(
+                    raw_mols,
+                    n_confs=n_confs,
+                    n_cores=embed_cores,
+                    optimization=optimization,
+                    max_iters=max_iters,
+                )
+
+        raw_mols = self._raw_smiles_input_to_mols(
+            structures,
+            name=name,
+            names=names,
+        )
+        return self.build_initial_df(
+            raw_mols,
+            n_confs=n_confs,
+            n_cores=embed_cores,
+            optimization=optimization,
+            max_iters=max_iters,
+        )
+
+    def _build_initial_df_from_embedded(self, embedded_dict: dict) -> pd.DataFrame:
         """
         Turn a dictionary of embedded‐conformer data into a tidy DataFrame.
 

@@ -71,9 +71,27 @@ df = run_mols(ligands, save_output_dir=False)
 
 Use `Stepper` when you want to control the calculation stages yourself.
 
-`Stepper` does not create molecules from scratch. It takes a dataframe that
-already contains atoms, coordinates, and metadata, then adds new columns as each
-calculation stage finishes.
+`Stepper` builds or consumes the initial FRUST dataframe, then adds new columns
+as each calculation stage finishes. For a quick molecule calculation, pass a
+SMILES string directly:
+
+```python
+from frust.stepper import Stepper
+
+step = Stepper(save_output_dir=False)
+df = step.build_initial_df("CCO", name="ethanol")
+df = step.gxtb(df, name="gxtb_opt", options={"opt": None})
+```
+
+For FRUST-generated molecule or transition-state structures, keep the structure
+generation step explicit and let `build_initial_df` embed the raw structures:
+
+```python
+from frust.utils.mols import create_mol_per_rpos
+
+mols = create_mol_per_rpos(ligands)
+df = step.build_initial_df(mols, n_confs=2)
+```
 
 Typical `Stepper` calls look like:
 

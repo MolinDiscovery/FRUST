@@ -23,14 +23,13 @@ flowchart TD
     D["create_ts_per_rpos"]
     E["transformer_ts1/2/3/4<br/>or transformer_int3"]
     F["Generated TS dict<br/>name -> (mol, keep_idxs, smiles)"]
-    G["embed_ts"]
-    H["Stepper.build_initial_df"]
+    H["Stepper.build_initial_df<br/>embeds raw TS dict"]
     I["FRUST DataFrame<br/>constraint_atoms, atoms, coords_embedded, rpos, cid"]
     J["Stepper.xtb / Stepper.orca<br/>constraint=True"]
 
     A --> D
     B --> C --> D
-    D --> E --> F --> G --> H --> I --> J
+    D --> E --> F --> H --> I --> J
 ```
 
 The main code path is:
@@ -38,7 +37,6 @@ The main code path is:
 ```python
 from frust.utils.io import read_ts_type_from_xyz
 from frust.utils.mols import create_ts_per_rpos
-from frust.embedder import embed_ts
 from frust.stepper import Stepper
 ```
 
@@ -200,46 +198,25 @@ In table form, the generated object is easiest to reason about like this:
     )
     ```
 
-## Embed And Build The Initial DataFrame
+## Build The Initial DataFrame
 
-`embed_ts(...)` generates conformers. During embedding, `keep_idxs` becomes a
-coordinate map (`coordMap`) so RDKit keeps the template reactive core close to
-the template geometry.
-
-```python
-from frust.embedder import embed_ts
-
-embedded = embed_ts(
-    ts_structs,
-    ts_type=ts_type,
-    n_confs=1,
-    optimize=False,
-)
-```
-
-Representative shape of `embedded`:
-
-| Generated key | `conformer_ids` | `keep_idxs` | `smiles` | `uff_energies` |
-| --- | --- | --- | --- | --- |
-| `TS1(1-methylpyrrole_rpos(2))` | `[0]` | `[10, 11, 39, 40, 41, 44]` | `CN1C=CC=C1` | `[]` |
-
-The exact conformer id and UFF energies depend on the embedding settings, but
-the important point is that the same `keep_idxs` list still travels with the
-structure after conformer generation.
-
-The stepper turns embedded conformers into a tidy DataFrame:
+`Stepper.build_initial_df(...)` accepts the raw TS dictionary from
+`create_ts_per_rpos(...)`. It embeds conformers and turns the result into a
+normal FRUST dataframe. During embedding, `keep_idxs` becomes a coordinate map
+(`coordMap`) so RDKit keeps the template reactive core close to the template
+geometry.
 
 ```python
 from frust.stepper import Stepper
 
 step = Stepper(
-    step_type=ts_type,
+    step_type="auto",
     n_cores=4,
     memory_gb=20,
     debug=True,
 )
 
-df = step.build_initial_df(embedded)
+df = step.build_initial_df(ts_structs, n_confs=1, ts_optimize=False)
 df[
     [
         "custom_name",
@@ -253,15 +230,19 @@ df[
 ].head()
 ```
 
+`step_type="auto"` infers the constrained template type from the generated
+structure names. In this example the dataframe contains only `TS1` rows, so
+later `constraint=True` calls use the `TS1` constraint template.
+
 Representative output:
 
 |  | `custom_name` | `structure_type` | `rpos` | `cid` | `constraint_atoms` | `atoms` | `coords_embedded` |
 | ---: | --- | --- | ---: | ---: | --- | --- | --- |
 | 0 | `TS1(1-methylpyrrole_rpos(2))` | `TS1` | 2 | 0 | `[10, 11, 39, 40, 41, 44]` | `["C", "N", "C", ...]` | `54 x 3 coordinates` |
 
-This is the first point where the transformer output becomes normal FRUST table
-metadata. From here on, calculation stages do not need the original
-`ts_structs` dictionary; they read `constraint_atoms` from the DataFrame row.
+This is the point where the transformer output becomes normal FRUST table
+metadata. From here on, calculation stages do not need the original `ts_structs`
+dictionary; they read `constraint_atoms` from the DataFrame row.
 
 !!! example "Inspect constraint atoms"
 
@@ -315,8 +296,8 @@ flowchart LR
 `constraint=True` is opt-in for calculation stages. The stepper first validates
 that it has enough information:
 
-- `Stepper(step_type=...)` must be set to a supported constrained type:
-  `TS1`, `TS2`, `TS3`, `TS4`, or `INT3`.
+- `Stepper(step_type=...)` must be set to `TS1`, `TS2`, `TS3`, `TS4`, `INT3`,
+  or `"auto"` when the dataframe contains one constrained structure type.
 - The DataFrame must contain `constraint_atoms`.
 - Each row must contain a sequence of atom indices.
 
