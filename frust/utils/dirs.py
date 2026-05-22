@@ -1,6 +1,5 @@
 # frust/utils/dirs.py
 from pathlib import Path
-from .mols import generate_id
 
 def prepare_base_dir(path: Path | str | None, job_id: int | None = None) -> Path:
     """Prepare and create a base directory for pipeline results.
@@ -36,6 +35,9 @@ def prepare_base_dir(path: Path | str | None, job_id: int | None = None) -> Path
         base_dir.mkdir(exist_ok=True, parents=True)
     else:
         base_dir = Path(".")
+
+    # Import lazily so importing Stepper does not load molecule/visualization helpers.
+    from .mols import generate_id
 
     # Always create a unique, timestamped run directory when output is requested.
     results_preface = "FRUST_results"

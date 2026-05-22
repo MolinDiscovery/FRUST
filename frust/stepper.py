@@ -11,6 +11,7 @@ import pandas as pd
 from pandas import Series
 from inspect import signature
 from rdkit import Chem
+from rdkit.Geometry import Point3D
 from rdkit.Chem.rdchem import Mol
 from frust.utils.dirs import make_step_dir, prepare_base_dir
 from frust.utils.provenance import (
@@ -29,6 +30,22 @@ from frust.schema import (
     output_column,
     parse_structure_name,
 )
+
+
+def _metadata_text(value: str | None) -> str | None:
+    """Normalize optional free-text input metadata."""
+    if value is None:
+        return None
+    text = str(value).strip()
+    return text or None
+
+
+def _metadata_list(value: list | tuple | None) -> list[str] | None:
+    """Normalize optional list metadata to strings."""
+    if value is None:
+        return None
+    return [str(item) for item in value]
+
 
 def _make_logger(name: str, debug: bool) -> logging.Logger:
     """Create an instance-local logger so debug settings don't leak globally."""
@@ -60,8 +77,8 @@ class Stepper:
     `Stepper` operates on pandas DataFrames, adds calculation outputs as new
     columns, and optionally manages run directories and saved engine files.
     :meth:`build_initial_df` can also build the initial dataframe from simple
-    chemistry inputs such as SMILES strings or raw FRUST structure
-    dictionaries.
+    chemistry inputs such as SMILES strings, XYZ geometries, bare RDKit
+    molecules, or raw FRUST structure dictionaries.
     """
 
     def __init__(
@@ -290,7 +307,7 @@ class Stepper:
         return atoms
 
     @staticmethod
-    def _plain_molecule_metadata(label: str, smiles: str) -> dict[str, Any]:
+    def _plain_molecule_metadata(label: str, smiles: str | None) -> dict[str, Any]:
         """Build schema metadata for a plain molecule input."""
         return {
             "structure_id": f"MOL:{label}:structure",
@@ -302,6 +319,105 @@ class Stepper:
             "smiles": smiles,
             "input_smiles": smiles,
         }
+
+    @staticmethod
+    def _mol_smiles(mol: Mol) -> str | None:
+        """Return a best-effort SMILES string for an RDKit molecule."""
+        try:
+            return Chem.MolToSmiles(Chem.RemoveHs(mol), isomericSmiles=True)
+        except Exception:
+            return None
+
+    @staticmethod
+    def _is_path_like(value: Any) -> bool:
+        """Return True for pathlib/os path inputs."""
+        return isinstance(value, (Path, os.PathLike))
+
+    @classmethod
+    def _looks_like_xyz_path(cls, value: Any) -> bool:
+        """Return True when an input should be treated as an XYZ path."""
+        if cls._is_path_like(value):
+            return True
+        return isinstance(value, str) and Path(value).suffix.lower() == ".xyz"
+
+    @staticmethod
+    def _looks_like_xyz_block(value: Any) -> bool:
+        """Return True for strings that look like an XYZ geometry block."""
+        if not isinstance(value, str) or "\n" not in value:
+            return False
+        lines = value.strip().splitlines()
+        if len(lines) < 3:
+            return False
+        try:
+            n_atoms = int(lines[0].strip())
+        except ValueError:
+            return False
+        return n_atoms >= 1 and len(lines) >= n_atoms + 2
+
+    @classmethod
+    def _is_xyz_source(cls, value: Any) -> bool:
+        """Return True when a value should be parsed as XYZ input."""
+        return cls._looks_like_xyz_path(value) or cls._looks_like_xyz_block(value)
+
+    @staticmethod
+    def _parse_xyz_block(text: str, *, label: str) -> tuple[list[str], list[tuple[float, float, float]]]:
+        """Parse an XYZ block into atoms and coordinates without bond perception."""
+        lines = text.strip().splitlines()
+        try:
+            n_atoms = int(lines[0].strip())
+        except (IndexError, ValueError) as exc:
+            raise ValueError(f"Invalid XYZ block for {label!r}: first line must be an atom count") from exc
+
+        atom_lines = lines[2 : 2 + n_atoms]
+        if len(atom_lines) != n_atoms:
+            raise ValueError(
+                f"Invalid XYZ block for {label!r}: expected {n_atoms} atom lines, got {len(atom_lines)}"
+            )
+
+        atoms: list[str] = []
+        coords: list[tuple[float, float, float]] = []
+        for line_no, line in enumerate(atom_lines, start=3):
+            parts = line.split()
+            if len(parts) < 4:
+                raise ValueError(
+                    f"Invalid XYZ block for {label!r}: line {line_no} must contain element, x, y, z"
+                )
+            atom = parts[0]
+            try:
+                xyz = (float(parts[1]), float(parts[2]), float(parts[3]))
+            except ValueError as exc:
+                raise ValueError(
+                    f"Invalid XYZ block for {label!r}: line {line_no} has non-numeric coordinates"
+                ) from exc
+            atoms.append(atom)
+            coords.append(xyz)
+
+        return atoms, coords
+
+    @classmethod
+    def _read_xyz_source(cls, source: str | Path | os.PathLike, *, label: str) -> tuple[list[str], list[tuple[float, float, float]]]:
+        """Read atoms and coordinates from an XYZ path or block."""
+        if cls._looks_like_xyz_path(source):
+            path = Path(source)
+            if not path.exists():
+                raise FileNotFoundError(f"XYZ file does not exist for {label!r}: {path}")
+            return cls._parse_xyz_block(path.read_text(), label=label)
+        if cls._looks_like_xyz_block(source):
+            return cls._parse_xyz_block(str(source), label=label)
+        raise ValueError(f"Input for {label!r} is not an XYZ path or XYZ block")
+
+    @staticmethod
+    def _xyz_to_mol(atoms: list[str], coords: list[tuple[float, float, float]]) -> Mol:
+        """Create an RDKit molecule with atoms and one conformer, preserving XYZ geometry."""
+        rw_mol = Chem.RWMol()
+        for symbol in atoms:
+            rw_mol.AddAtom(Chem.Atom(symbol))
+        mol = rw_mol.GetMol()
+        conf = Chem.Conformer(len(atoms))
+        for idx, (x, y, z) in enumerate(coords):
+            conf.SetAtomPosition(idx, Point3D(float(x), float(y), float(z)))
+        mol.AddConformer(conf, assignId=True)
+        return mol
 
     @staticmethod
     def _smiles_to_mol(smiles: str, label: str) -> Mol:
@@ -329,6 +445,68 @@ class Stepper:
             )
         return raw
 
+    @classmethod
+    def _xyz_records_to_embedded(
+        cls,
+        xyz_values: list[str | Path | os.PathLike],
+        labels: list[str],
+    ) -> dict[str, tuple[Mol, list[int], dict[str, Any]]]:
+        """Convert named XYZ sources into embedded records with preserved coordinates."""
+        embedded: dict[str, tuple[Mol, list[int], dict[str, Any]]] = {}
+        for source, label in zip(xyz_values, labels):
+            atoms, coords = cls._read_xyz_source(source, label=label)
+            mol = cls._xyz_to_mol(atoms, coords)
+            embedded[label] = (
+                mol,
+                [0],
+                cls._plain_molecule_metadata(label, None),
+            )
+        return embedded
+
+    @classmethod
+    def _rdkit_records_to_embedded(
+        cls,
+        mols: list[Mol],
+        labels: list[str],
+        *,
+        n_confs: int | None,
+        n_cores: int,
+        optimization: str,
+        max_iters: int,
+    ) -> dict[str, tuple]:
+        """Normalize bare RDKit molecules, preserving conformers where present."""
+        embedded: dict[str, tuple] = {}
+        raw_to_embed: dict[str, tuple[Mol, dict[str, Any]]] = {}
+
+        for mol, label in zip(mols, labels):
+            if not isinstance(mol, Mol):
+                raise TypeError(f"Expected an RDKit Mol for {label!r}, got {type(mol).__name__}")
+            smiles = cls._mol_smiles(mol)
+            metadata = cls._plain_molecule_metadata(label, smiles)
+            if mol.GetNumConformers() > 0:
+                embedded[label] = (
+                    mol,
+                    [conf.GetId() for conf in mol.GetConformers()],
+                    metadata,
+                )
+            else:
+                raw_to_embed[label] = (mol, metadata)
+
+        if raw_to_embed:
+            from frust.embedder import embed_mols
+
+            embedded.update(
+                embed_mols(
+                    raw_to_embed,
+                    n_confs=n_confs,
+                    n_cores=n_cores,
+                    optimization=optimization,
+                    max_iters=max_iters,
+                )
+            )
+
+        return embedded
+
     @staticmethod
     def _sequence_is_cids(value: Any) -> bool:
         """Return True for conformer-id sequences in embedded tuple values."""
@@ -341,10 +519,12 @@ class Stepper:
     @classmethod
     def _dict_value_kind(cls, value: Any) -> str:
         """Classify one build_initial_df dictionary value."""
+        if cls._is_xyz_source(value):
+            return "xyz"
         if isinstance(value, str):
             return "smiles"
         if isinstance(value, Mol):
-            return "raw_mol"
+            return "rdkit_mol"
         if not isinstance(value, tuple):
             return "unknown"
         if len(value) == 2:
@@ -388,7 +568,7 @@ class Stepper:
         kinds = {cls._dict_value_kind(value) for value in data.values()}
         if "unknown" in kinds:
             raise ValueError(
-                "Could not classify build_initial_df dictionary input; expected SMILES, raw molecules, raw TS/INT structures, or embedded structures"
+                "Could not classify build_initial_df dictionary input; expected SMILES, XYZ, RDKit molecules, raw molecules, raw TS/INT structures, or embedded structures"
             )
         embedded = {"embedded_mol", "embedded_ts"}
         if kinds <= embedded:
@@ -480,6 +660,122 @@ class Stepper:
             )
 
         raise TypeError(f"Unsupported SMILES input type: {type(structures).__name__}")
+
+    def _xyz_input_to_embedded(
+        self,
+        structures: Any,
+        *,
+        name: str | None,
+        names: list[str] | tuple[str, ...] | None,
+    ) -> tuple[dict[str, tuple[Mol, list[int], dict[str, Any]]], str]:
+        """Normalize XYZ inputs into embedded dictionaries."""
+        if self._is_xyz_source(structures):
+            if self._looks_like_xyz_path(structures):
+                default = Path(structures).stem
+                labels = [str(name) if name is not None else default]
+                if names is not None:
+                    raise ValueError("`names=` is only valid for batch XYZ inputs")
+                input_kind = "xyz_path"
+            else:
+                if name is None:
+                    raise ValueError("`name=` is required for a single XYZ block input")
+                if names is not None:
+                    raise ValueError("`names=` is only valid for batch XYZ inputs")
+                labels = [str(name)]
+                input_kind = "xyz_block"
+            return self._xyz_records_to_embedded([structures], labels), input_kind
+
+        if isinstance(structures, pd.DataFrame) and "xyz" in structures.columns and "smiles" not in structures.columns:
+            if name is not None or names is not None:
+                raise ValueError(
+                    "Use dataframe columns such as 'substrate_name' to label dataframe inputs; `name=` and `names=` are not accepted with dataframe input"
+                )
+            labels = self._df_labels(structures)
+            return self._xyz_records_to_embedded(structures["xyz"].tolist(), labels), "xyz_dataframe"
+
+        if isinstance(structures, (list, tuple)):
+            if not structures:
+                raise ValueError("build_initial_df received an empty XYZ list")
+            if not all(self._is_xyz_source(item) for item in structures):
+                raise ValueError("List input to build_initial_df cannot mix XYZ inputs with other input types")
+            labels = self._labels_from_names(
+                len(structures),
+                name=name,
+                names=names,
+                allow_name=False,
+                allow_names=True,
+            )
+            return self._xyz_records_to_embedded(list(structures), labels), "xyz_list"
+
+        if isinstance(structures, dict) and self._dict_kind(structures) == "xyz":
+            if name is not None or names is not None:
+                raise ValueError("Named XYZ dictionaries already provide labels; do not pass `name=` or `names=`")
+            return self._xyz_records_to_embedded(
+                list(structures.values()),
+                [str(key) for key in structures.keys()],
+            ), "xyz_dict"
+
+        raise TypeError(f"Unsupported XYZ input type: {type(structures).__name__}")
+
+    def _rdkit_input_to_embedded(
+        self,
+        structures: Any,
+        *,
+        name: str | None,
+        names: list[str] | tuple[str, ...] | None,
+        n_confs: int | None,
+        n_cores: int,
+        optimization: str,
+        max_iters: int,
+    ) -> tuple[dict[str, tuple], str]:
+        """Normalize bare RDKit Mol inputs into embedded dictionaries."""
+        if isinstance(structures, Mol):
+            labels = self._labels_from_names(
+                1,
+                name=name,
+                names=names,
+                allow_name=True,
+                allow_names=False,
+            )
+            return self._rdkit_records_to_embedded(
+                [structures],
+                labels,
+                n_confs=n_confs,
+                n_cores=n_cores,
+                optimization=optimization,
+                max_iters=max_iters,
+            ), "rdkit_mol"
+
+        if isinstance(structures, (list, tuple)) and structures and all(isinstance(item, Mol) for item in structures):
+            labels = self._labels_from_names(
+                len(structures),
+                name=name,
+                names=names,
+                allow_name=False,
+                allow_names=True,
+            )
+            return self._rdkit_records_to_embedded(
+                list(structures),
+                labels,
+                n_confs=n_confs,
+                n_cores=n_cores,
+                optimization=optimization,
+                max_iters=max_iters,
+            ), "rdkit_mol_list"
+
+        if isinstance(structures, dict) and self._dict_kind(structures) == "rdkit_mol":
+            if name is not None or names is not None:
+                raise ValueError("Named RDKit Mol dictionaries already provide labels; do not pass `name=` or `names=`")
+            return self._rdkit_records_to_embedded(
+                list(structures.values()),
+                [str(key) for key in structures.keys()],
+                n_confs=n_confs,
+                n_cores=n_cores,
+                optimization=optimization,
+                max_iters=max_iters,
+            ), "rdkit_mol_dict"
+
+        raise TypeError(f"Unsupported RDKit Mol input type: {type(structures).__name__}")
 
     @staticmethod
     def _unique_constrained_types(df: pd.DataFrame) -> set[str]:
@@ -587,14 +883,17 @@ class Stepper:
 
         Parameters
         ----------
-        structures : dict, str, list[str], pandas.DataFrame
+        structures : dict, str, pathlib.Path, list, pandas.DataFrame, rdkit.Chem.Mol
             Input structures. Existing embedded dictionaries keep the previous
-            behavior. Raw SMILES inputs, raw molecule dictionaries, and raw
-            TS/INT dictionaries are embedded before dataframe construction.
+            behavior. Raw SMILES inputs, XYZ paths/blocks, bare RDKit
+            molecules, raw molecule dictionaries, and raw TS/INT dictionaries
+            are normalized before dataframe construction. XYZ geometry is
+            preserved as supplied.
         name : str, optional
-            Label for a single SMILES input. Written to ``substrate_name``.
+            Label for a single SMILES, XYZ block/path, or RDKit molecule
+            input. Written to ``substrate_name``.
         names : list[str], optional
-            Labels for a batch SMILES list.
+            Labels for batch SMILES, XYZ, or RDKit molecule lists.
         n_confs : int or None, optional
             Number of conformers generated for raw inputs. Defaults to ``1``
             for quick calculator-style setup. Use ``None`` for FRUST's
@@ -664,8 +963,102 @@ class Stepper:
             name = None
             names = None
 
+        xyz_like = (
+            self._is_xyz_source(structures)
+            or (
+                isinstance(structures, pd.DataFrame)
+                and "xyz" in structures.columns
+                and "smiles" not in structures.columns
+            )
+            or (
+                isinstance(structures, (list, tuple))
+                and any(self._is_xyz_source(item) for item in structures)
+            )
+        )
+        if xyz_like:
+            embedded, input_kind = self._xyz_input_to_embedded(
+                structures,
+                name=name,
+                names=names,
+            )
+            df = self._build_initial_df_from_embedded(embedded)
+            self._resolve_auto_step_type(df)
+            return self._with_initial_df_attrs(
+                df,
+                input_kind=input_kind,
+                workflow=workflow,
+                n_confs=None,
+                n_cores=embed_cores,
+            )
+
+        rdkit_like = (
+            isinstance(structures, Mol)
+            or (
+                isinstance(structures, (list, tuple))
+                and bool(structures)
+                and all(isinstance(item, Mol) for item in structures)
+            )
+        )
+        if rdkit_like:
+            embedded, input_kind = self._rdkit_input_to_embedded(
+                structures,
+                name=name,
+                names=names,
+                n_confs=n_confs,
+                n_cores=embed_cores,
+                optimization=optimization,
+                max_iters=max_iters,
+            )
+            df = self._build_initial_df_from_embedded(embedded)
+            self._resolve_auto_step_type(df)
+            return self._with_initial_df_attrs(
+                df,
+                input_kind=input_kind,
+                workflow=workflow,
+                n_confs=n_confs,
+                n_cores=embed_cores,
+                optimization=optimization,
+                max_iters=max_iters,
+            )
+
         if isinstance(structures, dict):
             kind = self._dict_kind(structures)
+            if kind == "xyz":
+                embedded, input_kind = self._xyz_input_to_embedded(
+                    structures,
+                    name=name,
+                    names=names,
+                )
+                df = self._build_initial_df_from_embedded(embedded)
+                self._resolve_auto_step_type(df)
+                return self._with_initial_df_attrs(
+                    df,
+                    input_kind=input_kind,
+                    workflow=workflow,
+                    n_confs=None,
+                    n_cores=embed_cores,
+                )
+            if kind == "rdkit_mol":
+                embedded, input_kind = self._rdkit_input_to_embedded(
+                    structures,
+                    name=name,
+                    names=names,
+                    n_confs=n_confs,
+                    n_cores=embed_cores,
+                    optimization=optimization,
+                    max_iters=max_iters,
+                )
+                df = self._build_initial_df_from_embedded(embedded)
+                self._resolve_auto_step_type(df)
+                return self._with_initial_df_attrs(
+                    df,
+                    input_kind=input_kind,
+                    workflow=workflow,
+                    n_confs=n_confs,
+                    n_cores=embed_cores,
+                    optimization=optimization,
+                    max_iters=max_iters,
+                )
             if kind == "embedded":
                 df = self._build_initial_df_from_embedded(structures)
                 self._resolve_auto_step_type(df)
@@ -1289,6 +1682,14 @@ class Stepper:
             {
                 "engine": "xtb",
                 "options": opts,
+                "input": {
+                    "options": opts,
+                    "detailed_inp_str": _metadata_text(detailed_inp_str),
+                    "constraint": bool(constraint),
+                    "save_step": bool(save_step),
+                    "lowest": lowest,
+                    "n_cores": effective_n_cores,
+                },
                 "calculator": calculator_provenance(
                     name="xtb",
                     mode="direct",
@@ -1431,6 +1832,14 @@ class Stepper:
             {
                 "engine": "gxtb",
                 "options": opts,
+                "input": {
+                    "options": opts,
+                    "detailed_inp_str": _metadata_text(detailed_inp_str),
+                    "constraint": bool(constraint),
+                    "save_step": bool(save_step),
+                    "lowest": lowest,
+                    "n_cores": effective_n_cores,
+                },
                 "calculator": calculator_provenance(
                     name="gxtb",
                     mode="direct_gxtb",
@@ -1595,6 +2004,30 @@ class Stepper:
             prefix = f"{name}-{func}-{basis}" + (f"-{opt_flag}" if opt_flag else "")
 
         effective_n_cores = self._effective_n_cores(n_cores)
+        generated_input_blocks = []
+        if "Freq" in opts:
+            generated_input_blocks.append("freq_calc_hess")
+        if use_last_hess:
+            generated_input_blocks.append("read_last_hess")
+        if constraint:
+            generated_input_blocks.append(f"{self._step_type_upper()}_constraints")
+
+        def build_input_metadata(**extra: object) -> dict[str, object]:
+            metadata: dict[str, object] = {
+                "options": opts,
+                "xtra_inp_str": _metadata_text(xtra_inp_str),
+                "constraint": bool(constraint),
+                "save_step": bool(save_step),
+                "save_files": _metadata_list(save_files),
+                "lowest": lowest,
+                "read_files": _metadata_list(read_files),
+                "use_last_hess": bool(use_last_hess),
+                "n_cores": effective_n_cores,
+                "memory_gb": self.memory_gb,
+                "generated_input_blocks": generated_input_blocks or None,
+            }
+            metadata.update(extra)
+            return metadata
 
         def build_orca_calculator(
             mode: str,
@@ -1752,6 +2185,7 @@ class Stepper:
                 {
                     "engine": "orca",
                     "options": opts,
+                    "input": build_input_metadata(),
                     "calculator": build_orca_calculator("direct"),
                 }
             )
@@ -1784,6 +2218,11 @@ class Stepper:
                     "engine": "orca",
                     "options": opts,
                     "gxtb": True,
+                    "input": build_input_metadata(
+                        gxtb=True,
+                        gxtb_exe=_metadata_text(gxtb_exe),
+                        gxtb_ext_params=_metadata_text(gxtb_ext_params),
+                    ),
                     "calculator": build_orca_calculator(
                         "orca_external_gxtb",
                         executables={
@@ -1838,7 +2277,11 @@ class Stepper:
                 },
             )
 
-        def run_with_uma_block(client_block: str, calculator: dict[str, object]) -> pd.DataFrame:
+        def run_with_uma_block(
+            client_block: str,
+            calculator: dict[str, object],
+            input_extra: dict[str, object] | None = None,
+        ) -> pd.DataFrame:
             orig_build = build_orca
 
             def build_orca_uma(row: Series) -> dict:
@@ -1848,6 +2291,20 @@ class Stepper:
                 return inp
 
             result = self._run_engine(df, self.orca_fn, prefix, build_orca_uma, save_step, lowest, save_files)
+            uma_input = {
+                "uma": uma,
+                "uma_task": spec.task,
+                "uma_model": spec.model,
+                "uma_server": uma_server,
+                "uma_device": uma_device,
+                "uma_cache_dir": _metadata_text(uma_cache_dir),
+                "uma_offline": bool(uma_offline),
+                "uma_server_cores": uma_server_cores,
+                "uma_memory_per_thread_mib": int(uma_memory_per_thread_mib),
+                "uma_keep_logs": uma_keep_logs,
+                "uma_log_dir": _metadata_text(uma_log_dir),
+            }
+            uma_input.update(input_extra or {})
             result.attrs.setdefault("frust_steps", {}).setdefault(prefix, {}).update(
                 {
                     "engine": "orca",
@@ -1856,6 +2313,7 @@ class Stepper:
                     "uma_task": spec.task,
                     "uma_model": spec.model,
                     "uma_server": uma_server,
+                    "input": build_input_metadata(**uma_input),
                     "calculator": calculator,
                 }
             )
@@ -1892,6 +2350,7 @@ class Stepper:
                         "uma_memory_per_thread_mib": int(uma_memory_per_thread_mib),
                     },
                 ),
+                input_extra={"uma_server_cores": int(server_cores)},
             )
             if uma_keep_logs == "on_failure" and uma_result_failed(result):
                 server_handle.preserve()

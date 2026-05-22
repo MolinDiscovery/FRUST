@@ -9,8 +9,8 @@
 [![DOI](https://img.shields.io/badge/preprint-ChemRxiv-purple)](https://doi.org/10.26434/chemrxiv.15003686/v1)
 
 FRUST is research software for building, screening, and analyzing frustrated
-Lewis pair substrate structures. It provides template-based structure
-generation, conformer handling, staged xTB/g-xTB/ORCA workflows, UMA
+Lewis pair substrate structures. It combines template-based structure
+generation, conformer handling, staged xTB/g-xTB/ORCA calculations, UMA
 integration, and dataframe/parquet outputs for downstream analysis.
 
 FRUST is active research software. It is useful now, but the API and workflow
@@ -21,7 +21,7 @@ defaults should not be treated as fixed.
 FRUST requires Python 3.10 or newer.
 
 ```bash
-git clone <repository-url>
+git clone https://github.com/molindiscovery/FRUST.git
 cd FRUST
 pip install -e .
 ```
@@ -33,8 +33,9 @@ documentation:
 pip install -e ".[analytics,cluster,notebooks,docs]"
 ```
 
-FRUST does not install external quantum chemistry tools such as xTB, ORCA,
-ORCA-External-Tools, UMA, or g-xTB. See the documentation for setup details.
+FRUST does not install external quantum chemistry programs. Install and
+configure xTB, ORCA, ORCA-External-Tools, g-xTB, or UMA separately when your
+workflow needs them.
 
 ## Quickstart
 
@@ -85,14 +86,11 @@ df = ft.pipes.run_mols(substrates, n_confs=2, DFT=False)
 
 ## Documentation
 
-<a href="https://molindiscovery.github.io/FRUST/">
-  <img
-    src="https://img.shields.io/badge/Read_the_docs-FRUST_documentation-blue?style=for-the-badge&logo=readthedocs"
-    alt="FRUST documentation"
-  >
-</a>
+The user documentation is available at:
 
-To preview the docs locally while editing them:
+<https://molindiscovery.github.io/FRUST/>
+
+To preview the documentation locally:
 
 ```bash
 pip install -e ".[docs]"
@@ -113,22 +111,22 @@ mkdocs serve
 
 ## Repository Layout
 
-- `frust/` contains the Python package.
-- `frust/pipes.py` and `frust/pipelines/` contain workflow entry points.
-- `frust/stepper.py` contains the dataframe calculation layer.
-- `tests/` contains unit tests.
-- `docs/` contains the MkDocs documentation source.
-- `datasets/` and `structures/` contain project input tables and structural
-  templates.
-- `scripts/` contains supporting helpers outside the packaged API.
+```text
+frust/      Python package
+docs/       MkDocs documentation source
+tests/      Unit tests
+scripts/    Supporting project scripts
+datasets/   Example and project input tables
+structures/ Structural templates and starting geometries
+```
 
 ## How to Cite
 
 If you use FRUST, please cite the ChemRxiv preprint:
 
-> Nielsen, J. M.; Rasmussen, M. H.; Jensen, J. H.<br>
+> Nielsen, J. M.; Rasmussen, M. H.; Jensen, J. H.  
 > *Computational Prediction of Substrate Scope of a Homogeneous Catalyst: The
-> Case of Metal-free C-H Borylation by a Frustrated Lewis Pair Catalyst*.<br>
+> Case of Metal-free C-H Borylation by a Frustrated Lewis Pair Catalyst*.  
 > ChemRxiv, 2026. <https://doi.org/10.26434/chemrxiv.15003686/v1>
 
 BibTeX:
@@ -148,9 +146,19 @@ BibTeX:
 ## Acknowledgements
 
 FRUST builds on a broad open-source and computational chemistry ecosystem,
-including RDKit, pandas, NumPy, SciPy, matplotlib, xTB, ORCA,
-ORCA-External-Tools, g-xTB, UMA, Tooltoad, submitit, and MkDocs.
+including RDKit, pandas, NumPy, SciPy, matplotlib, xTB, ORCA, ORCA-External-
+Tools, g-xTB, UMA, Tooltoad, submitit, and MkDocs.
 
 ## License
 
 FRUST is distributed under the MIT License. See [LICENSE](LICENSE).
+
+## Notes For Maintainers
+
+Useful badges to add when the corresponding infrastructure exists:
+
+```md
+[![CI](https://github.com/molindiscovery/FRUST/actions/workflows/ci.yml/badge.svg)](https://github.com/molindiscovery/FRUST/actions/workflows/ci.yml)
+[![codecov](https://codecov.io/gh/molindiscovery/FRUST/branch/main/graph/badge.svg)](https://codecov.io/gh/molindiscovery/FRUST)
+[![PyPI](https://img.shields.io/pypi/v/FRUST)](https://pypi.org/project/FRUST/)
+```

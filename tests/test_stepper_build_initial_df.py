@@ -1,4 +1,6 @@
 import unittest
+from pathlib import Path
+from tempfile import TemporaryDirectory
 from unittest.mock import patch
 
 import pandas as pd
@@ -27,6 +29,15 @@ def _metadata(name: str, smiles: str = "CCO") -> dict:
         "smiles": smiles,
         "input_smiles": smiles,
     }
+
+
+def _xyz_block() -> str:
+    return """3
+water
+O 0.0 0.0 0.0
+H 0.0 0.0 0.96
+H 0.0 0.75 -0.24
+"""
 
 
 class StepperBuildInitialDfTests(unittest.TestCase):
@@ -109,6 +120,104 @@ class StepperBuildInitialDfTests(unittest.TestCase):
         self.assertEqual(df["substrate_name"].iloc[0], "ethanol")
         self.assertEqual(df["smiles"].iloc[0], "CCO")
         self.assertIn("coords_embedded", df.columns)
+
+    def test_xyz_file_path_preserves_atoms_and_coordinates(self):
+        step = Stepper(debug=True, save_output_dir=False)
+        with TemporaryDirectory() as tmpdir:
+            path = Path(tmpdir) / "water.xyz"
+            path.write_text(_xyz_block())
+
+            df = step.build_initial_df(path)
+
+        self.assertEqual(df.attrs["frust_initial_df"]["input_kind"], "xyz_path")
+        self.assertEqual(df["substrate_name"].iloc[0], "water")
+        self.assertEqual(df["atoms"].iloc[0], ["O", "H", "H"])
+        self.assertEqual(df["coords_embedded"].iloc[0][2], (0.0, 0.75, -0.24))
+        self.assertIsNone(df["smiles"].iloc[0])
+
+    def test_xyz_block_requires_name_and_preserves_geometry(self):
+        step = Stepper(debug=True, save_output_dir=False)
+
+        with self.assertRaisesRegex(ValueError, "`name=` is required"):
+            step.build_initial_df(_xyz_block())
+
+        df = step.build_initial_df(_xyz_block(), name="water")
+
+        self.assertEqual(df.attrs["frust_initial_df"]["input_kind"], "xyz_block")
+        self.assertEqual(df["substrate_name"].iloc[0], "water")
+        self.assertEqual(df["atoms"].iloc[0], ["O", "H", "H"])
+        self.assertEqual(df["coords_embedded"].iloc[0][1], (0.0, 0.0, 0.96))
+
+    def test_xyz_list_uses_names(self):
+        step = Stepper(debug=True, save_output_dir=False)
+        with TemporaryDirectory() as tmpdir:
+            water = Path(tmpdir) / "water.xyz"
+            other = Path(tmpdir) / "other.xyz"
+            water.write_text(_xyz_block())
+            other.write_text(_xyz_block())
+
+            df = step.build_initial_df(
+                [water, other],
+                names=["water_a", "water_b"],
+            )
+
+        self.assertEqual(df.attrs["frust_initial_df"]["input_kind"], "xyz_list")
+        self.assertEqual(list(df["substrate_name"]), ["water_a", "water_b"])
+
+    def test_dataframe_xyz_input_uses_substrate_name(self):
+        step = Stepper(debug=True, save_output_dir=False)
+        with TemporaryDirectory() as tmpdir:
+            path = Path(tmpdir) / "water.xyz"
+            path.write_text(_xyz_block())
+            inputs = pd.DataFrame(
+                {
+                    "xyz": [str(path)],
+                    "substrate_name": ["water_df"],
+                }
+            )
+
+            df = step.build_initial_df(inputs)
+
+        self.assertEqual(df.attrs["frust_initial_df"]["input_kind"], "xyz_dataframe")
+        self.assertEqual(df["substrate_name"].iloc[0], "water_df")
+        self.assertEqual(df["atoms"].iloc[0], ["O", "H", "H"])
+
+    def test_missing_xyz_path_raises_clear_error(self):
+        step = Stepper(debug=True, save_output_dir=False)
+
+        with self.assertRaisesRegex(FileNotFoundError, "XYZ file does not exist"):
+            step.build_initial_df("missing.xyz")
+
+    def test_bare_rdkit_mol_with_conformer_preserves_coordinates(self):
+        step = Stepper(debug=True, save_output_dir=False)
+        mol = _mol_with_conformer()
+        expected = tuple(mol.GetConformer(0).GetAtomPosition(0))
+
+        df = step.build_initial_df(mol, name="ethanol")
+
+        self.assertEqual(df.attrs["frust_initial_df"]["input_kind"], "rdkit_mol")
+        self.assertEqual(df["substrate_name"].iloc[0], "ethanol")
+        self.assertEqual(df["coords_embedded"].iloc[0][0], expected)
+
+    def test_bare_rdkit_mol_without_conformer_is_embedded(self):
+        step = Stepper(debug=True, save_output_dir=False)
+        mol = Chem.MolFromSmiles("CCO")
+
+        df = step.build_initial_df(mol, name="ethanol", n_confs=1)
+
+        self.assertEqual(df.attrs["frust_initial_df"]["input_kind"], "rdkit_mol")
+        self.assertEqual(df["substrate_name"].iloc[0], "ethanol")
+        self.assertIn("coords_embedded", df.columns)
+        self.assertGreater(len(df["coords_embedded"].iloc[0]), 0)
+
+    def test_rdkit_mol_list_uses_names(self):
+        step = Stepper(debug=True, save_output_dir=False)
+        mols = [Chem.MolFromSmiles("CCO"), Chem.MolFromSmiles("CCN")]
+
+        df = step.build_initial_df(mols, names=["ethanol", "ethylamine"], n_confs=1)
+
+        self.assertEqual(df.attrs["frust_initial_df"]["input_kind"], "rdkit_mol_list")
+        self.assertEqual(list(df["substrate_name"]), ["ethanol", "ethylamine"])
 
     def test_workflow_mols_expands_smiles_before_embedding(self):
         step = Stepper(debug=True, save_output_dir=False)

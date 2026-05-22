@@ -24,12 +24,27 @@ def summarize_ts_vibrations(
 ):
     true_ts_count = 0
     non_ts_count = 0
+    missing_vibs_count = 0
     rows = []
 
     for idx, row in df.iterrows():
         ligand = row.get("substrate_name", row.get("ligand_name", ""))
         rpos   = row.get("rpos", "")
         vibs   = row[col]
+
+        if _missing_vibrations(vibs):
+            missing_vibs_count += 1
+            row_data = {
+                "Structure": idx,
+                "Ligand": ligand,
+                "RPOS": rpos,
+                "1. img. freq.": "Missing",
+                "Neg. freqs": "Missing",
+            }
+            if show_pos_freqs:
+                row_data["Pos. freqs"] = "Missing"
+            rows.append(row_data)
+            continue
 
         freqs = [entry.get('frequency') for entry in vibs]
         neg_freqs = [f for f in freqs if f < 0]
@@ -80,6 +95,8 @@ def summarize_ts_vibrations(
         print("\nSummary:")
         print(f"  True TSs : {true_ts_count}")
         print(f"  Non-TSs  : {non_ts_count}")
+        if missing_vibs_count:
+            print(f"  Missing vibrations : {missing_vibs_count}")
 
     else:
         latex_df = result_df.head(max_rows).copy()
@@ -106,6 +123,22 @@ def summarize_ts_vibrations(
         print("\\label{tab:SI:freqstsX}")
         print(latex_table)
         print("\\end{table}")
+
+
+def _missing_vibrations(vibs) -> bool:
+    """Return whether a vibrations cell is missing."""
+    if vibs is None:
+        return True
+    if isinstance(vibs, float) and math.isnan(vibs):
+        return True
+    try:
+        missing = pd.isna(vibs)
+    except (TypeError, ValueError):
+        return False
+    try:
+        return bool(missing)
+    except (TypeError, ValueError):
+        return False
 
 
 # # an old more simple function for annotation

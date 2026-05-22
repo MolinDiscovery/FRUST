@@ -6,6 +6,7 @@ from frust.transformers import transformer_mols
 from frust.utils.io import read_ts_type_from_xyz
 from frust.utils.mols import create_ts_per_rpos, create_mol_per_rpos
 from frust.schema import energy_columns
+from frust.utils.dataframes import lowest_energy_rows
 import pandas as pd
 
 from rdkit.Chem.rdchem import Mol
@@ -299,7 +300,7 @@ def run_ts_per_lig(
     *,
     n_confs: int | None = None,
     n_cores: int = 4,
-    mem_gb: int = 20,    
+    mem_gb: int = 20,
     debug: bool = False,
     top_n: int = 10,
     out_dir: str | None = None,
@@ -384,7 +385,7 @@ def run_ts_per_lig(
         "TightSCF"  : None,
         "SP"        : None,
         "NoSym"     : None,
-    }, lowest=1)
+    })
 
     if not DFT:
         if output_parquet:
@@ -436,15 +437,89 @@ def run_mols(
     *,
     n_confs: int | None = 5,
     n_cores: int = 4,
-    mem_gb: int = 20,    
+    mem_gb: int = 20,
     debug: bool = False,
-    top_n: int = 5,
+    top_n: int = 10,
     out_dir: str | None = None,
     output_parquet: str | None = None,
     save_output_dir: bool = True,
     DFT: bool = False,
     select_mols: str | list[str] = "all",  # "all", "uniques", "generics", or specific names
 ):
+    """Run the standard molecular catalytic-cycle workflow for ligand SMILES.
+
+    This is the molecule analogue of the transition-state pipelines: FRUST
+    expands each ligand into the molecular states produced by
+    :func:`frust.transformers.transformer_mols`, embeds conformers, runs the
+    default xTB preoptimization/single-point/optimization cascade, and
+    optionally continues through the DFT ORCA branch.
+
+    Parameters
+    ----------
+    ligand_smiles_df : pandas.DataFrame or list[str]
+        Ligand input. DataFrame inputs must contain a ``smiles`` column. A
+        plain list is interpreted as a list of ligand SMILES and is converted
+        to a one-column DataFrame internally. Duplicate SMILES are only
+        expanded once.
+    n_confs : int or None, optional
+        Number of conformers to embed for each generated molecular state. Pass
+        ``None`` to let the embedder use its own default behavior.
+    n_cores : int, optional
+        Number of CPU cores used for conformer embedding and as the default
+        resource setting for the :class:`frust.stepper.Stepper`.
+    mem_gb : int, optional
+        Memory in GB passed to the :class:`frust.stepper.Stepper`.
+    debug : bool, optional
+        Enable debug behavior in the underlying :class:`frust.stepper.Stepper`.
+    top_n : int, optional
+        Number of lowest-energy conformers retained after the xTB optimization
+        stage.
+    out_dir : str or None, optional
+        Base directory for calculation output if output directories are saved.
+    output_parquet : str or None, optional
+        If provided, write the final dataframe to this parquet path before
+        returning it.
+    save_output_dir : bool, optional
+        Whether the :class:`frust.stepper.Stepper` should save a FRUST output
+        directory.
+    DFT : bool, optional
+        If ``False``, stop after the xTB cascade and ``DFT-pre-SP``. If
+        ``True``, also run the ORCA ``DFT-Opt`` and solvent ``DFT-SP`` stages.
+    select_mols : str or list[str], optional
+        Molecular states to generate before embedding. Use ``"all"`` for the
+        full set. Use ``"uniques"`` for the ligand and rpos-dependent states
+        such as ``int2_rpos(...)``, ``mol2_rpos(...)``, and
+        ``HBpin-ligand_rpos(...)``. Use ``"generics"`` for states shared
+        across all ligands/rpos values: ``dimer``, ``HH``, ``catalyst``, and
+        ``HBpin-mol``. Use a string or list to select explicit families from
+        ``"dimer"``, ``"HH"``, ``"ligand"``, ``"catalyst"``, ``"int2"``,
+        ``"mol2"``, ``"HBpin-ligand"``, and ``"HBpin-mol"``.
+
+    Returns
+    -------
+    pandas.DataFrame
+        Result dataframe containing embedded structures and all calculation
+        columns produced by the requested xTB/ORCA stages.
+
+    Examples
+    --------
+    Run the full default molecular-state expansion for two conformers per
+    state:
+
+    >>> import frust as ft
+    >>> df = ft.pipes.run_mols(["COc1ccccc1"], n_confs=2)
+
+    Run only ligand and catalyst reference states:
+
+    >>> df = ft.pipes.run_mols(
+    ...     ["COc1ccccc1"],
+    ...     select_mols=["ligand", "catalyst"],
+    ... )
+
+    Run only reactive-position variants for the ``int2`` family:
+
+    >>> df = ft.pipes.run_mols(["COc1ccccc1"], select_mols="int2")
+    """
     ligand_smiles_df, ligand_smiles_list = _normalize_smiles_input(ligand_smiles_df)
 
     # 1) build generic-cycle molecules (with optional selection)
@@ -487,7 +562,168 @@ def run_mols(
 
     # 4) if no DFT requested, save/return
     if not DFT:
+        df = lowest_energy_rows(df)
+        if output_parquet:
+            df.to_parquet(output_parquet)
+        return df
 
+    # ↓↓↓↓↓↓↓↓ DFT branch ↓↓↓↓↓↓↓↓
+
+    df = step.orca(df, "DFT-Opt", options={
+        functional  : None,
+        basisset    : None,
+        "TightSCF"  : None,
+        "SlowConv"  : None,
+        "Opt"       : None,
+        freq        : None,
+        "NoSym"     : None,
+    }, lowest=1)
+
+    df = step.orca(df, name="DFT-SP", options={
+        functional      : None,
+        basisset_solv   : None,
+        "TightSCF"      : None,
+        "SP"            : None,
+        "NoSym"         : None,
+    }, xtra_inp_str="""%CPCM\nSMD TRUE\nSMDSOLVENT "chloroform"\nend""")
+
+    if output_parquet:
+        df.to_parquet(output_parquet)
+    return df
+
+
+def run_mols_custom(
+    ligand_smiles_df: pd.DataFrame | list[str],
+    *,
+    n_confs: int | None = 5,
+    n_cores: int = 4,
+    mem_gb: int = 20,
+    debug: bool = False,
+    top_n: int = 10,
+    out_dir: str | None = None,
+    output_parquet: str | None = None,
+    save_output_dir: bool = True,
+    DFT: bool = False,
+    select_mols: str | list[str] = "all",  # "all", "uniques", "generics", or specific names
+):
+    """Run the standard molecular catalytic-cycle workflow for ligand SMILES.
+
+    This is the molecule analogue of the transition-state pipelines: FRUST
+    expands each ligand into the molecular states produced by
+    :func:`frust.transformers.transformer_mols`, embeds conformers, runs the
+    default xTB preoptimization/single-point/optimization cascade, and
+    optionally continues through the DFT ORCA branch.
+
+    Parameters
+    ----------
+    ligand_smiles_df : pandas.DataFrame or list[str]
+        Ligand input. DataFrame inputs must contain a ``smiles`` column. A
+        plain list is interpreted as a list of ligand SMILES and is converted
+        to a one-column DataFrame internally. Duplicate SMILES are only
+        expanded once.
+    n_confs : int or None, optional
+        Number of conformers to embed for each generated molecular state. Pass
+        ``None`` to let the embedder use its own default behavior.
+    n_cores : int, optional
+        Number of CPU cores used for conformer embedding and as the default
+        resource setting for the :class:`frust.stepper.Stepper`.
+    mem_gb : int, optional
+        Memory in GB passed to the :class:`frust.stepper.Stepper`.
+    debug : bool, optional
+        Enable debug behavior in the underlying :class:`frust.stepper.Stepper`.
+    top_n : int, optional
+        Number of lowest-energy conformers retained after the xTB optimization
+        stage.
+    out_dir : str or None, optional
+        Base directory for calculation output if output directories are saved.
+    output_parquet : str or None, optional
+        If provided, write the final dataframe to this parquet path before
+        returning it.
+    save_output_dir : bool, optional
+        Whether the :class:`frust.stepper.Stepper` should save a FRUST output
+        directory.
+    DFT : bool, optional
+        If ``False``, stop after the xTB cascade and ``DFT-pre-SP``. If
+        ``True``, also run the ORCA ``DFT-Opt`` and solvent ``DFT-SP`` stages.
+    select_mols : str or list[str], optional
+        Molecular states to generate before embedding. Use ``"all"`` for the
+        full set. Use ``"uniques"`` for the ligand and rpos-dependent states
+        such as ``int2_rpos(...)``, ``mol2_rpos(...)``, and
+        ``HBpin-ligand_rpos(...)``. Use ``"generics"`` for states shared
+        across all ligands/rpos values: ``dimer``, ``HH``, ``catalyst``, and
+        ``HBpin-mol``. Use a string or list to select explicit families from
+        ``"dimer"``, ``"HH"``, ``"ligand"``, ``"catalyst"``, ``"int2"``,
+        ``"mol2"``, ``"HBpin-ligand"``, and ``"HBpin-mol"``.
+
+    Returns
+    -------
+    pandas.DataFrame
+        Result dataframe containing embedded structures and all calculation
+        columns produced by the requested xTB/ORCA stages.
+
+    Examples
+    --------
+    Run the full default molecular-state expansion for two conformers per
+    state:
+
+    >>> import frust as ft
+    >>> df = ft.pipes.run_mols(["COc1ccccc1"], n_confs=2)
+
+    Run only ligand and catalyst reference states:
+
+    >>> df = ft.pipes.run_mols(
+    ...     ["COc1ccccc1"],
+    ...     select_mols=["ligand", "catalyst"],
+    ... )
+
+    Run only reactive-position variants for the ``int2`` family:
+
+    >>> df = ft.pipes.run_mols(["COc1ccccc1"], select_mols="int2")
+    """
+    ligand_smiles_df, ligand_smiles_list = _normalize_smiles_input(ligand_smiles_df)
+
+    # 1) build generic-cycle molecules (with optional selection)
+    mols = create_mol_per_rpos(
+        ligand_smiles_df,
+        return_format="dict",
+        select_mols=select_mols,
+    )
+
+    # 2) embed
+    embedded = embed_mols(mols, n_confs=n_confs, n_cores=n_cores)
+
+    # 3) xTB cascade
+    step = Stepper(
+        step_type="MOLS",
+        n_cores=n_cores,
+        memory_gb=mem_gb,
+        debug=debug,
+        output_base=out_dir,
+        save_output_dir=save_output_dir,
+        save_calc_dirs=False,
+    )
+    df = step.build_initial_df(embedded)
+    df = step.xtb(df, name="xtb_preopt", options={"gfnff": None, "opt": None}, n_cores=2)
+    df = step.xtb(df, name="xtb_sp", options={"gfn": 2}, n_cores=2)
+    #df = step.xtb(df, name="xtb_opt", options={"gfn": 2, "opt": None}, lowest=top_n, n_cores=2)
+    df = step.gxtb(df, name="gxtb_opt", options={"opt": None}, n_cores=2)
+
+    functional      = "wB97X-D3" # wB97X-D3, wB97M-V
+    basisset        = "6-31G**" # 6-31G**, def2-TZVPD
+    basisset_solv   = "6-31+G**" # 6-31+G**, def2-TZVPD
+    freq            = "Freq" # Freq, NumFreq
+
+    df = step.orca(df, name="DFT-pre-SP", options={
+        functional  : None,
+        basisset_solv : None,
+        "TightSCF"  : None,
+        "SP"        : None,
+        "NoSym"     : None,
+    }, xtra_inp_str="""%CPCM\nSMD TRUE\nSMDSOLVENT "chloroform"\nend""")
+
+    # 4) if no DFT requested, save/return
+    if not DFT:
+        df = lowest_energy_rows(df)
         if output_parquet:
             df.to_parquet(output_parquet)
         return df

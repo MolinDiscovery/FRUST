@@ -129,6 +129,35 @@ Common executable sources:
 | ORCA | `ORCA_EXE` |
 | OET wrappers | `OET_TOOLS/bin/...` |
 
+For day-to-day inspection, use `show_steps(...)` to flatten the most useful
+parts of `df.attrs["frust_steps"]` into a readable table:
+
+```python
+import frust as ft
+
+ft.show_steps(df)
+```
+
+Example output:
+
+| step | engine | calc_name | mode | options | n_columns | n_cores | memory_gb | xtra_inp_str |
+| --- | --- | --- | --- | --- | ---: | ---: | ---: | --- |
+| `gxtb_opt` | `gxtb` | `gxtb` | `direct_gxtb` | `opt` | 3 | 8 |  |  |
+| `DFT-SP-solvent` | `orca` | `orca` | `direct` | `wB97X-D3 6-31+G** TightSCF SP NoSym` | 3 | 8 | 20.0 | `%CPCM ...` |
+
+The helper also includes compact `executables` and `environment` columns when
+you ask for the full view:
+
+```python
+ft.show_steps(df, detail="full")
+```
+
+Use the default summary view for quick inspection. It includes ORCA
+`xtra_inp_str` because solvent models, custom geometry blocks, and other extra
+input can change the chemistry. Use `detail="full"` when you need the full
+call-level `input` block, executable paths, environment paths, compatibility
+aliases such as `gxtb_exe`, or the backend callable name.
+
 !!! note
     Provenance is best effort. If an executable is not discoverable, FRUST keeps
     the configured value and records `resolved=False` instead of turning
@@ -275,6 +304,33 @@ many conformers -> cheap optimization -> keep the best few -> expensive stage
 
 That is the normal screening pattern. Run cheap calculations broadly, then
 spend expensive ORCA time only on the most relevant rows.
+
+If you already have a completed results dataframe, use `ft.lowest_energy_rows`
+to apply the same grouping rule after the fact:
+
+```python
+import pandas as pd
+import frust as ft
+
+df_ligs = pd.read_parquet("ligs.parquet")
+
+df_low = ft.lowest_energy_rows(df_ligs)
+```
+
+By default, FRUST uses the latest energy column and keeps one row per inferred
+structure group. To keep more rows, or to rank by a specific stage:
+
+```python
+df_low = ft.lowest_energy_rows(
+    df_ligs,
+    n=5,
+    energy_col="xtb-gfn-opt-EE",
+)
+```
+
+The helper normalizes legacy `ligand_name` columns to `substrate_name` before
+grouping, so older parquet files follow the same identity rules as current
+`Stepper(lowest=...)` runs.
 
 ## Failed Rows
 

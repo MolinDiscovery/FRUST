@@ -87,8 +87,22 @@ class StepperProvenanceTests(unittest.TestCase):
             }
 
         with tempfile.TemporaryDirectory() as td:
-            gxtb = _executable(Path(td) / "gxtb-xtb")
-            with patch.dict(os.environ, {"GXTB_EXE": str(gxtb)}):
+            root = Path(td)
+            gxtb = _executable(root / "gxtb-xtb")
+            orca = _executable(root / "orca")
+            mpi = root / "openmpi"
+            mpi.mkdir()
+            env_file = root / "frust.env"
+            env_file.write_text(f"GXTB_EXE={gxtb}\nORCA_EXE={orca}\nOPEN_MPI_DIR={mpi}\n")
+            with patch.dict(
+                os.environ,
+                {
+                    "GXTB_EXE": str(gxtb),
+                    "ORCA_EXE": str(orca),
+                    "OPEN_MPI_DIR": str(mpi),
+                    "TOOLTOAD_DOTENV_PATH": str(env_file),
+                },
+            ):
                 step = Stepper(debug=True, save_output_dir=False, n_cores=8)
                 step.gxtb_fn = fake_gxtb
                 out = step.gxtb(_df(), name="gxtb_test", options={"opt": None}, n_cores=4)
@@ -115,17 +129,31 @@ class StepperProvenanceTests(unittest.TestCase):
                 "OPEN_MPI_DIR": str(mpi),
                 "XTBPATH": str(xtbpath),
             }
+            env_file = root / "frust.env"
+            env_file.write_text(
+                f"ORCA_EXE={orca}\nXTB_EXE={xtb}\nOPEN_MPI_DIR={mpi}\nXTBPATH={xtbpath}\n"
+            )
+            env["TOOLTOAD_DOTENV_PATH"] = str(env_file)
             with patch.dict(os.environ, env):
                 step = Stepper(debug=True, save_output_dir=False, n_cores=8, memory_gb=12)
                 step.orca_fn = _fake_orca
+                xtra_inp_str = """%CPCM
+SMD TRUE
+SMDSOLVENT "chloroform"
+end"""
                 out = step.orca(
                     _df(),
                     name="orca_test",
                     options={"HF": None, "STO-3G": None, "SP": None},
+                    xtra_inp_str=xtra_inp_str,
                     n_cores=2,
                 )
 
-        calc = out.attrs["frust_steps"]["orca_test"]["calculator"]
+        meta = out.attrs["frust_steps"]["orca_test"]
+        self.assertEqual(meta["input"]["xtra_inp_str"], xtra_inp_str)
+        self.assertEqual(meta["input"]["options"], {"HF": None, "STO-3G": None, "SP": None})
+        self.assertFalse(meta["input"]["constraint"])
+        calc = meta["calculator"]
         self.assertEqual(calc["name"], "orca")
         self.assertEqual(calc["mode"], "direct")
         self.assertEqual(calc["resources"], {"n_cores": 2, "memory_gb": 12})
@@ -139,13 +167,16 @@ class StepperProvenanceTests(unittest.TestCase):
             root = Path(td)
             oet = _fake_oet_root(root)
             orca = _executable(root / "orca")
+            mpi = root / "openmpi"
+            mpi.mkdir()
             env_file = root / "frust.env"
-            env_file.write_text(f"OET_TOOLS={oet}\nORCA_EXE={orca}\n")
+            env_file.write_text(f"OET_TOOLS={oet}\nORCA_EXE={orca}\nOPEN_MPI_DIR={mpi}\n")
             with patch.dict(
                 os.environ,
                 {
                     "OET_TOOLS": str(oet),
                     "ORCA_EXE": str(orca),
+                    "OPEN_MPI_DIR": str(mpi),
                     "TOOLTOAD_DOTENV_PATH": str(env_file),
                 },
             ):
@@ -180,13 +211,16 @@ class StepperProvenanceTests(unittest.TestCase):
             root = Path(td)
             oet = _fake_oet_root(root)
             orca = _executable(root / "orca")
+            mpi = root / "openmpi"
+            mpi.mkdir()
             env_file = root / "frust.env"
-            env_file.write_text(f"OET_TOOLS={oet}\nORCA_EXE={orca}\n")
+            env_file.write_text(f"OET_TOOLS={oet}\nORCA_EXE={orca}\nOPEN_MPI_DIR={mpi}\n")
             with patch.dict(
                 os.environ,
                 {
                     "OET_TOOLS": str(oet),
                     "ORCA_EXE": str(orca),
+                    "OPEN_MPI_DIR": str(mpi),
                     "TOOLTOAD_DOTENV_PATH": str(env_file),
                 },
             ):
