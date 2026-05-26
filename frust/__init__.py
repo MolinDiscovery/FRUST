@@ -11,7 +11,10 @@ from typing import TYPE_CHECKING, Any
 
 _PUBLIC_MODULES: dict[str, str] = {
     "cluster": "frust.cluster",
+    "pipelines": "frust.pipelines",
     "pipes": "frust.pipes",
+    "utils": "frust.utils",
+    "vis": "frust.vis",
 }
 
 _PUBLIC_API: dict[str, tuple[str, str]] = {
@@ -80,7 +83,10 @@ def __dir__() -> list[str]:
 
 if TYPE_CHECKING:
     import frust.cluster as cluster
+    import frust.pipelines as pipelines
     import frust.pipes as pipes
+    import frust.utils as utils
+    import frust.vis as vis
     from frust.cluster import ClusterConfig, Resources, submit_chain, submit_jobs
     from frust.embedder import embed_mols, embed_ts
     from frust.schema import (
