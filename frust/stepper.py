@@ -30,6 +30,11 @@ from frust.schema import (
     output_column,
     parse_structure_name,
 )
+from frust.constraints import (
+    dataframe_has_row_constraints,
+    render_orca_constraints,
+    render_xtb_constraints,
+)
 
 
 def _metadata_text(value: str | None) -> str | None:
@@ -232,6 +237,9 @@ class Stepper:
 
     def _validate_constraint_request(self, df: pd.DataFrame) -> str:
         """Validate that constraint mode is fully specified."""
+        if dataframe_has_row_constraints(df):
+            return "row"
+
         step_type = self._step_type_upper()
         if not step_type:
             raise ValueError(
@@ -1587,9 +1595,9 @@ class Stepper:
             if base_str:
                 inp["detailed_input_str"] = base_str
 
-            block = None
+            block = render_xtb_constraints(row) if constraint else None
 
-            if step_type == "TS1" and constraint:
+            if block is None and step_type == "TS1" and constraint:
                 B, N, H, C = 0, 1, 4, 5
                 atom = [x + 1 for x in self._constraint_atoms(row)]
                 block = textwrap.dedent(f"""
@@ -1605,7 +1613,7 @@ class Stepper:
                 $end
                 """).strip()
 
-            if step_type == "TS2" and constraint:
+            if block is None and step_type == "TS2" and constraint:
                 BCat10, N17, H40, H41, C46 = 0, 1, 4, 3, 5  # noqa: F841
                 atom = [x + 1 for x in self._constraint_atoms(row)]
                 block = textwrap.dedent(f"""
@@ -1618,7 +1626,7 @@ class Stepper:
                 $end
                 """).strip()
 
-            if step_type == "TS3" and constraint:
+            if block is None and step_type == "TS3" and constraint:
                 BCat10, H11, BPin22, H21, C = 0, 2, 3, 4, 5
                 atom = [x + 1 for x in self._constraint_atoms(row)]
                 block = textwrap.dedent(f"""
@@ -1635,7 +1643,7 @@ class Stepper:
                 $end
                 """).strip()
 
-            if step_type == "TS4" and constraint:
+            if block is None and step_type == "TS4" and constraint:
                 BCat11, H12, H13, BPin37, C = 0, 2, 3, 4, 5 # noqa: F841
                 atom = [x + 1 for x in self._constraint_atoms(row)]
                 block = textwrap.dedent(f"""
@@ -1652,7 +1660,7 @@ class Stepper:
                 $end
                 """).strip()
 
-            if step_type == "INT3" and constraint:
+            if block is None and step_type == "INT3" and constraint:
                 BCat10, BPin42, H11, C = 0, 3, 4, 5
                 atom = [x + 1 for x in self._constraint_atoms(row)]
                 block = textwrap.dedent(f"""
@@ -1737,9 +1745,9 @@ class Stepper:
             if base_str:
                 inp["detailed_input_str"] = base_str
 
-            block = None
+            block = render_xtb_constraints(row) if constraint else None
 
-            if step_type == "TS1" and constraint:
+            if block is None and step_type == "TS1" and constraint:
                 B, N, H, C = 0, 1, 4, 5
                 atom = [x + 1 for x in self._constraint_atoms(row)]
                 block = textwrap.dedent(f"""
@@ -1755,7 +1763,7 @@ class Stepper:
                 $end
                 """).strip()
 
-            if step_type == "TS2" and constraint:
+            if block is None and step_type == "TS2" and constraint:
                 BCat10, N17, H40, H41, C46 = 0, 1, 4, 3, 5  # noqa: F841
                 atom = [x + 1 for x in self._constraint_atoms(row)]
                 block = textwrap.dedent(f"""
@@ -1768,7 +1776,7 @@ class Stepper:
                 $end
                 """).strip()
 
-            if step_type == "TS3" and constraint:
+            if block is None and step_type == "TS3" and constraint:
                 BCat10, H11, BPin22, H21, C = 0, 2, 3, 4, 5
                 atom = [x + 1 for x in self._constraint_atoms(row)]
                 block = textwrap.dedent(f"""
@@ -1785,7 +1793,7 @@ class Stepper:
                 $end
                 """).strip()
 
-            if step_type == "TS4" and constraint:
+            if block is None and step_type == "TS4" and constraint:
                 BCat11, H12, H13, BPin37, C = 0, 2, 3, 4, 5  # noqa: F841
                 atom = [x + 1 for x in self._constraint_atoms(row)]
                 block = textwrap.dedent(f"""
@@ -1802,7 +1810,7 @@ class Stepper:
                 $end
                 """).strip()
 
-            if step_type == "INT3" and constraint:
+            if block is None and step_type == "INT3" and constraint:
                 BCat10, BPin42, H11, C = 0, 3, 4, 5
                 atom = [x + 1 for x in self._constraint_atoms(row)]
                 block = textwrap.dedent(f"""
@@ -2010,7 +2018,10 @@ class Stepper:
         if use_last_hess:
             generated_input_blocks.append("read_last_hess")
         if constraint:
-            generated_input_blocks.append(f"{self._step_type_upper()}_constraints")
+            if dataframe_has_row_constraints(df):
+                generated_input_blocks.append("row_constraints")
+            else:
+                generated_input_blocks.append(f"{self._step_type_upper()}_constraints")
 
         def build_input_metadata(**extra: object) -> dict[str, object]:
             metadata: dict[str, object] = {
@@ -2094,7 +2105,13 @@ class Stepper:
                 ).strip()
                 inp["xtra_inp_str"] += ("\n\n" + block) if inp["xtra_inp_str"] else block
 
-            if constraint and step_type == "TS1":
+            row_constraint_block = render_orca_constraints(row) if constraint else None
+            if row_constraint_block:
+                inp["xtra_inp_str"] += (
+                    "\n\n" + row_constraint_block
+                ) if inp["xtra_inp_str"] else row_constraint_block
+
+            if row_constraint_block is None and constraint and step_type == "TS1":
                 atom = self._constraint_atoms(row)
                 B, N, H, C = atom[0], atom[1], atom[4], atom[5]
                 block = textwrap.dedent(f"""
@@ -2111,7 +2128,7 @@ class Stepper:
                 """).strip() # {{A {N} {H} {C} 170.1342 C}}
                 inp["xtra_inp_str"] += ("\n\n" + block) if inp["xtra_inp_str"] else block
 
-            if constraint and step_type == "TS2":
+            if row_constraint_block is None and constraint and step_type == "TS2":
                 atom = self._constraint_atoms(row)
                 BCat, N17, H40, H41 = atom[0], atom[1], atom[4], atom[3]
                 block = textwrap.dedent(f"""
@@ -2125,7 +2142,7 @@ class Stepper:
                 """).strip()
                 inp["xtra_inp_str"] += ("\n\n" + block) if inp["xtra_inp_str"] else block
 
-            if constraint and step_type == "TS3":
+            if row_constraint_block is None and constraint and step_type == "TS3":
                 atom = self._constraint_atoms(row)
                 BCat, H11, BPin, H21, C = atom[0], atom[2], atom[3], atom[4], atom[5]
                 block = textwrap.dedent(f"""
@@ -2143,7 +2160,7 @@ class Stepper:
                 """).strip()
                 inp["xtra_inp_str"] += ("\n\n" + block) if inp["xtra_inp_str"] else block
 
-            if constraint and step_type == "TS4":
+            if row_constraint_block is None and constraint and step_type == "TS4":
                 atom = self._constraint_atoms(row)
                 BCat, H12, H13, BPin, C = atom[0], atom[2], atom[3], atom[4], atom[5]  # noqa: F841
                 block = textwrap.dedent(f"""
@@ -2161,7 +2178,7 @@ class Stepper:
                 """).strip()
                 inp["xtra_inp_str"] += ("\n\n" + block) if inp["xtra_inp_str"] else block
 
-            if constraint and step_type == "INT3":
+            if row_constraint_block is None and constraint and step_type == "INT3":
                 atom = self._constraint_atoms(row)
                 BCat, BPin, H11, C = atom[0], atom[3], atom[4], atom[5]
                 block = textwrap.dedent(f"""

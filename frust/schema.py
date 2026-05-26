@@ -90,7 +90,14 @@ def normalize_dataframe(df: pd.DataFrame) -> pd.DataFrame:
 
 def infer_group_columns(df: pd.DataFrame) -> list[str]:
     """Choose columns that identify one chemical object for lowest filtering."""
-    preferred = ["substrate_name", "structure_type", "molecule_role", "rpos"]
+    preferred = [
+        "system_name",
+        "substrate_name",
+        "catalyst_name",
+        "structure_type",
+        "molecule_role",
+        "rpos",
+    ]
     return [col for col in preferred if col in df.columns]
 
 

@@ -97,3 +97,4 @@ nav:
   - Tutorials:
       - Building Initial DataFrames: tutorials/building-initial-dataframes.md
       - Templates: tutorials/templates.md
+      - Catalyst And Substrate Screens: tutorials/catalyst-substrate-screens.md

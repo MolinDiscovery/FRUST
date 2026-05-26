@@ -14,6 +14,7 @@ class PublicApiTests(unittest.TestCase):
             lowest_energy_rows,
             pipelines,
             pipes,
+            screen,
             plot_vibs,
             summarize_ts_vibrations,
             utils,
@@ -21,6 +22,7 @@ class PublicApiTests(unittest.TestCase):
             write_xyz,
         )
         from frust import pipelines as pipelines_direct
+        from frust import screen as screen_direct
         from frust import utils as utils_direct
         from frust import vis as vis_direct
         from frust.cluster import ClusterConfig, Resources, submit_chain, submit_jobs
@@ -39,6 +41,7 @@ class PublicApiTests(unittest.TestCase):
             "cluster",
             "pipelines",
             "pipes",
+            "screen",
             "utils",
             "vis",
             "show_steps",
@@ -88,6 +91,8 @@ class PublicApiTests(unittest.TestCase):
         self.assertIs(ft.vis.plot_mols, plot_mols_direct)
         self.assertIs(ft.vis.plot_vibs, plot_vibs_direct)
         self.assertIs(ft.pipelines, pipelines_direct)
+        self.assertIs(ft.screen, screen_direct)
+        self.assertIs(screen, screen_direct)
         self.assertIs(pipelines, pipelines_direct)
         self.assertIs(ft.pipelines.run_ts_per_rpos, run_ts_per_rpos)
         self.assertIs(ft.pipes.run_mols, run_mols)

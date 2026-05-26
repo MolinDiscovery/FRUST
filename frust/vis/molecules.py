@@ -2,6 +2,8 @@ from typing import Any, List, Optional, Union
 
 import numpy as np
 import pandas as pd
+from rdkit import Chem
+from rdkit.Geometry import Point3D
 from tooltoad.chemutils import ac2mol
 from tooltoad.vis import DrawMolSvg, MolTo3DGrid, RxnTo3DGrid
 
@@ -108,7 +110,7 @@ def plot_mols(
                                 else len(coords) > 0)
 
                 if is_valid:
-                    mol = ac2mol(atoms, coords)
+                    mol = _row_to_mol(row, atoms, coords)
                     if mol is not None:
                         all_mols.append(mol)
 
@@ -142,6 +144,70 @@ def plot_mols(
     molto3d_args.update(molto3d_kwargs)
 
     MolTo3DGrid(all_mols, **molto3d_args)
+
+
+def _row_to_mol(row: pd.Series, atoms: list[str], coords: list[tuple[float, float, float]]):
+    """Create a molecule for plotting one dataframe row.
+
+    Parameters
+    ----------
+    row : pandas.Series
+        Dataframe row.
+    atoms : list of str
+        Atom symbols.
+    coords : list of tuple of float
+        Cartesian coordinates.
+
+    Returns
+    -------
+    rdkit.Chem.Mol or None
+        Molecule with row-provided connectivity when available.
+    """
+    bonds = row.get("connectivity_bonds")
+    if isinstance(bonds, list) and bonds:
+        return _mol_from_connectivity(atoms, coords, bonds)
+    return ac2mol(atoms, coords)
+
+
+def _mol_from_connectivity(
+    atoms: list[str],
+    coords: list[tuple[float, float, float]],
+    bonds: list[tuple[int, int]],
+) -> Chem.Mol:
+    """Build an RDKit molecule from explicit atom and bond connectivity.
+
+    Parameters
+    ----------
+    atoms : list of str
+        Atom symbols.
+    coords : list of tuple of float
+        Cartesian coordinates.
+    bonds : list of tuple of int
+        Zero-based atom-index pairs.
+
+    Returns
+    -------
+    rdkit.Chem.Mol
+        Molecule with one conformer.
+    """
+    editable = Chem.RWMol()
+    for symbol in atoms:
+        editable.AddAtom(Chem.Atom(str(symbol)))
+    for begin, end in bonds:
+        if begin == end:
+            continue
+        if editable.GetBondBetweenAtoms(int(begin), int(end)) is None:
+            editable.AddBond(int(begin), int(end), Chem.BondType.SINGLE)
+    mol = editable.GetMol()
+    mol.UpdatePropertyCache(strict=False)
+    conformer = Chem.Conformer(len(atoms))
+    for atom_idx, coord in enumerate(coords):
+        conformer.SetAtomPosition(
+            int(atom_idx),
+            Point3D(float(coord[0]), float(coord[1]), float(coord[2])),
+        )
+    mol.AddConformer(conformer, assignId=True)
+    return mol
 
 def plot_row(
     df: pd.DataFrame,

@@ -13,6 +13,7 @@ _PUBLIC_MODULES: dict[str, str] = {
     "cluster": "frust.cluster",
     "pipelines": "frust.pipelines",
     "pipes": "frust.pipes",
+    "screen": "frust.screen",
     "utils": "frust.utils",
     "vis": "frust.vis",
 }
@@ -85,6 +86,7 @@ if TYPE_CHECKING:
     import frust.cluster as cluster
     import frust.pipelines as pipelines
     import frust.pipes as pipes
+    import frust.screen as screen
     import frust.utils as utils
     import frust.vis as vis
     from frust.cluster import ClusterConfig, Resources, submit_chain, submit_jobs
