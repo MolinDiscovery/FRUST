@@ -1,8 +1,11 @@
 import json
+import os
 import subprocess
 import sys
+import tempfile
 import textwrap
 import unittest
+from pathlib import Path
 
 
 class PublicApiTests(unittest.TestCase):
@@ -321,6 +324,58 @@ class PublicApiTests(unittest.TestCase):
             },
         )
         self.assertEqual(result["after_plot_vibs"], {"frust.vis": True})
+
+    def test_screen_import_works_without_orca_configuration(self):
+        repo_root = Path(__file__).resolve().parents[1]
+        tooltoad_root = repo_root.parent / "tool-toad"
+        code = textwrap.dedent(
+            """
+            import pandas as pd
+            import frust as ft
+
+            components = ft.screen.read(
+                pd.DataFrame(
+                    {
+                        "role": ["substrate", "catalyst"],
+                        "smiles": [
+                            "CN1C=CC=C1",
+                            "CC1(C)CCCC(C)(C)N1C2=CC=CC=C2B",
+                        ],
+                    }
+                )
+            )
+            print(",".join(components["role"].tolist()))
+            """
+        )
+
+        with tempfile.TemporaryDirectory() as td:
+            tmp = Path(td)
+            home = tmp / "home"
+            home.mkdir()
+            env = dict(os.environ)
+            for key in ("ORCA_EXE", "OPEN_MPI_DIR", "XTB_EXE", "GXTB_EXE", "XTBPATH"):
+                env.pop(key, None)
+            env["HOME"] = str(home)
+            env["TOOLTOAD_DOTENV_PATH"] = str(tmp / "missing.env")
+            env["PYTHONPATH"] = os.pathsep.join(
+                part
+                for part in [
+                    str(repo_root),
+                    str(tooltoad_root),
+                    env.get("PYTHONPATH", ""),
+                ]
+                if part
+            )
+            proc = subprocess.run(
+                [sys.executable, "-c", code],
+                cwd=tmp,
+                env=env,
+                check=True,
+                capture_output=True,
+                text=True,
+            )
+
+        self.assertEqual(proc.stdout.strip(), "substrate,catalyst")
 
 
 if __name__ == "__main__":
