@@ -20,6 +20,11 @@ from frust.tsguess.matching import (
 from frust.tsguess.specs import BUILTIN_TS_SPECS, TSSpec
 
 HBPIN_SMILES = "CC1(C)OB([H])OC1(C)C"
+TS2_SUBSTRATE_ACTIVE_SITE_COORDS = (
+    (4.032469, 5.165170, -0.184499),
+    (3.638645, 3.836721, -0.134114),
+    (2.362445, 3.792621, -0.684305),
+)
 
 
 def create_ts_guess_dataframes(
@@ -83,18 +88,17 @@ def _rows_for_system_rpos(
     n_cores: int,
 ) -> list[dict[str, Any]]:
     mol, roles = _assemble_system_mol(system, spec, rpos)
-    coord_map = {
-        roles[role]: spec.role_coordinates[role]
-        for role in _placement_roles(spec)
-        if role in roles
-    }
+    coord_map = _placement_coord_map(mol, spec, roles)
     embedded, cids = embed_with_coord_map(
         mol,
         coord_map,
         n_confs=n_confs,
         n_cores=n_cores,
         allowed_contact_pairs=_allowed_contact_pairs(spec, roles),
+        snap_atom_indices=_hard_placement_atom_indices(spec, roles),
     )
+    if spec.name == "TS2":
+        embedded = _add_bond_if_missing(embedded, roles["cat_B"], roles["substrate_C"])
     atoms = [atom.GetSymbol() for atom in embedded.GetAtoms()]
     connectivity_bonds = _connectivity_bonds(embedded)
     constraint_spec = spec.constraint_dicts()
@@ -156,6 +160,10 @@ def _assemble_system_mol(
         substrate_name=str(system["substrate_name"]),
     )
     cat_roles = match_catalyst_roles(catalyst, catalyst_name=str(system["catalyst_name"]))
+    if spec.name == "TS2":
+        catalyst, cat_roles, catalyst_b_h = _keep_one_boron_hydrogen(catalyst, cat_roles)
+    else:
+        catalyst_b_h = hydrogens_on_atom(catalyst, cat_roles["cat_B"], role="cat_B", minimum=1)
 
     parts = [catalyst, substrate]
     offsets = [0, catalyst.GetNumAtoms()]
@@ -171,7 +179,6 @@ def _assemble_system_mol(
         "cat_N": cat_roles["cat_N"],
         "substrate_C": offsets[1] + substrate_rpos,
     }
-    catalyst_b_h = hydrogens_on_atom(catalyst, cat_roles["cat_B"], role="cat_B", minimum=1)
 
     if spec.name == "TS1":
         roles["transfer_H"] = _single_h_role(extra, extra_offset)
@@ -193,6 +200,90 @@ def _assemble_system_mol(
     if missing:
         raise ValueError(f"Could not assign required roles for {spec.name}: {missing}")
     return combined, roles
+
+
+def _keep_one_boron_hydrogen(
+    catalyst: Chem.Mol,
+    cat_roles: dict[str, int],
+) -> tuple[Chem.Mol, dict[str, int], list[int]]:
+    """Remove surplus B-H atoms from the catalyst for TS2 assembly.
+
+    Parameters
+    ----------
+    catalyst : rdkit.Chem.Mol
+        Explicit-hydrogen catalyst molecule.
+    cat_roles : dict
+        Catalyst role atom indices before atom removal.
+
+    Returns
+    -------
+    tuple
+        Updated catalyst, updated catalyst roles, and the retained B-H atom
+        index.
+    """
+    boron_hydrogens = hydrogens_on_atom(catalyst, cat_roles["cat_B"], role="cat_B", minimum=1)
+    keep = int(boron_hydrogens[0])
+    remove = [int(idx) for idx in boron_hydrogens[1:]]
+    if not remove:
+        return catalyst, dict(cat_roles), [keep]
+
+    editable = Chem.RWMol(catalyst)
+    for atom_idx in sorted(remove, reverse=True):
+        editable.RemoveAtom(atom_idx)
+    trimmed = editable.GetMol()
+    trimmed.UpdatePropertyCache(strict=False)
+    adjusted_roles = {
+        role: _adjust_index_after_removals(atom_idx, remove)
+        for role, atom_idx in cat_roles.items()
+    }
+    adjusted_keep = _adjust_index_after_removals(keep, remove)
+    return trimmed, adjusted_roles, [adjusted_keep]
+
+
+def _adjust_index_after_removals(atom_idx: int, removed_indices: list[int]) -> int:
+    """Adjust an atom index after removing atoms with lower indices.
+
+    Parameters
+    ----------
+    atom_idx : int
+        Original atom index.
+    removed_indices : list of int
+        Original atom indices removed from the molecule.
+
+    Returns
+    -------
+    int
+        Atom index in the trimmed molecule.
+    """
+    if int(atom_idx) in set(removed_indices):
+        raise ValueError(f"Cannot remap removed atom index {atom_idx}")
+    return int(atom_idx) - sum(int(removed) < int(atom_idx) for removed in removed_indices)
+
+
+def _add_bond_if_missing(mol: Chem.Mol, atom_i: int, atom_j: int) -> Chem.Mol:
+    """Return a molecule with one added single bond if absent.
+
+    Parameters
+    ----------
+    mol : rdkit.Chem.Mol
+        Molecule to update.
+    atom_i : int
+        First atom index.
+    atom_j : int
+        Second atom index.
+
+    Returns
+    -------
+    rdkit.Chem.Mol
+        Molecule containing the requested bond.
+    """
+    if mol.GetBondBetweenAtoms(int(atom_i), int(atom_j)) is not None:
+        return mol
+    editable = Chem.RWMol(mol)
+    editable.AddBond(int(atom_i), int(atom_j), Chem.BondType.SINGLE)
+    bonded = editable.GetMol()
+    bonded.UpdatePropertyCache(strict=False)
+    return bonded
 
 
 def _extra_fragment(spec: TSSpec) -> Chem.Mol | None:
@@ -304,6 +395,98 @@ def _connectivity_bonds(mol: Chem.Mol) -> list[tuple[int, int]]:
         (int(bond.GetBeginAtomIdx()), int(bond.GetEndAtomIdx()))
         for bond in mol.GetBonds()
     ]
+
+
+def _placement_coord_map(
+    mol: Chem.Mol,
+    spec: TSSpec,
+    roles: dict[str, int],
+) -> dict[int, tuple[float, float, float]]:
+    """Return hard and soft placement coordinates for a TS guess.
+
+    Parameters
+    ----------
+    mol : rdkit.Chem.Mol
+        Assembled TS graph.
+    spec : TSSpec
+        Transition-state specification.
+    roles : dict
+        Mapping from role name to atom index.
+
+    Returns
+    -------
+    dict
+        Mapping from atom indices to Cartesian target coordinates.
+    """
+    coord_map = {
+        roles[role]: spec.role_coordinates[role]
+        for role in _placement_roles(spec)
+        if role in roles
+    }
+    if spec.name == "TS2":
+        substrate_neighbors = _ts2_substrate_frame_neighbors(mol, roles)
+        coord_map[substrate_neighbors[0]] = TS2_SUBSTRATE_ACTIVE_SITE_COORDS[0]
+        coord_map[roles["substrate_C"]] = TS2_SUBSTRATE_ACTIVE_SITE_COORDS[1]
+        coord_map[substrate_neighbors[1]] = TS2_SUBSTRATE_ACTIVE_SITE_COORDS[2]
+    return coord_map
+
+
+def _hard_placement_atom_indices(spec: TSSpec, roles: dict[str, int]) -> set[int]:
+    """Return atom indices that must be snapped to role coordinates.
+
+    Parameters
+    ----------
+    spec : TSSpec
+        Transition-state specification.
+    roles : dict
+        Mapping from role name to atom index.
+
+    Returns
+    -------
+    set of int
+        Atom indices that should land exactly on their TS role coordinates.
+    """
+    return {int(roles[role]) for role in _placement_roles(spec) if role in roles}
+
+
+def _ts2_substrate_frame_neighbors(mol: Chem.Mol, roles: dict[str, int]) -> tuple[int, int]:
+    """Return the two substrate neighbors that define the TS2 ring frame.
+
+    Parameters
+    ----------
+    mol : rdkit.Chem.Mol
+        Assembled TS2 molecule.
+    roles : dict
+        Mapping from role name to atom index.
+
+    Returns
+    -------
+    tuple of int
+        Ordered heavy-atom neighbors of ``substrate_C``. A heteroatom neighbor
+        is placed first when present, matching the methylpyrrole-derived TS2
+        template frame.
+    """
+    substrate_c = int(roles["substrate_C"])
+    cat_b = int(roles["cat_B"])
+    neighbors = [
+        int(neighbor.GetIdx())
+        for neighbor in mol.GetAtomWithIdx(substrate_c).GetNeighbors()
+        if neighbor.GetAtomicNum() > 1 and int(neighbor.GetIdx()) != cat_b
+    ]
+    if len(neighbors) != 2:
+        raise ValueError(
+            "TS2 substrate placement requires exactly two heavy neighbors on "
+            f"substrate_C; found {len(neighbors)}"
+        )
+    return tuple(
+        sorted(
+            neighbors,
+            key=lambda idx: (
+                mol.GetAtomWithIdx(int(idx)).GetAtomicNum() == 6,
+                int(idx),
+            ),
+        )
+    )
 
 
 def _placement_roles(spec: TSSpec) -> tuple[str, ...]:

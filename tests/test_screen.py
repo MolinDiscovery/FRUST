@@ -1,6 +1,7 @@
 import unittest
 from unittest.mock import patch
 
+import numpy as np
 import pandas as pd
 from tooltoad.chemutils import ac2mol
 
@@ -12,9 +13,86 @@ from frust.vis.molecules import _row_to_mol
 
 
 CATALYST = "CC1(C)CCCC(C)(C)N1C2=CC=CC=C2B"
+TS2_TEMPLATE_SUBSTRATE_FRAME = np.array(
+    [
+        (4.032469, 5.165170, -0.184499),
+        (3.638645, 3.836721, -0.134114),
+        (2.362445, 3.792621, -0.684305),
+    ],
+    dtype=float,
+)
+
+
+def _unit_normal(points):
+    normal = np.cross(points[0] - points[1], points[2] - points[1])
+    return normal / np.linalg.norm(normal)
+
+
+def _ordered_substrate_frame_neighbors(mol, substrate_c, cat_b):
+    neighbors = [
+        neighbor.GetIdx()
+        for neighbor in mol.GetAtomWithIdx(substrate_c).GetNeighbors()
+        if neighbor.GetAtomicNum() > 1 and neighbor.GetIdx() != cat_b
+    ]
+    return sorted(
+        neighbors,
+        key=lambda idx: (
+            mol.GetAtomWithIdx(idx).GetAtomicNum() == 6,
+            idx,
+        ),
+    )
+
+
+def _substrate_heavy_component(mol, substrate_c, cat_b):
+    visited = {substrate_c}
+    frontier = [substrate_c]
+    while frontier:
+        atom_idx = frontier.pop()
+        atom = mol.GetAtomWithIdx(atom_idx)
+        for neighbor in atom.GetNeighbors():
+            neighbor_idx = neighbor.GetIdx()
+            if neighbor_idx == cat_b or neighbor.GetAtomicNum() == 1:
+                continue
+            if neighbor_idx in visited:
+                continue
+            visited.add(neighbor_idx)
+            frontier.append(neighbor_idx)
+    return visited
 
 
 class ScreenWorkflowTests(unittest.TestCase):
+    def assert_sane_ts2_row(self, row):
+        roles = row["constraint_roles"]
+        coords = np.array(row["coords_embedded"], dtype=float)
+        mol = _row_to_mol(row, row["atoms"], row["coords_embedded"])
+        cat_b = roles["cat_B"]
+        cat_h = roles["cat_H"]
+        substrate_c = roles["substrate_C"]
+        h2_atoms = [roles["transfer_H"], roles["n_transfer_H"]]
+
+        b_hydrogens = [
+            neighbor.GetIdx()
+            for neighbor in mol.GetAtomWithIdx(cat_b).GetNeighbors()
+            if neighbor.GetAtomicNum() == 1
+        ]
+        self.assertEqual(b_hydrogens, [cat_h])
+        self.assertIsNotNone(mol.GetBondBetweenAtoms(cat_b, substrate_c))
+
+        frame_neighbors = _ordered_substrate_frame_neighbors(mol, substrate_c, cat_b)
+        self.assertEqual(len(frame_neighbors), 2)
+        frame_points = coords[[frame_neighbors[0], substrate_c, frame_neighbors[1]]]
+        template_normal = _unit_normal(TS2_TEMPLATE_SUBSTRATE_FRAME)
+        actual_normal = _unit_normal(frame_points)
+        self.assertGreater(float(np.dot(actual_normal, template_normal)), 0.95)
+
+        substrate_heavy = _substrate_heavy_component(mol, substrate_c, cat_b)
+        h2_to_substrate = [
+            float(np.linalg.norm(coords[h_atom] - coords[substrate_atom]))
+            for h_atom in h2_atoms
+            for substrate_atom in substrate_heavy
+        ]
+        self.assertGreater(min(h2_to_substrate), 1.8)
+
     def test_read_normalizes_roles_names_and_catalyst_rpos(self):
         raw = pd.DataFrame(
             {
@@ -170,8 +248,49 @@ class ScreenWorkflowTests(unittest.TestCase):
         inferred = ac2mol(row["atoms"], row["coords_embedded"])
         plotted = _row_to_mol(row, row["atoms"], row["coords_embedded"])
 
-        self.assertGreater(inferred.GetNumBonds(), len(row["connectivity_bonds"]))
+        self.assertGreaterEqual(inferred.GetNumBonds(), len(row["connectivity_bonds"]))
         self.assertEqual(plotted.GetNumBonds(), len(row["connectivity_bonds"]))
+
+    def test_ts2_uses_template_substrate_frame_without_extra_boron_hydride(self):
+        systems = ft.screen.expand(
+            ft.screen.read(
+                pd.DataFrame(
+                    {
+                        "role": ["substrate", "catalyst"],
+                        "smiles": ["CN1C=CC=C1", CATALYST],
+                        "rpos": ["2", None],
+                    }
+                )
+            )
+        )
+
+        row = ft.screen.create_ts_guesses(systems, ts_types=["TS2"], n_confs=1)["TS2"].iloc[0]
+        self.assert_sane_ts2_row(row)
+
+    def test_ts2_screen_panel_has_sane_core_graphs(self):
+        substrates = [
+            "CN1C=CC=C1",
+            "C1=CC=CO1",
+            "COC1=CC=CO1",
+            "CC([Si](N1C=CC=C1)(C(C)C)C(C)C)C",
+        ]
+        components = ft.screen.read(
+            pd.DataFrame(
+                {
+                    "role": ["substrate", "substrate", "substrate", "substrate", "catalyst"],
+                    "smiles": substrates + [CATALYST],
+                }
+            )
+        )
+        rows = ft.screen.create_ts_guesses(
+            ft.screen.expand(components),
+            ts_types=["TS2"],
+            n_confs=1,
+        )["TS2"]
+
+        self.assertEqual(len(rows), 9)
+        for _, row in rows.iterrows():
+            self.assert_sane_ts2_row(row)
 
     def test_constraint_renderers_and_stepper_row_first(self):
         row = pd.Series(

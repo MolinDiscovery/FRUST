@@ -17,6 +17,7 @@ def embed_with_coord_map(
     n_confs: int = 1,
     n_cores: int = 1,
     allowed_contact_pairs: set[tuple[int, int]] | None = None,
+    snap_atom_indices: set[int] | None = None,
 ) -> tuple[Chem.Mol, list[int]]:
     """Embed conformers while fixing role atoms to TS-core coordinates.
 
@@ -32,6 +33,9 @@ def embed_with_coord_map(
         Number of RDKit threads.
     allowed_contact_pairs : set of tuple of int, optional
         Nonbonded atom pairs expected to be close in the TS core.
+    snap_atom_indices : set of int, optional
+        Atom indices to snap exactly to ``coord_map`` positions after rigid
+        fragment placement. If omitted, every ``coord_map`` atom is snapped.
 
     Returns
     -------
@@ -47,6 +51,7 @@ def embed_with_coord_map(
     }
     use_coord_map = len(Chem.GetMolFrags(working)) == 1
     allowed_pairs = _normalize_pairs(allowed_contact_pairs or set())
+    snap_indices = set(rdkit_coord_map) if snap_atom_indices is None else set(snap_atom_indices)
 
     with rdBase.BlockLogs():
         cids = list(
@@ -84,7 +89,13 @@ def embed_with_coord_map(
     if not cids:
         raise ValueError("RDKit embedding produced no conformers for the TS guess")
     if not use_coord_map:
-        _place_fragments_by_anchors(working, cids, rdkit_coord_map, allowed_pairs)
+        _place_fragments_by_anchors(
+            working,
+            cids,
+            rdkit_coord_map,
+            allowed_pairs,
+            snap_indices,
+        )
         cids = _rank_conformers_by_clashes(working, cids, allowed_pairs)[:requested_confs]
     return working, cids
 
@@ -94,6 +105,7 @@ def _place_fragments_by_anchors(
     cids: list[int],
     coord_map: dict[int, Point3D],
     allowed_contact_pairs: set[tuple[int, int]],
+    snap_atom_indices: set[int],
 ) -> None:
     """Rigidly place disconnected fragments from role-atom anchors.
 
@@ -107,6 +119,8 @@ def _place_fragments_by_anchors(
         Mapping from atom index to target coordinates.
     allowed_contact_pairs : set of tuple of int
         Nonbonded atom pairs expected to be close in the TS core.
+    snap_atom_indices : set of int
+        Atom indices to snap exactly to target coordinates.
     """
     fragments = tuple(tuple(int(idx) for idx in fragment) for fragment in Chem.GetMolFrags(mol))
     targets = {
@@ -132,7 +146,7 @@ def _place_fragments_by_anchors(
                     int(atom_idx),
                     Point3D(float(placed[0]), float(placed[1]), float(placed[2])),
                 )
-        _snap_anchor_positions(conf, coord_map)
+        _snap_anchor_positions(conf, coord_map, snap_atom_indices)
         placed_coords = _conformer_coordinates(conf, mol.GetNumAtoms())
         placed_coords = _relieve_anchor_preserving_clashes(
             mol,
@@ -142,7 +156,7 @@ def _place_fragments_by_anchors(
             allowed_contact_pairs,
         )
         _set_conformer_coordinates(conf, placed_coords)
-        _snap_anchor_positions(conf, coord_map)
+        _snap_anchor_positions(conf, coord_map, snap_atom_indices)
 
 
 def _conformer_coordinates(conf: Chem.Conformer, n_atoms: int) -> np.ndarray:
@@ -186,7 +200,11 @@ def _set_conformer_coordinates(conf: Chem.Conformer, coords: np.ndarray) -> None
         )
 
 
-def _snap_anchor_positions(conf: Chem.Conformer, coord_map: dict[int, Point3D]) -> None:
+def _snap_anchor_positions(
+    conf: Chem.Conformer,
+    coord_map: dict[int, Point3D],
+    snap_atom_indices: set[int],
+) -> None:
     """Set anchor atom coordinates exactly to their target positions.
 
     Parameters
@@ -195,8 +213,12 @@ def _snap_anchor_positions(conf: Chem.Conformer, coord_map: dict[int, Point3D]) 
         Conformer to update.
     coord_map : dict
         Mapping from atom index to target coordinates.
+    snap_atom_indices : set of int
+        Atom indices to snap exactly to target coordinates.
     """
     for atom_idx, position in coord_map.items():
+        if int(atom_idx) not in snap_atom_indices:
+            continue
         conf.SetAtomPosition(int(atom_idx), position)
 
 
