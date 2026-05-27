@@ -123,7 +123,7 @@ BUILTIN_TS_SPECS: dict[str, TSSpec] = {
             ConstraintEntry("angle", ("cat_B", "transfer_H", "pin_B"), 98.89),
             ConstraintEntry("angle", ("cat_B", "substrate_C", "pin_B"), 61.75),
         ),
-        constraint_order=("cat_B", "cat_N", "transfer_H", "pin_B", "cat_H", "substrate_C"),
+        constraint_order=("cat_B", "cat_N", "cat_H", "pin_B", "transfer_H", "substrate_C"),
         extra_fragment="HBpin",
     ),
     "TS4": TSSpec(

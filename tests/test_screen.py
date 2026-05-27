@@ -21,6 +21,28 @@ TS2_TEMPLATE_SUBSTRATE_FRAME = np.array(
     ],
     dtype=float,
 )
+TS3_TEMPLATE_SUBSTRATE_FRAME = np.array(
+    [
+        (3.160721, 1.507283, 2.235734),
+        (1.976672, 0.248906, 2.068494),
+        (1.648714, -0.239019, 3.315702),
+    ],
+    dtype=float,
+)
+TS4_TEMPLATE_SUBSTRATE_FRAME = np.array(
+    [
+        (-0.719273, 1.363805, 4.969583),
+        (0.013065, 0.446161, 3.676874),
+        (0.189969, -0.867008, 4.103431),
+    ],
+    dtype=float,
+)
+SCREEN_PANEL_SUBSTRATES = [
+    "CN1C=CC=C1",
+    "C1=CC=CO1",
+    "COC1=CC=CO1",
+    "CC([Si](N1C=CC=C1)(C(C)C)C(C)C)C",
+]
 
 
 def _unit_normal(points):
@@ -28,11 +50,18 @@ def _unit_normal(points):
     return normal / np.linalg.norm(normal)
 
 
-def _ordered_substrate_frame_neighbors(mol, substrate_c, cat_b):
+def _excluded_atoms(excluded):
+    if isinstance(excluded, int):
+        return {excluded}
+    return set(excluded)
+
+
+def _ordered_substrate_frame_neighbors(mol, substrate_c, excluded):
+    excluded = _excluded_atoms(excluded)
     neighbors = [
         neighbor.GetIdx()
         for neighbor in mol.GetAtomWithIdx(substrate_c).GetNeighbors()
-        if neighbor.GetAtomicNum() > 1 and neighbor.GetIdx() != cat_b
+        if neighbor.GetAtomicNum() > 1 and neighbor.GetIdx() not in excluded
     ]
     return sorted(
         neighbors,
@@ -43,7 +72,8 @@ def _ordered_substrate_frame_neighbors(mol, substrate_c, cat_b):
     )
 
 
-def _substrate_heavy_component(mol, substrate_c, cat_b):
+def _substrate_heavy_component(mol, substrate_c, excluded):
+    excluded = _excluded_atoms(excluded)
     visited = {substrate_c}
     frontier = [substrate_c]
     while frontier:
@@ -51,7 +81,7 @@ def _substrate_heavy_component(mol, substrate_c, cat_b):
         atom = mol.GetAtomWithIdx(atom_idx)
         for neighbor in atom.GetNeighbors():
             neighbor_idx = neighbor.GetIdx()
-            if neighbor_idx == cat_b or neighbor.GetAtomicNum() == 1:
+            if neighbor_idx in excluded or neighbor.GetAtomicNum() == 1:
                 continue
             if neighbor_idx in visited:
                 continue
@@ -60,7 +90,27 @@ def _substrate_heavy_component(mol, substrate_c, cat_b):
     return visited
 
 
+def _role_bond_exists(mol, roles, left, right):
+    return mol.GetBondBetweenAtoms(roles[left], roles[right]) is not None
+
+
+def _has_distance_constraint(row, left, right):
+    target = {left, right}
+    return any(
+        constraint["kind"] == "distance" and set(constraint["roles"]) == target
+        for constraint in row["constraint_spec"]
+    )
+
+
 class ScreenWorkflowTests(unittest.TestCase):
+    def assert_core_metrics_close(self, row, *, distance_tol=0.16, angle_tol=4.0):
+        for metric in row["ts_core_metrics"]:
+            delta = abs(float(metric["delta"]))
+            if metric["kind"] == "distance":
+                self.assertLess(delta, distance_tol, metric)
+            elif metric["kind"] == "angle":
+                self.assertLess(delta, angle_tol, metric)
+
     def assert_sane_ts2_row(self, row):
         roles = row["constraint_roles"]
         coords = np.array(row["coords_embedded"], dtype=float)
@@ -92,6 +142,84 @@ class ScreenWorkflowTests(unittest.TestCase):
             for substrate_atom in substrate_heavy
         ]
         self.assertGreater(min(h2_to_substrate), 1.8)
+
+    def assert_sane_ts3_row(self, row):
+        roles = row["constraint_roles"]
+        coords = np.array(row["coords_embedded"], dtype=float)
+        mol = _row_to_mol(row, row["atoms"], row["coords_embedded"])
+        cat_b = roles["cat_B"]
+        pin_b = roles["pin_B"]
+        substrate_c = roles["substrate_C"]
+        transfer_h = roles["transfer_H"]
+        cat_h = roles["cat_H"]
+
+        cat_b_hydrogens = sorted(
+            neighbor.GetIdx()
+            for neighbor in mol.GetAtomWithIdx(cat_b).GetNeighbors()
+            if neighbor.GetAtomicNum() == 1
+        )
+        pin_b_hydrogens = sorted(
+            neighbor.GetIdx()
+            for neighbor in mol.GetAtomWithIdx(pin_b).GetNeighbors()
+            if neighbor.GetAtomicNum() == 1
+        )
+        self.assertEqual(cat_b_hydrogens, [cat_h])
+        self.assertEqual(pin_b_hydrogens, [transfer_h])
+        self.assertTrue(_role_bond_exists(mol, roles, "transfer_H", "pin_B"))
+        self.assertFalse(_role_bond_exists(mol, roles, "cat_B", "pin_B"))
+        self.assertTrue(_role_bond_exists(mol, roles, "cat_B", "substrate_C"))
+        self.assertFalse(_role_bond_exists(mol, roles, "pin_B", "substrate_C"))
+        self.assertTrue(_has_distance_constraint(row, "cat_B", "pin_B"))
+
+        frame_neighbors = _ordered_substrate_frame_neighbors(
+            mol,
+            substrate_c,
+            {cat_b, pin_b},
+        )
+        frame_points = coords[[frame_neighbors[0], substrate_c, frame_neighbors[1]]]
+        template_normal = _unit_normal(TS3_TEMPLATE_SUBSTRATE_FRAME)
+        actual_normal = _unit_normal(frame_points)
+        self.assertGreater(float(np.dot(actual_normal, template_normal)), 0.95)
+        self.assert_core_metrics_close(row)
+
+    def assert_sane_ts4_row(self, row):
+        roles = row["constraint_roles"]
+        coords = np.array(row["coords_embedded"], dtype=float)
+        mol = _row_to_mol(row, row["atoms"], row["coords_embedded"])
+        cat_b = roles["cat_B"]
+        pin_b = roles["pin_B"]
+        substrate_c = roles["substrate_C"]
+        cat_h = roles["cat_H"]
+        transfer_h = roles["transfer_H"]
+
+        cat_b_hydrogens = sorted(
+            neighbor.GetIdx()
+            for neighbor in mol.GetAtomWithIdx(cat_b).GetNeighbors()
+            if neighbor.GetAtomicNum() == 1
+        )
+        pin_b_hydrogens = sorted(
+            neighbor.GetIdx()
+            for neighbor in mol.GetAtomWithIdx(pin_b).GetNeighbors()
+            if neighbor.GetAtomicNum() == 1
+        )
+        self.assertEqual(cat_b_hydrogens, sorted([cat_h, transfer_h]))
+        self.assertEqual(pin_b_hydrogens, [])
+        self.assertTrue(_role_bond_exists(mol, roles, "cat_B", "transfer_H"))
+        self.assertFalse(_role_bond_exists(mol, roles, "cat_B", "pin_B"))
+        self.assertTrue(_role_bond_exists(mol, roles, "pin_B", "substrate_C"))
+        self.assertFalse(_role_bond_exists(mol, roles, "cat_B", "substrate_C"))
+        self.assertTrue(_has_distance_constraint(row, "cat_B", "pin_B"))
+
+        frame_neighbors = _ordered_substrate_frame_neighbors(
+            mol,
+            substrate_c,
+            {cat_b, pin_b},
+        )
+        frame_points = coords[[frame_neighbors[0], substrate_c, frame_neighbors[1]]]
+        template_normal = _unit_normal(TS4_TEMPLATE_SUBSTRATE_FRAME)
+        actual_normal = _unit_normal(frame_points)
+        self.assertGreater(float(np.dot(actual_normal, template_normal)), 0.95)
+        self.assert_core_metrics_close(row)
 
     def test_read_normalizes_roles_names_and_catalyst_rpos(self):
         raw = pd.DataFrame(
@@ -268,17 +396,11 @@ class ScreenWorkflowTests(unittest.TestCase):
         self.assert_sane_ts2_row(row)
 
     def test_ts2_screen_panel_has_sane_core_graphs(self):
-        substrates = [
-            "CN1C=CC=C1",
-            "C1=CC=CO1",
-            "COC1=CC=CO1",
-            "CC([Si](N1C=CC=C1)(C(C)C)C(C)C)C",
-        ]
         components = ft.screen.read(
             pd.DataFrame(
                 {
                     "role": ["substrate", "substrate", "substrate", "substrate", "catalyst"],
-                    "smiles": substrates + [CATALYST],
+                    "smiles": SCREEN_PANEL_SUBSTRATES + [CATALYST],
                 }
             )
         )
@@ -291,6 +413,44 @@ class ScreenWorkflowTests(unittest.TestCase):
         self.assertEqual(len(rows), 9)
         for _, row in rows.iterrows():
             self.assert_sane_ts2_row(row)
+
+    def test_ts3_uses_tmp_hydride_topology_and_substrate_frame(self):
+        components = ft.screen.read(
+            pd.DataFrame(
+                {
+                    "role": ["substrate", "substrate", "substrate", "substrate", "catalyst"],
+                    "smiles": SCREEN_PANEL_SUBSTRATES + [CATALYST],
+                }
+            )
+        )
+        rows = ft.screen.create_ts_guesses(
+            ft.screen.expand(components),
+            ts_types=["TS3"],
+            n_confs=1,
+        )["TS3"]
+
+        self.assertEqual(len(rows), 9)
+        for _, row in rows.iterrows():
+            self.assert_sane_ts3_row(row)
+
+    def test_ts4_uses_tmp_hydride_topology_and_substrate_frame(self):
+        components = ft.screen.read(
+            pd.DataFrame(
+                {
+                    "role": ["substrate", "substrate", "substrate", "substrate", "catalyst"],
+                    "smiles": SCREEN_PANEL_SUBSTRATES + [CATALYST],
+                }
+            )
+        )
+        rows = ft.screen.create_ts_guesses(
+            ft.screen.expand(components),
+            ts_types=["TS4"],
+            n_confs=1,
+        )["TS4"]
+
+        self.assertEqual(len(rows), 9)
+        for _, row in rows.iterrows():
+            self.assert_sane_ts4_row(row)
 
     def test_constraint_renderers_and_stepper_row_first(self):
         row = pd.Series(

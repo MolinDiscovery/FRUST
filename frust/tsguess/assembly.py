@@ -20,11 +20,35 @@ from frust.tsguess.matching import (
 from frust.tsguess.specs import BUILTIN_TS_SPECS, TSSpec
 
 HBPIN_SMILES = "CC1(C)OB([H])OC1(C)C"
-TS2_SUBSTRATE_ACTIVE_SITE_COORDS = (
-    (4.032469, 5.165170, -0.184499),
-    (3.638645, 3.836721, -0.134114),
-    (2.362445, 3.792621, -0.684305),
-)
+SUBSTRATE_ACTIVE_SITE_COORDS = {
+    "TS2": (
+        (4.032469, 5.165170, -0.184499),
+        (3.638645, 3.836721, -0.134114),
+        (2.362445, 3.792621, -0.684305),
+    ),
+    "TS3": (
+        (3.160721, 1.507283, 2.235734),
+        (1.976672, 0.248906, 2.068494),
+        (1.648714, -0.239019, 3.315702),
+    ),
+    "TS4": (
+        (-0.719273, 1.363805, 4.969583),
+        (0.013065, 0.446161, 3.676874),
+        (0.189969, -0.867008, 4.103431),
+    ),
+}
+HBPIN_FRAME_COORDS = {
+    "TS3": (
+        (2.532308, -1.428336, 0.777578),
+        (3.838521, -1.272533, 0.411564),
+        (2.261638, -2.599120, 1.439991),
+    ),
+    "TS4": (
+        (0.999483, 1.217369, 2.683538),
+        (1.211476, 2.573270, 2.863243),
+        (2.083253, 0.582111, 2.088466),
+    ),
+}
 
 
 def create_ts_guess_dataframes(
@@ -97,8 +121,7 @@ def _rows_for_system_rpos(
         allowed_contact_pairs=_allowed_contact_pairs(spec, roles),
         snap_atom_indices=_hard_placement_atom_indices(spec, roles),
     )
-    if spec.name == "TS2":
-        embedded = _add_bond_if_missing(embedded, roles["cat_B"], roles["substrate_C"])
+    embedded = _add_final_ts_bonds(embedded, spec, roles)
     atoms = [atom.GetSymbol() for atom in embedded.GetAtoms()]
     connectivity_bonds = _connectivity_bonds(embedded)
     constraint_spec = spec.constraint_dicts()
@@ -160,15 +183,28 @@ def _assemble_system_mol(
         substrate_name=str(system["substrate_name"]),
     )
     cat_roles = match_catalyst_roles(catalyst, catalyst_name=str(system["catalyst_name"]))
-    if spec.name == "TS2":
-        catalyst, cat_roles, catalyst_b_h = _keep_one_boron_hydrogen(catalyst, cat_roles)
+    if spec.name in {"TS2", "TS3"}:
+        catalyst, cat_roles, catalyst_b_h = _keep_boron_hydrogens(
+            catalyst,
+            cat_roles,
+            keep_count=1,
+        )
+    elif spec.name == "TS4":
+        catalyst, cat_roles, catalyst_b_h = _keep_boron_hydrogens(
+            catalyst,
+            cat_roles,
+            keep_count=2,
+        )
     else:
         catalyst_b_h = hydrogens_on_atom(catalyst, cat_roles["cat_B"], role="cat_B", minimum=1)
+
+    extra = _extra_fragment(spec)
+    if spec.name == "TS4" and extra is not None:
+        extra = _remove_pin_hydrogens(extra)
 
     parts = [catalyst, substrate]
     offsets = [0, catalyst.GetNumAtoms()]
     extra_offset = catalyst.GetNumAtoms() + substrate.GetNumAtoms()
-    extra = _extra_fragment(spec)
     if extra is not None:
         parts.append(extra)
         offsets.append(extra_offset)
@@ -186,12 +222,12 @@ def _assemble_system_mol(
         roles["cat_H"] = catalyst_b_h[0]
         roles.update(_h2_roles(extra, extra_offset))
     elif spec.name == "TS3":
-        roles["transfer_H"] = catalyst_b_h[0]
-        roles["cat_H"] = catalyst_b_h[1] if len(catalyst_b_h) > 1 else catalyst_b_h[0]
+        roles["cat_H"] = catalyst_b_h[0]
         roles["pin_B"] = _pin_b_role(extra, extra_offset)
+        roles["transfer_H"] = _pin_h_role(extra, extra_offset)
     elif spec.name == "TS4":
         roles["cat_H"] = catalyst_b_h[0]
-        roles["transfer_H"] = catalyst_b_h[1] if len(catalyst_b_h) > 1 else catalyst_b_h[0]
+        roles["transfer_H"] = catalyst_b_h[1]
         roles["pin_B"] = _pin_b_role(extra, extra_offset)
     else:
         raise ValueError(f"Unsupported TS spec: {spec.name}")
@@ -202,11 +238,13 @@ def _assemble_system_mol(
     return combined, roles
 
 
-def _keep_one_boron_hydrogen(
+def _keep_boron_hydrogens(
     catalyst: Chem.Mol,
     cat_roles: dict[str, int],
+    *,
+    keep_count: int,
 ) -> tuple[Chem.Mol, dict[str, int], list[int]]:
-    """Remove surplus B-H atoms from the catalyst for TS2 assembly.
+    """Remove surplus catalyst B-H atoms while keeping the requested count.
 
     Parameters
     ----------
@@ -214,18 +252,25 @@ def _keep_one_boron_hydrogen(
         Explicit-hydrogen catalyst molecule.
     cat_roles : dict
         Catalyst role atom indices before atom removal.
+    keep_count : int
+        Number of catalyst B-H atoms to retain.
 
     Returns
     -------
     tuple
         Updated catalyst, updated catalyst roles, and the retained B-H atom
-        index.
+        indices.
     """
-    boron_hydrogens = hydrogens_on_atom(catalyst, cat_roles["cat_B"], role="cat_B", minimum=1)
-    keep = int(boron_hydrogens[0])
-    remove = [int(idx) for idx in boron_hydrogens[1:]]
+    boron_hydrogens = hydrogens_on_atom(
+        catalyst,
+        cat_roles["cat_B"],
+        role="cat_B",
+        minimum=int(keep_count),
+    )
+    keep = [int(idx) for idx in boron_hydrogens[: int(keep_count)]]
+    remove = [int(idx) for idx in boron_hydrogens[int(keep_count) :]]
     if not remove:
-        return catalyst, dict(cat_roles), [keep]
+        return catalyst, dict(cat_roles), keep
 
     editable = Chem.RWMol(catalyst)
     for atom_idx in sorted(remove, reverse=True):
@@ -236,8 +281,8 @@ def _keep_one_boron_hydrogen(
         role: _adjust_index_after_removals(atom_idx, remove)
         for role, atom_idx in cat_roles.items()
     }
-    adjusted_keep = _adjust_index_after_removals(keep, remove)
-    return trimmed, adjusted_roles, [adjusted_keep]
+    adjusted_keep = [_adjust_index_after_removals(atom_idx, remove) for atom_idx in keep]
+    return trimmed, adjusted_roles, adjusted_keep
 
 
 def _adjust_index_after_removals(atom_idx: int, removed_indices: list[int]) -> int:
@@ -284,6 +329,61 @@ def _add_bond_if_missing(mol: Chem.Mol, atom_i: int, atom_j: int) -> Chem.Mol:
     bonded = editable.GetMol()
     bonded.UpdatePropertyCache(strict=False)
     return bonded
+
+
+def _add_final_ts_bonds(
+    mol: Chem.Mol,
+    spec: TSSpec,
+    roles: dict[str, int],
+) -> Chem.Mol:
+    """Add TS-specific stored connectivity after coordinate placement.
+
+    Parameters
+    ----------
+    mol : rdkit.Chem.Mol
+        Embedded molecule before final TS connectivity.
+    spec : TSSpec
+        Transition-state specification.
+    roles : dict
+        Mapping from role name to atom index.
+
+    Returns
+    -------
+    rdkit.Chem.Mol
+        Molecule with final plotting/connectivity bonds.
+    """
+    final_bonds = {
+        "TS2": (("cat_B", "substrate_C"),),
+        "TS3": (("cat_B", "substrate_C"),),
+        "TS4": (("pin_B", "substrate_C"),),
+    }.get(spec.name, ())
+    bonded = mol
+    for left, right in final_bonds:
+        bonded = _add_bond_if_missing(bonded, roles[left], roles[right])
+    return bonded
+
+
+def _remove_pin_hydrogens(extra: Chem.Mol) -> Chem.Mol:
+    """Remove explicit B-H atoms from a built-in HBpin fragment.
+
+    Parameters
+    ----------
+    extra : rdkit.Chem.Mol
+        Built-in HBpin fragment with explicit hydrogens.
+
+    Returns
+    -------
+    rdkit.Chem.Mol
+        HBpin fragment without B-H atoms.
+    """
+    pin_b = _pin_b_role(extra, 0)
+    pin_hydrogens = hydrogens_on_atom(extra, pin_b, role="pin_B", minimum=1)
+    editable = Chem.RWMol(extra)
+    for atom_idx in sorted(pin_hydrogens, reverse=True):
+        editable.RemoveAtom(int(atom_idx))
+    trimmed = editable.GetMol()
+    trimmed.UpdatePropertyCache(strict=False)
+    return trimmed
 
 
 def _extra_fragment(spec: TSSpec) -> Chem.Mol | None:
@@ -371,6 +471,28 @@ def _pin_b_role(extra: Chem.Mol | None, offset: int) -> int:
     return offset + int(matches[0][0])
 
 
+def _pin_h_role(extra: Chem.Mol | None, offset: int) -> int:
+    """Return the explicit B-H atom in a built-in HBpin fragment.
+
+    Parameters
+    ----------
+    extra : rdkit.Chem.Mol or None
+        Built-in HBpin fragment.
+    offset : int
+        Atom offset for the extra fragment.
+
+    Returns
+    -------
+    int
+        Atom index for the HBpin hydrogen.
+    """
+    if extra is None:
+        raise ValueError("TS3 requires a built-in HBpin fragment")
+    pin_b = _pin_b_role(extra, 0)
+    pin_hydrogens = hydrogens_on_atom(extra, pin_b, role="pin_B", minimum=1)
+    return offset + int(pin_hydrogens[0])
+
+
 def _combine_mols(parts: list[Chem.Mol]) -> Chem.Mol:
     combined = parts[0]
     for part in parts[1:]:
@@ -423,11 +545,18 @@ def _placement_coord_map(
         for role in _placement_roles(spec)
         if role in roles
     }
-    if spec.name == "TS2":
-        substrate_neighbors = _ts2_substrate_frame_neighbors(mol, roles)
-        coord_map[substrate_neighbors[0]] = TS2_SUBSTRATE_ACTIVE_SITE_COORDS[0]
-        coord_map[roles["substrate_C"]] = TS2_SUBSTRATE_ACTIVE_SITE_COORDS[1]
-        coord_map[substrate_neighbors[1]] = TS2_SUBSTRATE_ACTIVE_SITE_COORDS[2]
+    if spec.name in SUBSTRATE_ACTIVE_SITE_COORDS:
+        substrate_neighbors = _substrate_frame_neighbors(mol, roles)
+        substrate_frame = SUBSTRATE_ACTIVE_SITE_COORDS[spec.name]
+        coord_map[substrate_neighbors[0]] = substrate_frame[0]
+        coord_map[roles["substrate_C"]] = substrate_frame[1]
+        coord_map[substrate_neighbors[1]] = substrate_frame[2]
+    if spec.name in HBPIN_FRAME_COORDS:
+        pin_oxygen_neighbors = _pin_oxygen_frame_neighbors(mol, roles)
+        hbpin_frame = HBPIN_FRAME_COORDS[spec.name]
+        coord_map[roles["pin_B"]] = hbpin_frame[0]
+        coord_map[pin_oxygen_neighbors[0]] = hbpin_frame[1]
+        coord_map[pin_oxygen_neighbors[1]] = hbpin_frame[2]
     return coord_map
 
 
@@ -449,13 +578,13 @@ def _hard_placement_atom_indices(spec: TSSpec, roles: dict[str, int]) -> set[int
     return {int(roles[role]) for role in _placement_roles(spec) if role in roles}
 
 
-def _ts2_substrate_frame_neighbors(mol: Chem.Mol, roles: dict[str, int]) -> tuple[int, int]:
-    """Return the two substrate neighbors that define the TS2 ring frame.
+def _substrate_frame_neighbors(mol: Chem.Mol, roles: dict[str, int]) -> tuple[int, int]:
+    """Return the two substrate neighbors that define a TMP ring frame.
 
     Parameters
     ----------
     mol : rdkit.Chem.Mol
-        Assembled TS2 molecule.
+        Assembled TS molecule.
     roles : dict
         Mapping from role name to atom index.
 
@@ -463,19 +592,20 @@ def _ts2_substrate_frame_neighbors(mol: Chem.Mol, roles: dict[str, int]) -> tupl
     -------
     tuple of int
         Ordered heavy-atom neighbors of ``substrate_C``. A heteroatom neighbor
-        is placed first when present, matching the methylpyrrole-derived TS2
-        template frame.
+        is placed first when present, matching the placeholder template frame.
     """
     substrate_c = int(roles["substrate_C"])
-    cat_b = int(roles["cat_B"])
+    excluded = {int(roles["cat_B"])}
+    if "pin_B" in roles:
+        excluded.add(int(roles["pin_B"]))
     neighbors = [
         int(neighbor.GetIdx())
         for neighbor in mol.GetAtomWithIdx(substrate_c).GetNeighbors()
-        if neighbor.GetAtomicNum() > 1 and int(neighbor.GetIdx()) != cat_b
+        if neighbor.GetAtomicNum() > 1 and int(neighbor.GetIdx()) not in excluded
     ]
     if len(neighbors) != 2:
         raise ValueError(
-            "TS2 substrate placement requires exactly two heavy neighbors on "
+            "TS substrate placement requires exactly two heavy neighbors on "
             f"substrate_C; found {len(neighbors)}"
         )
     return tuple(
@@ -487,6 +617,35 @@ def _ts2_substrate_frame_neighbors(mol: Chem.Mol, roles: dict[str, int]) -> tupl
             ),
         )
     )
+
+
+def _pin_oxygen_frame_neighbors(mol: Chem.Mol, roles: dict[str, int]) -> tuple[int, int]:
+    """Return the two HBpin oxygen neighbors used for rigid frame placement.
+
+    Parameters
+    ----------
+    mol : rdkit.Chem.Mol
+        Assembled TS molecule.
+    roles : dict
+        Mapping from role name to atom index.
+
+    Returns
+    -------
+    tuple of int
+        Ordered oxygen neighbors of ``pin_B``.
+    """
+    pin_b = int(roles["pin_B"])
+    oxygen_neighbors = [
+        int(neighbor.GetIdx())
+        for neighbor in mol.GetAtomWithIdx(pin_b).GetNeighbors()
+        if neighbor.GetAtomicNum() == 8
+    ]
+    if len(oxygen_neighbors) != 2:
+        raise ValueError(
+            "HBpin placement requires exactly two oxygen neighbors on "
+            f"pin_B; found {len(oxygen_neighbors)}"
+        )
+    return tuple(sorted(oxygen_neighbors))
 
 
 def _placement_roles(spec: TSSpec) -> tuple[str, ...]:
@@ -507,9 +666,9 @@ def _placement_roles(spec: TSSpec) -> tuple[str, ...]:
     if spec.name == "TS2":
         return ("cat_B", "cat_N", "cat_H", "transfer_H", "n_transfer_H", "substrate_C")
     if spec.name == "TS3":
-        return ("cat_B", "transfer_H", "pin_B", "substrate_C")
+        return ("cat_B", "cat_N", "cat_H", "transfer_H", "pin_B", "substrate_C")
     if spec.name == "TS4":
-        return ("cat_B", "transfer_H", "pin_B", "substrate_C")
+        return ("cat_B", "cat_N", "cat_H", "transfer_H", "pin_B", "substrate_C")
     return tuple(spec.role_coordinates)
 
 
