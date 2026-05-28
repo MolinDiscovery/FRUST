@@ -59,7 +59,7 @@ Common options include:
 | Option | Use |
 | --- | --- |
 | `legends` | Add a label to each viewer cell |
-| `highlightAtoms` | Highlight atoms in each molecule |
+| `highlightAtoms` | Mark atoms in each molecule with translucent halo overlays |
 | `show_labels` | Draw atom labels before rendering |
 | `show_charges` | Show formal charges as annotations |
 | `show_confs` | Show all conformers instead of only one |
