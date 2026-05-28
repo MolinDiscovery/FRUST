@@ -111,7 +111,7 @@ def create_ts_guesses(
     systems: pd.DataFrame,
     *,
     ts_types: tuple[str, ...] | list[str] = ("TS1", "TS2", "TS3", "TS4"),
-    n_confs: int = 1,
+    n_confs: int | None = 1,
     n_cores: int = 1,
     validate: bool = True,
 ) -> dict[str, pd.DataFrame]:
@@ -123,8 +123,9 @@ def create_ts_guesses(
         Expanded systems from :func:`expand`.
     ts_types : tuple or list of str, optional
         TS types to generate.
-    n_confs : int, optional
-        Number of embedded conformers per generated TS guess.
+    n_confs : int or None, optional
+        Number of embedded conformers per generated TS guess. If ``None``,
+        choose a count from the assembled molecule's rotatable-bond count.
     n_cores : int, optional
         RDKit embedding threads.
     validate : bool, optional

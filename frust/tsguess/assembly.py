@@ -7,6 +7,7 @@ from typing import Any
 
 import pandas as pd
 from rdkit import Chem
+from rdkit.Chem import rdMolDescriptors, rdmolops
 
 from frust.tsguess.diagnostics import core_metrics
 from frust.tsguess.embedding import embed_with_coord_map
@@ -55,7 +56,7 @@ def create_ts_guess_dataframes(
     systems: pd.DataFrame,
     *,
     ts_types: Iterable[str] = ("TS1", "TS2", "TS3", "TS4"),
-    n_confs: int = 1,
+    n_confs: int | None = 1,
     n_cores: int = 1,
     validate: bool = True,
 ) -> dict[str, pd.DataFrame]:
@@ -67,8 +68,9 @@ def create_ts_guess_dataframes(
         Expanded substrate-catalyst systems from :func:`frust.screen.expand`.
     ts_types : iterable of str, optional
         TS types to generate.
-    n_confs : int, optional
-        Number of conformers per generated TS guess.
+    n_confs : int or None, optional
+        Number of conformers per generated TS guess. If ``None``, choose a
+        count from the assembled molecule's rotatable-bond count.
     n_cores : int, optional
         RDKit embedding threads.
     validate : bool, optional
@@ -95,7 +97,7 @@ def create_ts_guess_dataframes(
                         system,
                         spec,
                         int(rpos),
-                        n_confs=int(n_confs),
+                        n_confs=n_confs,
                         n_cores=int(n_cores),
                     )
                 )
@@ -108,15 +110,16 @@ def _rows_for_system_rpos(
     spec: TSSpec,
     rpos: int,
     *,
-    n_confs: int,
+    n_confs: int | None,
     n_cores: int,
 ) -> list[dict[str, Any]]:
     mol, roles = _assemble_system_mol(system, spec, rpos)
+    resolved_n_confs = _resolve_n_confs(mol, n_confs)
     coord_map = _placement_coord_map(mol, spec, roles)
     embedded, cids = embed_with_coord_map(
         mol,
         coord_map,
-        n_confs=n_confs,
+        n_confs=resolved_n_confs,
         n_cores=n_cores,
         allowed_contact_pairs=_allowed_contact_pairs(spec, roles),
         snap_atom_indices=_hard_placement_atom_indices(spec, roles),
@@ -164,6 +167,34 @@ def _rows_for_system_rpos(
                 row[col] = value
         rows.append(row)
     return rows
+
+
+def _resolve_n_confs(mol: Chem.Mol, n_confs: int | None) -> int:
+    """Resolve ``None`` conformer counts with the legacy TS heuristic.
+
+    Parameters
+    ----------
+    mol : rdkit.Chem.Mol
+        Assembled explicit-hydrogen TS guess molecule.
+    n_confs : int or None
+        Requested conformer count. ``None`` selects 50, 200, or 300 conformers
+        from the rotatable-bond count, matching the legacy TS embedder.
+
+    Returns
+    -------
+    int
+        Concrete conformer count to pass to RDKit.
+    """
+    if n_confs is not None:
+        return int(n_confs)
+
+    rdmolops.FastFindRings(mol)
+    rotatable_bonds = rdMolDescriptors.CalcNumRotatableBonds(mol)
+    if rotatable_bonds <= 7:
+        return 50
+    if rotatable_bonds <= 12:
+        return 200
+    return 300
 
 
 def _assemble_system_mol(

@@ -212,3 +212,84 @@ def submit_chain(
         save_output_dir=save_output_dir,
         work_dir=work_dir,
     )
+
+
+def submit_screen_chain(
+    *,
+    csv_path: str | Path,
+    ts_types: tuple[str, ...] | list[str] = ("TS1", "TS2", "TS3", "TS4"),
+    out_dir: str | Path,
+    cluster: ClusterConfig,
+    stage_resources: dict[str, Resources] | None = None,
+    debug: bool = False,
+    production: bool = True,
+    n_confs: int | None = None,
+    top_n: int = 10,
+    functional: str | None = None,
+    basisset: str | None = None,
+    basisset_solv: str | None = None,
+    save_output_dir: bool = True,
+    work_dir: str | Path | None = None,
+) -> JobSubmissionResult:
+    """Submit a screen-based TS chain for substrate/catalyst systems.
+
+    Parameters
+    ----------
+    csv_path : str or pathlib.Path
+        Screen CSV containing ``role`` and ``smiles`` columns. Substrate rows
+        may include ``rpos``; catalyst rows are paired with every substrate.
+    ts_types : tuple or list of str, optional
+        Transition-state types to submit. Defaults to TS1-TS4.
+    out_dir : str or pathlib.Path
+        Root directory under which per-target stage outputs are written.
+    cluster : frust.cluster.config.ClusterConfig
+        Shared cluster or local-executor configuration.
+    stage_resources : dict[str, Resources] or None, optional
+        Optional per-stage resource overrides.
+    debug : bool, optional
+        Forwarded to stage functions.
+    production : bool, optional
+        If ``True`` and ``n_confs`` is ``None``, preserve the screen TS guess
+        module's automatic conformer-count behavior.
+    n_confs : int or None, optional
+        Conformer count generated inside the initialization stage. ``None``
+        selects the legacy rotatable-bond heuristic.
+    top_n : int, optional
+        Number of low-energy xTB conformers retained before DFT filtering.
+    functional : str or None, optional
+        ORCA functional override for preset stage modules.
+    basisset : str or None, optional
+        ORCA gas-phase basis set override.
+    basisset_solv : str or None, optional
+        ORCA solvent single-point basis set override.
+    save_output_dir : bool, optional
+        Forwarded to initialization stages.
+    work_dir : str or pathlib.Path or None, optional
+        Optional work directory override. If omitted, ``cluster.work_dir`` is
+        used.
+
+    Returns
+    -------
+    frust.cluster.config.JobSubmissionResult
+        Summary of the submitted screen-chain jobs.
+    """
+    return submit_chain_jobs(
+        csv_path=csv_path,
+        preset="screen_ts_per_rpos",
+        module_path=None,
+        stage_order=None,
+        ts_xyz=None,
+        ts_types=ts_types,
+        out_dir=out_dir,
+        cluster=cluster,
+        stage_resources=stage_resources,
+        debug=debug,
+        production=production,
+        n_confs=n_confs,
+        top_n=top_n,
+        functional=functional,
+        basisset=basisset,
+        basisset_solv=basisset_solv,
+        save_output_dir=save_output_dir,
+        work_dir=work_dir,
+    )

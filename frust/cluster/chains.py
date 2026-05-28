@@ -97,13 +97,15 @@ def submit_chain_jobs(
     preset: str | None,
     module_path: str | None,
     stage_order: list[str] | None,
-    ts_xyz: str | Path,
+    ts_xyz: str | Path | None,
     out_dir: str | Path,
     cluster: ClusterConfig,
     stage_resources: dict[str, Resources] | None = None,
     debug: bool = False,
     production: bool = True,
     n_confs: int | None = None,
+    ts_types: tuple[str, ...] | list[str] | None = None,
+    top_n: int | None = None,
     functional: str | None = None,
     basisset: str | None = None,
     basisset_solv: str | None = None,
@@ -122,7 +124,7 @@ def submit_chain_jobs(
         Custom stage module path for advanced chains.
     stage_order : list[str] or None
         Explicit stage order for custom chains.
-    ts_xyz : str or pathlib.Path
+    ts_xyz : str or pathlib.Path or None
         TS template file used to generate initial stage inputs.
     out_dir : str or pathlib.Path
         Root output directory for the chain submission.
@@ -136,6 +138,11 @@ def submit_chain_jobs(
         Preserve stage defaults when ``True`` and ``n_confs`` is ``None``.
     n_confs : int or None, optional
         Conformer count forwarded to initialization stages.
+    ts_types : tuple or list of str or None, optional
+        TS types used by screen-chain presets.
+    top_n : int or None, optional
+        Number of low-energy rows retained by initialization stages that
+        support xTB conformer filtering.
     functional : str or None, optional
         ORCA functional override forwarded to preset stage modules when they
         accept it.
@@ -161,7 +168,13 @@ def submit_chain_jobs(
         stage_order=stage_order,
     )
     stage_funcs = _resolve_stage_functions(resolved["module_path"], resolved["stage_order"])
-    prepared = prepare_chain_inputs(csv_path, preset or "custom", ts_xyz)
+    prepared = prepare_chain_inputs(
+        csv_path,
+        preset or "custom",
+        ts_xyz,
+        ts_types=ts_types,
+    )
+    run_init_arg = prepared.get("run_init_arg", "ts_struct")
 
     root_out_dir = Path(out_dir)
     root_out_dir.mkdir(parents=True, exist_ok=True)
@@ -170,7 +183,7 @@ def submit_chain_jobs(
     tags: list[str] = []
     save_dirs: list[str] = []
 
-    for ts_struct, raw_tag in zip(prepared["payloads"], prepared["tags"]):
+    for payload, raw_tag in zip(prepared["payloads"], prepared["tags"]):
         tag = sanitize_tag(raw_tag)
         save_dir = chain_save_dir(root_out_dir, tag)
         Path(save_dir).mkdir(parents=True, exist_ok=True)
@@ -205,13 +218,15 @@ def submit_chain_jobs(
             if stage_name == "run_init":
                 kwargs.update(
                     {
-                        "ts_struct": ts_struct,
+                        run_init_arg: payload,
                         "n_confs": None if production and n_confs is None else n_confs,
                         "n_cores": resources.cpus,
                         "mem_gb": resources.mem_gb,
                         "save_output_dir": save_output_dir,
                     }
                 )
+                if top_n is not None:
+                    kwargs["top_n"] = top_n
             elif stage_name == "run_cleanup":
                 kwargs = {"save_dir": save_dir}
             else:

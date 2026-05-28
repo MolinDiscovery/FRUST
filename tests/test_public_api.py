@@ -28,7 +28,7 @@ class PublicApiTests(unittest.TestCase):
         from frust import screen as screen_direct
         from frust import utils as utils_direct
         from frust import vis as vis_direct
-        from frust.cluster import ClusterConfig, Resources, submit_chain, submit_jobs
+        from frust.cluster import ClusterConfig, Resources, submit_chain, submit_jobs, submit_screen_chain
         from frust.pipes import run_mols
         from frust.pipelines import run_ts_per_rpos
         from frust.stepper import Stepper as StepperDirect
@@ -65,6 +65,7 @@ class PublicApiTests(unittest.TestCase):
             "Resources",
             "submit_jobs",
             "submit_chain",
+            "submit_screen_chain",
         }
 
         self.assertTrue(expected.issubset(set(ft.__all__)))
@@ -84,6 +85,7 @@ class PublicApiTests(unittest.TestCase):
         self.assertIs(ft.Resources, Resources)
         self.assertIs(ft.submit_jobs, submit_jobs)
         self.assertIs(ft.submit_chain, submit_chain)
+        self.assertIs(ft.submit_screen_chain, submit_screen_chain)
         self.assertIs(ft.cluster.submit_jobs, submit_jobs)
         self.assertIs(ft.utils, utils_direct)
         self.assertIs(utils, utils_direct)

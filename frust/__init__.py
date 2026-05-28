@@ -55,6 +55,7 @@ _PUBLIC_API: dict[str, tuple[str, str]] = {
     "Resources": ("frust.cluster", "Resources"),
     "submit_jobs": ("frust.cluster", "submit_jobs"),
     "submit_chain": ("frust.cluster", "submit_chain"),
+    "submit_screen_chain": ("frust.cluster", "submit_screen_chain"),
 }
 
 __all__ = sorted({*_PUBLIC_MODULES, *_PUBLIC_API})
@@ -89,7 +90,7 @@ if TYPE_CHECKING:
     import frust.screen as screen
     import frust.utils as utils
     import frust.vis as vis
-    from frust.cluster import ClusterConfig, Resources, submit_chain, submit_jobs
+    from frust.cluster import ClusterConfig, Resources, submit_chain, submit_jobs, submit_screen_chain
     from frust.embedder import embed_mols, embed_ts
     from frust.schema import (
         energy_columns,

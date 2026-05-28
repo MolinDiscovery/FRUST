@@ -8,6 +8,7 @@ from typing import TYPE_CHECKING
 
 _PUBLIC_MODULES: dict[str, str] = {
     "run_int3_per_rpos": "frust.pipelines.run_int3_per_rpos",
+    "run_screen_ts_per_rpos": "frust.pipelines.run_screen_ts_per_rpos",
     "run_struct": "frust.pipelines.run_struct",
     "run_ts_per_rpos": "frust.pipelines.run_ts_per_rpos",
 }
@@ -33,4 +34,4 @@ def __dir__() -> list[str]:
 
 
 if TYPE_CHECKING:
-    from frust.pipelines import run_int3_per_rpos, run_struct, run_ts_per_rpos
+    from frust.pipelines import run_int3_per_rpos, run_screen_ts_per_rpos, run_struct, run_ts_per_rpos

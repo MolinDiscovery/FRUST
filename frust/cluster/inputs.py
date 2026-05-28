@@ -6,6 +6,10 @@ import importlib
 import pandas as pd
 
 from frust.cluster.naming import sanitize_tag
+from frust.screen import expand as expand_screen
+from frust.screen import read as read_screen
+from frust.tsguess.matching import parse_rpos_value
+from frust.tsguess.specs import BUILTIN_TS_SPECS
 from frust.utils.mols import create_ts_per_rpos
 
 
@@ -133,7 +137,13 @@ def prepare_pipeline_inputs(
     raise ValueError(f"Unsupported combination for pipeline {pipeline!r}")
 
 
-def prepare_chain_inputs(csv_path: str | Path, preset: str, ts_xyz: str | Path):
+def prepare_chain_inputs(
+    csv_path: str | Path,
+    preset: str,
+    ts_xyz: str | Path | None,
+    *,
+    ts_types: tuple[str, ...] | list[str] | None = None,
+):
     """Prepare TS payloads for dependent chain submission.
 
     Parameters
@@ -142,8 +152,10 @@ def prepare_chain_inputs(csv_path: str | Path, preset: str, ts_xyz: str | Path):
         CSV input containing at least a ``smiles`` column.
     preset : str
         Chain preset label used for reporting the prepared mode.
-    ts_xyz : str or pathlib.Path
+    ts_xyz : str or pathlib.Path or None
         TS template file used to generate stage inputs.
+    ts_types : tuple or list of str or None, optional
+        TS types used by the screen-chain preset.
 
     Returns
     -------
@@ -151,7 +163,75 @@ def prepare_chain_inputs(csv_path: str | Path, preset: str, ts_xyz: str | Path):
         Dictionary containing ``mode``, ``payloads``, ``tags``, and the loaded
         input ``dataframe``.
     """
+    if preset == "screen_ts_per_rpos":
+        return prepare_screen_chain_inputs(csv_path, ts_types=ts_types)
+
+    if ts_xyz is None:
+        raise ValueError(f"`ts_xyz` is required for chain preset {preset!r}")
     df = load_csv_input(csv_path)
     ts_jobs = create_ts_per_rpos(df, str(ts_xyz), return_format="list")
     tags = [sanitize_tag(list(job.keys())[0]) for job in ts_jobs]
-    return {"mode": preset, "payloads": ts_jobs, "tags": tags, "dataframe": df}
+    return {
+        "mode": preset,
+        "payloads": ts_jobs,
+        "tags": tags,
+        "dataframe": df,
+        "run_init_arg": "ts_struct",
+    }
+
+
+def prepare_screen_chain_inputs(
+    csv_path: str | Path,
+    *,
+    ts_types: tuple[str, ...] | list[str] | None = None,
+):
+    """Prepare lightweight screen targets for dependent chain submission.
+
+    Parameters
+    ----------
+    csv_path : str or pathlib.Path
+        Screen CSV containing component ``role`` and ``smiles`` columns.
+    ts_types : tuple or list of str or None, optional
+        Transition-state types to prepare. If omitted, prepare TS1-TS4.
+
+    Returns
+    -------
+    dict
+        Dictionary containing screen target payloads and stable tags. Payloads
+        are one-row expanded-system dataframes with fixed ``ts_type`` and
+        integer ``rpos`` values. They do not contain embedded TS guesses.
+    """
+    requested_ts_types = tuple(
+        str(ts_type).upper()
+        for ts_type in (ts_types or ("TS1", "TS2", "TS3", "TS4"))
+    )
+    unknown_ts_types = sorted(set(requested_ts_types) - set(BUILTIN_TS_SPECS))
+    if unknown_ts_types:
+        supported = ", ".join(sorted(BUILTIN_TS_SPECS))
+        raise ValueError(
+            f"Unsupported screen TS types {unknown_ts_types}. Supported TS types: {supported}"
+        )
+    components = read_screen(csv_path)
+    systems = expand_screen(components)
+
+    payloads: list[pd.DataFrame] = []
+    tags: list[str] = []
+    for _, system in systems.iterrows():
+        rpos_values = parse_rpos_value(system.get("rpos"), str(system["substrate_smiles"]))
+        for ts_type in requested_ts_types:
+            ts_label = str(ts_type).upper()
+            for rpos in rpos_values:
+                target = system.copy()
+                target["rpos"] = int(rpos)
+                target["ts_type"] = ts_label
+                payloads.append(pd.DataFrame([target]))
+                tags.append(sanitize_tag(f"{ts_label}__{system['system_name']}__r{int(rpos)}"))
+
+    return {
+        "mode": "screen_ts_per_rpos",
+        "payloads": payloads,
+        "tags": tags,
+        "dataframe": components,
+        "systems": systems,
+        "run_init_arg": "screen_target",
+    }
