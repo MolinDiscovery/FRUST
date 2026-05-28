@@ -1,5 +1,6 @@
 # frust/pipes.py
 from pathlib import Path
+from frust import screen
 from frust.stepper import Stepper
 from frust.embedder import embed_ts, embed_mols
 from frust.transformers import transformer_mols
@@ -36,6 +37,180 @@ def _normalize_smiles_input(
 
     unique_smiles = list(dict.fromkeys(df["smiles"].tolist()))
     return df, unique_smiles
+
+
+def _screen_input_to_systems(screen_input: str | Path | pd.DataFrame) -> pd.DataFrame:
+    """Return expanded screen systems from a CSV, component table, or systems table.
+
+    Parameters
+    ----------
+    screen_input : str, pathlib.Path, or pandas.DataFrame
+        Screen CSV/component table with ``role`` and ``smiles`` columns, or an
+        already-expanded systems dataframe with screen system columns.
+
+    Returns
+    -------
+    pandas.DataFrame
+        Expanded substrate-catalyst systems ready for TS guess generation.
+    """
+    system_columns = {"system_name", "substrate_smiles", "catalyst_smiles", "rpos"}
+    if isinstance(screen_input, pd.DataFrame) and system_columns.issubset(screen_input.columns):
+        return screen_input.copy()
+    return screen.expand(screen.read(screen_input))
+
+
+def run_screen_ts_per_rpos(
+    screen_input: str | Path | pd.DataFrame,
+    *,
+    ts_types: tuple[str, ...] | list[str] = ("TS1", "TS2", "TS3", "TS4"),
+    n_confs: int | None = None,
+    n_cores: int = 4,
+    mem_gb: int = 20,
+    debug: bool = False,
+    top_n: int = 10,
+    out_dir: str | None = None,
+    work_dir: str | None = None,
+    output_parquet: str | None = None,
+    save_output_dir: bool = True,
+    DFT: bool = False,
+) -> pd.DataFrame:
+    """Run the screen-based TS workflow for substrate/catalyst systems.
+
+    Parameters
+    ----------
+    screen_input : str, pathlib.Path, or pandas.DataFrame
+        Screen CSV/component table accepted by :func:`frust.screen.read`, or an
+        expanded systems dataframe from :func:`frust.screen.expand`.
+    ts_types : tuple or list of str, optional
+        Transition-state types to generate. Defaults to TS1-TS4.
+    n_confs : int or None, optional
+        Number of conformers per TS guess. ``None`` uses the TS guess module's
+        rotatable-bond heuristic.
+    n_cores : int, optional
+        Number of CPU cores used by embedding and calculator stages.
+    mem_gb : int, optional
+        Memory in GB forwarded to :class:`frust.stepper.Stepper`.
+    debug : bool, optional
+        Forwarded to :class:`frust.stepper.Stepper`.
+    top_n : int, optional
+        Number of low-energy xTB rows retained before DFT filtering.
+    out_dir : str or None, optional
+        Base output directory for calculation artifacts.
+    work_dir : str or None, optional
+        Calculator scratch directory.
+    output_parquet : str or None, optional
+        If provided, write the resulting dataframe to this Parquet file.
+    save_output_dir : bool, optional
+        Whether to keep the output directory structure created by the stepper.
+    DFT : bool, optional
+        If ``True``, continue from the xTB/DFT prescreen into DFT refinement.
+
+    Returns
+    -------
+    pandas.DataFrame
+        Dataframe containing screened or DFT-refined TS candidates.
+    """
+    systems = _screen_input_to_systems(screen_input)
+    ts_guesses = screen.create_ts_guesses(
+        systems,
+        ts_types=ts_types,
+        n_confs=n_confs,
+        n_cores=n_cores,
+    )
+    df = pd.concat(ts_guesses.values(), ignore_index=True)
+    if df.empty:
+        raise ValueError("No screen TS guesses were generated")
+
+    step = Stepper(
+        step_type=None,
+        n_cores=n_cores,
+        memory_gb=mem_gb,
+        debug=debug,
+        output_base=out_dir,
+        save_calc_dirs=True,
+        save_output_dir=save_output_dir,
+        work_dir=work_dir,
+    )
+
+    df = step.xtb(df, name="xtb_preopt", options={"gfnff": None, "opt": None}, constraint=True)
+    df = step.xtb(df, name="xtb_sp", options={"gfn": 2})
+    df = step.xtb(
+        df,
+        name="xtb_opt",
+        options={"gfn": 2, "opt": None},
+        constraint=True,
+        lowest=top_n,
+    )
+
+    functional = "wB97X-D3"
+    basisset = "6-31G**"
+    basisset_solv = "6-31+G**"
+    freq = "Freq"
+
+    df = step.orca(
+        df,
+        name="DFT-pre-SP",
+        options={
+            functional: None,
+            basisset: None,
+            "TightSCF": None,
+            "SP": None,
+            "NoSym": None,
+        },
+    )
+
+    if not DFT:
+        df = lowest_energy_rows(df)
+        if output_parquet:
+            df.to_parquet(output_parquet)
+        return df
+
+    df = step.orca(
+        df,
+        name="DFT-pre-Opt",
+        options={
+            functional: None,
+            basisset: None,
+            "TightSCF": None,
+            "SlowConv": None,
+            "Opt": None,
+            "NoSym": None,
+        },
+        constraint=True,
+        lowest=1,
+    )
+
+    df = step.orca(
+        df,
+        name="DFT",
+        options={
+            functional: None,
+            basisset: None,
+            "TightSCF": None,
+            "SlowConv": None,
+            "OptTS": None,
+            freq: None,
+            "NoSym": None,
+        },
+        lowest=1,
+    )
+
+    df = step.orca(
+        df,
+        name="DFT-SP",
+        options={
+            functional: None,
+            basisset_solv: None,
+            "TightSCF": None,
+            "SP": None,
+            "NoSym": None,
+        },
+        xtra_inp_str="""%CPCM\nSMD TRUE\nSMDSOLVENT "chloroform"\nend""",
+    )
+
+    if output_parquet:
+        df.to_parquet(output_parquet)
+    return df
 
 
 def run_ts_per_rpos(

@@ -29,7 +29,7 @@ class PublicApiTests(unittest.TestCase):
         from frust import utils as utils_direct
         from frust import vis as vis_direct
         from frust.cluster import ClusterConfig, Resources, submit_chain, submit_jobs, submit_screen_chain
-        from frust.pipes import run_mols
+        from frust.pipes import run_mols, run_screen_ts_per_rpos
         from frust.pipelines import run_ts_per_rpos
         from frust.stepper import Stepper as StepperDirect
         from frust.utils.analytics import summarize_ts_vibrations as summarize_direct
@@ -102,6 +102,7 @@ class PublicApiTests(unittest.TestCase):
         self.assertIs(ft.pipelines.run_ts_per_rpos, run_ts_per_rpos)
         self.assertIs(ft.pipes.run_mols, run_mols)
         self.assertIs(pipes.run_mols, run_mols)
+        self.assertIs(ft.pipes.run_screen_ts_per_rpos, run_screen_ts_per_rpos)
 
     def test_import_frust_is_lazy_in_fresh_process(self):
         code = textwrap.dedent(
