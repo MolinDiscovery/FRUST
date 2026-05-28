@@ -9,7 +9,13 @@ wraps `submitit` so FRUST can submit either:
 The public interface is intentionally small:
 
 ```python
-from frust.cluster import submit_jobs, submit_chain, ClusterConfig, Resources
+from frust.cluster import (
+    submit_jobs,
+    submit_chain,
+    submit_screen_chain,
+    ClusterConfig,
+    Resources,
+)
 ```
 
 If you install FRUST without cluster extras, install `submitit` first:
@@ -34,6 +40,7 @@ In practice:
 
 - use `submit_jobs(...)` for `run_mols`, `run_ts_per_lig`, `run_ts_per_rpos`, and the related high-level `frust.pipes` workflows
 - use `submit_chain(...)` for staged modules such as `frust.pipelines.run_ts_per_rpos`
+- use `submit_screen_chain(...)` for the new substrate/catalyst screen workflow that generates TS1-TS4 guesses from SMILES instead of a fixed `ts_xyz` template
 
 ## Core Configuration
 
@@ -251,7 +258,83 @@ result = submit_chain(
 This keeps the same stage order and resource handling, but swaps the ORCA
 keywords used by the preset stages.
 
-## Tutorial 6: Use a Custom Chain
+## Tutorial 6: Submit a Catalyst Screen TS Chain
+
+The screen chain is the staged cluster workflow for the new catalyst/substrate
+TS guess module. It starts from a screen CSV, not from a legacy `.xyz` template.
+
+```csv
+role,smiles,compound_name,rpos
+substrate,CN1C=CC=C1,pyrrole,"2,3"
+substrate,COC1=CC=CO1,methoxyfuran,
+catalyst,CC1(C)CCCC(C)(C)N1C2=CC=CC=C2B,B-cat-1,
+```
+
+Submit all four TS types in one call:
+
+```python
+from frust.cluster import ClusterConfig, Resources, submit_screen_chain
+
+location = "runs/screen_ts"
+
+result = submit_screen_chain(
+    csv_path="datasets/screen.csv",
+    ts_types=["TS1", "TS2", "TS3", "TS4"],
+    out_dir=location,
+    cluster=ClusterConfig(
+        backend="slurm",
+        partition="kemi1",
+        log_dir=f"logs/{location}",
+    ),
+    stage_resources={
+        "run_init": Resources(cpus=24, mem_gb=20, timeout_min=7200),
+        "run_hess": Resources(cpus=8, mem_gb=64, timeout_min=7200),
+        "run_OptTS": Resources(cpus=24, mem_gb=20, timeout_min=7200),
+        "run_freq": Resources(cpus=8, mem_gb=64, timeout_min=7200),
+        "run_solv": Resources(cpus=24, mem_gb=20, timeout_min=3600),
+        "run_cleanup": Resources(cpus=2, mem_gb=2, timeout_min=60),
+    },
+    n_confs=None,
+    top_n=10,
+)
+```
+
+For the CSV above, the first substrate has two explicit reactive positions.
+The second substrate has no `rpos`, so FRUST expands its symmetry-unique
+aromatic C-H positions. The submitted chains are grouped like this:
+
+| Chain unit | Example tag |
+| --- | --- |
+| one TS type | `TS3` |
+| one substrate/catalyst pair | `pyrrole__B-cat-1` |
+| one reactive position | `r2` |
+| full output directory | `runs/screen_ts/TS3__pyrrole__B-cat-1__r2` |
+
+Each chain then runs:
+
+1. `run_init`
+2. `run_hess`
+3. `run_OptTS`
+4. `run_freq`
+5. `run_solv`
+6. `run_cleanup`
+
+!!! info "Where TS guesses are generated"
+    `submit_screen_chain(...)` prepares lightweight screen targets during
+    submission. The actual RDKit TS guess conformers are generated inside each
+    cluster `run_init` job. This matches the old staged workflow behavior and
+    avoids doing expensive embedding work on the login node.
+
+!!! note "What `n_confs=None` means"
+    `n_confs=None` uses FRUST's TS conformer heuristic based on rotatable bond
+    count. Pass an integer such as `n_confs=20` when you want a fixed number of
+    generated TS guess conformers per `TS/system/rpos` chain.
+
+This is the right cluster entry point when you want to screen several catalysts
+and substrates across TS1-TS4. Use the legacy `submit_chain(..., ts_xyz=...)`
+when you specifically want the old transformer/template workflow.
+
+## Tutorial 7: Use a Custom Chain
 
 If you do not want to use a preset, you can specify the stage module and stage order directly.
 
@@ -320,7 +403,8 @@ This is useful for:
 
 ## Returned Result Object
 
-Both `submit_jobs(...)` and `submit_chain(...)` return a `JobSubmissionResult`:
+`submit_jobs(...)`, `submit_chain(...)`, and `submit_screen_chain(...)` return
+a `JobSubmissionResult`:
 
 ```python
 JobSubmissionResult(
@@ -344,6 +428,7 @@ The currently supported built-in chain presets are:
 
 - `ts_per_rpos`
 - `int3_per_rpos`
+- `screen_ts_per_rpos`
 
 ## Common Errors
 
@@ -358,7 +443,13 @@ Missing `ts_xyz`:
 - `run_ts_per_rpos_UMA`
 - `run_ts_per_rpos_UMA_short`
 - `run_orca_smoke_test`
-- all `submit_chain(...)` calls
+- legacy `submit_chain(...)` calls
+
+Screen input errors:
+
+- `submit_screen_chain(...)` requires a component CSV with `role` and `smiles`
+- substrate rows may use `rpos`; catalyst `rpos` values are ignored by default
+- each catalyst must match the supported B-aryl-N catalyst scaffold
 
 Mixed preset and custom arguments:
 
