@@ -299,6 +299,46 @@ result = submit_screen_chain(
 )
 ```
 
+To run the DFT stages with ORCA's built-in `r2SCAN-3c` composite method, pass
+the composite method keyword directly:
+
+```python
+result = submit_screen_chain(
+    csv_path="datasets/screen.csv",
+    ts_types=["TS1", "TS2", "TS3", "TS4"],
+    out_dir="runs/screen_ts_r2scan3c",
+    cluster=ClusterConfig(
+        backend="slurm",
+        partition="kemi1",
+        log_dir="logs/screen_ts_r2scan3c",
+    ),
+    stage_resources={
+        "run_init": Resources(cpus=24, mem_gb=20, timeout_min=7200),
+        "run_hess": Resources(cpus=8, mem_gb=64, timeout_min=7200),
+        "run_OptTS": Resources(cpus=24, mem_gb=20, timeout_min=7200),
+        "run_freq": Resources(cpus=8, mem_gb=64, timeout_min=7200),
+        "run_solv": Resources(cpus=24, mem_gb=20, timeout_min=3600),
+        "run_cleanup": Resources(cpus=2, mem_gb=2, timeout_min=60),
+    },
+    n_confs=None,
+    top_n=10,
+    composite_method="r2SCAN-3c",
+)
+```
+
+This makes the ORCA stages use inputs like:
+
+```orca
+! r2SCAN-3c TightSCF SP NoSym
+```
+
+instead of a separate functional and basis pair.
+
+!!! warning "Do not add a basis set to `r2SCAN-3c`"
+    `r2SCAN-3c` is an ORCA composite method. It already includes its own
+    tailored basis and corrections, so `composite_method="r2SCAN-3c"` cannot be
+    combined with `functional=...`, `basisset=...`, or `basisset_solv=...`.
+
 For the CSV above, the first substrate has two explicit reactive positions.
 The second substrate has no `rpos`, so FRUST expands its symmetry-unique
 aromatic C-H positions. The submitted chains are grouped like this:

@@ -31,7 +31,8 @@ def _resolve_theory(
     functional: str | None = None,
     basisset: str | None = None,
     basisset_solv: str | None = None,
-) -> tuple[str, str, str]:
+    composite_method: str | None = None,
+) -> tuple[str, str | None, str | None]:
     """Resolve workflow theory settings.
 
     Parameters
@@ -42,17 +43,47 @@ def _resolve_theory(
         ORCA gas-phase basis set override.
     basisset_solv : str or None, optional
         ORCA solvent basis set override.
+    composite_method : str or None, optional
+        Complete ORCA composite-method keyword, such as ``"r2SCAN-3c"``. When
+        provided, no separate basis set keywords are emitted.
 
     Returns
     -------
-    tuple[str, str, str]
-        Functional, gas-phase basis set, and solvent basis set.
+    tuple[str, str or None, str or None]
+        Method keyword, gas-phase basis set, and solvent basis set.
     """
+    if composite_method is not None:
+        conflicting = [
+            name
+            for name, value in (
+                ("functional", functional),
+                ("basisset", basisset),
+                ("basisset_solv", basisset_solv),
+            )
+            if value is not None
+        ]
+        if conflicting:
+            joined = ", ".join(f"`{name}`" for name in conflicting)
+            raise ValueError(
+                "`composite_method` cannot be combined with "
+                f"{joined}; ORCA composite methods already include their basis/corrections."
+            )
+        return composite_method, None, None
+
     return (
         functional or FUNCTIONAL,
         basisset or BASISSET,
         basisset_solv or BASISSET_SOLV,
     )
+
+
+def _orca_options(method: str, basis: str | None, *keywords: str) -> dict[str, None]:
+    """Build ORCA simple-input options for a method and optional basis."""
+    options: dict[str, None] = {method: None}
+    if basis:
+        options[basis] = None
+    options.update({keyword: None for keyword in keywords})
+    return options
 
 
 def _best_rows(df: pd.DataFrame) -> pd.DataFrame:
@@ -118,6 +149,7 @@ def run_init(
     functional: str | None = None,
     basisset: str | None = None,
     basisset_solv: str | None = None,
+    composite_method: str | None = None,
 ) -> pd.DataFrame:
     """Generate one screen TS target and run the initialization filter chain.
 
@@ -148,6 +180,9 @@ def run_init(
         ORCA gas-phase basis set override.
     basisset_solv : str or None, optional
         ORCA solvent basis set override.
+    composite_method : str or None, optional
+        Complete ORCA composite-method keyword, such as ``"r2SCAN-3c"``. When
+        provided, no separate basis set keywords are emitted.
 
     Returns
     -------
@@ -196,35 +231,30 @@ def run_init(
         n_cores=2,
     )
 
-    current_functional, current_basisset, _ = _resolve_theory(
+    current_method, current_basisset, _ = _resolve_theory(
         functional=functional,
         basisset=basisset,
         basisset_solv=basisset_solv,
+        composite_method=composite_method,
     )
 
     df = step.orca(
         df,
         name="DFT-pre-SP",
-        options={
-            current_functional: None,
-            current_basisset: None,
-            "TightSCF": None,
-            "SP": None,
-            "NoSym": None,
-        },
+        options=_orca_options(current_method, current_basisset, "TightSCF", "SP", "NoSym"),
     )
 
     df = step.orca(
         df,
         name="DFT-pre-Opt",
-        options={
-            current_functional: None,
-            current_basisset: None,
-            "TightSCF": None,
-            "SlowConv": None,
-            "Opt": None,
-            "NoSym": None,
-        },
+        options=_orca_options(
+            current_method,
+            current_basisset,
+            "TightSCF",
+            "SlowConv",
+            "Opt",
+            "NoSym",
+        ),
         constraint=True,
         lowest=1,
     )
@@ -246,6 +276,7 @@ def run_hess(
     functional: str | None = None,
     basisset: str | None = None,
     basisset_solv: str | None = None,
+    composite_method: str | None = None,
 ) -> pd.DataFrame:
     """Run the Hessian stage for the best initialized screen TS rows."""
     df = normalize_dataframe(pd.read_parquet(Path(save_dir or ".") / parquet_path))
@@ -263,22 +294,17 @@ def run_hess(
         work_dir=work_dir,
     )
 
-    current_functional, current_basisset, _ = _resolve_theory(
+    current_method, current_basisset, _ = _resolve_theory(
         functional=functional,
         basisset=basisset,
         basisset_solv=basisset_solv,
+        composite_method=composite_method,
     )
 
     df = step.orca(
         df,
         name="Hess",
-        options={
-            current_functional: None,
-            current_basisset: None,
-            "TightSCF": None,
-            "Freq": None,
-            "NoSym": None,
-        },
+        options=_orca_options(current_method, current_basisset, "TightSCF", "Freq", "NoSym"),
         read_files=["input.hess"],
     )
 
@@ -299,6 +325,7 @@ def run_OptTS(
     functional: str | None = None,
     basisset: str | None = None,
     basisset_solv: str | None = None,
+    composite_method: str | None = None,
 ) -> pd.DataFrame:
     """Run the ORCA OptTS stage using the previous Hessian."""
     df = normalize_dataframe(pd.read_parquet(Path(save_dir or ".") / parquet_path))
@@ -312,23 +339,24 @@ def run_OptTS(
         work_dir=work_dir,
     )
 
-    current_functional, current_basisset, _ = _resolve_theory(
+    current_method, current_basisset, _ = _resolve_theory(
         functional=functional,
         basisset=basisset,
         basisset_solv=basisset_solv,
+        composite_method=composite_method,
     )
 
     df = step.orca(
         df,
         name="OptTS",
-        options={
-            current_functional: None,
-            current_basisset: None,
-            "TightSCF": None,
-            "SlowConv": None,
-            "OptTS": None,
-            "NoSym": None,
-        },
+        options=_orca_options(
+            current_method,
+            current_basisset,
+            "TightSCF",
+            "SlowConv",
+            "OptTS",
+            "NoSym",
+        ),
         use_last_hess=True,
     )
 
@@ -349,6 +377,7 @@ def run_freq(
     functional: str | None = None,
     basisset: str | None = None,
     basisset_solv: str | None = None,
+    composite_method: str | None = None,
 ) -> pd.DataFrame:
     """Run the final frequency stage."""
     df = normalize_dataframe(pd.read_parquet(Path(save_dir or ".") / parquet_path))
@@ -362,23 +391,24 @@ def run_freq(
         work_dir=work_dir,
     )
 
-    current_functional, current_basisset, _ = _resolve_theory(
+    current_method, current_basisset, _ = _resolve_theory(
         functional=functional,
         basisset=basisset,
         basisset_solv=basisset_solv,
+        composite_method=composite_method,
     )
 
     df = step.orca(
         df,
         name="Freq",
-        options={
-            current_functional: None,
-            current_basisset: None,
-            "TightSCF": None,
-            "SlowConv": None,
-            "Freq": None,
-            "NoSym": None,
-        },
+        options=_orca_options(
+            current_method,
+            current_basisset,
+            "TightSCF",
+            "SlowConv",
+            "Freq",
+            "NoSym",
+        ),
     )
 
     stem = parquet_path.rsplit(".", 1)[0]
@@ -398,6 +428,7 @@ def run_solv(
     functional: str | None = None,
     basisset: str | None = None,
     basisset_solv: str | None = None,
+    composite_method: str | None = None,
 ) -> pd.DataFrame:
     """Run the solvent single-point stage."""
     df = normalize_dataframe(pd.read_parquet(Path(save_dir or ".") / parquet_path))
@@ -411,22 +442,17 @@ def run_solv(
         work_dir=work_dir,
     )
 
-    current_functional, _, current_basisset_solv = _resolve_theory(
+    current_method, _, current_basisset_solv = _resolve_theory(
         functional=functional,
         basisset=basisset,
         basisset_solv=basisset_solv,
+        composite_method=composite_method,
     )
 
     df = step.orca(
         df,
         name="DFT-solv",
-        options={
-            current_functional: None,
-            current_basisset_solv: None,
-            "TightSCF": None,
-            "SP": None,
-            "NoSym": None,
-        },
+        options=_orca_options(current_method, current_basisset_solv, "TightSCF", "SP", "NoSym"),
         xtra_inp_str='%CPCM\nSMD TRUE\nSMDSOLVENT "chloroform"\nend',
     )
 

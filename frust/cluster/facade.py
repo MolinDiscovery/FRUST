@@ -228,6 +228,7 @@ def submit_screen_chain(
     functional: str | None = None,
     basisset: str | None = None,
     basisset_solv: str | None = None,
+    composite_method: str | None = None,
     save_output_dir: bool = True,
     work_dir: str | Path | None = None,
 ) -> JobSubmissionResult:
@@ -262,6 +263,10 @@ def submit_screen_chain(
         ORCA gas-phase basis set override.
     basisset_solv : str or None, optional
         ORCA solvent single-point basis set override.
+    composite_method : str or None, optional
+        Complete ORCA composite-method keyword, such as ``"r2SCAN-3c"``. When
+        provided, no separate basis set keywords are forwarded. Mutually
+        exclusive with ``functional``, ``basisset``, and ``basisset_solv``.
     save_output_dir : bool, optional
         Forwarded to initialization stages.
     work_dir : str or pathlib.Path or None, optional
@@ -273,6 +278,23 @@ def submit_screen_chain(
     frust.cluster.config.JobSubmissionResult
         Summary of the submitted screen-chain jobs.
     """
+    if composite_method is not None:
+        conflicting = [
+            name
+            for name, value in (
+                ("functional", functional),
+                ("basisset", basisset),
+                ("basisset_solv", basisset_solv),
+            )
+            if value is not None
+        ]
+        if conflicting:
+            joined = ", ".join(f"`{name}`" for name in conflicting)
+            raise ValueError(
+                "`composite_method` cannot be combined with "
+                f"{joined}; ORCA composite methods already include their basis/corrections."
+            )
+
     return submit_chain_jobs(
         csv_path=csv_path,
         preset="screen_ts_per_rpos",
@@ -290,6 +312,7 @@ def submit_screen_chain(
         functional=functional,
         basisset=basisset,
         basisset_solv=basisset_solv,
+        composite_method=composite_method,
         save_output_dir=save_output_dir,
         work_dir=work_dir,
     )

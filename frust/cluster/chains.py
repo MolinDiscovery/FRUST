@@ -109,6 +109,7 @@ def submit_chain_jobs(
     functional: str | None = None,
     basisset: str | None = None,
     basisset_solv: str | None = None,
+    composite_method: str | None = None,
     save_output_dir: bool = True,
     work_dir: str | Path | None = None,
 ) -> JobSubmissionResult:
@@ -152,6 +153,10 @@ def submit_chain_jobs(
     basisset_solv : str or None, optional
         ORCA solvent single-point basis set override forwarded to preset stage
         modules when they accept it.
+    composite_method : str or None, optional
+        Complete ORCA composite-method keyword forwarded to preset stage
+        modules when they accept it. Composite methods are mutually exclusive
+        with ``functional``, ``basisset``, and ``basisset_solv``.
     save_output_dir : bool, optional
         Forwarded to initialization stages when supported.
     work_dir : str or pathlib.Path or None, optional
@@ -162,6 +167,23 @@ def submit_chain_jobs(
     frust.cluster.config.JobSubmissionResult
         Summary of all submitted stage jobs for all prepared tags.
     """
+    if composite_method is not None:
+        conflicting = [
+            name
+            for name, value in (
+                ("functional", functional),
+                ("basisset", basisset),
+                ("basisset_solv", basisset_solv),
+            )
+            if value is not None
+        ]
+        if conflicting:
+            joined = ", ".join(f"`{name}`" for name in conflicting)
+            raise ValueError(
+                "`composite_method` cannot be combined with "
+                f"{joined}; ORCA composite methods already include their basis/corrections."
+            )
+
     resolved = _resolve_chain_definition(
         preset=preset,
         module_path=module_path,
@@ -215,6 +237,8 @@ def submit_chain_jobs(
                 kwargs["basisset"] = basisset
             if basisset_solv is not None:
                 kwargs["basisset_solv"] = basisset_solv
+            if composite_method is not None:
+                kwargs["composite_method"] = composite_method
             if stage_name == "run_init":
                 kwargs.update(
                     {

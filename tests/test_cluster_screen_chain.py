@@ -196,6 +196,50 @@ class ScreenChainSubmissionTests(unittest.TestCase):
         ]
         self.assertTrue(dependent_updates)
 
+    def test_submit_screen_chain_forwards_composite_method(self):
+        with tempfile.TemporaryDirectory() as tmp:
+            csv_path = _screen_csv(Path(tmp) / "screen.csv")
+            fake = FakeExecutor()
+            cluster = ClusterConfig(
+                backend="slurm",
+                partition="kemi1",
+                log_dir=Path(tmp) / "logs",
+            )
+
+            with patch("frust.cluster.chains.create_executor", return_value=fake):
+                submit_screen_chain(
+                    csv_path=csv_path,
+                    ts_types=["TS1"],
+                    out_dir=Path(tmp) / "out",
+                    cluster=cluster,
+                    composite_method="r2SCAN-3c",
+                )
+
+        for fn, kwargs in fake.submissions:
+            if getattr(fn, "__name__", "") == "run_cleanup":
+                self.assertNotIn("composite_method", kwargs)
+            else:
+                self.assertEqual(kwargs.get("composite_method"), "r2SCAN-3c")
+
+    def test_submit_screen_chain_rejects_mixed_composite_and_basis(self):
+        with tempfile.TemporaryDirectory() as tmp:
+            csv_path = _screen_csv(Path(tmp) / "screen.csv")
+            cluster = ClusterConfig(
+                backend="slurm",
+                partition="kemi1",
+                log_dir=Path(tmp) / "logs",
+            )
+
+            with self.assertRaisesRegex(ValueError, "composite_method.*basisset"):
+                submit_screen_chain(
+                    csv_path=csv_path,
+                    ts_types=["TS1"],
+                    out_dir=Path(tmp) / "out",
+                    cluster=cluster,
+                    composite_method="r2SCAN-3c",
+                    basisset="def2-SVP",
+                )
+
     def test_legacy_submit_chain_still_requires_ts_xyz(self):
         signature = inspect.signature(submit_chain)
         self.assertIs(signature.parameters["ts_xyz"].default, inspect._empty)
@@ -241,6 +285,89 @@ class ScreenChainPipelineTests(unittest.TestCase):
         self.assertEqual(FakeStepper.instances[0].kwargs["n_cores"], 7)
         self.assertEqual(FakeStepper.instances[0].kwargs["memory_gb"], 11)
         self.assertEqual(len(out), 1)
+
+    def test_run_init_composite_method_omits_basis_keywords(self):
+        from frust.pipelines import run_screen_ts_per_rpos
+
+        FakeStepper.instances = []
+        seed_df = _seed_ts_guess_df()
+        with tempfile.TemporaryDirectory() as tmp:
+            with (
+                patch.object(
+                    run_screen_ts_per_rpos,
+                    "create_ts_guesses",
+                    return_value={"TS1": seed_df},
+                ),
+                patch.object(run_screen_ts_per_rpos, "Stepper", FakeStepper),
+            ):
+                run_screen_ts_per_rpos.run_init(
+                    _screen_target(),
+                    save_dir=tmp,
+                    composite_method="r2SCAN-3c",
+                )
+
+        orca_calls = [
+            call for call in FakeStepper.instances[0].calls if call[0] == "orca"
+        ]
+        self.assertEqual([call[1] for call in orca_calls], ["DFT-pre-SP", "DFT-pre-Opt"])
+        for _, _, options, *_ in orca_calls:
+            self.assertIn("r2SCAN-3c", options)
+            self.assertNotIn("6-31G**", options)
+            self.assertNotIn("6-31+G**", options)
+
+    def test_screen_chain_composite_method_reaches_all_post_init_stages(self):
+        from frust.pipelines import run_screen_ts_per_rpos
+
+        FakeStepper.instances = []
+        with tempfile.TemporaryDirectory() as tmp:
+            save_path = Path(tmp)
+            _seed_ts_guess_df().to_parquet(save_path / "init.parquet")
+            with patch.object(run_screen_ts_per_rpos, "Stepper", FakeStepper):
+                run_screen_ts_per_rpos.run_hess(
+                    "init.parquet",
+                    save_dir=tmp,
+                    composite_method="r2SCAN-3c",
+                )
+                run_screen_ts_per_rpos.run_OptTS(
+                    "init.hess.parquet",
+                    save_dir=tmp,
+                    composite_method="r2SCAN-3c",
+                )
+                run_screen_ts_per_rpos.run_freq(
+                    "init.hess.optts.parquet",
+                    save_dir=tmp,
+                    composite_method="r2SCAN-3c",
+                )
+                run_screen_ts_per_rpos.run_solv(
+                    "init.hess.optts.freq.parquet",
+                    save_dir=tmp,
+                    composite_method="r2SCAN-3c",
+                )
+
+        expected = ["Hess", "OptTS", "Freq", "DFT-solv"]
+        seen = []
+        for instance in FakeStepper.instances:
+            for call in instance.calls:
+                if call[0] != "orca":
+                    continue
+                _, name, options, *_ = call
+                seen.append(name)
+                self.assertIn("r2SCAN-3c", options)
+                self.assertNotIn("6-31G**", options)
+                self.assertNotIn("6-31+G**", options)
+        self.assertEqual(seen, expected)
+
+    def test_screen_chain_conventional_theory_still_uses_basis_keywords(self):
+        from frust.pipelines import run_screen_ts_per_rpos
+
+        self.assertEqual(
+            run_screen_ts_per_rpos._resolve_theory(
+                functional="B3LYP",
+                basisset="def2-SVP",
+                basisset_solv="def2-SVPD",
+            ),
+            ("B3LYP", "def2-SVP", "def2-SVPD"),
+        )
 
 
 if __name__ == "__main__":

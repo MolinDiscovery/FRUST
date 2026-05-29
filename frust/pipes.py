@@ -882,9 +882,9 @@ def run_mols_custom(
     df = step.xtb(df, name="xtb_opt", options={"gfn": 2, "opt": None}, lowest=top_n, n_cores=2)
     # df = step.gxtb(df, name="gxtb_opt", options={"opt": None}, n_cores=2)
 
-    functional      = "wB97X-D3" # wB97X-D3, wB97M-V
-    basisset        = "6-31G**" # 6-31G**, def2-TZVPD
-    basisset_solv   = "6-31+G**" # 6-31+G**, def2-TZVPD
+    functional      = "R2SCAN",
+    basisset        = "def2-SVP",
+    basisset_solv   = "def2-SVPD",
     freq            = "Freq" # Freq, NumFreq
 
     df = step.orca(df, name="DFT-pre-SP", options={
