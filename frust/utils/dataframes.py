@@ -2,12 +2,23 @@
 
 from __future__ import annotations
 
+import warnings
 from collections.abc import Mapping
+from pathlib import Path
 from typing import Any
 
 import pandas as pd
 
 from frust.schema import energy_columns, infer_group_columns, normalize_dataframe
+
+_PUBCHEM_CACHE_COLUMNS = [
+    "canonical_smiles",
+    "input_smiles",
+    "pubchem_iupac",
+    "pubchem_cid",
+    "lookup_status",
+    "lookup_error",
+]
 
 
 def show_steps(df: pd.DataFrame, *, detail: str = "summary") -> pd.DataFrame:
@@ -98,6 +109,183 @@ def show_steps(df: pd.DataFrame, *, detail: str = "summary") -> pd.DataFrame:
     return out.dropna(axis=1, how="all")
 
 
+def map_substrate_names(
+    df: pd.DataFrame,
+    *,
+    smiles_col: str = "substrate_smiles",
+    name_col: str = "substrate_name",
+    mapped_col: str = "substrate_pubchem_iupac",
+    cid_col: str = "substrate_pubchem_cid",
+    original_col: str | None = None,
+    replace: bool = True,
+    add_metadata: bool = False,
+    cache_path: str | Path | None = None,
+    force: bool = False,
+    sanitize_names: bool = True,
+    strict: bool = False,
+    inplace: bool = False,
+    return_mapping: bool = False,
+) -> pd.DataFrame | tuple[pd.DataFrame, pd.DataFrame]:
+    """Map substrate SMILES to PubChem names and annotate a FRUST dataframe.
+
+    Parameters
+    ----------
+    df : pandas.DataFrame
+        FRUST dataframe containing a substrate SMILES column.
+    smiles_col : str, optional
+        Column containing substrate SMILES strings.
+    name_col : str, optional
+        Column to replace when ``replace=True``.
+    mapped_col : str, optional
+        Column that stores the raw PubChem IUPAC name.
+    cid_col : str, optional
+        Column that stores the PubChem CID.
+    original_col : str or None, optional
+        Optional column used to preserve original names before replacement.
+    replace : bool, optional
+        Replace ``name_col`` with mapped PubChem names for successful lookups.
+    add_metadata : bool, optional
+        Add canonical SMILES, PubChem IUPAC, PubChem CID, and lookup-status
+        columns to the returned dataframe. Metadata columns are also added when
+        ``replace=False`` so the call has a visible dataframe effect.
+    cache_path : str, pathlib.Path, or None, optional
+        CSV cache path. ``None`` uses ``~/.cache/frust/pubchem_names.csv``.
+    force : bool, optional
+        Re-query PubChem even when a cache entry exists.
+    sanitize_names : bool, optional
+        Sanitize replacement names for FRUST/file-name compatibility.
+    strict : bool, optional
+        Raise an error if any unique substrate SMILES cannot be mapped.
+    inplace : bool, optional
+        Mutate ``df`` directly instead of returning a copy.
+    return_mapping : bool, optional
+        Return ``(dataframe, mapping_dataframe)``.
+
+    Returns
+    -------
+    pandas.DataFrame or tuple[pandas.DataFrame, pandas.DataFrame]
+        Annotated dataframe, optionally with the unique SMILES mapping table.
+    """
+    if smiles_col not in df.columns:
+        raise ValueError(f"cannot map substrate names: {smiles_col!r} is not a column")
+
+    from frust.utils.mols import (
+        canonicalize_smiles,
+        lookup_pubchem_name,
+        sanitize_molecule_name,
+    )
+
+    out = df if inplace else df.copy()
+    if not inplace:
+        out.attrs.update(getattr(df, "attrs", {}))
+
+    cache_file = _resolve_pubchem_cache_path(cache_path)
+    cache_records = _read_pubchem_cache(cache_file)
+
+    canonical_series = out[smiles_col].map(
+        lambda value: _canonical_smiles_or_none(value, canonicalize_smiles)
+    )
+    unique_inputs: dict[str, str] = {}
+    for raw_smiles, canonical in zip(out[smiles_col], canonical_series):
+        if canonical is not None and canonical not in unique_inputs:
+            unique_inputs[canonical] = str(raw_smiles).strip()
+
+    mapping_records: list[dict[str, Any]] = []
+    records_by_key: dict[str, dict[str, Any]] = {}
+    cache_changed = False
+
+    for canonical, raw_smiles in unique_inputs.items():
+        if not force and canonical in cache_records:
+            cache_record = cache_records[canonical]
+            record = _mapping_record_from_cache(
+                cache_record,
+                raw_smiles=raw_smiles,
+                smiles_col=smiles_col,
+                mapped_col=mapped_col,
+                cid_col=cid_col,
+                cache_hit=True,
+            )
+        else:
+            lookup = lookup_pubchem_name(raw_smiles)
+            cache_record = _cache_record_from_lookup(lookup, raw_smiles, canonical)
+            cache_records[canonical] = cache_record
+            cache_changed = True
+            record = _mapping_record_from_cache(
+                cache_record,
+                raw_smiles=raw_smiles,
+                smiles_col=smiles_col,
+                mapped_col=mapped_col,
+                cid_col=cid_col,
+                cache_hit=False,
+            )
+
+        mapping_records.append(record)
+        records_by_key[canonical] = record
+
+    if cache_changed:
+        _write_pubchem_cache(cache_file, cache_records)
+
+    failures = [
+        record
+        for record in mapping_records
+        if record["lookup_status"] != "success"
+    ]
+    if strict and failures:
+        failed = ", ".join(
+            f"{record[smiles_col]!r} ({record['lookup_status']})"
+            for record in failures
+        )
+        raise ValueError(f"PubChem lookup failed for substrate SMILES: {failed}")
+
+    mapped_names = canonical_series.map(
+        lambda key: _record_value(records_by_key.get(key), mapped_col)
+    )
+    mapped_cids = canonical_series.map(
+        lambda key: _record_value(records_by_key.get(key), cid_col)
+    )
+    mapped_status = canonical_series.map(
+        lambda key: _record_value(records_by_key.get(key), "lookup_status") or "missing_smiles"
+    )
+
+    if add_metadata or not replace:
+        out["substrate_canonical_smiles"] = canonical_series
+        out[mapped_col] = mapped_names
+        out[cid_col] = mapped_cids
+        out["substrate_pubchem_status"] = mapped_status
+
+    if replace:
+        if name_col not in out.columns:
+            out[name_col] = pd.NA
+        if original_col is not None and original_col not in out.columns:
+            out[original_col] = out[name_col]
+
+        success = mapped_status.eq("success") & mapped_names.notna()
+        replacement_names = mapped_names.loc[success].map(
+            lambda value: sanitize_molecule_name(str(value))
+            if sanitize_names
+            else str(value)
+        )
+        out.loc[success, name_col] = replacement_names
+
+    mapping_df = pd.DataFrame(
+        mapping_records,
+        columns=[
+            smiles_col,
+            "canonical_smiles",
+            mapped_col,
+            cid_col,
+            "lookup_status",
+            "lookup_error",
+            "cache_hit",
+        ],
+    )
+    mapping_df.attrs.update(getattr(df, "attrs", {}))
+
+    if return_mapping:
+        return out, mapping_df
+    return out
+
+
 def lowest_energy_rows(
     df: pd.DataFrame,
     n: int = 1,
@@ -168,6 +356,137 @@ def _normalized_column_name(column: str) -> str:
     """Return the canonical FRUST name for one possibly legacy column name."""
     normalized = normalize_dataframe(pd.DataFrame(columns=[column]))
     return str(normalized.columns[0])
+
+
+def _resolve_pubchem_cache_path(cache_path: str | Path | None) -> Path:
+    """Resolve the PubChem name-cache path."""
+    if cache_path is not None:
+        return Path(cache_path).expanduser()
+    return Path.home() / ".cache" / "frust" / "pubchem_names.csv"
+
+
+def _read_pubchem_cache(cache_path: Path) -> dict[str, dict[str, Any]]:
+    """Read PubChem cache records keyed by canonical SMILES."""
+    if not cache_path.exists():
+        return {}
+
+    try:
+        cache_df = pd.read_csv(cache_path, dtype=object)
+    except Exception as exc:
+        warnings.warn(
+            f"Ignoring unreadable PubChem cache {cache_path}: {exc}",
+            UserWarning,
+            stacklevel=2,
+        )
+        return {}
+
+    missing = set(_PUBCHEM_CACHE_COLUMNS) - set(cache_df.columns)
+    if missing:
+        warnings.warn(
+            f"Ignoring PubChem cache {cache_path}: missing columns {sorted(missing)}",
+            UserWarning,
+            stacklevel=2,
+        )
+        return {}
+
+    cache_df = cache_df.dropna(subset=["canonical_smiles"])
+    cache_df = cache_df.drop_duplicates("canonical_smiles", keep="last")
+    records: dict[str, dict[str, Any]] = {}
+    for record in cache_df[_PUBCHEM_CACHE_COLUMNS].to_dict("records"):
+        normalized = {key: _none_if_missing(value) for key, value in record.items()}
+        canonical = normalized.get("canonical_smiles")
+        if canonical is not None:
+            records[str(canonical)] = normalized
+    return records
+
+
+def _write_pubchem_cache(cache_path: Path, records: dict[str, dict[str, Any]]) -> None:
+    """Write PubChem cache records."""
+    cache_path.parent.mkdir(parents=True, exist_ok=True)
+    cache_df = pd.DataFrame(records.values(), columns=_PUBCHEM_CACHE_COLUMNS)
+    cache_df = cache_df.sort_values("canonical_smiles", na_position="last")
+    cache_df.to_csv(cache_path, index=False)
+
+
+def _cache_record_from_lookup(
+    lookup: Mapping[str, Any],
+    raw_smiles: str,
+    canonical_smiles: str,
+) -> dict[str, Any]:
+    """Normalize one lookup result into the on-disk cache schema."""
+    return {
+        "canonical_smiles": canonical_smiles,
+        "input_smiles": raw_smiles,
+        "pubchem_iupac": _none_if_missing(lookup.get("pubchem_iupac")),
+        "pubchem_cid": _none_if_missing(lookup.get("pubchem_cid")),
+        "lookup_status": _none_if_missing(lookup.get("lookup_status")) or "error",
+        "lookup_error": _none_if_missing(lookup.get("lookup_error")),
+    }
+
+
+def _mapping_record_from_cache(
+    cache_record: Mapping[str, Any],
+    *,
+    raw_smiles: str,
+    smiles_col: str,
+    mapped_col: str,
+    cid_col: str,
+    cache_hit: bool,
+) -> dict[str, Any]:
+    """Convert one cache record to a user-facing mapping record."""
+    return {
+        smiles_col: raw_smiles,
+        "canonical_smiles": _record_value(cache_record, "canonical_smiles"),
+        mapped_col: _record_value(cache_record, "pubchem_iupac"),
+        cid_col: _coerce_pubchem_cid(_record_value(cache_record, "pubchem_cid")),
+        "lookup_status": _record_value(cache_record, "lookup_status") or "error",
+        "lookup_error": _record_value(cache_record, "lookup_error"),
+        "cache_hit": cache_hit,
+    }
+
+
+def _canonical_smiles_or_none(value: Any, canonicalize_smiles) -> str | None:
+    """Canonicalize a possibly missing SMILES value."""
+    if _is_missing_scalar(value):
+        return None
+    return canonicalize_smiles(str(value))
+
+
+def _record_value(record: Mapping[str, Any] | None, key: str) -> Any:
+    """Return a scalar record value with pandas missing values normalized."""
+    if record is None:
+        return None
+    return _none_if_missing(record.get(key))
+
+
+def _none_if_missing(value: Any) -> Any:
+    """Convert pandas missing scalars and empty strings to ``None``."""
+    if value is None:
+        return None
+    if isinstance(value, str) and value.strip() == "":
+        return None
+    try:
+        if bool(pd.isna(value)):
+            return None
+    except (TypeError, ValueError):
+        pass
+    return value
+
+
+def _coerce_pubchem_cid(value: Any) -> Any:
+    """Convert cache-loaded integer-like PubChem CIDs back to integers."""
+    value = _none_if_missing(value)
+    if value is None:
+        return None
+    try:
+        return int(value)
+    except (TypeError, ValueError):
+        return value
+
+
+def _is_missing_scalar(value: Any) -> bool:
+    """Return whether a value should be treated as a missing scalar."""
+    return _none_if_missing(value) is None
 
 
 def _steps_mapping(df: pd.DataFrame) -> Mapping[str, Any]:

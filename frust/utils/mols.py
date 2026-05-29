@@ -8,6 +8,118 @@ from rdkit.Chem.rdchem import RWMol
 from rdkit.Chem.rdchem import Mol
 from frust.utils.io import read_ts_type_from_xyz
 
+
+def canonicalize_smiles(smiles: str) -> str:
+    """Return a canonical isomeric SMILES string when RDKit can parse it.
+
+    Parameters
+    ----------
+    smiles : str
+        Input SMILES string.
+
+    Returns
+    -------
+    str
+        RDKit canonical isomeric SMILES, or the stripped input string if RDKit
+        cannot parse the molecule.
+    """
+    value = str(smiles).strip()
+    mol = Chem.MolFromSmiles(value)
+    if mol is None:
+        return value
+    return Chem.MolToSmiles(mol, isomericSmiles=True)
+
+
+def sanitize_molecule_name(name: str) -> str:
+    """Return a compact FRUST-safe molecule name.
+
+    Parameters
+    ----------
+    name : str
+        Human-readable molecule name.
+
+    Returns
+    -------
+    str
+        Name with whitespace and path separators replaced by underscores.
+    """
+    import re
+
+    value = re.sub(r"\s+", "_", str(name).strip())
+    value = value.replace("/", "_").replace("\\", "_")
+    return value or "Unknown_Molecule"
+
+
+def lookup_pubchem_name(
+    smiles: str,
+    *,
+    max_retries: int = 5,
+    delay: float = 10.0,
+) -> dict[str, object]:
+    """Look up PubChem IUPAC name metadata for one SMILES string.
+
+    Parameters
+    ----------
+    smiles : str
+        Input SMILES string.
+    max_retries : int, optional
+        Number of attempts for temporary PubChem server-busy errors.
+    delay : float, optional
+        Seconds to wait between server-busy retry attempts.
+
+    Returns
+    -------
+    dict
+        Lookup metadata with ``canonical_smiles``, ``pubchem_iupac``,
+        ``pubchem_cid``, ``lookup_status``, and ``lookup_error`` keys.
+    """
+    import time
+
+    import pubchempy as pcp
+
+    canonical = canonicalize_smiles(smiles)
+    result: dict[str, object] = {
+        "input_smiles": str(smiles),
+        "canonical_smiles": canonical,
+        "pubchem_iupac": None,
+        "pubchem_cid": None,
+        "lookup_status": "not_queried",
+        "lookup_error": None,
+    }
+
+    compounds = None
+    for attempt in range(1, max_retries + 1):
+        try:
+            compounds = pcp.get_compounds(smiles, "smiles")
+            break
+        except pcp.PubChemHTTPError as exc:
+            if "PUGREST.ServerBusy" in str(exc) and attempt < max_retries:
+                time.sleep(delay)
+                continue
+            result["lookup_status"] = "error"
+            result["lookup_error"] = str(exc)
+            return result
+        except Exception as exc:
+            result["lookup_status"] = "error"
+            result["lookup_error"] = str(exc)
+            return result
+
+    if not compounds:
+        result["lookup_status"] = "not_found"
+        return result
+
+    compound = compounds[0]
+    result["pubchem_cid"] = getattr(compound, "cid", None)
+    iupac_name = getattr(compound, "iupac_name", None)
+    if not iupac_name:
+        result["lookup_status"] = "no_iupac"
+        return result
+
+    result["pubchem_iupac"] = str(iupac_name)
+    result["lookup_status"] = "success"
+    return result
+
+
 def get_molecule_name(smiles: str):
     """Retrieve the IUPAC name for a molecule from its SMILES string.
     
@@ -26,31 +138,13 @@ def get_molecule_name(smiles: str):
         pcp.PubChemHTTPError: When PubChem API encounters errors other than 
                              server busy status (which is handled with retries).
     """
-    import pubchempy as pcp
-    import time
-    
-    max_retries = 5      # Maximum number of retry attempts
-    delay = 10           # Seconds to wait between attempts
+    result = lookup_pubchem_name(smiles)
+    name = result.get("pubchem_iupac")
+    if name:
+        return sanitize_molecule_name(str(name))
 
-    compounds = None
-    for attempt in range(1, max_retries + 1):
-        try:
-            compounds = pcp.get_compounds(smiles, 'smiles')
-            break
-        except pcp.PubChemHTTPError as e:
-            if 'PUGREST.ServerBusy' in str(e):
-                print(f"Attempt {attempt}/{max_retries}: PubChem is busy. Waiting {delay} seconds before retrying...")
-                time.sleep(delay)
-            else:
-                print(f"Attempt {attempt}/{max_retries}: Encountered error: {e}")
-                break
-
-    if compounds and compounds[0].iupac_name:
-        name = compounds[0].iupac_name
-        return name.replace(" ", "_")
-    else:
-        print("Warning: Failed to retrieve compound name. Using fallback name.")
-        return "Unknown_Molecule"
+    print("Warning: Failed to retrieve compound name. Using fallback name.")
+    return "Unknown_Molecule"
     
 
 def generate_id(id_name: str, job_id:int = None) -> str:

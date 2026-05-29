@@ -1,8 +1,11 @@
+import tempfile
 import unittest
+from pathlib import Path
+from unittest.mock import patch
 
 import pandas as pd
 
-from frust.utils import show_steps, lowest_energy_rows
+from frust.utils import show_steps, lowest_energy_rows, map_substrate_names
 
 
 class DataFrameUtilityTests(unittest.TestCase):
@@ -178,6 +181,176 @@ class DataFrameUtilityTests(unittest.TestCase):
                 pd.DataFrame({"substrate_name": ["x"], "stage-EE": [-1.0]}),
                 group_cols=["missing"],
             )
+
+    def test_map_substrate_names_replaces_names_with_lean_default(self):
+        df = pd.DataFrame(
+            {
+                "substrate_smiles": ["CN1C=CC=C1", "CN1C=CC=C1"],
+                "substrate_name": ["substrate_000", "substrate_000"],
+                "rpos": [0, 1],
+            }
+        )
+        df.attrs["note"] = "preserved"
+        calls = []
+
+        def fake_lookup(smiles):
+            calls.append(smiles)
+            return {
+                "input_smiles": smiles,
+                "canonical_smiles": "Cn1cccc1",
+                "pubchem_iupac": "1 methyl pyrrole",
+                "pubchem_cid": 12345,
+                "lookup_status": "success",
+                "lookup_error": None,
+            }
+
+        with tempfile.TemporaryDirectory() as td:
+            cache_path = Path(td) / "pubchem.csv"
+            with patch("frust.utils.mols.lookup_pubchem_name", side_effect=fake_lookup):
+                out = map_substrate_names(df, cache_path=cache_path)
+
+            verbose = map_substrate_names(
+                df,
+                cache_path=cache_path,
+                add_metadata=True,
+                original_col="substrate_name_original",
+            )
+
+        self.assertEqual(calls, ["CN1C=CC=C1"])
+        self.assertEqual(list(out["substrate_name"]), ["1_methyl_pyrrole", "1_methyl_pyrrole"])
+        self.assertNotIn("substrate_name_original", out.columns)
+        self.assertNotIn("substrate_pubchem_iupac", out.columns)
+        self.assertNotIn("substrate_pubchem_cid", out.columns)
+        self.assertNotIn("substrate_pubchem_status", out.columns)
+        self.assertEqual(out.attrs["note"], "preserved")
+        self.assertEqual(list(df["substrate_name"]), ["substrate_000", "substrate_000"])
+        self.assertEqual(list(verbose["substrate_name"]), ["1_methyl_pyrrole", "1_methyl_pyrrole"])
+        self.assertEqual(list(verbose["substrate_name_original"]), ["substrate_000", "substrate_000"])
+        self.assertEqual(list(verbose["substrate_pubchem_iupac"]), ["1 methyl pyrrole", "1 methyl pyrrole"])
+        self.assertEqual(list(verbose["substrate_pubchem_cid"]), [12345, 12345])
+        self.assertEqual(list(verbose["substrate_pubchem_status"]), ["success", "success"])
+
+    def test_map_substrate_names_uses_cache_and_force_requeries(self):
+        df = pd.DataFrame(
+            {
+                "substrate_smiles": ["C1=CC=CO1"],
+                "substrate_name": ["substrate_000"],
+            }
+        )
+
+        with tempfile.TemporaryDirectory() as td:
+            cache_path = Path(td) / "pubchem.csv"
+            with patch(
+                "frust.utils.mols.lookup_pubchem_name",
+                return_value={
+                    "input_smiles": "C1=CC=CO1",
+                    "canonical_smiles": "c1ccoc1",
+                    "pubchem_iupac": "furan",
+                    "pubchem_cid": 8029,
+                    "lookup_status": "success",
+                    "lookup_error": None,
+                },
+            ) as lookup:
+                first = map_substrate_names(df, cache_path=cache_path)
+
+            with patch(
+                "frust.utils.mols.lookup_pubchem_name",
+                side_effect=AssertionError("cache was not used"),
+            ) as lookup_cached:
+                second = map_substrate_names(df, cache_path=cache_path)
+
+            with patch(
+                "frust.utils.mols.lookup_pubchem_name",
+                return_value={
+                    "input_smiles": "C1=CC=CO1",
+                    "canonical_smiles": "c1ccoc1",
+                    "pubchem_iupac": "oxole",
+                    "pubchem_cid": 8029,
+                    "lookup_status": "success",
+                    "lookup_error": None,
+                },
+            ) as lookup_forced:
+                forced = map_substrate_names(df, cache_path=cache_path, force=True)
+
+        self.assertEqual(lookup.call_count, 1)
+        self.assertEqual(lookup_cached.call_count, 0)
+        self.assertEqual(lookup_forced.call_count, 1)
+        self.assertEqual(first["substrate_name"].iloc[0], "furan")
+        self.assertEqual(second["substrate_name"].iloc[0], "furan")
+        self.assertEqual(forced["substrate_name"].iloc[0], "oxole")
+
+    def test_map_substrate_names_handles_failed_lookups_and_strict_mode(self):
+        df = pd.DataFrame(
+            {
+                "substrate_smiles": ["not_a_smiles"],
+                "substrate_name": ["substrate_000"],
+            }
+        )
+
+        def fake_lookup(smiles):
+            return {
+                "input_smiles": smiles,
+                "canonical_smiles": smiles,
+                "pubchem_iupac": None,
+                "pubchem_cid": None,
+                "lookup_status": "not_found",
+                "lookup_error": None,
+            }
+
+        with tempfile.TemporaryDirectory() as td:
+            cache_path = Path(td) / "pubchem.csv"
+            with patch("frust.utils.mols.lookup_pubchem_name", side_effect=fake_lookup):
+                out = map_substrate_names(
+                    df,
+                    cache_path=cache_path,
+                    add_metadata=True,
+                    original_col="substrate_name_original",
+                )
+
+            with self.assertRaisesRegex(ValueError, "PubChem lookup failed"):
+                map_substrate_names(df, cache_path=cache_path, strict=True)
+
+        self.assertEqual(out["substrate_name"].iloc[0], "substrate_000")
+        self.assertEqual(out["substrate_name_original"].iloc[0], "substrate_000")
+        self.assertIsNone(out["substrate_pubchem_iupac"].iloc[0])
+        self.assertEqual(out["substrate_pubchem_status"].iloc[0], "not_found")
+
+    def test_map_substrate_names_can_return_mapping_table(self):
+        df = pd.DataFrame(
+            {
+                "substrate_smiles": ["C1=CC=CO1", "CN1C=CC=C1"],
+                "substrate_name": ["substrate_000", "substrate_001"],
+            }
+        )
+
+        def fake_lookup(smiles):
+            name = "furan" if smiles == "C1=CC=CO1" else "1-methylpyrrole"
+            cid = 8029 if smiles == "C1=CC=CO1" else 11772
+            return {
+                "input_smiles": smiles,
+                "canonical_smiles": smiles,
+                "pubchem_iupac": name,
+                "pubchem_cid": cid,
+                "lookup_status": "success",
+                "lookup_error": None,
+            }
+
+        with tempfile.TemporaryDirectory() as td:
+            with patch("frust.utils.mols.lookup_pubchem_name", side_effect=fake_lookup):
+                out, mapping = map_substrate_names(
+                    df,
+                    cache_path=Path(td) / "pubchem.csv",
+                    return_mapping=True,
+                )
+
+        self.assertEqual(list(out["substrate_name"]), ["furan", "1-methylpyrrole"])
+        self.assertEqual(set(mapping["substrate_smiles"]), {"C1=CC=CO1", "CN1C=CC=C1"})
+        self.assertIn("cache_hit", mapping.columns)
+        self.assertTrue(mapping["lookup_status"].eq("success").all())
+
+    def test_map_substrate_names_validates_smiles_column(self):
+        with self.assertRaisesRegex(ValueError, "substrate_smiles"):
+            map_substrate_names(pd.DataFrame({"substrate_name": ["x"]}))
 
 
 if __name__ == "__main__":

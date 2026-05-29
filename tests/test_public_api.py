@@ -15,6 +15,7 @@ class PublicApiTests(unittest.TestCase):
             Stepper,
             show_steps,
             lowest_energy_rows,
+            map_substrate_names,
             pipelines,
             pipes,
             screen,
@@ -35,7 +36,9 @@ class PublicApiTests(unittest.TestCase):
         from frust.utils.analytics import summarize_ts_vibrations as summarize_direct
         from frust.utils.dataframes import show_steps as show_steps_direct
         from frust.utils.dataframes import lowest_energy_rows as lowest_direct
+        from frust.utils.dataframes import map_substrate_names as map_names_direct
         from frust.utils.io import write_xyz as write_xyz_direct
+        from frust.utils.mols import get_molecule_name
         from frust.vis import plot_mols as plot_mols_direct
         from frust.vis import plot_vibs as plot_vibs_direct
 
@@ -49,6 +52,7 @@ class PublicApiTests(unittest.TestCase):
             "vis",
             "show_steps",
             "lowest_energy_rows",
+            "map_substrate_names",
             "summarize_ts_vibrations",
             "plot_vibs",
             "write_xyz",
@@ -75,6 +79,8 @@ class PublicApiTests(unittest.TestCase):
         self.assertIs(show_steps, show_steps_direct)
         self.assertIs(ft.lowest_energy_rows, lowest_direct)
         self.assertIs(lowest_energy_rows, lowest_direct)
+        self.assertIs(ft.map_substrate_names, map_names_direct)
+        self.assertIs(map_substrate_names, map_names_direct)
         self.assertIs(ft.summarize_ts_vibrations, summarize_direct)
         self.assertIs(summarize_ts_vibrations, summarize_direct)
         self.assertIs(ft.plot_vibs, plot_vibs_direct)
@@ -91,6 +97,8 @@ class PublicApiTests(unittest.TestCase):
         self.assertIs(utils, utils_direct)
         self.assertIs(ft.utils.write_xyz, write_xyz_direct)
         self.assertIs(ft.utils.summarize_ts_vibrations, summarize_direct)
+        self.assertIs(ft.utils.map_substrate_names, map_names_direct)
+        self.assertTrue(callable(get_molecule_name))
         self.assertIs(ft.vis, vis_direct)
         self.assertIs(vis, vis_direct)
         self.assertIs(ft.vis.plot_mols, plot_mols_direct)

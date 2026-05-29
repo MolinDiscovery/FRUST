@@ -879,8 +879,8 @@ def run_mols_custom(
     df = step.build_initial_df(embedded)
     df = step.xtb(df, name="xtb_preopt", options={"gfnff": None, "opt": None}, n_cores=2)
     df = step.xtb(df, name="xtb_sp", options={"gfn": 2}, n_cores=2)
-    #df = step.xtb(df, name="xtb_opt", options={"gfn": 2, "opt": None}, lowest=top_n, n_cores=2)
-    df = step.gxtb(df, name="gxtb_opt", options={"opt": None}, n_cores=2)
+    df = step.xtb(df, name="xtb_opt", options={"gfn": 2, "opt": None}, lowest=top_n, n_cores=2)
+    # df = step.gxtb(df, name="gxtb_opt", options={"opt": None}, n_cores=2)
 
     functional      = "wB97X-D3" # wB97X-D3, wB97M-V
     basisset        = "6-31G**" # 6-31G**, def2-TZVPD
