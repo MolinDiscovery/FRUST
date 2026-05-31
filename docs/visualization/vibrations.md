@@ -10,6 +10,10 @@ from frust.vis import plot_vibs
 plot_vibs(df_ok, row_index=0, vId=0)
 ```
 
+`plot_vibs` uses the same scene renderer and default visual style as
+`plot_mols`, so static molecule grids and animated vibration grids have matching
+cell sizes, labels, background, and atom/stick styling.
+
 <iframe
   src="../../assets/3methoxyphenol-ts1-imaginary-mode.html"
   title="3-methoxyphenol TS1 imaginary-mode animation"

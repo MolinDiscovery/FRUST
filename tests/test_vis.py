@@ -358,6 +358,10 @@ class SceneAdapterTests(unittest.TestCase):
         self.assertEqual(len(scene.cells), 2)
         self.assertEqual(scene.columns, 2)
         self.assertEqual(scene.cells[0].animations[0].frequency, -427.1)
+        self.assertEqual(scene.background_color, ("blue", 0.1))
+        self.assertFalse(scene.transparent)
+        self.assertEqual(scene.cell_size, (400, 400))
+        self.assertEqual(scene.cells[0].models[0].style["sphere"]["radius"], 0.3)
 
     def test_vibration_column_selection_prefers_latest_non_missing(self):
         df = self.small_vib_df()

@@ -20,7 +20,7 @@ def plot_vibs(
     height: float = 400,
     numFrames: int = 20,
     amplitude: float = 1,
-    transparent: bool = True,
+    transparent: bool = False,
     fps: float | None = None,
     reps: int = 50,
     custom_coords_col_name: str | None = None,
@@ -54,7 +54,8 @@ def plot_vibs(
     amplitude
         Vibration displacement amplitude.
     transparent
-        Use transparent background.
+        Use transparent background. Defaults to ``False`` so vibration grids
+        match the standard molecule-grid appearance.
     fps
         Animation frames per second. ``None`` keeps py3Dmol's historical
         50 ms interval.

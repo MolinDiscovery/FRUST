@@ -21,6 +21,10 @@ from tooltoad.scene3d import (
 
 from frust.schema import latest_opt_coords_column, normalize_dataframe
 
+DEFAULT_SCENE_BACKGROUND: tuple[str, float] = ("blue", 0.1)
+DEFAULT_CELL_SIZE: tuple[int, int] = (400, 400)
+DEFAULT_MOLECULE_STYLE: dict[str, Any] = {"stick": {}, "sphere": {"radius": 0.3}}
+
 
 def show_scene(scene: GridScene):
     """Render a Tooltoad 3D scene.
@@ -49,9 +53,9 @@ def molecule_scene_from_dataframe(
     include_coords: Sequence[str] | None = None,
     coord_indices: Sequence[int] | slice | None = slice(-1, None),
     columns: int | None = None,
-    cell_size: tuple[int, int] = (400, 400),
+    cell_size: tuple[int, int] = DEFAULT_CELL_SIZE,
     linked: bool = False,
-    background_color: str | tuple[str, float] = ("blue", 0.1),
+    background_color: str | tuple[str, float] = DEFAULT_SCENE_BACKGROUND,
     show_labels: bool = False,
     show_charges: bool = True,
     kekulize: bool = True,
@@ -166,13 +170,13 @@ def vibration_scene_from_dataframe(
     cell_size: tuple[int, int] | None = None,
     numFrames: int = 20,
     amplitude: float = 1.0,
-    transparent: bool = True,
+    transparent: bool = False,
     fps: float | None = None,
     reps: int = 50,
     linked: bool = True,
     freq_label: bool = True,
     legends: Sequence[str] | None = None,
-    background_color: str | None = None,
+    background_color: str | tuple[str, float] | None = None,
 ) -> GridScene:
     """Create an animated vibration scene from a FRUST dataframe."""
 
@@ -210,7 +214,7 @@ def vibration_scene_from_dataframe(
                         atoms=row["atoms"],
                         coords=row[coords_col],
                         bonds=_optional_bonds(row),
-                        style={"sphere": {"radius": 0.4}, "stick": {}},
+                        style=DEFAULT_MOLECULE_STYLE,
                     )
                 ],
                 animations=[
@@ -229,22 +233,27 @@ def vibration_scene_from_dataframe(
     if viewergrid is not None:
         rows, cols = viewergrid
         scene_columns = cols
-        scene_cell_size = (
+        scene_cell_size = cell_size or (
             max(1, int(width / cols)),
             max(1, int(height / rows)),
         )
     elif columns is not None:
         scene_columns = int(columns)
-        scene_cell_size = cell_size or (400, 400)
+        scene_cell_size = cell_size or DEFAULT_CELL_SIZE
     else:
         scene_columns = 1 if len(cells) == 1 else math.ceil(math.sqrt(len(cells)))
         rows = math.ceil(len(cells) / scene_columns)
-        scene_cell_size = cell_size or (
-            max(1, int(width / scene_columns)),
-            max(1, int(height / rows)),
-        )
+        if cell_size is not None:
+            scene_cell_size = cell_size
+        elif (width, height) != (600, 400):
+            scene_cell_size = (
+                max(1, int(width / scene_columns)),
+                max(1, int(height / rows)),
+            )
+        else:
+            scene_cell_size = DEFAULT_CELL_SIZE
 
-    bg = background_color or "0xeeeeee"
+    bg = background_color or DEFAULT_SCENE_BACKGROUND
     return GridScene(
         cells=cells,
         columns=max(1, scene_columns),
