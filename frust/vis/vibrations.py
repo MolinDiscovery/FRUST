@@ -125,7 +125,7 @@ def plot_vibs(
         legends=legends,
     )
     renderer = Py3DmolGridRenderer(scene)
-    viewer = renderer.show()
+    viewer = renderer.render()
 
     if export_HTML:
         try:

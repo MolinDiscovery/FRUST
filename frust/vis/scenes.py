@@ -27,7 +27,7 @@ DEFAULT_MOLECULE_STYLE: dict[str, Any] = {"stick": {}, "sphere": {"radius": 0.3}
 
 
 def show_scene(scene: GridScene):
-    """Render a Tooltoad 3D scene.
+    """Return a rendered Tooltoad 3D scene viewer.
 
     Parameters
     ----------
@@ -37,10 +37,11 @@ def show_scene(scene: GridScene):
     Returns
     -------
     py3Dmol.view
-        Rendered viewer.
+        Rendered viewer. In notebooks, returning this object displays the
+        scene once without an additional explicit ``show()`` call.
     """
 
-    return Py3DmolGridRenderer(scene).show()
+    return Py3DmolGridRenderer(scene).render()
 
 
 def molecule_scene_from_dataframe(

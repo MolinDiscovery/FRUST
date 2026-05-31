@@ -377,8 +377,11 @@ class SceneAdapterTests(unittest.TestCase):
         show.assert_called_once()
         self.assertIsNone(viewer)
 
-    def test_plot_vibs_renders_scene_grid(self):
-        with patch("frust.vis.vibrations.Py3DmolGridRenderer.show", return_value="viewer"):
+    def test_plot_vibs_returns_viewer_without_explicit_show(self):
+        with (
+            patch("frust.vis.vibrations.Py3DmolGridRenderer.render", return_value="viewer") as render,
+            patch("frust.vis.vibrations.Py3DmolGridRenderer.show") as show,
+        ):
             viewer = vis.plot_vibs(
                 self.small_vib_df(),
                 row_indices="all",
@@ -387,6 +390,20 @@ class SceneAdapterTests(unittest.TestCase):
                 vId=0,
             )
 
+        render.assert_called_once()
+        show.assert_not_called()
+        self.assertEqual(viewer, "viewer")
+
+    def test_show_scene_returns_viewer_without_explicit_show(self):
+        scene = molecule_scene_from_dataframe(self.small_molecule_df(), row_indices=[0])
+        with (
+            patch("frust.vis.scenes.Py3DmolGridRenderer.render", return_value="viewer") as render,
+            patch("frust.vis.scenes.Py3DmolGridRenderer.show") as show,
+        ):
+            viewer = vis.show_scene(scene)
+
+        render.assert_called_once()
+        show.assert_not_called()
         self.assertEqual(viewer, "viewer")
 
     def test_ts_guess_scene_adds_role_and_distance_overlays(self):
