@@ -17,11 +17,23 @@ from frust.schema import normal_termination_columns, normalize_dataframe
 
 def summarize_ts_vibrations(
     df: pd.DataFrame,
-    col: str = "DFT-wB97X-D3-6-31G**-OptTS-vibs",
+    col: str | None = None,
     max_rows: int = 5,
     output_latex: bool = False,
     show_pos_freqs = True,
 ):
+    if col is None:
+        col = _select_vibration_column(df)
+        print(f"Using vibration column: {col}")
+    elif col not in df.columns:
+        available = _vibration_columns(df)
+        suffix = (
+            " Available vibration columns: " + ", ".join(map(repr, available))
+            if available
+            else " No vibration columns ending in '-vibs' were found."
+        )
+        raise ValueError(f"Vibration column {col!r} is not present.{suffix}")
+
     true_ts_count = 0
     non_ts_count = 0
     missing_vibs_count = 0
@@ -123,6 +135,29 @@ def summarize_ts_vibrations(
         print("\\label{tab:SI:freqstsX}")
         print(latex_table)
         print("\\end{table}")
+
+
+def _vibration_columns(df: pd.DataFrame) -> list[str]:
+    """Return dataframe columns that look like FRUST vibration columns."""
+    return [
+        str(col)
+        for col in df.columns
+        if str(col).lower() == "vibs" or str(col).lower().endswith("-vibs")
+    ]
+
+
+def _select_vibration_column(df: pd.DataFrame) -> str:
+    """Choose the latest usable vibration column for TS summaries."""
+    vibs_cols = _vibration_columns(df)
+    if not vibs_cols:
+        raise ValueError("No vibration columns found. Expected at least one column ending in '-vibs'.")
+
+    non_missing_cols = [
+        col
+        for col in vibs_cols
+        if df[col].map(lambda value: not _missing_vibrations(value)).any()
+    ]
+    return (non_missing_cols or vibs_cols)[-1]
 
 
 def _missing_vibrations(vibs) -> bool:

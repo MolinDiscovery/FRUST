@@ -167,6 +167,16 @@ end
 """,
             )
 
+    def test_orca_gxtb_rejects_calc_hess_flag(self):
+        step = Stepper(step_type="MOLS", debug=True, save_output_dir=False)
+        with self.assertRaisesRegex(ValueError, "Calc_Hess"):
+            step.orca(
+                _df(),
+                options={"OptTS": None},
+                gxtb=True,
+                calc_hess=True,
+            )
+
     def test_orca_gxtb_allows_numfreq(self):
         calls = []
 

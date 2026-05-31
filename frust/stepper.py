@@ -1887,6 +1887,7 @@ class Stepper:
         gxtb: bool = False,
         gxtb_exe: str | None = None,
         gxtb_ext_params: str | None = None,
+        calc_hess: bool = False,
         **kw        
     ) -> pd.DataFrame:
         """Run ORCA calculations and attach results to the DataFrame.
@@ -1963,6 +1964,10 @@ class Stepper:
                 ``xtb`` executable. If omitted, ``GXTB_EXE`` is used.
             gxtb_ext_params (str or None, optional): Extra parameters appended
                 to OET ``oet_gxtb`` through ORCA ``Ext_Params``.
+            calc_hess (bool, optional): If ``True``, add an explicit ORCA
+                ``%geom Calc_Hess true`` block. This is intended for
+                optimization jobs that need an initial optimizer Hessian and is
+                not implied by ``Freq``. Defaults to ``False``.
 
         Returns:
             pd.DataFrame: The input DataFrame extended with stage-prefixed ORCA
@@ -1985,6 +1990,12 @@ class Stepper:
             raise ValueError(
                 "ORCA Freq is not compatible with g-xTB ExtOpt. "
                 "Use NumFreq for finite-difference frequencies with external g-xTB gradients."
+            )
+        if gxtb and calc_hess:
+            raise ValueError(
+                "ORCA %geom Calc_Hess is not compatible with g-xTB ExtOpt. "
+                "Use OptTS with the approximate Hessian, and add NumFreq only when you need "
+                "a post-optimization numerical frequency check."
             )
         if gxtb and "calc_hess" in (xtra_inp_str or "").lower():
             raise ValueError(
@@ -2013,8 +2024,8 @@ class Stepper:
 
         effective_n_cores = self._effective_n_cores(n_cores)
         generated_input_blocks = []
-        if "Freq" in opts:
-            generated_input_blocks.append("freq_calc_hess")
+        if calc_hess:
+            generated_input_blocks.append("calc_hess")
         if use_last_hess:
             generated_input_blocks.append("read_last_hess")
         if constraint:
@@ -2033,6 +2044,7 @@ class Stepper:
                 "lowest": lowest,
                 "read_files": _metadata_list(read_files),
                 "use_last_hess": bool(use_last_hess),
+                "calc_hess": bool(calc_hess),
                 "n_cores": effective_n_cores,
                 "memory_gb": self.memory_gb,
                 "generated_input_blocks": generated_input_blocks or None,
@@ -2086,7 +2098,7 @@ class Stepper:
                 "read_files": read_files,
             }
 
-            if "Freq" in opts:
+            if calc_hess:
                 block = textwrap.dedent("""
                     %geom
                       Calc_Hess true

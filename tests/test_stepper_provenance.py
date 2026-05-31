@@ -45,6 +45,34 @@ def _fake_orca(
     }
 
 
+def _recording_orca(calls):
+    def fake_orca(
+        atoms,
+        coords,
+        n_cores,
+        scr,
+        data2file,
+        options,
+        xtra_inp_str,
+        memory,
+        read_files,
+    ):
+        calls.append(
+            {
+                "options": options,
+                "xtra_inp_str": xtra_inp_str,
+                "read_files": read_files,
+            }
+        )
+        return {
+            "normal_termination": True,
+            "electronic_energy": -1.0,
+            "opt_coords": coords,
+        }
+
+    return fake_orca
+
+
 def _fake_oet_root(root: Path) -> Path:
     oet = root / "oet"
     bin_dir = oet / "bin"
@@ -161,6 +189,40 @@ end"""
         self.assertEqual(calc["executables"]["xtb"]["path"], str(xtb.resolve()))
         self.assertEqual(calc["environment"]["OPEN_MPI_DIR"]["path"], str(mpi.resolve()))
         self.assertEqual(calc["environment"]["XTBPATH"]["path"], str(xtbpath.resolve()))
+
+    def test_orca_freq_does_not_add_calc_hess_block(self):
+        calls = []
+        step = Stepper(debug=True, save_output_dir=False)
+        step.orca_fn = _recording_orca(calls)
+
+        out = step.orca(
+            _df(),
+            name="freq_test",
+            options={"HF": None, "STO-3G": None, "Freq": None},
+        )
+
+        self.assertNotIn("Calc_Hess", calls[0]["xtra_inp_str"])
+        meta = out.attrs["frust_steps"]["freq_test"]["input"]
+        self.assertFalse(meta["calc_hess"])
+        self.assertNotIn("freq_calc_hess", meta.get("generated_input_blocks") or [])
+
+    def test_orca_calc_hess_flag_adds_explicit_block(self):
+        calls = []
+        step = Stepper(debug=True, save_output_dir=False)
+        step.orca_fn = _recording_orca(calls)
+
+        out = step.orca(
+            _df(),
+            name="opt_with_hess",
+            options={"HF": None, "STO-3G": None, "Opt": None},
+            calc_hess=True,
+        )
+
+        self.assertIn("%geom", calls[0]["xtra_inp_str"])
+        self.assertIn("Calc_Hess true", calls[0]["xtra_inp_str"])
+        meta = out.attrs["frust_steps"]["opt_with_hess"]["input"]
+        self.assertTrue(meta["calc_hess"])
+        self.assertIn("calc_hess", meta["generated_input_blocks"])
 
     def test_orca_uma_standalone_records_calculator_metadata(self):
         with tempfile.TemporaryDirectory() as td:

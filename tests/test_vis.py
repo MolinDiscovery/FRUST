@@ -16,6 +16,7 @@ from scipy.stats import linregress
 import frust.vis as vis
 from frust.vis import MolTo3DGrid, RxnTo3DGrid, plot_energy_profile, plot_mols
 from frust.vis.regression import _round_to_sig_figs
+from frust.vis.vibrations import _select_vibration_column, _select_vibration_coords_column
 from frust.vis.energy_profile.layout import _compute_x_single
 from frust.vis.energy_profile.parsing import _parse_entries, _parse_placement
 from frust.vis.scenes import (
@@ -25,6 +26,78 @@ from frust.vis.scenes import (
     ts_guess_scene_from_dataframe,
     vibration_scene_from_dataframe,
 )
+
+
+class PlotVibsSelectionTests(unittest.TestCase):
+    def test_selects_last_non_missing_vibs_and_preceding_coords(self):
+        df = pd.DataFrame(
+            {
+                "atoms": [["H", "H"]],
+                "coords_embedded": [[[0.0, 0.0, 0.0], [0.0, 0.0, 0.7]]],
+                "DFT-pre-Opt-oc": [[[0.0, 0.0, 0.0], [0.0, 0.0, 0.8]]],
+                "Hess-vibs": [[{"frequency": -200.0}]],
+                "OptTS-oc": [[[0.0, 0.0, 0.0], [0.0, 0.0, 0.9]]],
+                "Freq-vibs": [[{"frequency": -100.0}]],
+                "DFT-solv-EE": [-1.0],
+            }
+        )
+
+        vibs_col = _select_vibration_column(df)
+        coords_col = _select_vibration_coords_column(df, vibs_col)
+
+        self.assertEqual(vibs_col, "Freq-vibs")
+        self.assertEqual(coords_col, "OptTS-oc")
+
+    def test_selects_latest_named_vibs_by_dataframe_order(self):
+        df = pd.DataFrame(
+            {
+                "atoms": [["H", "H"]],
+                "OptTS-oc": [[[0.0, 0.0, 0.0], [0.0, 0.0, 0.9]]],
+                "Freq-vibs": [[{"frequency": -100.0}]],
+                "FinalCheck-vibs": [[{"frequency": -90.0}]],
+            }
+        )
+
+        self.assertEqual(_select_vibration_column(df), "FinalCheck-vibs")
+
+    def test_ignores_trailing_missing_vibration_column(self):
+        df = pd.DataFrame(
+            {
+                "atoms": [["H", "H"]],
+                "OptTS-oc": [[[0.0, 0.0, 0.0], [0.0, 0.0, 0.9]]],
+                "Freq-vibs": [[{"frequency": -100.0}]],
+                "DFT-solv-vibs": [None],
+            }
+        )
+
+        self.assertEqual(_select_vibration_column(df), "Freq-vibs")
+
+    def test_prefers_matching_coordinate_column_when_available(self):
+        df = pd.DataFrame(
+            {
+                "coords_embedded": [[[0.0, 0.0, 0.0]]],
+                "Freq-oc": [[[1.0, 0.0, 0.0]]],
+                "Freq-vibs": [[{"frequency": -100.0}]],
+                "Later-oc": [[[2.0, 0.0, 0.0]]],
+            }
+        )
+
+        self.assertEqual(_select_vibration_coords_column(df, "Freq-vibs"), "Freq-oc")
+
+    def test_missing_custom_coordinate_column_reports_available(self):
+        df = pd.DataFrame(
+            {
+                "OptTS-oc": [[[0.0, 0.0, 0.0]]],
+                "Freq-vibs": [[{"frequency": -100.0}]],
+            }
+        )
+
+        with self.assertRaisesRegex(KeyError, "Available coordinate columns.*OptTS-oc"):
+            _select_vibration_coords_column(
+                df,
+                "Freq-vibs",
+                custom_coords_col_name="missing-oc",
+            )
 
 
 class PlotEnergyProfileTests(unittest.TestCase):
