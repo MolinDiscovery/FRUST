@@ -9,7 +9,8 @@ different ways:
 !!! tip "Same import path, broader structure"
 
     The public import path is still `frust.vis`, but the implementation is
-    organized internally by visualization type.
+    organized around a shared scene renderer. FRUST converts DataFrame rows
+    into a generic 3D scene, then renders that scene with py3Dmol.
 
 ## Common Imports
 
@@ -36,9 +37,33 @@ from frust.vis import (
 
 ```mermaid
 flowchart LR
-    A["FRUST DataFrame"] --> B["plot_mols / plot_vibs"]
-    C["Molecules, XYZ files, reactions"] --> D["MolTo3DGrid / RxnTo3DGrid"]
-    E["Relative energies"] --> F["plot_energy_profile"]
+    A["FRUST DataFrame"] --> B["Scene builder"]
+    B --> C["GridScene"]
+    D["Molecules, XYZ files, reactions"] --> C
+    C --> E["py3Dmol renderer"]
+    F["Relative energies"] --> G["plot_energy_profile"]
+```
+
+The scene layer is mostly invisible in normal notebooks:
+
+```python
+import frust as ft
+
+ft.plot_mols(df, row_indices=range(4))
+ft.plot_vibs(df, row_indices=range(4), vId=0, columns=2)
+```
+
+For custom comparison views, you can build a scene explicitly and render it:
+
+```python
+scene = ft.vis.vibration_scene_from_dataframe(
+    df,
+    row_indices=range(4),
+    vId=0,
+    columns=2,
+)
+
+ft.vis.show_scene(scene)
 ```
 
 !!! example "Use FRUST only for visualization"

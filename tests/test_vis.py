@@ -18,6 +18,13 @@ from frust.vis import MolTo3DGrid, RxnTo3DGrid, plot_energy_profile, plot_mols
 from frust.vis.regression import _round_to_sig_figs
 from frust.vis.energy_profile.layout import _compute_x_single
 from frust.vis.energy_profile.parsing import _parse_entries, _parse_placement
+from frust.vis.scenes import (
+    molecule_scene_from_dataframe,
+    select_vibration_column,
+    select_vibration_coords_column,
+    ts_guess_scene_from_dataframe,
+    vibration_scene_from_dataframe,
+)
 
 
 class PlotEnergyProfileTests(unittest.TestCase):
@@ -26,6 +33,10 @@ class PlotEnergyProfileTests(unittest.TestCase):
         self.assertIs(vis.plot_mols, plot_mols)
         self.assertIs(vis.MolTo3DGrid, MolTo3DGrid)
         self.assertIs(vis.RxnTo3DGrid, RxnTo3DGrid)
+        self.assertTrue(callable(vis.show_scene))
+        self.assertTrue(callable(vis.molecule_scene_from_dataframe))
+        self.assertTrue(callable(vis.vibration_scene_from_dataframe))
+        self.assertTrue(callable(vis.ts_guess_scene))
 
     def test_side_reaction_parsing_extracts_anchor_rise_and_legend(self):
         entries, seg_ids, anchor, rise, legend = _parse_entries(
@@ -223,6 +234,102 @@ class PlotRegressionOutliersTests(unittest.TestCase):
 
         self.assertEqual(len(scatter), 3)
         self.assertFalse(np.isnan(scatter).any())
+
+
+class SceneAdapterTests(unittest.TestCase):
+    def small_molecule_df(self):
+        return pd.DataFrame(
+            {
+                "substrate_name": ["furan", "pyrrole"],
+                "rpos": [0, 1],
+                "atoms": [["C", "H"], ["N", "H"]],
+                "coords_embedded": [
+                    [[0.0, 0.0, 0.0], [0.0, 0.0, 1.0]],
+                    [[0.0, 0.0, 0.0], [0.0, 1.0, 0.0]],
+                ],
+                "connectivity_bonds": [[(0, 1)], [(0, 1)]],
+            }
+        )
+
+    def small_vib_df(self):
+        df = self.small_molecule_df()
+        df["OptTS-oc"] = df["coords_embedded"]
+        df["Freq-vibs"] = [
+            [{"frequency": -427.1, "mode": [[0, 0, 0.1], [0, 0, -0.1]]}],
+            [{"frequency": -388.4, "mode": [[0, 0.1, 0], [0, -0.1, 0]]}],
+        ]
+        return df
+
+    def test_molecule_scene_from_dataframe_uses_atoms_coords_and_bonds(self):
+        scene = molecule_scene_from_dataframe(
+            self.small_molecule_df(),
+            row_indices=[0],
+            coord_indices=slice(-1, None),
+        )
+
+        self.assertEqual(len(scene.cells), 1)
+        model = scene.cells[0].models[0]
+        self.assertEqual(model.atoms, ["C", "H"])
+        self.assertEqual(model.bonds, [(0, 1)])
+        self.assertIn("furan", scene.cells[0].title)
+
+    def test_vibration_scene_from_dataframe_supports_all_rows_and_columns(self):
+        scene = vibration_scene_from_dataframe(
+            self.small_vib_df(),
+            row_indices="all",
+            max_rows=2,
+            columns=2,
+            vId=0,
+        )
+
+        self.assertEqual(len(scene.cells), 2)
+        self.assertEqual(scene.columns, 2)
+        self.assertEqual(scene.cells[0].animations[0].frequency, -427.1)
+
+    def test_vibration_column_selection_prefers_latest_non_missing(self):
+        df = self.small_vib_df()
+        df["Later-vibs"] = [None, None]
+
+        self.assertEqual(select_vibration_column(df), "Freq-vibs")
+        self.assertEqual(select_vibration_coords_column(df, "Freq-vibs"), "OptTS-oc")
+
+    def test_plot_mols_renders_scene(self):
+        with patch("frust.vis.molecules.Py3DmolGridRenderer.show") as show:
+            viewer = plot_mols(self.small_molecule_df(), row_indices=[0])
+
+        show.assert_called_once()
+        self.assertIsNone(viewer)
+
+    def test_plot_vibs_renders_scene_grid(self):
+        with patch("frust.vis.vibrations.Py3DmolGridRenderer.show", return_value="viewer"):
+            viewer = vis.plot_vibs(
+                self.small_vib_df(),
+                row_indices="all",
+                max_rows=2,
+                columns=2,
+                vId=0,
+            )
+
+        self.assertEqual(viewer, "viewer")
+
+    def test_ts_guess_scene_adds_role_and_distance_overlays(self):
+        df = self.small_molecule_df().iloc[[0]].copy()
+        df["constraint_roles"] = [{"cat_B": 0, "transfer_H": 1}]
+        df["constraint_spec"] = [
+            [{"kind": "distance", "roles": ["cat_B", "transfer_H"], "value": 1.2}]
+        ]
+
+        scene = ts_guess_scene_from_dataframe(
+            df,
+            row_indices=[0],
+            show_roles=True,
+            show_constraint_distances=True,
+        )
+
+        overlay_types = {type(overlay).__name__ for overlay in scene.cells[0].overlays}
+        self.assertIn("AtomLabel", overlay_types)
+        self.assertIn("AtomHighlight", overlay_types)
+        self.assertIn("DistanceOverlay", overlay_types)
 
 
 if __name__ == "__main__":

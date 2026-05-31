@@ -14,6 +14,14 @@ _PUBLIC_API: dict[str, tuple[str, str]] = {
     "DrawMolSvg": ("tooltoad.vis", "DrawMolSvg"),
     "MolTo3DGrid": ("tooltoad.vis", "MolTo3DGrid"),
     "RxnTo3DGrid": ("tooltoad.vis", "RxnTo3DGrid"),
+    "GridScene": ("tooltoad.scene3d", "GridScene"),
+    "SceneCell": ("tooltoad.scene3d", "SceneCell"),
+    "MoleculeModel": ("tooltoad.scene3d", "MoleculeModel"),
+    "VibrationAnimation": ("tooltoad.scene3d", "VibrationAnimation"),
+    "AtomLabel": ("tooltoad.scene3d", "AtomLabel"),
+    "AtomHighlight": ("tooltoad.scene3d", "AtomHighlight"),
+    "DistanceOverlay": ("tooltoad.scene3d", "DistanceOverlay"),
+    "Py3DmolGridRenderer": ("tooltoad.scene3d", "Py3DmolGridRenderer"),
     "DrawUniqueChGrid": ("frust.vis.aromatic", "DrawUniqueChGrid"),
     "plot_energy_profile": ("frust.vis.energy_profile", "plot_energy_profile"),
     "plot_lig": ("frust.vis.molecules", "plot_lig"),
@@ -24,6 +32,11 @@ _PUBLIC_API: dict[str, tuple[str, str]] = {
     "set_theme": ("frust.vis.theme", "set_theme"),
     "use_darkmode": ("frust.vis.theme", "use_darkmode"),
     "plot_vibs": ("frust.vis.vibrations", "plot_vibs"),
+    "show_scene": ("frust.vis.scenes", "show_scene"),
+    "molecule_scene_from_dataframe": ("frust.vis.scenes", "molecule_scene_from_dataframe"),
+    "vibration_scene_from_dataframe": ("frust.vis.scenes", "vibration_scene_from_dataframe"),
+    "ts_guess_scene_from_dataframe": ("frust.vis.scenes", "ts_guess_scene_from_dataframe"),
+    "ts_guess_scene": ("frust.vis.scenes", "ts_guess_scene_from_dataframe"),
 }
 
 __all__ = sorted(_PUBLIC_API)
@@ -48,10 +61,26 @@ def __dir__() -> list[str]:
 
 if TYPE_CHECKING:
     from tooltoad.vis import DrawMolSvg, MolTo3DGrid, RxnTo3DGrid
+    from tooltoad.scene3d import (
+        AtomHighlight,
+        AtomLabel,
+        DistanceOverlay,
+        GridScene,
+        MoleculeModel,
+        Py3DmolGridRenderer,
+        SceneCell,
+        VibrationAnimation,
+    )
 
     from frust.vis.aromatic import DrawUniqueChGrid
     from frust.vis.energy_profile import plot_energy_profile
     from frust.vis.molecules import plot_lig, plot_mols, plot_row, plot_rpos
     from frust.vis.regression import plot_regression_outliers
+    from frust.vis.scenes import (
+        molecule_scene_from_dataframe,
+        show_scene,
+        ts_guess_scene_from_dataframe,
+        vibration_scene_from_dataframe,
+    )
     from frust.vis.theme import set_theme, use_darkmode
     from frust.vis.vibrations import plot_vibs

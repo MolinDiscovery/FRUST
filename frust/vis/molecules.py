@@ -6,8 +6,10 @@ from rdkit import Chem
 from rdkit.Geometry import Point3D
 from tooltoad.chemutils import ac2mol
 from tooltoad.vis import DrawMolSvg, MolTo3DGrid, RxnTo3DGrid
+from tooltoad.scene3d import Py3DmolGridRenderer
 
 from frust.schema import normalize_dataframe
+from frust.vis.scenes import molecule_scene_from_dataframe
 
 
 def plot_mols(
@@ -42,108 +44,49 @@ def plot_mols(
     Returns:
         None
     """
-    filtered_df = normalize_dataframe(df)
-
-    if row_indices is not None:
-        filtered_df = filtered_df.iloc[row_indices]
-
-    if substrate_filter is not None:
-        filtered_df = filtered_df[
-            filtered_df['substrate_name'].isin(substrate_filter)
-        ]
-
-    if rpos_filter is not None:
-        filtered_df = filtered_df[filtered_df['rpos'].isin(rpos_filter)]
-
-    if filtered_df.empty:
-        print("No molecules match the specified filters.")
-        return
-
-    coord_columns = [
-        c for c in filtered_df.columns
-        if "coords" in c or str(c).endswith("-oc") or str(c).endswith("-opt_coords")
-    ]
-
-    if coord_indices is not None:
-        if isinstance(coord_indices, slice):
-            coord_columns = coord_columns[coord_indices]
-        else:
-            coord_columns = [
-                coord_columns[i] for i in coord_indices
-                if 0 <= i < len(coord_columns)
-            ]
-    elif include_coords is not None:
-        coord_columns = [
-            c for c in coord_columns
-            if any(pattern in c for pattern in include_coords)
-        ]
-    elif exclude_coords is not None:
-        coord_columns = [
-            c for c in coord_columns
-            if not any(pattern in c for pattern in exclude_coords)
-        ]
-
-    if not coord_columns:
-        print("No coordinate columns found after filtering.")
-        return
-
-    print(f"Found {len(coord_columns)} coordinate columns: {coord_columns}")
-    print(f"Processing {len(filtered_df)} rows")
-
-    all_mols = []
-    all_legends = []
-
-    for idx, row in filtered_df.iterrows():
-        atoms = row["atoms"]
-        substrate_name = row["substrate_name"]
-        rpos = row["rpos"]
-
-        for coord_col in coord_columns:
-            coords = row[coord_col]
-
-            if coords is not None:
-                if isinstance(coords, np.ndarray):
-                    is_valid = coords.size > 0 and not pd.isna(coords).all()
-                else:
-                    is_valid = (not pd.isna(coords)
-                                if not isinstance(coords, list)
-                                else len(coords) > 0)
-
-                if is_valid:
-                    mol = _row_to_mol(row, atoms, coords)
-                    if mol is not None:
-                        all_mols.append(mol)
-
-                        coord_type = (coord_col.replace("coords_", "")
-                                      .replace("_coords", ""))
-                        if rpos is None or pd.isna(rpos):
-                            legend = f"{substrate_name}\n{coord_type}"
-                        else:
-                            legend = f"{substrate_name} r{rpos}\n{coord_type}"
-                        all_legends.append(legend)
-
-    if not all_mols:
-        print("No valid molecules could be generated.")
-        return
-
-    print(f"Generated {len(all_mols)} molecules for display")
-
-    # Defaults (can be overridden by molto3d_kwargs)
-    molto3d_args = {
-        'legends': all_legends,
-        'show_labels': False,
-        'show_confs': True,
-        #'background_color': 'black' if darkmode else 'white',
-        'cell_size': (400, 400),
-        'columns': len(coord_columns) if coord_indices is None else 4,
-        'linked': False,
-        'kekulize': True,
-        'show_charges': True,
+    scene_kwargs = {
+        "cell_size": molto3d_kwargs.pop("cell_size", (400, 400)),
+        "columns": molto3d_kwargs.pop("columns", None),
+        "linked": molto3d_kwargs.pop("linked", False),
+        "show_labels": molto3d_kwargs.pop("show_labels", False),
+        "show_charges": molto3d_kwargs.pop("show_charges", True),
+        "kekulize": molto3d_kwargs.pop("kekulize", True),
     }
+    export_HTML = molto3d_kwargs.pop("export_HTML", "none")
+    if "background_color" in molto3d_kwargs:
+        scene_kwargs["background_color"] = molto3d_kwargs.pop("background_color")
+    elif dark:
+        scene_kwargs["background_color"] = ("black", 1.0)
 
-    molto3d_args.update(molto3d_kwargs)
+    if molto3d_kwargs:
+        ignored = ", ".join(sorted(molto3d_kwargs))
+        print(f"Ignoring unsupported scene-grid options: {ignored}")
 
-    MolTo3DGrid(all_mols, **molto3d_args)
+    try:
+        scene = molecule_scene_from_dataframe(
+            df,
+            row_indices=row_indices,
+            substrate_filter=substrate_filter,
+            rpos_filter=rpos_filter,
+            exclude_coords=exclude_coords,
+            include_coords=include_coords,
+            coord_indices=coord_indices,
+            **scene_kwargs,
+        )
+    except ValueError as exc:
+        print(str(exc))
+        return None
+
+    print(f"Generated {len(scene.cells)} molecules for display")
+    renderer = Py3DmolGridRenderer(scene)
+    renderer.show()
+    if export_HTML != "none":
+        try:
+            renderer.write_html(export_HTML)
+            print(f"HTML export successful: {export_HTML}")
+        except Exception as e:
+            print(f"Error exporting HTML to '{export_HTML}': {e}")
+    return None
 
 
 def _row_to_mol(row: pd.Series, atoms: list[str], coords: list[tuple[float, float, float]]):

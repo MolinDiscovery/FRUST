@@ -31,10 +31,33 @@ plot_vibs(df_ok, row_index=0, vId=0)
 plot_vibs(
     df_ok,
     row_indices=[0, 1, 2, 3],
-    viewergrid=(2, 2),
+    columns=2,
     linked=True,
 )
 ```
+
+Use `row_indices="all"` when you want a quick grid of every row in a result
+table. Add `max_rows` for large screens:
+
+```python
+plot_vibs(
+    df_ok,
+    row_indices="all",
+    max_rows=12,
+    columns=3,
+    vId=0,
+)
+```
+
+!!! note "Single-row default"
+
+    `plot_vibs(df_ok)` still shows one row by default. Multi-row vibration
+    grids are explicit through `row_indices=[...]` or `row_indices="all"`.
+
+FRUST automatically chooses the latest non-empty vibration column and the best
+matching optimized coordinate column. This lets the same call work for
+conventional columns such as `DFT-wB97X-D3-6-31G**-OptTS-vibs` and compact
+screen-chain columns such as `Freq-vibs`.
 
 ## Custom Coordinate Column
 
@@ -90,3 +113,21 @@ documentation or shared with collaborators.
         legends=["lowest", "second-lowest"],
     )
     ```
+
+## Scene-Based Comparison
+
+The visualization layer can also build a reusable scene before rendering. This
+is useful for mixed static/animated comparison views.
+
+```python
+import frust as ft
+
+scene = ft.vis.vibration_scene_from_dataframe(
+    df_ok,
+    row_indices=[0, 1, 2, 3],
+    vId=0,
+    columns=2,
+)
+
+ft.vis.show_scene(scene)
+```

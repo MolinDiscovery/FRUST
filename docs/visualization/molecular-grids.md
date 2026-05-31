@@ -11,7 +11,8 @@ reaction objects and want a quick notebook visualization.
 ## 3D Molecule Grids
 
 `MolTo3DGrid` accepts RDKit molecules, SMILES strings, `.xyz` paths, or mixed
-lists of those inputs. It renders an interactive py3Dmol grid.
+lists of those inputs. It renders an interactive py3Dmol grid using the same
+scene renderer as FRUST DataFrame viewers.
 
 ```python
 from frust.vis import MolTo3DGrid
@@ -66,6 +67,41 @@ Common options include:
 | `bonds_to_remove` | Hide selected bonds before rendering |
 | `linked` | Rotate and zoom all cells together |
 | `export_HTML` | Write the interactive viewer to an HTML file |
+
+## DataFrame Scene Objects
+
+Most users should call `plot_mols(...)` directly:
+
+```python
+import frust as ft
+
+ft.plot_mols(ts_guesses["TS1"], row_indices=range(4))
+```
+
+Internally FRUST turns each selected row into a scene cell:
+
+```python
+scene = ft.vis.molecule_scene_from_dataframe(
+    ts_guesses["TS1"],
+    row_indices=range(4),
+)
+
+ft.vis.show_scene(scene)
+```
+
+This is useful when you want to inspect or combine scenes before rendering.
+For example, a TS-guess scene can label role atoms from `constraint_roles`:
+
+```python
+scene = ft.vis.ts_guess_scene(
+    ts_guesses["TS3"],
+    row_indices=[0],
+    show_roles=True,
+    show_constraint_distances=True,
+)
+
+ft.vis.show_scene(scene)
+```
 
 ## Reaction Grids
 
