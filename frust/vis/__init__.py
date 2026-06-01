@@ -20,8 +20,11 @@ _PUBLIC_API: dict[str, tuple[str, str]] = {
     "VibrationAnimation": ("tooltoad.scene3d", "VibrationAnimation"),
     "AtomLabel": ("tooltoad.scene3d", "AtomLabel"),
     "AtomHighlight": ("tooltoad.scene3d", "AtomHighlight"),
+    "ArrowOverlay": ("tooltoad.scene3d", "ArrowOverlay"),
     "DistanceOverlay": ("tooltoad.scene3d", "DistanceOverlay"),
+    "ScreenLabelOverlay": ("tooltoad.scene3d", "ScreenLabelOverlay"),
     "Py3DmolGridRenderer": ("tooltoad.scene3d", "Py3DmolGridRenderer"),
+    "reaction_scene_cells": ("tooltoad.vis", "reaction_scene_cells"),
     "DrawUniqueChGrid": ("frust.vis.aromatic", "DrawUniqueChGrid"),
     "plot_energy_profile": ("frust.vis.energy_profile", "plot_energy_profile"),
     "plot_lig": ("frust.vis.molecules", "plot_lig"),
@@ -64,13 +67,16 @@ if TYPE_CHECKING:
     from tooltoad.scene3d import (
         AtomHighlight,
         AtomLabel,
+        ArrowOverlay,
         DistanceOverlay,
         GridScene,
         MoleculeModel,
         Py3DmolGridRenderer,
         SceneCell,
+        ScreenLabelOverlay,
         VibrationAnimation,
     )
+    from tooltoad.vis import reaction_scene_cells
 
     from frust.vis.aromatic import DrawUniqueChGrid
     from frust.vis.energy_profile import plot_energy_profile

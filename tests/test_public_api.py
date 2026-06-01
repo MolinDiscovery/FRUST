@@ -41,6 +41,8 @@ class PublicApiTests(unittest.TestCase):
         from frust.utils.mols import get_molecule_name
         from frust.vis import plot_mols as plot_mols_direct
         from frust.vis import plot_vibs as plot_vibs_direct
+        from frust.vis import ArrowOverlay, ScreenLabelOverlay
+        from frust.vis import reaction_scene_cells
 
         expected = {
             "Stepper",
@@ -103,6 +105,9 @@ class PublicApiTests(unittest.TestCase):
         self.assertIs(vis, vis_direct)
         self.assertIs(ft.vis.plot_mols, plot_mols_direct)
         self.assertIs(ft.vis.plot_vibs, plot_vibs_direct)
+        self.assertIs(ft.vis.ArrowOverlay, ArrowOverlay)
+        self.assertIs(ft.vis.ScreenLabelOverlay, ScreenLabelOverlay)
+        self.assertIs(ft.vis.reaction_scene_cells, reaction_scene_cells)
         self.assertIs(ft.pipelines, pipelines_direct)
         self.assertIs(ft.screen, screen_direct)
         self.assertIs(screen, screen_direct)

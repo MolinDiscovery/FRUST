@@ -15,7 +15,13 @@ from scipy.stats import linregress
 
 import frust.vis as vis
 from frust.vis import MolTo3DGrid, RxnTo3DGrid, plot_energy_profile, plot_mols
-from frust.vis import GridScene, MoleculeModel, SceneCell
+from frust.vis import (
+    ArrowOverlay,
+    GridScene,
+    MoleculeModel,
+    SceneCell,
+    ScreenLabelOverlay,
+)
 from frust.vis.regression import _round_to_sig_figs
 from frust.vis.vibrations import _select_vibration_column, _select_vibration_coords_column
 from frust.vis.energy_profile.layout import _compute_x_single
@@ -107,6 +113,9 @@ class PlotEnergyProfileTests(unittest.TestCase):
         self.assertIs(vis.plot_mols, plot_mols)
         self.assertIs(vis.MolTo3DGrid, MolTo3DGrid)
         self.assertIs(vis.RxnTo3DGrid, RxnTo3DGrid)
+        self.assertTrue(callable(vis.reaction_scene_cells))
+        self.assertIs(vis.ArrowOverlay, ArrowOverlay)
+        self.assertIs(vis.ScreenLabelOverlay, ScreenLabelOverlay)
         self.assertTrue(callable(vis.show_scene))
         self.assertTrue(callable(vis.molecule_scene_from_dataframe))
         self.assertTrue(callable(vis.vibration_scene_from_dataframe))
