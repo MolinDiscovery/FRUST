@@ -1,5 +1,7 @@
 import re
 import pandas as pd
+from collections.abc import Mapping, Sequence
+from typing import Any
 from rdkit.Chem.Draw import rdMolDraw2D
 from rdkit import Chem
 from rdkit.Chem import Draw, rdDepictor
@@ -14,6 +16,7 @@ try:
 except ImportError:
     cairosvg = None
 from frust.schema import normal_termination_columns, normalize_dataframe
+from frust.utils.dataframes import merge_dataframe_attrs
 
 def summarize_ts_vibrations(
     df: pd.DataFrame,
@@ -135,6 +138,252 @@ def summarize_ts_vibrations(
         print("\\label{tab:SI:freqstsX}")
         print(latex_table)
         print("\\end{table}")
+
+
+def inspect_ts_vibrations(
+    data: pd.DataFrame | Mapping[str, pd.DataFrame] | Sequence[pd.DataFrame],
+    *,
+    col: str | None = None,
+    status: str = "all",
+    weak_imag_threshold: float = 50.0,
+    low_pos_threshold: float = 10.0,
+    max_imag_freqs: int = 3,
+    max_pos_freqs: int = 3,
+) -> pd.DataFrame:
+    """Return a compact dataframe report for TS vibration inspection.
+
+    Parameters
+    ----------
+    data : pandas.DataFrame, mapping, or sequence of pandas.DataFrame
+        One FRUST results dataframe, a mapping such as ``{"TS1": df}``, or a
+        sequence of dataframes.
+    col : str, optional
+        Explicit vibration column. If omitted, the latest non-missing
+        vibration column is selected per dataframe.
+    status : str, optional
+        Filter rows by ``"all"``, ``"review"``, ``"problems"``,
+        ``"first_order"``, ``"minimum"``, ``"higher_order"``, or
+        ``"missing_vibs"``. ``"review"`` and ``"problems"`` include all
+        non-first-order rows plus flagged first-order rows.
+    weak_imag_threshold : float, optional
+        Flag first-order rows whose imaginary frequency magnitude is below this
+        value in cm^-1.
+    low_pos_threshold : float, optional
+        Flag rows whose lowest positive frequency is below this value in cm^-1.
+    max_imag_freqs : int, optional
+        Maximum number of imaginary frequencies shown in the compact string.
+    max_pos_freqs : int, optional
+        Maximum number of positive frequencies shown in the compact string.
+
+    Returns
+    -------
+    pandas.DataFrame
+        Compact inspection report. Aggregate counts are stored in
+        ``report.attrs["summary"]`` and selected vibration columns in
+        ``report.attrs["vibration_columns"]``.
+    """
+    status = str(status).lower()
+    allowed_status = {
+        "all",
+        "review",
+        "problems",
+        "first_order",
+        "minimum",
+        "higher_order",
+        "missing_vibs",
+    }
+    if status not in allowed_status:
+        allowed = ", ".join(sorted(allowed_status))
+        raise ValueError(f"status must be one of: {allowed}")
+
+    items = _normalize_vibration_inputs(data)
+    include_source = len(items) > 1
+    rows: list[dict[str, Any]] = []
+    vibration_columns: dict[str, str] = {}
+
+    for source, df in items:
+        selected_col = _resolve_vibration_column(df, col)
+        vibration_columns[source] = selected_col
+        for pos, (_, row) in enumerate(df.iterrows()):
+            report_row = _vibration_report_row(
+                row,
+                row_position=pos,
+                source=source if include_source else None,
+                vibs_col=selected_col,
+                weak_imag_threshold=float(weak_imag_threshold),
+                low_pos_threshold=float(low_pos_threshold),
+                max_imag_freqs=int(max_imag_freqs),
+                max_pos_freqs=int(max_pos_freqs),
+            )
+            rows.append(report_row)
+
+    report = pd.DataFrame(rows)
+    if report.empty:
+        report.attrs["summary"] = {}
+        report.attrs["vibration_columns"] = vibration_columns
+        return report
+
+    report.attrs["summary"] = report["status"].value_counts(dropna=False).to_dict()
+    report.attrs["vibration_columns"] = vibration_columns
+
+    if status in {"review", "problems"}:
+        report = report[
+            report["status"].ne("first_order") | report["flags"].astype(str).ne("")
+        ].copy()
+    elif status != "all":
+        report = report[report["status"].eq(status)].copy()
+
+    column_order = [
+        "row",
+        "substrate_name",
+        "structure_type",
+        "rpos",
+        "cid",
+        "status",
+        "n_imag",
+        "imag_freqs",
+        "low_pos_freqs",
+        "flags",
+    ]
+    if include_source:
+        column_order.insert(0, "source")
+    report = report[[col_name for col_name in column_order if col_name in report.columns]]
+    report.attrs["summary"] = {
+        key: int(value)
+        for key, value in report.attrs["summary"].items()
+    }
+    report.attrs["vibration_columns"] = vibration_columns
+    report.attrs["status_filter"] = status
+    report.attrs["n_review_rows"] = int(len(report))
+    return report
+
+
+def _normalize_vibration_inputs(
+    data: pd.DataFrame | Mapping[str, pd.DataFrame] | Sequence[pd.DataFrame],
+) -> list[tuple[str, pd.DataFrame]]:
+    """Normalize dataframe-like vibration inputs into labeled items."""
+    if isinstance(data, pd.DataFrame):
+        return [("df", data)]
+    if isinstance(data, Mapping):
+        items = [(str(key), value) for key, value in data.items()]
+    elif isinstance(data, Sequence) and not isinstance(data, (str, bytes)):
+        items = [(f"df_{idx:03d}", value) for idx, value in enumerate(data)]
+    else:
+        raise TypeError(
+            "inspect_ts_vibrations expects a dataframe, mapping of dataframes, or sequence of dataframes"
+        )
+    for label, df in items:
+        if not isinstance(df, pd.DataFrame):
+            raise TypeError(f"Vibration input {label!r} is not a pandas DataFrame")
+    return items
+
+
+def _resolve_vibration_column(df: pd.DataFrame, col: str | None) -> str:
+    """Resolve explicit or automatic vibration column selection."""
+    if col is None:
+        return _select_vibration_column(df)
+    if col not in df.columns:
+        available = _vibration_columns(df)
+        suffix = (
+            " Available vibration columns: " + ", ".join(map(repr, available))
+            if available
+            else " No vibration columns ending in '-vibs' were found."
+        )
+        raise ValueError(f"Vibration column {col!r} is not present.{suffix}")
+    return col
+
+
+def _vibration_report_row(
+    row: pd.Series,
+    *,
+    row_position: int,
+    source: str | None,
+    vibs_col: str,
+    weak_imag_threshold: float,
+    low_pos_threshold: float,
+    max_imag_freqs: int,
+    max_pos_freqs: int,
+) -> dict[str, Any]:
+    """Build one compact vibration-inspection report row."""
+    vibs = row[vibs_col]
+    base = {
+        "row": int(row_position),
+        "substrate_name": row.get("substrate_name", row.get("ligand_name", "")),
+        "structure_type": row.get("structure_type", None),
+        "rpos": row.get("rpos", None),
+        "cid": row.get("cid", None),
+    }
+    if source is not None:
+        base["source"] = source
+
+    if _missing_vibrations(vibs):
+        return {
+            **base,
+            "status": "missing_vibs",
+            "n_imag": pd.NA,
+            "imag_freqs": "Missing",
+            "low_pos_freqs": "Missing",
+            "flags": "",
+        }
+
+    freqs = [
+        float(entry.get("frequency"))
+        for entry in vibs
+        if isinstance(entry, Mapping) and entry.get("frequency") is not None
+    ]
+    neg_freqs = sorted([freq for freq in freqs if freq < 0.0])
+    pos_freqs = sorted([freq for freq in freqs if freq >= 0.0])
+    n_imag = len(neg_freqs)
+
+    if n_imag == 0:
+        row_status = "minimum"
+    elif n_imag == 1:
+        row_status = "first_order"
+    else:
+        row_status = "higher_order"
+
+    flags = _vibration_flags(
+        neg_freqs,
+        pos_freqs,
+        weak_imag_threshold=weak_imag_threshold,
+        low_pos_threshold=low_pos_threshold,
+    )
+    return {
+        **base,
+        "status": row_status,
+        "n_imag": n_imag,
+        "imag_freqs": _format_frequency_list(neg_freqs, max_items=max_imag_freqs),
+        "low_pos_freqs": _format_frequency_list(pos_freqs, max_items=max_pos_freqs),
+        "flags": ", ".join(flags),
+    }
+
+
+def _vibration_flags(
+    neg_freqs: list[float],
+    pos_freqs: list[float],
+    *,
+    weak_imag_threshold: float,
+    low_pos_threshold: float,
+) -> list[str]:
+    """Return compact review flags for a vibration spectrum."""
+    flags: list[str] = []
+    if len(neg_freqs) == 1 and abs(neg_freqs[0]) < weak_imag_threshold:
+        flags.append("weak_imag")
+    if pos_freqs and pos_freqs[0] < low_pos_threshold:
+        flags.append("very_low_pos")
+    return flags
+
+
+def _format_frequency_list(freqs: list[float], *, max_items: int) -> str:
+    """Format frequencies as a compact comma-separated string."""
+    if not freqs:
+        return "None"
+    max_items = max(0, int(max_items))
+    shown = freqs[:max_items] if max_items else []
+    text = ", ".join(f"{freq:.2f}" for freq in shown)
+    if len(freqs) > len(shown):
+        text = f"{text}, ..." if text else "..."
+    return text
 
 
 def _vibration_columns(df: pd.DataFrame) -> list[str]:
@@ -1556,6 +1805,8 @@ def merge_parquet_dir(
         raise FileNotFoundError(f"No .parquet files in '{in_path}'.")
 
     dfs: list[pd.DataFrame] = []
+    used_files: list[Path] = []
+    skipped_files: list[Path] = []
     for fp in files:
         df = normalize_dataframe(pd.read_parquet(str(fp)))
         if require_normal_termination:
@@ -1573,13 +1824,22 @@ def merge_parquet_dir(
                         lambda x: bool(x) if pd.notna(x) else False
                     )
                 if not subset.all().all():
+                    skipped_files.append(fp)
                     continue
         dfs.append(df)
+        used_files.append(fp)
 
     if not dfs:
         raise ValueError("No files to merge after filtering.")
 
     merged = pd.concat(dfs, ignore_index=True)
+    merged.attrs.update(
+        merge_dataframe_attrs(
+            dfs,
+            source_files=[str(path) for path in used_files],
+            skipped_files=[str(path) for path in skipped_files],
+        )
+    )
     if merged.empty:
         raise ValueError("Merged DataFrame is empty.")
 

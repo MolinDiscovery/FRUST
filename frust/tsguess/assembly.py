@@ -86,23 +86,39 @@ def create_ts_guess_dataframes(
 
     requested_specs = [_resolve_spec(ts_type) for ts_type in ts_types]
     rows_by_type: dict[str, list[dict[str, Any]]] = {spec.name: [] for spec in requested_specs}
+    conformers_by_type: dict[str, list[dict[str, Any]]] = {spec.name: [] for spec in requested_specs}
 
     for _, system in systems.iterrows():
         substrate_smiles = str(system["substrate_smiles"])
         rpos_values = parse_rpos_value(system.get("rpos"), substrate_smiles)
         for rpos in rpos_values:
             for spec in requested_specs:
-                rows_by_type[spec.name].extend(
-                    _rows_for_system_rpos(
-                        system,
-                        spec,
-                        int(rpos),
-                        n_confs=n_confs,
-                        n_cores=int(n_cores),
-                    )
+                rows, conformer_meta = _rows_for_system_rpos(
+                    system,
+                    spec,
+                    int(rpos),
+                    n_confs=n_confs,
+                    n_cores=int(n_cores),
                 )
+                rows_by_type[spec.name].extend(rows)
+                conformers_by_type[spec.name].append(conformer_meta)
 
-    return {ts_type: pd.DataFrame(rows) for ts_type, rows in rows_by_type.items()}
+    dataframes: dict[str, pd.DataFrame] = {}
+    for ts_type, rows in rows_by_type.items():
+        df = pd.DataFrame(rows)
+        records = conformers_by_type[ts_type]
+        if records:
+            df.attrs["frust_conformers"] = {
+                "schema_version": 1,
+                "source": "screen.create_ts_guesses",
+                "requested_n_confs": n_confs,
+                "n_cores": int(n_cores),
+                "n_structures": len(records),
+                "total_generated_confs": int(sum(record["generated_n_confs"] for record in records)),
+                "structures": records,
+            }
+        dataframes[ts_type] = df
+    return dataframes
 
 
 def _rows_for_system_rpos(
@@ -112,7 +128,7 @@ def _rows_for_system_rpos(
     *,
     n_confs: int | None,
     n_cores: int,
-) -> list[dict[str, Any]]:
+) -> tuple[list[dict[str, Any]], dict[str, Any]]:
     mol, roles = _assemble_system_mol(system, spec, rpos)
     resolved_n_confs = _resolve_n_confs(mol, n_confs)
     coord_map = _placement_coord_map(mol, spec, roles)
@@ -131,14 +147,14 @@ def _rows_for_system_rpos(
     constraint_atoms = [roles[role] for role in spec.constraint_order if role in roles]
 
     rows: list[dict[str, Any]] = []
+    system_name = str(system["system_name"])
+    custom_name = f"{spec.name}({system_name}_rpos({rpos}))"
     for cid in cids:
         conf = embedded.GetConformer(int(cid))
         coords = [
             tuple(float(v) for v in conf.GetAtomPosition(idx))
             for idx in range(embedded.GetNumAtoms())
         ]
-        system_name = str(system["system_name"])
-        custom_name = f"{spec.name}({system_name}_rpos({rpos}))"
         row = {
             "custom_name": custom_name,
             "structure_id": f"{spec.name}:{system_name}:r{rpos}",
@@ -166,7 +182,20 @@ def _rows_for_system_rpos(
             if col not in row and col not in {"rpos", "smiles"}:
                 row[col] = value
         rows.append(row)
-    return rows
+    conformer_meta = {
+        "structure_id": f"{spec.name}:{system_name}:r{rpos}",
+        "custom_name": custom_name,
+        "structure_type": spec.name,
+        "system_name": system_name,
+        "substrate_name": str(system["substrate_name"]),
+        "catalyst_name": str(system["catalyst_name"]),
+        "rpos": int(rpos),
+        "requested_n_confs": n_confs,
+        "resolved_n_confs": int(resolved_n_confs),
+        "generated_n_confs": len(cids),
+        "cids": [int(cid) for cid in cids],
+    }
+    return rows, conformer_meta
 
 
 def _resolve_n_confs(mol: Chem.Mol, n_confs: int | None) -> int:

@@ -6,6 +6,8 @@ from unittest.mock import patch
 import pandas as pd
 
 from frust.utils import show_steps, lowest_energy_rows, map_substrate_names
+from frust.utils.analytics import merge_parquet_dir
+from frust.utils.dataframes import merge_dataframe_attrs
 
 
 class DataFrameUtilityTests(unittest.TestCase):
@@ -16,6 +18,19 @@ class DataFrameUtilityTests(unittest.TestCase):
                 "engine": "xtb",
                 "columns": ["xtb_opt-EE", "xtb_opt-NT", "xtb_opt-oc"],
                 "options": {"gfn": 2, "opt": None},
+                "row_counts": {
+                    "input_rows": 50,
+                    "output_rows": 10,
+                    "dropped_rows": 40,
+                },
+                "filtering": {
+                    "lowest": 10,
+                    "energy_col": "xtb_sp-EE",
+                    "input_rows": 50,
+                    "output_rows": 10,
+                    "dropped_rows": 40,
+                    "n_groups": 1,
+                },
                 "calculator": {
                     "name": "xtb",
                     "mode": "direct",
@@ -43,6 +58,11 @@ class DataFrameUtilityTests(unittest.TestCase):
                 "engine": "orca",
                 "columns": ["gxtb_opt-EE"],
                 "options": {"ExtOpt": None, "Opt": None},
+                "row_counts": {
+                    "input_rows": 10,
+                    "output_rows": 10,
+                    "dropped_rows": 0,
+                },
                 "gxtb": True,
                 "gxtb_exe": "/cluster/apps/g-xtb/bin/xtb",
                 "gxtb_exe_source": "GXTB_EXE",
@@ -87,8 +107,16 @@ class DataFrameUtilityTests(unittest.TestCase):
         self.assertEqual(out.loc["xtb_opt", "options"], "gfn opt")
         self.assertEqual(out.loc["xtb_opt", "columns"], "xtb_opt-EE, xtb_opt-NT, xtb_opt-oc")
         self.assertEqual(out.loc["xtb_opt", "n_columns"], 3)
+        self.assertEqual(out.loc["xtb_opt", "lowest"], 10)
+        self.assertEqual(out.loc["xtb_opt", "filter_energy_col"], "xtb_sp-EE")
+        self.assertEqual(out.loc["xtb_opt", "input_rows"], 50)
+        self.assertEqual(out.loc["xtb_opt", "output_rows"], 10)
+        self.assertEqual(out.loc["xtb_opt", "dropped_rows"], 40)
         self.assertEqual(out.loc["xtb_opt", "n_cores"], 4)
         self.assertEqual(out.loc["gxtb_opt", "memory_gb"], 20.0)
+        self.assertEqual(out.loc["gxtb_opt", "input_rows"], 10)
+        self.assertEqual(out.loc["gxtb_opt", "output_rows"], 10)
+        self.assertEqual(out.loc["gxtb_opt", "dropped_rows"], 0)
         self.assertIn("xtra_inp_str", out.columns)
         self.assertIn("SMDSOLVENT", out.loc["gxtb_opt", "xtra_inp_str"])
 
@@ -111,6 +139,236 @@ class DataFrameUtilityTests(unittest.TestCase):
 
         self.assertTrue(out.empty)
         self.assertEqual(out.index.name, "step")
+
+    def test_show_steps_includes_initial_conformer_generation_attrs(self):
+        df = pd.DataFrame({"x": [1]})
+        df.attrs["frust_conformers"] = {
+            "schema_version": 1,
+            "source": "screen.create_ts_guesses",
+            "n_cores": 8,
+            "structures": [
+                {
+                    "structure_id": "TS1:furan__cat:r0",
+                    "requested_n_confs": 5,
+                    "resolved_n_confs": 5,
+                    "generated_n_confs": 4,
+                    "cids": [0, 1, 2, 3],
+                },
+                {
+                    "structure_id": "TS1:furan__cat:r1",
+                    "requested_n_confs": 5,
+                    "resolved_n_confs": 5,
+                    "generated_n_confs": 5,
+                    "cids": [0, 1, 2, 3, 4],
+                },
+            ],
+        }
+
+        out = show_steps(df)
+
+        self.assertEqual(list(out.index), ["initial_conformers"])
+        self.assertEqual(out.loc["initial_conformers", "engine"], "rdkit")
+        self.assertEqual(out.loc["initial_conformers", "calc_name"], "screen.create_ts_guesses")
+        self.assertEqual(
+            out.loc["initial_conformers", "options"],
+            "structures=2 requested=5 resolved=5 generated=9 missing=1",
+        )
+        self.assertNotIn("n_structures", out.columns)
+        self.assertNotIn("n_confs_requested", out.columns)
+        self.assertNotIn("n_confs_resolved", out.columns)
+        self.assertNotIn("n_confs_generated", out.columns)
+        self.assertNotIn("n_confs_missing", out.columns)
+        self.assertEqual(out.loc["initial_conformers", "output_rows"], 9)
+        self.assertEqual(out.loc["initial_conformers", "n_cores"], 8)
+
+    def test_merge_dataframe_attrs_preserves_steps_and_namespaces_conflicts(self):
+        first = pd.DataFrame({"x": [1]})
+        first.attrs["frust_steps"] = {
+            "DFT": {
+                "engine": "orca",
+                "columns": ["DFT-EE"],
+                "options": {"wB97X-D3": None},
+            }
+        }
+        first.attrs["note"] = "same"
+        first.attrs["method"] = "wB97X-D3"
+        first.attrs["frust_conformers"] = {
+            "schema_version": 1,
+            "source": "screen.create_ts_guesses",
+            "requested_n_confs": 2,
+            "structures": [
+                {
+                    "structure_id": "TS1:a:r0",
+                    "generated_n_confs": 2,
+                    "cids": [0, 1],
+                }
+            ],
+        }
+
+        second = pd.DataFrame({"x": [2]})
+        second.attrs["frust_steps"] = {
+            "DFT": {
+                "engine": "orca",
+                "columns": ["DFT-EE"],
+                "options": {"r2SCAN-3c": None},
+            },
+            "xtb": {
+                "engine": "xtb",
+                "columns": ["xtb-EE"],
+                "options": {"gfn": 2},
+            },
+        }
+        second.attrs["note"] = "same"
+        second.attrs["method"] = "r2SCAN-3c"
+        second.attrs["frust_conformers"] = {
+            "schema_version": 1,
+            "source": "screen.create_ts_guesses",
+            "requested_n_confs": 2,
+            "structures": [
+                {
+                    "structure_id": "TS1:b:r0",
+                    "generated_n_confs": 1,
+                    "cids": [0],
+                }
+            ],
+        }
+
+        attrs = merge_dataframe_attrs(
+            [first, second],
+            source_files=["first.parquet", "second.parquet"],
+        )
+
+        self.assertIn("DFT", attrs["frust_steps"])
+        self.assertIn("DFT__variant_001", attrs["frust_steps"])
+        self.assertIn("xtb", attrs["frust_steps"])
+        self.assertEqual(attrs["note"], "same")
+        self.assertNotIn("method", attrs)
+        self.assertEqual(
+            attrs["frust_steps"]["DFT"]["source_files"],
+            ["first.parquet"],
+        )
+        self.assertEqual(
+            attrs["frust_steps"]["DFT__variant_001"]["source_files"],
+            ["second.parquet"],
+        )
+        self.assertIn("DFT", attrs["frust_merge"]["step_variants"])
+        self.assertIn("method", attrs["frust_merge"]["attr_conflicts"])
+        self.assertEqual(attrs["frust_conformers"]["total_generated_confs"], 3)
+        self.assertEqual(attrs["frust_conformers"]["n_structures"], 2)
+        self.assertEqual(
+            attrs["frust_conformers"]["structures"][0]["source_files"],
+            ["first.parquet"],
+        )
+
+    def test_merge_dataframe_attrs_ignores_existing_step_source_files(self):
+        first = pd.DataFrame({"x": [1]})
+        first.attrs["frust_steps"] = {
+            "DFT": {
+                "engine": "orca",
+                "columns": ["DFT-EE"],
+                "source_files": ["original.parquet"],
+            }
+        }
+        second = pd.DataFrame({"x": [2]})
+        second.attrs["frust_steps"] = {
+            "DFT": {
+                "engine": "orca",
+                "columns": ["DFT-EE"],
+            }
+        }
+
+        attrs = merge_dataframe_attrs(
+            [first, second],
+            source_files=["merged.parquet", "second.parquet"],
+        )
+
+        self.assertEqual(list(attrs["frust_steps"]), ["DFT"])
+        self.assertEqual(
+            attrs["frust_steps"]["DFT"]["source_files"],
+            ["original.parquet", "second.parquet"],
+        )
+
+    def test_merge_parquet_dir_round_trips_attrs_for_show_steps(self):
+        with tempfile.TemporaryDirectory() as td:
+            root = Path(td)
+            for idx in range(2):
+                df = pd.DataFrame({"x": [idx], "DFT-NT": [True]})
+                df.attrs["frust_steps"] = {
+                    "DFT": {
+                        "engine": "orca",
+                        "columns": ["DFT-EE", "DFT-NT"],
+                        "options": {"wB97X-D3": None},
+                    }
+                }
+                df.attrs["note"] = "preserved"
+                df.to_parquet(root / f"part_{idx}.parquet")
+
+            output = root / "merged.parquet"
+            merge_parquet_dir(root, output=output)
+            merged = pd.read_parquet(output)
+
+        steps = show_steps(merged)
+        self.assertEqual(list(steps.index), ["DFT"])
+        self.assertEqual(steps.loc["DFT", "engine"], "orca")
+        self.assertEqual(merged.attrs["note"], "preserved")
+        self.assertEqual(merged.attrs["frust_merge"]["n_merged_files"], 2)
+
+    def test_merge_parquet_dir_records_conflicts_and_skipped_files(self):
+        with tempfile.TemporaryDirectory() as td:
+            root = Path(td)
+            first = pd.DataFrame({"x": [1], "DFT-NT": [True]})
+            first.attrs["frust_steps"] = {
+                "DFT": {
+                    "engine": "orca",
+                    "columns": ["DFT-EE"],
+                    "options": {"wB97X-D3": None},
+                }
+            }
+            first.attrs["method"] = "wB97X-D3"
+            first.to_parquet(root / "first.parquet")
+
+            second = pd.DataFrame({"x": [2], "DFT-NT": [True]})
+            second.attrs["frust_steps"] = {
+                "DFT": {
+                    "engine": "orca",
+                    "columns": ["DFT-EE"],
+                    "options": {"r2SCAN-3c": None},
+                }
+            }
+            second.attrs["method"] = "r2SCAN-3c"
+            second.to_parquet(root / "second.parquet")
+
+            skipped = pd.DataFrame({"x": [3], "DFT-NT": [False]})
+            skipped.attrs["frust_steps"] = {
+                "DFT": {
+                    "engine": "orca",
+                    "columns": ["DFT-EE"],
+                    "options": {"B3LYP": None},
+                }
+            }
+            skipped.attrs["method"] = "B3LYP"
+            skipped.to_parquet(root / "skipped.parquet")
+
+            output = root / "merged.parquet"
+            merge_parquet_dir(
+                root,
+                output=output,
+                require_normal_termination=True,
+            )
+            merged = pd.read_parquet(output)
+
+        self.assertEqual(set(merged["x"]), {1, 2})
+        self.assertIn("DFT", merged.attrs["frust_steps"])
+        self.assertIn("DFT__variant_001", merged.attrs["frust_steps"])
+        self.assertNotIn("method", merged.attrs)
+        self.assertIn("method", merged.attrs["frust_merge"]["attr_conflicts"])
+        self.assertEqual(merged.attrs["frust_merge"]["n_skipped_files"], 1)
+        self.assertTrue(
+            any(
+                str(path).endswith("skipped.parquet")
+                for path in merged.attrs["frust_merge"]["skipped_files"]
+            )
+        )
 
     def test_lowest_energy_rows_matches_stepper_grouping_defaults(self):
         df = pd.DataFrame(

@@ -5,6 +5,7 @@ import unittest
 import pandas as pd
 
 from frust.stepper import Stepper
+from frust.utils import show_steps
 
 
 def _df() -> pd.DataFrame:
@@ -16,6 +17,7 @@ def _df() -> pd.DataFrame:
                 [[0.0, 0.0, 0.0], [0.0, 0.0, 0.8]],
             ],
             "substrate_name": ["mol", "mol"],
+            "cid": [10, 11],
             "prev-EE": [-2.0, -1.0],
         }
     )
@@ -85,6 +87,21 @@ class StepperGxtbTests(unittest.TestCase):
         self.assertEqual(len(calls), 1)
         self.assertFalse(out["gxtb-NT"].iloc[0])
         self.assertIn("RuntimeError: boom", out["gxtb-error"].iloc[0])
+        row_counts = out.attrs["frust_steps"]["gxtb"]["row_counts"]
+        self.assertEqual(row_counts["input_rows"], 2)
+        self.assertEqual(row_counts["output_rows"], 1)
+        self.assertEqual(row_counts["dropped_rows"], 1)
+        filtering = out.attrs["frust_steps"]["gxtb"]["filtering"]
+        self.assertEqual(filtering["lowest"], 1)
+        self.assertEqual(filtering["energy_col"], "prev-EE")
+        self.assertEqual(filtering["input_rows"], 2)
+        self.assertEqual(filtering["output_rows"], 1)
+        self.assertEqual(filtering["dropped_rows"], 1)
+        self.assertEqual(filtering["groups"][0]["selected_cids"], [10])
+        steps = show_steps(out)
+        self.assertEqual(steps.loc["gxtb", "lowest"], 1)
+        self.assertEqual(steps.loc["gxtb", "filter_energy_col"], "prev-EE")
+        self.assertEqual(steps.loc["gxtb", "dropped_rows"], 1)
 
     def test_gxtb_constraints_are_forwarded_as_detailed_input(self):
         calls = []

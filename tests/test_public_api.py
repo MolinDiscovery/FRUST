@@ -20,6 +20,7 @@ class PublicApiTests(unittest.TestCase):
             pipes,
             screen,
             plot_vibs,
+            inspect_ts_vibrations,
             summarize_ts_vibrations,
             utils,
             vis,
@@ -30,9 +31,10 @@ class PublicApiTests(unittest.TestCase):
         from frust import utils as utils_direct
         from frust import vis as vis_direct
         from frust.cluster import ClusterConfig, Resources, submit_chain, submit_jobs, submit_screen_chain
-        from frust.pipes import run_mols, run_screen_ts_per_rpos
+        from frust.pipes import run_mols, run_mols_per_rpos, run_screen_ts_per_rpos
         from frust.pipelines import run_ts_per_rpos
         from frust.stepper import Stepper as StepperDirect
+        from frust.utils.analytics import inspect_ts_vibrations as inspect_vibs_direct
         from frust.utils.analytics import summarize_ts_vibrations as summarize_direct
         from frust.utils.dataframes import show_steps as show_steps_direct
         from frust.utils.dataframes import lowest_energy_rows as lowest_direct
@@ -55,6 +57,7 @@ class PublicApiTests(unittest.TestCase):
             "show_steps",
             "lowest_energy_rows",
             "map_substrate_names",
+            "inspect_ts_vibrations",
             "summarize_ts_vibrations",
             "plot_vibs",
             "write_xyz",
@@ -83,6 +86,8 @@ class PublicApiTests(unittest.TestCase):
         self.assertIs(lowest_energy_rows, lowest_direct)
         self.assertIs(ft.map_substrate_names, map_names_direct)
         self.assertIs(map_substrate_names, map_names_direct)
+        self.assertIs(ft.inspect_ts_vibrations, inspect_vibs_direct)
+        self.assertIs(inspect_ts_vibrations, inspect_vibs_direct)
         self.assertIs(ft.summarize_ts_vibrations, summarize_direct)
         self.assertIs(summarize_ts_vibrations, summarize_direct)
         self.assertIs(ft.plot_vibs, plot_vibs_direct)
@@ -98,6 +103,7 @@ class PublicApiTests(unittest.TestCase):
         self.assertIs(ft.utils, utils_direct)
         self.assertIs(utils, utils_direct)
         self.assertIs(ft.utils.write_xyz, write_xyz_direct)
+        self.assertIs(ft.utils.inspect_ts_vibrations, inspect_vibs_direct)
         self.assertIs(ft.utils.summarize_ts_vibrations, summarize_direct)
         self.assertIs(ft.utils.map_substrate_names, map_names_direct)
         self.assertTrue(callable(get_molecule_name))
@@ -115,6 +121,7 @@ class PublicApiTests(unittest.TestCase):
         self.assertIs(ft.pipelines.run_ts_per_rpos, run_ts_per_rpos)
         self.assertIs(ft.pipes.run_mols, run_mols)
         self.assertIs(pipes.run_mols, run_mols)
+        self.assertIs(ft.pipes.run_mols_per_rpos, run_mols_per_rpos)
         self.assertIs(ft.pipes.run_screen_ts_per_rpos, run_screen_ts_per_rpos)
 
     def test_import_frust_is_lazy_in_fresh_process(self):

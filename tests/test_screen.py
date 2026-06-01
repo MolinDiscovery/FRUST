@@ -301,6 +301,14 @@ class ScreenWorkflowTests(unittest.TestCase):
             self.assertIn("constraint_roles", df.columns)
             self.assertIn("constraint_spec", df.columns)
             self.assertEqual(len(df["atoms"].iloc[0]), len(df["coords_embedded"].iloc[0]))
+            self.assertNotIn("n_confs_generated", df.columns)
+            conformers = df.attrs["frust_conformers"]
+            self.assertEqual(conformers["source"], "screen.create_ts_guesses")
+            self.assertEqual(conformers["requested_n_confs"], 1)
+            self.assertEqual(conformers["total_generated_confs"], 1)
+            self.assertEqual(conformers["structures"][0]["structure_type"], ts_type)
+            self.assertEqual(conformers["structures"][0]["generated_n_confs"], 1)
+            self.assertEqual(conformers["structures"][0]["cids"], [0])
 
     def test_multifragment_ts_guess_does_not_collapse_fragments(self):
         systems = ft.screen.expand(

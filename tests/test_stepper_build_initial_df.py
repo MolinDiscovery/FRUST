@@ -120,6 +120,15 @@ class StepperBuildInitialDfTests(unittest.TestCase):
         self.assertEqual(df["substrate_name"].iloc[0], "ethanol")
         self.assertEqual(df["smiles"].iloc[0], "CCO")
         self.assertIn("coords_embedded", df.columns)
+        self.assertNotIn("n_confs_generated", df.columns)
+        conformers = df.attrs["frust_conformers"]
+        self.assertEqual(conformers["source"], "Stepper.build_initial_df")
+        self.assertEqual(conformers["requested_n_confs"], 1)
+        self.assertEqual(conformers["total_generated_confs"], 1)
+        self.assertEqual(conformers["structures"][0]["substrate_name"], "ethanol")
+        self.assertEqual(conformers["structures"][0]["resolved_n_confs"], 1)
+        self.assertEqual(conformers["structures"][0]["generated_n_confs"], 1)
+        self.assertEqual(conformers["structures"][0]["cids"], [0])
 
     def test_xyz_file_path_preserves_atoms_and_coordinates(self):
         step = Stepper(debug=True, save_output_dir=False)

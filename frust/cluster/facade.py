@@ -55,7 +55,7 @@ def submit_jobs(
     dft : bool, optional
         Forwarded to the selected FRUST pipeline as ``DFT`` when supported.
     select_mols : str or list[str], optional
-        Molecule selection forwarded to ``run_mols`` when supported.
+        Molecule selection forwarded to molecule workflows when supported.
     work_dir : str or pathlib.Path or None, optional
         Optional work directory override. If omitted, ``cluster.work_dir`` is
         used.
@@ -102,6 +102,8 @@ def submit_jobs(
 
         if pipeline == "run_mols":
             kwargs["ligand_smiles_df"] = payload
+        elif pipeline == "run_mols_per_rpos":
+            kwargs["mol_struct"] = payload
         elif pipeline == "run_ts_per_lig":
             kwargs["ligand_smiles_df"] = payload
             kwargs["ts_guess_xyz"] = str(ts_xyz)

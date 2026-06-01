@@ -11,6 +11,7 @@ import pandas as pd
 from pandas import Series
 from inspect import signature
 from rdkit import Chem
+from rdkit.Chem import rdMolDescriptors, rdmolops
 from rdkit.Geometry import Point3D
 from rdkit.Chem.rdchem import Mol
 from frust.utils.dirs import make_step_dir, prepare_base_dir
@@ -1017,7 +1018,11 @@ class Stepper:
                 optimization=optimization,
                 max_iters=max_iters,
             )
-            df = self._build_initial_df_from_embedded(embedded)
+            df = self._build_initial_df_from_embedded(
+                embedded,
+                requested_n_confs=n_confs,
+                resolve_n_confs=True,
+            )
             self._resolve_auto_step_type(df)
             return self._with_initial_df_attrs(
                 df,
@@ -1056,7 +1061,11 @@ class Stepper:
                     optimization=optimization,
                     max_iters=max_iters,
                 )
-                df = self._build_initial_df_from_embedded(embedded)
+                df = self._build_initial_df_from_embedded(
+                    embedded,
+                    requested_n_confs=n_confs,
+                    resolve_n_confs=True,
+                )
                 self._resolve_auto_step_type(df)
                 return self._with_initial_df_attrs(
                     df,
@@ -1087,7 +1096,11 @@ class Stepper:
                     optimization=optimization,
                     max_iters=max_iters,
                 )
-                df = self._build_initial_df_from_embedded(embedded)
+                df = self._build_initial_df_from_embedded(
+                    embedded,
+                    requested_n_confs=n_confs,
+                    resolve_n_confs=True,
+                )
                 self._resolve_auto_step_type(df)
                 input_kind = f"workflow_{workflow}" if workflow else "raw_mol_dict"
                 return self._with_initial_df_attrs(
@@ -1113,7 +1126,11 @@ class Stepper:
                     n_cores=embed_cores,
                     optimize=ts_optimize,
                 )
-                df = self._build_initial_df_from_embedded(embedded)
+                df = self._build_initial_df_from_embedded(
+                    embedded,
+                    requested_n_confs=n_confs,
+                    resolve_n_confs=True,
+                )
                 self._resolve_auto_step_type(df)
                 return self._with_initial_df_attrs(
                     df,
@@ -1164,7 +1181,13 @@ class Stepper:
         df.attrs["frust_initial_df"]["input_kind"] = input_kind
         return df
 
-    def _build_initial_df_from_embedded(self, embedded_dict: dict) -> pd.DataFrame:
+    def _build_initial_df_from_embedded(
+        self,
+        embedded_dict: dict,
+        *,
+        requested_n_confs: int | None = None,
+        resolve_n_confs: bool = False,
+    ) -> pd.DataFrame:
         """
         Turn a dictionary of embedded‐conformer data into a tidy DataFrame.
 
@@ -1201,6 +1224,7 @@ class Stepper:
               - energy_uff          (float or None)
         """
         rows: list[dict] = []
+        conformer_records: list[dict[str, Any]] = []
 
         for name, val in embedded_dict.items():
             if len(val) == 2:
@@ -1229,6 +1253,25 @@ class Stepper:
             e_map: dict[int,float] = {cid_val: e_val for (e_val, cid_val) in energies} if energies else {}
 
             atom_syms = [atom.GetSymbol() for atom in mol.GetAtoms()]
+            cids_list = [int(cid) for cid in cids]
+            conformer_records.append(
+                {
+                    "structure_id": meta.structure_id,
+                    "custom_name": meta.custom_name,
+                    "structure_type": meta.structure_type,
+                    "substrate_name": meta.substrate_name,
+                    "molecule_role": meta.molecule_role,
+                    "rpos": None if pd.isna(meta.rpos) else meta.rpos,
+                    "requested_n_confs": requested_n_confs,
+                    "resolved_n_confs": self._resolved_conformer_count(
+                        mol,
+                        requested_n_confs,
+                        resolve_n_confs=resolve_n_confs,
+                    ),
+                    "generated_n_confs": len(cids_list),
+                    "cids": cids_list,
+                }
+            )
 
             for cid in cids:
                 conf = mol.GetConformer(cid)
@@ -1250,7 +1293,134 @@ class Stepper:
                     "energy_uff":       e_map.get(cid, None)
                 })
 
-        return pd.DataFrame(rows)
+        df = pd.DataFrame(rows)
+        if conformer_records:
+            df.attrs["frust_conformers"] = {
+                "schema_version": 1,
+                "source": "Stepper.build_initial_df",
+                "requested_n_confs": requested_n_confs,
+                "n_structures": len(conformer_records),
+                "total_generated_confs": int(
+                    sum(record["generated_n_confs"] for record in conformer_records)
+                ),
+                "structures": conformer_records,
+            }
+        return df
+
+    @staticmethod
+    def _resolved_conformer_count(
+        mol: Mol,
+        requested_n_confs: int | None,
+        *,
+        resolve_n_confs: bool,
+    ) -> int | None:
+        """Return the concrete conformer count FRUST requested from RDKit."""
+        if requested_n_confs is not None:
+            return int(requested_n_confs)
+        if not resolve_n_confs:
+            return None
+        try:
+            rdmolops.FastFindRings(mol)
+            rotatable_bonds = rdMolDescriptors.CalcNumRotatableBonds(mol)
+        except Exception:
+            return None
+        if rotatable_bonds <= 7:
+            return 50
+        if rotatable_bonds <= 12:
+            return 200
+        return 300
+
+    @staticmethod
+    def _metadata_scalar(value: Any) -> Any:
+        """Convert pandas/numpy scalar metadata to attrs-friendly values."""
+        try:
+            if bool(pd.isna(value)):
+                return None
+        except (TypeError, ValueError):
+            pass
+        if isinstance(value, np.generic):
+            return value.item()
+        return value
+
+    @classmethod
+    def _group_identity(cls, key: Any) -> tuple[Any, ...]:
+        """Normalize a pandas groupby key into a hashable attrs identity."""
+        values = key if isinstance(key, tuple) else (key,)
+        return tuple(cls._metadata_scalar(value) for value in values)
+
+    @classmethod
+    def _cid_list(cls, df: pd.DataFrame) -> list[int]:
+        """Return conformer IDs from a dataframe group when available."""
+        if "cid" not in df.columns:
+            return []
+        cids: list[int] = []
+        for value in df["cid"].tolist():
+            value = cls._metadata_scalar(value)
+            if value is None:
+                continue
+            try:
+                cids.append(int(value))
+            except (TypeError, ValueError):
+                continue
+        return cids
+
+    def _lowest_filter(
+        self,
+        df: pd.DataFrame,
+        *,
+        lowest: int,
+    ) -> tuple[pd.DataFrame, dict[str, Any]]:
+        """Apply ``lowest=`` filtering and return compact attrs metadata."""
+        e_cols = energy_columns(df)
+        if not e_cols:
+            raise ValueError("cannot apply `lowest=` filter: no energy column found")
+        last_energy = e_cols[-1]
+
+        group_keys = infer_group_columns(df)
+        if not group_keys:
+            raise ValueError("cannot apply `lowest=` filter: no structure identity columns found")
+
+        sort_keys = group_keys + [last_energy]
+        filtered = (
+            df
+            .sort_values(sort_keys, na_position="last")
+            .groupby(group_keys, dropna=False)
+            .head(lowest)
+        )
+
+        selected_groups = {
+            self._group_identity(key): group
+            for key, group in filtered.groupby(group_keys, dropna=False, sort=False)
+        }
+        groups: list[dict[str, Any]] = []
+        for key, group in df.groupby(group_keys, dropna=False, sort=False):
+            identity = self._group_identity(key)
+            selected = selected_groups.get(identity)
+            selected_rows = 0 if selected is None else len(selected)
+            groups.append(
+                {
+                    "keys": {
+                        col: value
+                        for col, value in zip(group_keys, identity)
+                    },
+                    "input_rows": int(len(group)),
+                    "output_rows": int(selected_rows),
+                    "dropped_rows": int(len(group) - selected_rows),
+                    "selected_cids": [] if selected is None else self._cid_list(selected),
+                }
+            )
+
+        metadata = {
+            "lowest": int(lowest),
+            "energy_col": last_energy,
+            "group_cols": list(group_keys),
+            "input_rows": int(len(df)),
+            "output_rows": int(len(filtered)),
+            "dropped_rows": int(len(df) - len(filtered)),
+            "n_groups": int(len(groups)),
+            "groups": groups,
+        }
+        return filtered, metadata
 
     def _run_engine(
             self,
@@ -1319,30 +1489,17 @@ class Stepper:
             needs_grouping=lowest is not None,
             needs_hessian=use_last_hess,
         )
+        step_input_rows = int(len(df_out))
         coord_col = self._last_coord_col(df_out)
         all_row_data: list[dict[str, object]] = []
+        filtering_meta: dict[str, Any] | None = None
 
         if lowest is not None and lowest < 1:
             self.logger.warning(f"ignoring lowest={lowest!r}, must be ≥1")
             lowest = None
 
         if lowest:
-            e_cols = energy_columns(df_out)
-            if not e_cols:
-                raise ValueError("cannot apply `lowest=` filter: no energy column found")
-            last_energy = e_cols[-1]
-
-            group_keys = infer_group_columns(df_out)
-            if not group_keys:
-                raise ValueError("cannot apply `lowest=` filter: no structure identity columns found")
-
-            sort_keys = group_keys + [last_energy]
-            df_out = (
-                df_out
-                .sort_values(sort_keys, na_position="last")
-                .groupby(group_keys, dropna=False)
-                .head(lowest)
-            )
+            df_out, filtering_meta = self._lowest_filter(df_out, lowest=lowest)
 
         for i, row in df_out.iterrows():
             coords = row[coord_col]
@@ -1512,7 +1669,18 @@ class Stepper:
             df_out[col] = vals
 
         steps = dict(df_out.attrs.get("frust_steps", {}))
-        steps[prefix] = {"engine": prefix.split("-", 1)[0], "columns": sorted(column_arrays)}
+        step_meta = {
+            "engine": prefix.split("-", 1)[0],
+            "columns": sorted(column_arrays),
+            "row_counts": {
+                "input_rows": step_input_rows,
+                "output_rows": int(len(df_out)),
+                "dropped_rows": step_input_rows - int(len(df_out)),
+            },
+        }
+        if filtering_meta is not None:
+            step_meta["filtering"] = filtering_meta
+        steps[prefix] = step_meta
         df_out.attrs["frust_steps"] = steps
 
         return df_out

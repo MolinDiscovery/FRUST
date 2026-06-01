@@ -10,7 +10,7 @@ from frust.screen import expand as expand_screen
 from frust.screen import read as read_screen
 from frust.tsguess.matching import parse_rpos_value
 from frust.tsguess.specs import BUILTIN_TS_SPECS
-from frust.utils.mols import create_ts_per_rpos
+from frust.utils.mols import create_mol_per_rpos, create_ts_per_rpos
 
 
 TS_PIPELINES = {
@@ -25,7 +25,11 @@ DATAFRAME_PIPELINES = {
     "run_ts_per_lig",
 }
 
-SUPPORTED_PIPELINES = TS_PIPELINES | DATAFRAME_PIPELINES
+MOLECULE_PIPELINES = {
+    "run_mols_per_rpos",
+}
+
+SUPPORTED_PIPELINES = TS_PIPELINES | DATAFRAME_PIPELINES | MOLECULE_PIPELINES
 
 
 def load_csv_input(csv_path: str | Path) -> pd.DataFrame:
@@ -128,6 +132,20 @@ def prepare_pipeline_inputs(
 
     if pipeline == "run_mols":
         return {"mode": "dataframe", "payloads": [df], "tags": [sanitize_tag("mols")], "dataframe": df}
+
+    if pipeline == "run_mols_per_rpos":
+        mol_jobs = create_mol_per_rpos(
+            df,
+            return_format="list",
+            select_mols=select_mols,
+        )
+        tags = [sanitize_tag(list(job.keys())[0]) for job in mol_jobs]
+        return {
+            "mode": "mols_per_rpos",
+            "payloads": mol_jobs,
+            "tags": tags,
+            "dataframe": df,
+        }
 
     if pipeline == "run_ts_per_lig":
         if ts_xyz is None:

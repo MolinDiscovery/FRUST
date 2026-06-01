@@ -38,7 +38,7 @@ There are two modes:
 
 In practice:
 
-- use `submit_jobs(...)` for `run_mols`, `run_ts_per_lig`, `run_ts_per_rpos`, and the related high-level `frust.pipes` workflows
+- use `submit_jobs(...)` for `run_mols`, `run_mols_per_rpos`, `run_ts_per_lig`, `run_ts_per_rpos`, and the related high-level `frust.pipes` workflows
 - use `submit_chain(...)` for staged modules such as `frust.pipelines.run_ts_per_rpos`
 - use `submit_screen_chain(...)` for the new substrate/catalyst screen workflow that generates TS1-TS4 guesses from SMILES instead of a fixed `ts_xyz` template
 
@@ -112,6 +112,61 @@ This will:
 - call `frust.pipes.run_mols`
 - create parquet outputs under `runs/mols_example`
 - return a `JobSubmissionResult`
+
+### Splitting Molecular Jobs By Reactive Position
+
+`run_mols` is a whole-table workflow: one submitted job can contain several
+generated molecular states and several reactive positions. When the DFT part is
+the slow step, it is often better to submit one job per generated molecular
+state/rpos target.
+
+Use `run_mols_per_rpos` for that finer split:
+
+```python
+from frust.cluster import submit_jobs, ClusterConfig, Resources
+
+result = submit_jobs(
+    csv_path="datasets/example.csv",
+    pipeline="run_mols_per_rpos",
+    out_dir="runs/mols_per_rpos",
+    cluster=ClusterConfig(
+        backend="slurm",
+        partition="kemi1",
+        log_dir="logs/mols_per_rpos",
+    ),
+    resources=Resources(cpus=16, mem_gb=50, timeout_min=14400),
+    production=True,
+    n_confs=None,
+    dft=True,
+    select_mols=["ligand", "int2", "mol2", "HBpin-ligand"],
+)
+```
+
+For an input like:
+
+```csv
+smiles,rpos
+CN1C=CC=C1,"2,3"
+```
+
+FRUST prepares lightweight molecule payloads first, then submits them as
+independent jobs:
+
+| Generated target | Submitted as |
+| --- | --- |
+| `ligand` | one job |
+| `int2_rpos(2)` | one job |
+| `int2_rpos(3)` | one job |
+| `mol2_rpos(2)` | one job |
+| `mol2_rpos(3)` | one job |
+| `HBpin-ligand_rpos(2)` | one job |
+| `HBpin-ligand_rpos(3)` | one job |
+
+!!! info
+    `run_mols_per_rpos` does not run RDKit embedding on the login process.
+    Submission only builds the small prepared molecule payloads. Conformer
+    embedding, xTB filtering, and optional DFT refinement happen inside each
+    cluster job.
 
 ## Tutorial 2: Submit `run_ts_per_lig`
 

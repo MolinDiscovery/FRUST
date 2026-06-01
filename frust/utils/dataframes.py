@@ -2,10 +2,11 @@
 
 from __future__ import annotations
 
+import copy
 import warnings
 from collections.abc import Mapping
 from pathlib import Path
-from typing import Any
+from typing import Any, Sequence
 
 import pandas as pd
 
@@ -19,6 +20,100 @@ _PUBCHEM_CACHE_COLUMNS = [
     "lookup_status",
     "lookup_error",
 ]
+
+
+def merge_dataframe_attrs(
+    dfs: Sequence[pd.DataFrame],
+    *,
+    source_files: Sequence[str | Path] | None = None,
+    skipped_files: Sequence[str | Path] | None = None,
+) -> dict[str, Any]:
+    """Merge FRUST dataframe attrs across concatenated result tables.
+
+    Parameters
+    ----------
+    dfs : sequence of pandas.DataFrame
+        Dataframes whose attrs should be merged.
+    source_files : sequence of str or pathlib.Path, optional
+        File labels matching ``dfs``. These are recorded in merged step
+        metadata and in the merge provenance block.
+    skipped_files : sequence of str or pathlib.Path, optional
+        Files skipped during merge filtering.
+
+    Returns
+    -------
+    dict
+        Merged attrs suitable for assigning to a concatenated dataframe.
+    """
+    frames = list(dfs)
+    sources = _source_labels(source_files, len(frames))
+    skipped = [str(path) for path in (skipped_files or [])]
+    attr_items = [
+        (source, getattr(frame, "attrs", {}) or {})
+        for source, frame in zip(sources, frames)
+    ]
+
+    merge_info: dict[str, Any] = {
+        "input_files": sources,
+        "skipped_files": skipped,
+        "step_variants": {},
+        "attr_conflicts": {},
+    }
+    merged: dict[str, Any] = {}
+
+    steps = _merge_frust_steps(attr_items, merge_info)
+    if steps:
+        merged["frust_steps"] = steps
+
+    conformers = _merge_frust_conformers(attr_items)
+    if conformers:
+        merged["frust_conformers"] = conformers
+
+    attr_keys = sorted(
+        {
+            key
+            for _, attrs in attr_items
+            for key in attrs
+            if key not in {"frust_steps", "frust_conformers", "frust_merge"}
+        },
+        key=str,
+    )
+    for key in attr_keys:
+        groups: list[dict[str, Any]] = []
+        for source, attrs in attr_items:
+            if key not in attrs:
+                continue
+            value = attrs[key]
+            fingerprint = _attr_fingerprint(value)
+            for group in groups:
+                if group["fingerprint"] == fingerprint:
+                    group["source_files"].append(source)
+                    break
+            else:
+                groups.append(
+                    {
+                        "fingerprint": fingerprint,
+                        "value": copy.deepcopy(value),
+                        "source_files": [source],
+                    }
+                )
+
+        if len(groups) == 1:
+            merged[key] = groups[0]["value"]
+        elif groups:
+            merge_info["attr_conflicts"][str(key)] = [
+                {
+                    "source_files": group["source_files"],
+                    "value_repr": repr(group["value"]),
+                }
+                for group in groups
+            ]
+
+    merge_info["n_input_files"] = len(sources)
+    merge_info["n_skipped_files"] = len(skipped)
+    merge_info["n_merged_files"] = len(frames)
+    merged["frust_merge"] = merge_info
+    return merged
 
 
 def show_steps(df: pd.DataFrame, *, detail: str = "summary") -> pd.DataFrame:
@@ -44,6 +139,9 @@ def show_steps(df: pd.DataFrame, *, detail: str = "summary") -> pd.DataFrame:
         raise ValueError("detail must be 'summary' or 'full'")
 
     rows = []
+    conformer_row = _conformer_generation_step_row(df)
+    if conformer_row is not None:
+        rows.append(conformer_row)
 
     for step_name, step in _steps_mapping(df).items():
         if not isinstance(step, Mapping):
@@ -61,6 +159,14 @@ def show_steps(df: pd.DataFrame, *, detail: str = "summary") -> pd.DataFrame:
         if not isinstance(input_data, Mapping):
             input_data = {}
 
+        filtering = step.get("filtering", {})
+        if not isinstance(filtering, Mapping):
+            filtering = {}
+
+        row_counts = step.get("row_counts", {})
+        if not isinstance(row_counts, Mapping):
+            row_counts = {}
+
         columns = step.get("columns")
 
         rows.append(
@@ -73,6 +179,12 @@ def show_steps(df: pd.DataFrame, *, detail: str = "summary") -> pd.DataFrame:
                 "options": _format_keys(step.get("options")),
                 "columns": _format_list(columns),
                 "n_columns": len(columns) if isinstance(columns, list) else 0,
+                "lowest": filtering.get("lowest"),
+                "filter_energy_col": filtering.get("energy_col"),
+                "input_rows": row_counts.get("input_rows", filtering.get("input_rows")),
+                "output_rows": row_counts.get("output_rows", filtering.get("output_rows")),
+                "dropped_rows": row_counts.get("dropped_rows", filtering.get("dropped_rows")),
+                "n_filter_groups": filtering.get("n_groups"),
                 "n_cores": resources.get("n_cores"),
                 "memory_gb": resources.get("memory_gb"),
                 "xtra_inp_str": input_data.get("xtra_inp_str"),
@@ -101,6 +213,11 @@ def show_steps(df: pd.DataFrame, *, detail: str = "summary") -> pd.DataFrame:
                 "options",
                 "columns",
                 "n_columns",
+                "lowest",
+                "filter_energy_col",
+                "input_rows",
+                "output_rows",
+                "dropped_rows",
                 "n_cores",
                 "memory_gb",
                 "xtra_inp_str",
@@ -487,6 +604,293 @@ def _coerce_pubchem_cid(value: Any) -> Any:
 def _is_missing_scalar(value: Any) -> bool:
     """Return whether a value should be treated as a missing scalar."""
     return _none_if_missing(value) is None
+
+
+def _conformer_generation_step_row(df: pd.DataFrame) -> dict[str, Any] | None:
+    """Build a compact ``show_steps`` row from conformer-generation attrs."""
+    conformers = df.attrs.get("frust_conformers", {})
+    if not isinstance(conformers, Mapping):
+        return None
+
+    records = [
+        record
+        for record in conformers.get("structures", []) or []
+        if isinstance(record, Mapping)
+    ]
+    if not records:
+        return None
+
+    generated_total = conformers.get("total_generated_confs")
+    if generated_total is None:
+        generated_total = sum(
+            int(record.get("generated_n_confs") or 0)
+            for record in records
+        )
+
+    resolved_values = [
+        _none_if_missing(record.get("resolved_n_confs"))
+        for record in records
+    ]
+    resolved_numbers = [
+        int(value)
+        for value in resolved_values
+        if value is not None
+    ]
+    resolved_total = (
+        sum(resolved_numbers)
+        if len(resolved_numbers) == len(records)
+        else None
+    )
+
+    missing_total = None
+    if resolved_total is not None:
+        missing_total = int(resolved_total) - int(generated_total)
+
+    requested_values = [
+        _none_if_missing(record.get("requested_n_confs", conformers.get("requested_n_confs")))
+        for record in records
+    ]
+    requested = _format_conformer_values(requested_values, none_label="auto")
+    resolved = _format_conformer_values(resolved_values)
+    options = _format_conformer_options(
+        n_structures=len(records),
+        requested=requested,
+        resolved=resolved,
+        generated=int(generated_total),
+        missing=missing_total,
+    )
+
+    return {
+        "step": "initial_conformers",
+        "engine": "rdkit",
+        "calc_name": conformers.get("source"),
+        "mode": "embedding",
+        "backend": None,
+        "options": options,
+        "columns": "coords_embedded",
+        "n_columns": None,
+        "lowest": None,
+        "filter_energy_col": None,
+        "input_rows": None,
+        "output_rows": int(generated_total),
+        "dropped_rows": None,
+        "n_filter_groups": None,
+        "n_cores": conformers.get("n_cores"),
+        "memory_gb": None,
+        "xtra_inp_str": None,
+        "detailed_inp_str": None,
+        "input": None,
+        "executables": None,
+        "environment": None,
+        "gxtb": None,
+        "gxtb_exe": None,
+        "gxtb_exe_source": None,
+    }
+
+
+def _format_conformer_values(values: Sequence[Any], *, none_label: str | None = None) -> Any:
+    """Format repeated conformer metadata values for summary display."""
+    normalized = [
+        none_label if _none_if_missing(value) is None else _none_if_missing(value)
+        for value in values
+    ]
+    normalized = [value for value in normalized if value is not None]
+    if not normalized:
+        return None
+
+    unique: list[Any] = []
+    for value in normalized:
+        if value in unique:
+            continue
+        unique.append(value)
+
+    if len(unique) == 1:
+        return unique[0]
+    return "mixed: " + ", ".join(map(str, unique))
+
+
+def _format_conformer_options(
+    *,
+    n_structures: int,
+    requested: Any,
+    resolved: Any,
+    generated: int,
+    missing: int | None,
+) -> str:
+    """Format conformer-generation counts without adding sparse columns."""
+    parts = [f"structures={n_structures}"]
+    if requested is not None:
+        parts.append(f"requested={requested}")
+    if resolved is not None:
+        parts.append(f"resolved={resolved}")
+    parts.append(f"generated={generated}")
+    if missing is not None:
+        parts.append(f"missing={missing}")
+    return " ".join(parts)
+
+
+def _source_labels(
+    source_files: Sequence[str | Path] | None,
+    n_frames: int,
+) -> list[str]:
+    """Return source labels matching a dataframe sequence."""
+    if source_files is None:
+        return [f"dataframe_{idx:03d}" for idx in range(n_frames)]
+    labels = [str(path) for path in source_files]
+    if len(labels) != n_frames:
+        raise ValueError("source_files must match the number of dataframes")
+    return labels
+
+
+def _merge_frust_steps(
+    attr_items: Sequence[tuple[str, Mapping[str, Any]]],
+    merge_info: dict[str, Any],
+) -> dict[str, Any]:
+    """Merge ``frust_steps`` attrs with namespaced conflict variants."""
+    variants_by_step: dict[str, list[dict[str, Any]]] = {}
+
+    for source, attrs in attr_items:
+        steps = attrs.get("frust_steps", {})
+        if not isinstance(steps, Mapping):
+            continue
+        for step_name, step_meta in steps.items():
+            if not isinstance(step_meta, Mapping):
+                continue
+            comparison_meta = copy.deepcopy(dict(step_meta))
+            step_sources = _existing_step_sources(comparison_meta, source)
+            variants = variants_by_step.setdefault(str(step_name), [])
+            fingerprint = _attr_fingerprint(comparison_meta)
+            for variant in variants:
+                if variant["fingerprint"] == fingerprint:
+                    variant["source_files"].extend(step_sources)
+                    break
+            else:
+                variants.append(
+                    {
+                        "fingerprint": fingerprint,
+                        "metadata": comparison_meta,
+                        "source_files": step_sources,
+                    }
+                )
+
+    merged_steps: dict[str, Any] = {}
+    for step_name, variants in variants_by_step.items():
+        variant_records = []
+        for idx, variant in enumerate(variants):
+            output_name = step_name if idx == 0 else f"{step_name}__variant_{idx:03d}"
+            metadata = copy.deepcopy(variant["metadata"])
+            source_files = _unique_strings(variant["source_files"])
+            metadata["source_files"] = source_files
+            merged_steps[output_name] = metadata
+            variant_records.append(
+                {
+                    "step": output_name,
+                    "source_files": source_files,
+                }
+            )
+        if len(variant_records) > 1:
+            merge_info["step_variants"][step_name] = variant_records
+
+    return merged_steps
+
+
+def _merge_frust_conformers(
+    attr_items: Sequence[tuple[str, Mapping[str, Any]]],
+) -> dict[str, Any]:
+    """Merge compact conformer-generation attrs across result tables."""
+    records: list[dict[str, Any]] = []
+    top_level_values: dict[str, list[Any]] = {}
+
+    for source, attrs in attr_items:
+        conformers = attrs.get("frust_conformers", {})
+        if not isinstance(conformers, Mapping):
+            continue
+        for key in ("source", "requested_n_confs", "n_cores"):
+            if key in conformers:
+                top_level_values.setdefault(key, []).append(conformers[key])
+        for record in conformers.get("structures", []) or []:
+            if not isinstance(record, Mapping):
+                continue
+            item = copy.deepcopy(dict(record))
+            sources = item.get("source_files")
+            if isinstance(sources, list) and sources:
+                item["source_files"] = _unique_strings([*sources, source])
+            else:
+                item["source_files"] = [source]
+            records.append(item)
+
+    if not records:
+        return {}
+
+    merged: dict[str, Any] = {
+        "schema_version": 1,
+        "n_structures": len(records),
+        "total_generated_confs": int(
+            sum(
+                int(record.get("generated_n_confs") or 0)
+                for record in records
+            )
+        ),
+        "structures": records,
+    }
+    for key, values in top_level_values.items():
+        fingerprints = {_attr_fingerprint(value) for value in values}
+        if len(fingerprints) == 1 and values:
+            merged[key] = copy.deepcopy(values[0])
+    return merged
+
+
+def _existing_step_sources(step_meta: dict[str, Any], fallback: str) -> list[str]:
+    """Pop existing step source files or return the current source label."""
+    existing = step_meta.pop("source_files", None)
+    if isinstance(existing, list) and existing:
+        return [str(item) for item in existing]
+    return [fallback]
+
+
+def _unique_strings(values: Sequence[Any]) -> list[str]:
+    """Return unique strings while preserving first-seen order."""
+    seen = set()
+    out = []
+    for value in values:
+        text = str(value)
+        if text in seen:
+            continue
+        seen.add(text)
+        out.append(text)
+    return out
+
+
+def _attr_fingerprint(value: Any) -> Any:
+    """Return a stable comparable fingerprint for attrs metadata."""
+    if isinstance(value, Mapping):
+        return (
+            "mapping",
+            tuple(
+                (repr(key), _attr_fingerprint(item))
+                for key, item in sorted(value.items(), key=lambda entry: repr(entry[0]))
+            ),
+        )
+    if isinstance(value, (list, tuple)):
+        return ("sequence", tuple(_attr_fingerprint(item) for item in value))
+    if isinstance(value, set):
+        items = [_attr_fingerprint(item) for item in value]
+        return ("set", tuple(sorted(items, key=repr)))
+    if isinstance(value, Path):
+        return ("path", str(value))
+    if hasattr(value, "tolist"):
+        try:
+            return ("array", _attr_fingerprint(value.tolist()))
+        except Exception:
+            pass
+    try:
+        if bool(pd.isna(value)):
+            return ("missing", None)
+    except (TypeError, ValueError):
+        pass
+    if isinstance(value, (str, int, float, bool, type(None))):
+        return ("scalar", value)
+    return ("repr", type(value).__name__, repr(value))
 
 
 def _steps_mapping(df: pd.DataFrame) -> Mapping[str, Any]:

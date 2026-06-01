@@ -212,6 +212,97 @@ def run_screen_ts_per_rpos(
     return df
 
 
+def _run_mols_structures(
+    mols: dict[str, Mol | tuple[Mol, dict]],
+    *,
+    n_confs: int | None,
+    n_cores: int,
+    mem_gb: int,
+    debug: bool,
+    top_n: int,
+    out_dir: str | None,
+    work_dir: str | None,
+    output_parquet: str | None,
+    save_output_dir: bool,
+    DFT: bool,
+) -> pd.DataFrame:
+    """Run the standard molecule refinement cascade for prepared molecules."""
+    if not mols:
+        raise ValueError("mols must contain at least one prepared molecule")
+
+    embedded = embed_mols(mols, n_confs=n_confs, n_cores=n_cores)
+
+    step = Stepper(
+        step_type="MOLS",
+        n_cores=n_cores,
+        memory_gb=mem_gb,
+        debug=debug,
+        output_base=out_dir,
+        save_output_dir=save_output_dir,
+        save_calc_dirs=False,
+        work_dir=work_dir,
+    )
+    df = step.build_initial_df(embedded)
+    df = step.xtb(df, name="xtb_preopt", options={"gfnff": None, "opt": None}, n_cores=2)
+    df = step.xtb(df, name="xtb_sp", options={"gfn": 2}, n_cores=2)
+    df = step.xtb(df, name="xtb_opt", options={"gfn": 2, "opt": None}, lowest=top_n, n_cores=2)
+
+    functional = "wB97X-D3"  # wB97X-D3, wB97M-V
+    basisset = "6-31G**"  # 6-31G**, def2-TZVPD
+    basisset_solv = "6-31+G**"  # 6-31+G**, def2-TZVPD
+    freq = "Freq"  # Freq, NumFreq
+
+    df = step.orca(
+        df,
+        name="DFT-pre-SP",
+        options={
+            functional: None,
+            basisset: None,
+            "TightSCF": None,
+            "SP": None,
+            "NoSym": None,
+        },
+    )
+
+    if not DFT:
+        df = lowest_energy_rows(df)
+        if output_parquet:
+            df.to_parquet(output_parquet)
+        return df
+
+    df = step.orca(
+        df,
+        "DFT-Opt",
+        options={
+            functional: None,
+            basisset: None,
+            "TightSCF": None,
+            "SlowConv": None,
+            "Opt": None,
+            freq: None,
+            "NoSym": None,
+        },
+        lowest=1,
+    )
+
+    df = step.orca(
+        df,
+        name="DFT-SP",
+        options={
+            functional: None,
+            basisset_solv: None,
+            "TightSCF": None,
+            "SP": None,
+            "NoSym": None,
+        },
+        xtra_inp_str="""%CPCM\nSMD TRUE\nSMDSOLVENT "chloroform"\nend""",
+    )
+
+    if output_parquet:
+        df.to_parquet(output_parquet)
+    return df
+
+
 def run_ts_per_rpos(
     ts_struct: dict[str, tuple[Mol, list, str]],
     *,
@@ -615,6 +706,7 @@ def run_mols(
     debug: bool = False,
     top_n: int = 10,
     out_dir: str | None = None,
+    work_dir: str | None = None,
     output_parquet: str | None = None,
     save_output_dir: bool = True,
     DFT: bool = False,
@@ -650,6 +742,9 @@ def run_mols(
         stage.
     out_dir : str or None, optional
         Base directory for calculation output if output directories are saved.
+    work_dir : str or None, optional
+        Calculator scratch directory. If omitted, calculators use their
+        default working-directory behavior.
     output_parquet : str or None, optional
         If provided, write the final dataframe to this parquet path before
         returning it.
@@ -703,67 +798,112 @@ def run_mols(
         select_mols=select_mols,
     )
 
-    # 2) embed
-    embedded = embed_mols(mols, n_confs=n_confs, n_cores=n_cores)
-
-    # 3) xTB cascade
-    step = Stepper(
-        step_type="MOLS",
+    return _run_mols_structures(
+        mols,
+        n_confs=n_confs,
         n_cores=n_cores,
-        memory_gb=mem_gb,
+        mem_gb=mem_gb,
         debug=debug,
-        output_base=out_dir,
+        top_n=top_n,
+        out_dir=out_dir,
+        work_dir=work_dir,
+        output_parquet=output_parquet,
         save_output_dir=save_output_dir,
-        save_calc_dirs=False,
+        DFT=DFT,
     )
-    df = step.build_initial_df(embedded)
-    df = step.xtb(df, name="xtb_preopt", options={"gfnff": None, "opt": None}, n_cores=2)
-    df = step.xtb(df, name="xtb_sp", options={"gfn": 2}, n_cores=2)
-    df = step.xtb(df, name="xtb_opt", options={"gfn": 2, "opt": None}, lowest=top_n, n_cores=2)
 
-    functional      = "wB97X-D3" # wB97X-D3, wB97M-V
-    basisset        = "6-31G**" # 6-31G**, def2-TZVPD
-    basisset_solv   = "6-31+G**" # 6-31+G**, def2-TZVPD
-    freq            = "Freq" # Freq, NumFreq
 
-    df = step.orca(df, name="DFT-pre-SP", options={
-        functional  : None,
-        basisset    : None,
-        "TightSCF"  : None,
-        "SP"        : None,
-        "NoSym"     : None,
-    })
+def run_mols_per_rpos(
+    mol_struct: dict[str, Mol | tuple[Mol, dict]],
+    *,
+    n_confs: int | None = 5,
+    n_cores: int = 4,
+    mem_gb: int = 20,
+    debug: bool = False,
+    top_n: int = 10,
+    out_dir: str | None = None,
+    work_dir: str | None = None,
+    output_parquet: str | None = None,
+    save_output_dir: bool = True,
+    DFT: bool = False,
+) -> pd.DataFrame:
+    """Run the molecule workflow for one expanded molecule/rpos target.
 
-    # 4) if no DFT requested, save/return
-    if not DFT:
-        df = lowest_energy_rows(df)
-        if output_parquet:
-            df.to_parquet(output_parquet)
-        return df
+    This is the cluster-friendly sibling of :func:`run_mols`. It expects one
+    single-item dictionary from :func:`frust.utils.mols.create_mol_per_rpos`
+    with ``return_format="list"``. Embedding and all calculator stages still
+    happen inside this function, so cluster submission can fan out lightweight
+    prepared molecule payloads without doing RDKit conformer work on the login
+    process.
 
-    # ↓↓↓↓↓↓↓↓ DFT branch ↓↓↓↓↓↓↓↓
+    Parameters
+    ----------
+    mol_struct : dict
+        Single prepared molecular-state payload, typically one element from
+        ``create_mol_per_rpos(input_df, return_format="list")``. The key is
+        used as the stable molecule/rpos tag and the value is an RDKit
+        molecule, optionally paired with FRUST metadata.
+    n_confs : int or None, optional
+        Number of conformers to embed for this one molecular state. Pass
+        ``None`` to let the embedder use its rotatable-bond heuristic.
+    n_cores : int, optional
+        Number of CPU cores used for embedding and as the default Stepper
+        resource setting.
+    mem_gb : int, optional
+        Memory in GB passed to :class:`frust.stepper.Stepper`.
+    debug : bool, optional
+        Enable debug behavior in the underlying :class:`frust.stepper.Stepper`.
+    top_n : int, optional
+        Number of low-energy conformers retained after xTB optimization.
+    out_dir : str or None, optional
+        Base directory for calculation output if output directories are saved.
+    work_dir : str or None, optional
+        Calculator scratch directory.
+    output_parquet : str or None, optional
+        If provided, write the final dataframe to this parquet path.
+    save_output_dir : bool, optional
+        Whether the :class:`frust.stepper.Stepper` should save a FRUST output
+        directory.
+    DFT : bool, optional
+        If ``False``, stop after the xTB cascade and ``DFT-pre-SP``. If
+        ``True``, also run the ORCA ``DFT-Opt`` and solvent ``DFT-SP`` stages.
 
-    df = step.orca(df, "DFT-Opt", options={
-        functional  : None,
-        basisset    : None,
-        "TightSCF"  : None,
-        "SlowConv"  : None,
-        "Opt"       : None,
-        freq        : None,
-        "NoSym"     : None,
-    }, lowest=1)
+    Returns
+    -------
+    pandas.DataFrame
+        Result dataframe for this one molecular-state/rpos target.
 
-    df = step.orca(df, name="DFT-SP", options={
-        functional      : None,
-        basisset_solv   : None,
-        "TightSCF"      : None,
-        "SP"            : None,
-        "NoSym"         : None,
-    }, xtra_inp_str="""%CPCM\nSMD TRUE\nSMDSOLVENT "chloroform"\nend""")
+    Examples
+    --------
+    Prepare all molecular-state targets, then run the first target locally:
 
-    if output_parquet:
-        df.to_parquet(output_parquet)
-    return df
+    >>> import frust as ft
+    >>> import pandas as pd
+    >>> inputs = pd.DataFrame({"smiles": ["CN1C=CC=C1"]})
+    >>> jobs = ft.create_mol_per_rpos(inputs, return_format="list", select_mols="int2")
+    >>> df = ft.pipes.run_mols_per_rpos(jobs[0], n_confs=2)
+    """
+    if not isinstance(mol_struct, dict):
+        raise TypeError("mol_struct must be a single-item dictionary")
+    if len(mol_struct) != 1:
+        raise ValueError(
+            "run_mols_per_rpos expects exactly one prepared molecule payload; "
+            "use run_mols for multi-structure batches"
+        )
+
+    return _run_mols_structures(
+        mol_struct,
+        n_confs=n_confs,
+        n_cores=n_cores,
+        mem_gb=mem_gb,
+        debug=debug,
+        top_n=top_n,
+        out_dir=out_dir,
+        work_dir=work_dir,
+        output_parquet=output_parquet,
+        save_output_dir=save_output_dir,
+        DFT=DFT,
+    )
 
 
 def run_mols_custom(
