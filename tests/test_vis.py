@@ -15,6 +15,7 @@ from scipy.stats import linregress
 
 import frust.vis as vis
 from frust.vis import MolTo3DGrid, RxnTo3DGrid, plot_energy_profile, plot_mols
+from frust.vis import GridScene, MoleculeModel, SceneCell
 from frust.vis.regression import _round_to_sig_figs
 from frust.vis.vibrations import _select_vibration_column, _select_vibration_coords_column
 from frust.vis.energy_profile.layout import _compute_x_single
@@ -346,6 +347,18 @@ class SceneAdapterTests(unittest.TestCase):
         self.assertEqual(model.bonds, [(0, 1)])
         self.assertIn("furan", scene.cells[0].title)
 
+    def test_molecule_scene_preserves_numpy_array_connectivity(self):
+        df = self.small_molecule_df()
+        df.at[0, "connectivity_bonds"] = np.array([[0, 1]], dtype=object)
+
+        scene = molecule_scene_from_dataframe(
+            df,
+            row_indices=[0],
+            coord_indices=slice(-1, None),
+        )
+
+        self.assertEqual(scene.cells[0].models[0].bonds, [(0, 1)])
+
     def test_vibration_scene_from_dataframe_supports_all_rows_and_columns(self):
         scene = vibration_scene_from_dataframe(
             self.small_vib_df(),
@@ -362,6 +375,18 @@ class SceneAdapterTests(unittest.TestCase):
         self.assertFalse(scene.transparent)
         self.assertEqual(scene.cell_size, (400, 400))
         self.assertEqual(scene.cells[0].models[0].style["sphere"]["radius"], 0.3)
+
+    def test_vibration_scene_preserves_numpy_array_connectivity(self):
+        df = self.small_vib_df()
+        df.at[0, "connectivity_bonds"] = np.array([[0, 1]], dtype=object)
+
+        scene = vibration_scene_from_dataframe(
+            df,
+            row_indices=[0],
+            vId=0,
+        )
+
+        self.assertEqual(scene.cells[0].models[0].bonds, [(0, 1)])
 
     def test_vibration_column_selection_prefers_latest_non_missing(self):
         df = self.small_vib_df()
@@ -404,6 +429,30 @@ class SceneAdapterTests(unittest.TestCase):
 
         render.assert_called_once()
         show.assert_not_called()
+        self.assertEqual(viewer, "viewer")
+
+    def test_manual_scene_accepts_dataframe_numpy_bonds(self):
+        row = self.small_molecule_df().iloc[0].copy()
+        row["connectivity_bonds"] = np.array([[0, 1]], dtype=object)
+        scene = GridScene(
+            cells=[
+                SceneCell(
+                    title="manual",
+                    models=[
+                        MoleculeModel(
+                            atoms=row["atoms"],
+                            coords=row["coords_embedded"],
+                            bonds=row["connectivity_bonds"],
+                        )
+                    ],
+                )
+            ]
+        )
+
+        with patch("frust.vis.scenes.Py3DmolGridRenderer.render", return_value="viewer"):
+            viewer = vis.show_scene(scene)
+
+        self.assertEqual(scene.cells[0].models[0].bonds, [(0, 1)])
         self.assertEqual(viewer, "viewer")
 
     def test_ts_guess_scene_adds_role_and_distance_overlays(self):

@@ -17,6 +17,7 @@ from tooltoad.scene3d import (
     Py3DmolGridRenderer,
     SceneCell,
     VibrationAnimation,
+    normalize_bond_pairs,
 )
 
 from frust.schema import latest_opt_coords_column, normalize_dataframe
@@ -460,10 +461,7 @@ def _valid_coords(coords: Any) -> bool:
 
 
 def _optional_bonds(row: pd.Series) -> list[tuple[int, int]] | None:
-    bonds = row.get("connectivity_bonds")
-    if isinstance(bonds, list) and bonds:
-        return [(int(begin), int(end)) for begin, end in bonds]
-    return None
+    return normalize_bond_pairs(row.get("connectivity_bonds"))
 
 
 def _row_coord_title(row: pd.Series, coord_col: str) -> str:
