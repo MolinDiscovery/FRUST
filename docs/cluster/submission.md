@@ -18,6 +18,17 @@ from frust.cluster import (
 )
 ```
 
+For new method-plan workflows, the cluster entry point usually lives on the
+workflow object:
+
+```python
+result = wf.submit(
+    out_dir="runs/screen_ts",
+    cluster=cluster,
+    execution="dft_staged",
+)
+```
+
 If you install FRUST without cluster extras, install `submitit` first:
 
 ```bash
@@ -29,7 +40,7 @@ pip install -e ".[cluster]"
 Use `frust.cluster` when you want FRUST to submit jobs for you instead of
 writing Slurm scripts by hand.
 
-There are two modes:
+There are two lower-level helper modes:
 
 - `submit_jobs(...)`
   Submit independent jobs, typically one high-level pipeline call per input or per generated TS structure.
@@ -38,6 +49,8 @@ There are two modes:
 
 In practice:
 
+- use `wf.submit(...)` from `ft.workflows` for new local-to-cluster workflows
+  where one object owns the chemistry, method plan, and target graph
 - use `submit_jobs(...)` for `run_mols`, `run_mols_per_rpos`, `run_ts_per_lig`, `run_ts_per_rpos`, and the related high-level `frust.pipes` workflows
 - use `submit_chain(...)` for staged modules such as `frust.pipelines.run_ts_per_rpos`
 - use `submit_screen_chain(...)` for the new substrate/catalyst screen workflow that generates TS1-TS4 guesses from SMILES instead of a fixed `ts_xyz` template
@@ -77,7 +90,76 @@ resources = Resources(
 - memory in GB
 - timeout in minutes
 
-## Tutorial 1: Submit Independent Molecular Jobs
+## Tutorial 1: Submit A Workflow Object
+
+This is the recommended path for new production runs. The same workflow object
+can first be tested locally with `wf.run(...)`, then submitted to Slurm with
+`wf.submit(...)`.
+
+```python
+import frust as ft
+from frust.cluster import ClusterConfig, Resources
+
+method = ft.workflows.methods.preset("r2scan-3c")
+
+wf = ft.workflows.screen_ts(
+    csv_path="datasets/screen.csv",
+    ts_types=["TS1", "TS2", "TS3", "TS4"],
+    method=method,
+    n_confs=None,
+    top_n=10,
+    dft=True,
+)
+
+result = wf.submit(
+    out_dir="runs/screen_ts",
+    cluster=ClusterConfig(
+        backend="slurm",
+        partition="kemi1",
+        log_dir="logs/screen_ts",
+    ),
+    execution="dft_staged",
+    stage_resources={
+        "init": Resources(cpus=24, mem_gb=20, timeout_min=7200),
+        "hess": Resources(cpus=8, mem_gb=64, timeout_min=7200),
+        "optts": Resources(cpus=24, mem_gb=20, timeout_min=7200),
+        "freq": Resources(cpus=8, mem_gb=64, timeout_min=7200),
+        "solv": Resources(cpus=24, mem_gb=20, timeout_min=7200),
+    },
+)
+```
+
+The workflow object prepares one submitted chain per scientific target. For a
+screen TS workflow, a target is one `TS type + substrate/catalyst system +
+rpos`.
+
+| execution | Submitted shape |
+| --- | --- |
+| `single_job` | one job per target |
+| `dft_staged` | one initialization job, then dependent DFT jobs per target |
+| `fully_staged` | one dependent job per stage per target |
+
+!!! tip "Use `dft_staged` for production DFT"
+
+    `dft_staged` keeps cheap TS generation and xTB filtering together, then
+    gives Hessian, `OptTS`, frequency, and solvent stages their own resources.
+
+Collect the finished outputs with the same workflow object:
+
+```python
+merged = wf.collect(
+    "runs/screen_ts",
+    output="screen_ts_merged.parquet",
+    require_normal_termination=True,
+)
+
+ft.show_steps(merged)
+```
+
+See [Workflow Method Plans](../workflows/workflow-methods.md) for method
+presets and local smoke tests.
+
+## Tutorial 2: Submit Independent Molecular Jobs
 
 This is the simplest entry point. `run_mols` takes a CSV with a `smiles` column and submits one independent workflow.
 
@@ -168,7 +250,7 @@ independent jobs:
     embedding, xTB filtering, and optional DFT refinement happen inside each
     cluster job.
 
-## Tutorial 2: Submit `run_ts_per_lig`
+## Tutorial 3: Submit `run_ts_per_lig`
 
 Some pipelines need a TS template. In that case you must provide `ts_xyz`.
 
@@ -191,7 +273,7 @@ result = submit_jobs(
 )
 ```
 
-## Tutorial 3: Submit `run_ts_per_rpos`
+## Tutorial 4: Submit `run_ts_per_rpos`
 
 For `run_ts_per_rpos`, FRUST first expands the CSV into multiple `ts_struct` jobs using the TS template, then submits one independent job per generated TS structure.
 
@@ -216,7 +298,7 @@ result = submit_jobs(
 
 This is the right choice when you want the high-level `run_ts_per_rpos(...)` workflow itself to run as separate submitted jobs.
 
-## Tutorial 4: Submit a Dependent Stage Chain
+## Tutorial 5: Submit a Dependent Stage Chain
 
 If you want the staged pipeline in `frust.pipelines.run_ts_per_rpos`, use `submit_chain(...)` instead.
 
@@ -261,7 +343,7 @@ This preset submits the following chain:
 
 Each stage is submitted with Slurm `afterok` dependencies when using the Slurm backend.
 
-## Tutorial 5: Use the INT3 Chain Preset
+## Tutorial 6: Use the INT3 Chain Preset
 
 FRUST also includes a built-in preset for the `int3` stage module.
 
@@ -313,7 +395,7 @@ result = submit_chain(
 This keeps the same stage order and resource handling, but swaps the ORCA
 keywords used by the preset stages.
 
-## Tutorial 6: Submit a Catalyst Screen TS Chain
+## Tutorial 7: Submit a Catalyst Screen TS Chain
 
 The screen chain is the staged cluster workflow for the new catalyst/substrate
 TS guess module. It starts from a screen CSV, not from a legacy `.xyz` template.
@@ -425,11 +507,14 @@ Each chain then runs:
     count. Pass an integer such as `n_confs=20` when you want a fixed number of
     generated TS guess conformers per `TS/system/rpos` chain.
 
-This is the right cluster entry point when you want to screen several catalysts
-and substrates across TS1-TS4. Use the legacy `submit_chain(..., ts_xyz=...)`
-when you specifically want the old transformer/template workflow.
+This remains supported. For new work where method presets, local smoke tests,
+cluster submission, and collection should live on one object, prefer
+`ft.workflows.screen_ts(...).submit(...)`.
 
-## Tutorial 7: Use a Custom Chain
+Use the legacy `submit_chain(..., ts_xyz=...)` when you specifically want the
+old transformer/template workflow.
+
+## Tutorial 8: Use a Custom Chain
 
 If you do not want to use a preset, you can specify the stage module and stage order directly.
 
@@ -498,8 +583,8 @@ This is useful for:
 
 ## Returned Result Object
 
-`submit_jobs(...)`, `submit_chain(...)`, and `submit_screen_chain(...)` return
-a `JobSubmissionResult`:
+`wf.submit(...)`, `submit_jobs(...)`, `submit_chain(...)`, and
+`submit_screen_chain(...)` return a `JobSubmissionResult`:
 
 ```python
 JobSubmissionResult(

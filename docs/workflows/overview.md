@@ -35,19 +35,62 @@ flowchart TD
 !!! tip "Recommended reading order"
 
     Start with this overview, then read
+    [Workflow Method Plans](workflow-methods.md),
     [TS Guess Generation](ts-guess-generation.md) and
     [Optimization Pipeline](optimization-pipeline.md) before launching a large
     TS screen.
 
-## The Three Layers
+## The Four Layers
 
-FRUST has three workflow layers. Most users move from top to bottom only when
+FRUST has four workflow layers. Most users move from top to bottom only when
 they need more control.
 
-### 1. High-Level Pipelines
+### 1. Workflow Objects
+
+Use `ft.workflows` for new production work where the same setup should be
+tested locally and then submitted to a cluster.
+
+```python
+import frust as ft
+
+method = ft.workflows.methods.preset("r2scan-3c")
+
+wf = ft.workflows.screen_ts(
+    csv_path="screen.csv",
+    ts_types=["TS1", "TS2", "TS3", "TS4"],
+    method=method,
+    n_confs=None,
+    top_n=10,
+    dft=True,
+)
+
+df = wf.run(targets=[0], out_dir="debug/screen_ts", execution="dft_staged")
+```
+
+The same object can then be submitted:
+
+```python
+result = wf.submit(
+    out_dir="runs/screen_ts",
+    cluster=cluster,
+    execution="dft_staged",
+)
+```
+
+This layer keeps three decisions separate:
+
+| Decision | Example |
+| --- | --- |
+| chemistry and targets | `ft.workflows.screen_ts(...)` |
+| calculator choices | `ft.workflows.methods.preset("r2scan-3c")` |
+| local or cluster execution | `wf.run(...)` or `wf.submit(...)` |
+
+See [Workflow Method Plans](workflow-methods.md) for the full pattern.
+
+### 2. High-Level Pipelines
 
 Use `frust.pipes` when you want FRUST to do the usual structure generation and
-calculation sequence for you.
+calculation sequence for you in one local helper call.
 
 These functions are the simplest entry points:
 
@@ -67,7 +110,7 @@ from frust.pipes import run_mols
 df = run_mols(ligands, save_output_dir=False)
 ```
 
-### 2. Stepper
+### 3. Stepper
 
 Use `Stepper` when you want to control the calculation stages yourself.
 
@@ -105,19 +148,21 @@ Use this layer when you want to inspect intermediate results, change engine
 options, keep only the lowest conformers after a specific stage, or mix xTB,
 g-xTB, ORCA, and UMA in a custom order.
 
-### 3. Submitit Submission
+### 4. Submitit Submission
 
 Use `frust.cluster` when the workflow should be launched through `submitit`.
 
 The Slurm backend is for real cluster runs. The local backend is mainly for
 checking that the submission wiring works before sending jobs to Slurm.
 
-There are two submission styles:
+There are three submission styles:
 
 - `submit_jobs(...)`: submit independent jobs, usually one pipeline run per
   generated structure or input group.
 - `submit_chain(...)`: submit a dependent chain where each stage waits for the
   previous stage to finish.
+- workflow objects: call `wf.submit(...)` when you want the new method-plan
+  workflow API to manage the target graph.
 
 Example:
 
@@ -141,18 +186,22 @@ If you are new, start here:
 
 ```mermaid
 flowchart TD
-    A["Do you want a standard FRUST workflow?"] -->|Yes| B["Use frust.pipes locally<br/>or submit_jobs on a cluster"]
-    A -->|No| C["Use Stepper directly"]
-    B --> D["Do you need Slurm?"]
-    D -->|No| E["Call the pipeline in Python"]
-    D -->|Yes| F["Use frust.cluster"]
-    F --> G["Do stages need dependencies<br/>or different resources?"]
-    G -->|Yes| H["submit_chain"]
-    G -->|No| I["submit_jobs"]
+    A["Do you want local testing<br/>and cluster production<br/>from the same object?"] -->|Yes| B["Use ft.workflows"]
+    A -->|No| C["Do you want a quick local helper?"]
+    C -->|Yes| D["Use ft.pipes"]
+    C -->|No| E["Use Stepper directly"]
+    B --> F["wf.run(...) for smoke tests"]
+    B --> G["wf.submit(...) for Slurm"]
+    D --> H["Need legacy cluster submission?"]
+    H -->|Independent jobs| I["submit_jobs"]
+    H -->|Dependent chain| J["submit_chain"]
 ```
 
 In practice, choose the smallest layer that answers your question:
 
+- use `ft.workflows.screen_ts(...)` or `ft.workflows.mols(...)` when a run
+  should move from local testing to cluster production with the same method
+  plan;
 - use `run_mols(...)` for ordinary molecule screening;
 - use `run_ts_per_lig(...)` when one TS template should be applied to each
   ligand;

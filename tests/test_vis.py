@@ -385,6 +385,18 @@ class SceneAdapterTests(unittest.TestCase):
         self.assertEqual(scene.cell_size, (400, 400))
         self.assertEqual(scene.cells[0].models[0].style["sphere"]["radius"], 0.3)
 
+    def test_vibration_scene_from_dataframe_defaults_to_all_rows(self):
+        scene = vibration_scene_from_dataframe(self.small_vib_df(), vId=0)
+
+        self.assertEqual(len(scene.cells), 2)
+        self.assertEqual([cell.animations[0].frequency for cell in scene.cells], [-427.1, -388.4])
+
+    def test_vibration_scene_from_dataframe_explicit_row_index_is_single_row(self):
+        scene = vibration_scene_from_dataframe(self.small_vib_df(), row_index=1, vId=0)
+
+        self.assertEqual(len(scene.cells), 1)
+        self.assertEqual(scene.cells[0].animations[0].frequency, -388.4)
+
     def test_vibration_scene_preserves_numpy_array_connectivity(self):
         df = self.small_vib_df()
         df.at[0, "connectivity_bonds"] = np.array([[0, 1]], dtype=object)

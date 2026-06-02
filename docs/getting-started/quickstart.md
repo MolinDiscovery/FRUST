@@ -1,8 +1,9 @@
 # Quickstart
 
-FRUST has two main entry styles:
+FRUST has three main entry styles:
 
-- high-level functions in `frust.pipes` for common workflow runs;
+- workflow objects in `ft.workflows` for local-to-cluster production runs;
+- high-level functions in `frust.pipes` for compact local helper runs;
 - `Stepper` for explicit dataframe-by-dataframe calculation chains.
 
 For notebooks and quick scripts, the recommended import style is:
@@ -13,9 +14,10 @@ import frust as ft
 
 Daily calculation, dataframe-inspection, molecule-building, file IO, and
 visualization helpers are available directly from this namespace. Larger
-workflow domains stay grouped as lazy modules such as `ft.pipes` and
-`ft.cluster`. Everything is loaded lazily, so `import frust as ft` stays quick
-while heavier tools are imported only when you first use them.
+workflow domains stay grouped as lazy modules such as `ft.workflows`,
+`ft.pipes`, and `ft.cluster`. Everything is loaded lazily, so
+`import frust as ft` stays quick while heavier tools are imported only when you
+first use them.
 
 ## Quick Molecule Calculation
 
@@ -73,7 +75,46 @@ H 0.0 0.75 -0.24
 df = step.build_initial_df(xyz, name="water")
 ```
 
-## High-Level Workflow
+## Recommended Workflow Object
+
+Use `ft.workflows` when the same setup should work for a local smoke test and a
+cluster production run.
+
+```python
+import frust as ft
+
+method = ft.workflows.methods.preset("r2scan-3c")
+
+wf = ft.workflows.screen_ts(
+    csv_path="screen.csv",
+    ts_types=["TS1", "TS2", "TS3", "TS4"],
+    method=method,
+    n_confs=None,
+    top_n=10,
+    dft=True,
+)
+
+wf.targets()[:3]
+```
+
+Run one target locally before submitting the full screen:
+
+```python
+df = wf.run(
+    targets=[0],
+    out_dir="debug/screen_ts",
+    execution="dft_staged",
+    n_cores=4,
+    mem_gb=20,
+)
+
+ft.show_steps(df)
+```
+
+See [Workflow Method Plans](../workflows/workflow-methods.md) for method
+presets, g-xTB replacements, execution modes, and cluster submission.
+
+## High-Level Pipeline Function
 
 Use high-level pipeline functions when you want FRUST to generate structures,
 embed conformers, run the standard staged calculations, and return one results
@@ -134,11 +175,14 @@ ft.cluster.submit_jobs(
 )
 ```
 
-See [cluster submission](../cluster/submission.md) for independent jobs,
-dependent chains, local testing, presets, and common errors.
+For new local-to-cluster workflows, prefer `wf.submit(...)` from
+`ft.workflows`. See [cluster submission](../cluster/submission.md) for workflow
+objects, independent jobs, dependent chains, local testing, presets, and common
+errors.
 
 !!! note
     Explicit imports such as `from frust.stepper import Stepper` and
     `from frust.vis import plot_vibs` remain supported. The `import frust as ft`
     namespace is the compact user-facing style for common interactive work,
-    with larger subsystems available as `ft.pipes` and `ft.cluster`.
+    with larger subsystems available as `ft.workflows`, `ft.pipes`, and
+    `ft.cluster`.

@@ -7,7 +7,7 @@ coordinate.
 ```python
 from frust.vis import plot_vibs
 
-plot_vibs(df_ok, row_index=0, vId=0)
+plot_vibs(df_ok, vId=0)
 ```
 
 `plot_vibs` uses the same scene renderer and default visual style as
@@ -31,6 +31,18 @@ cell sizes, labels, background, and atom/stick styling.
 
 ## Multiple Rows
 
+By default, `plot_vibs(df_ok)` displays every row in the dataframe, matching
+`plot_mols(df_ok)`. This makes filtered dataframes convenient:
+
+```python
+plot_vibs(
+    df_ok[df_ok["substrate_name"] == "1-benzylpyrrole"],
+    columns=2,
+)
+```
+
+For explicit subsets, pass row positions:
+
 ```python
 plot_vibs(
     df_ok,
@@ -40,23 +52,21 @@ plot_vibs(
 )
 ```
 
-Use `row_indices="all"` when you want a quick grid of every row in a result
-table. Add `max_rows` for large screens:
+Use `max_rows` for large screens:
 
 ```python
 plot_vibs(
     df_ok,
-    row_indices="all",
     max_rows=12,
     columns=3,
     vId=0,
 )
 ```
 
-!!! note "Single-row default"
+!!! note "Single-row views"
 
-    `plot_vibs(df_ok)` still shows one row by default. Multi-row vibration
-    grids are explicit through `row_indices=[...]` or `row_indices="all"`.
+    Pass `row_index=0` when you want only one row. Omitting row selectors shows
+    all rows.
 
 FRUST automatically chooses the latest non-empty vibration column and the best
 matching optimized coordinate column. This lets the same call work for

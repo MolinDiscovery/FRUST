@@ -160,7 +160,7 @@ def molecule_scene_from_dataframe(
 def vibration_scene_from_dataframe(
     df: pd.DataFrame,
     *,
-    row_index: int = 0,
+    row_index: int | None = None,
     row_indices: Sequence[int] | str | None = None,
     max_rows: int | None = None,
     vId: int = 0,
@@ -484,13 +484,13 @@ def _vibration_title(row: pd.Series, frequency: float) -> str:
 def _vibration_row_indices(
     df: pd.DataFrame,
     *,
-    row_index: int,
+    row_index: int | None,
     row_indices: Sequence[int] | str | None,
     max_rows: int | None,
 ) -> list[int]:
     if row_indices is None:
-        indices = [int(row_index)]
-    elif row_indices == "all":
+        indices = list(range(len(df))) if row_index is None else [int(row_index)]
+    elif isinstance(row_indices, str) and row_indices == "all":
         indices = list(range(len(df)))
     elif isinstance(row_indices, Iterable) and not isinstance(row_indices, (str, bytes)):
         indices = [int(idx) for idx in row_indices]

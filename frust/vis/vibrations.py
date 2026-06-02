@@ -14,7 +14,7 @@ from frust.vis.scenes import (
 
 def plot_vibs(
     df,
-    row_index=0,
+    row_index: int | None = None,
     vId: int = 0,
     width: float = 600,
     height: float = 400,
@@ -42,7 +42,8 @@ def plot_vibs(
     df
         Dataframe containing ``atoms``, coordinates, and a vibration column.
     row_index
-        Single row to display when ``row_indices`` is not provided.
+        Single row to display when ``row_indices`` is not provided. When
+        omitted, all rows are displayed, matching ``plot_mols``.
     vId
         Vibration mode index to animate.
     width, height
@@ -64,7 +65,8 @@ def plot_vibs(
     custom_coords_col_name
         Explicit coordinate column override.
     row_indices
-        Sequence of row positions, ``"all"``, or ``None`` for ``row_index``.
+        Sequence of row positions, ``"all"``, or ``None``. When both
+        ``row_indices`` and ``row_index`` are omitted, all rows are displayed.
     viewergrid
         Historical explicit ``(rows, columns)`` grid shape.
     columns

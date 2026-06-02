@@ -275,6 +275,41 @@ df_low = step.gxtb(
 `lowest=` uses the same shared FRUST behavior as `Stepper.xtb(...)` and
 `Stepper.orca(...)`.
 
+## Workflow Method Plans
+
+For new local-to-cluster workflows, put g-xTB into the method plan instead of
+editing every calculation script by hand.
+
+```python
+import frust as ft
+
+method = (
+    ft.workflows.methods.preset("r2scan-3c")
+    .replace(
+        xtb_sp=ft.workflows.methods.gxtb(job="sp"),
+        xtb_opt=ft.workflows.methods.gxtb(job="opt"),
+    )
+)
+
+wf = ft.workflows.screen_ts(
+    csv_path="screen.csv",
+    ts_types=["TS1", "TS2", "TS3", "TS4"],
+    method=method,
+    n_confs=None,
+    top_n=10,
+    dft=True,
+)
+```
+
+This changes only the selected xTB-like filtering stages. The ORCA DFT stages
+still come from the `r2scan-3c` preset.
+
+!!! note "g-xTB stages are not GFN2 stages"
+
+    Use `ft.workflows.methods.gxtb(job="sp")` or `gxtb(job="opt")`. Do not
+    write `engine="gxtb", options={"gfn": 2}`; `gfn=2` is a normal xTB option,
+    not a g-xTB method selection.
+
 ## ORCA-Driven TS Optimization
 
 For transition states, use ORCA's external optimization interface:

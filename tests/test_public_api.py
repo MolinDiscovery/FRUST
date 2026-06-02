@@ -25,11 +25,13 @@ class PublicApiTests(unittest.TestCase):
             utils,
             vis,
             write_xyz,
+            workflows,
         )
         from frust import pipelines as pipelines_direct
         from frust import screen as screen_direct
         from frust import utils as utils_direct
         from frust import vis as vis_direct
+        from frust import workflows as workflows_direct
         from frust.cluster import ClusterConfig, Resources, submit_chain, submit_jobs, submit_screen_chain
         from frust.pipes import run_mols, run_mols_per_rpos, run_screen_ts_per_rpos
         from frust.pipelines import run_ts_per_rpos
@@ -45,6 +47,8 @@ class PublicApiTests(unittest.TestCase):
         from frust.vis import plot_vibs as plot_vibs_direct
         from frust.vis import ArrowOverlay, ScreenLabelOverlay
         from frust.vis import reaction_scene_cells
+        from frust.workflows import mols as workflow_mols
+        from frust.workflows import methods as workflow_methods
 
         expected = {
             "Stepper",
@@ -54,6 +58,7 @@ class PublicApiTests(unittest.TestCase):
             "screen",
             "utils",
             "vis",
+            "workflows",
             "show_steps",
             "lowest_energy_rows",
             "map_substrate_names",
@@ -114,6 +119,10 @@ class PublicApiTests(unittest.TestCase):
         self.assertIs(ft.vis.ArrowOverlay, ArrowOverlay)
         self.assertIs(ft.vis.ScreenLabelOverlay, ScreenLabelOverlay)
         self.assertIs(ft.vis.reaction_scene_cells, reaction_scene_cells)
+        self.assertIs(ft.workflows, workflows_direct)
+        self.assertIs(workflows, workflows_direct)
+        self.assertIs(ft.workflows.mols, workflow_mols)
+        self.assertIs(ft.workflows.methods, workflow_methods)
         self.assertIs(ft.pipelines, pipelines_direct)
         self.assertIs(ft.screen, screen_direct)
         self.assertIs(screen, screen_direct)

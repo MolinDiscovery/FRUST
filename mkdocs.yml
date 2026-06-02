@@ -66,6 +66,7 @@ nav:
           - Quickstart: getting-started/quickstart.md
       - Workflows:
           - Overview: workflows/overview.md
+          - Workflow Method Plans: workflows/workflow-methods.md
           - TS Guess Generation: workflows/ts-guess-generation.md
           - Optimization Pipeline: workflows/optimization-pipeline.md
           - Inspecting Results: workflows/inspecting-results.md
@@ -83,6 +84,8 @@ nav:
           - g-xTB: external-tools/gxtb.md
       - Cluster:
           - Submission: cluster/submission.md
+      - Development:
+          - Workflow Architecture: development/workflow-architecture.md
       - Troubleshooting:
           - Failed Calculations: troubleshooting/failed-calculations.md
           - Transition States: troubleshooting/transition-states.md
@@ -90,6 +93,7 @@ nav:
       - API Reference:
           - Visualization: api/vis.md
           - Stepper: api/stepper.md
+          - Workflows: api/workflows.md
           - Pipelines: api/pipes.md
           - Cluster: api/cluster.md
           - Schema: api/schema.md
@@ -98,3 +102,4 @@ nav:
       - Building Initial DataFrames: tutorials/building-initial-dataframes.md
       - Templates: tutorials/templates.md
       - Catalyst And Substrate Screens: tutorials/catalyst-substrate-screens.md
+      - Workflow Method Plans: tutorials/workflow-method-plans.md

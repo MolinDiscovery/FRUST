@@ -16,6 +16,7 @@ _PUBLIC_MODULES: dict[str, str] = {
     "screen": "frust.screen",
     "utils": "frust.utils",
     "vis": "frust.vis",
+    "workflows": "frust.workflows",
 }
 
 _PUBLIC_API: dict[str, tuple[str, str]] = {
@@ -92,6 +93,7 @@ if TYPE_CHECKING:
     import frust.screen as screen
     import frust.utils as utils
     import frust.vis as vis
+    import frust.workflows as workflows
     from frust.cluster import ClusterConfig, Resources, submit_chain, submit_jobs, submit_screen_chain
     from frust.embedder import embed_mols, embed_ts
     from frust.schema import (
