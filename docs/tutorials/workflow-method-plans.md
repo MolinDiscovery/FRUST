@@ -256,10 +256,11 @@ grouped into jobs.
 
 ## Submit The Same Workflow To Slurm
 
-After the one-target smoke test, submit the same workflow object:
+After the one-target smoke test, submit the same workflow object. This submits
+all targets in the workflow:
 
 ```python
-from frust.cluster import ClusterConfig, Resources
+from frust.cluster import ClusterConfig
 
 cluster = ClusterConfig(
     backend="slurm",
@@ -271,17 +272,19 @@ result = wf.submit(
     out_dir="runs/screen_ts",
     cluster=cluster,
     execution="dft_staged",
-    stage_resources={
-        "init": Resources(cpus=24, mem_gb=20, timeout_min=7200),
-        "hess": Resources(cpus=8, mem_gb=64, timeout_min=7200),
-        "optts": Resources(cpus=24, mem_gb=20, timeout_min=7200),
-        "freq": Resources(cpus=8, mem_gb=64, timeout_min=7200),
-        "solv": Resources(cpus=24, mem_gb=20, timeout_min=7200),
-    },
 )
 
 result
 ```
+
+With this exact call, FRUST uses these defaults:
+
+| Setting | Default behavior |
+| --- | --- |
+| `targets` omitted | submit every target from `wf.targets()` |
+| `stage_resources` omitted | use `Resources(cpus=4, mem_gb=20, timeout_min=720)` for every submitted job group |
+| `execution="dft_staged"` | submit one `init` job, then dependent DFT jobs for each target |
+| `out_dir="runs/screen_ts"` | write one subdirectory per target under `runs/screen_ts/` |
 
 Representative result:
 
@@ -295,7 +298,28 @@ JobSubmissionResult(
 )
 ```
 
-The `stage_resources` keys are workflow stage-group names. For a screen TS
+For production DFT work, override the stage resources that need more time,
+memory, or cores:
+
+```python
+from frust.cluster import Resources
+
+result = wf.submit(
+    out_dir="runs/screen_ts",
+    cluster=cluster,
+    execution="dft_staged",
+    stage_resources={
+        "init": Resources(cpus=24, mem_gb=20, timeout_min=7200),
+        "hess": Resources(cpus=8, mem_gb=64, timeout_min=7200),
+        "optts": Resources(cpus=24, mem_gb=20, timeout_min=7200),
+        "freq": Resources(cpus=8, mem_gb=64, timeout_min=7200),
+        "solv": Resources(cpus=24, mem_gb=20, timeout_min=7200),
+    },
+)
+```
+
+The `stage_resources` keys are workflow stage-group names. Missing keys still
+fall back to `Resources(cpus=4, mem_gb=20, timeout_min=720)`. For a screen TS
 workflow in `dft_staged` mode, the common keys are:
 
 | key | Contains |
@@ -305,6 +329,11 @@ workflow in `dft_staged` mode, the common keys are:
 | `optts` | ORCA `OptTS` using the previous Hessian |
 | `freq` | final frequency check |
 | `solv` | final solvent single point |
+
+!!! info "When `execution` is omitted"
+
+    DFT workflows default to `execution="dft_staged"`. Non-DFT workflows default
+    to `execution="single_job"`.
 
 ## Collect Finished Outputs
 

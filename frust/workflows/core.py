@@ -1,4 +1,11 @@
-"""Workflow graph execution for FRUST workflows."""
+"""Shared execution engine for FRUST workflow objects.
+
+This module deliberately contains no chemistry-specific target expansion. A
+concrete workflow in :mod:`frust.workflows.factories` supplies lightweight
+``WorkflowTarget`` objects and an ordered list of ``StageDef`` objects; this
+module turns them into local ``Stepper`` calls, submitted cluster jobs, and
+collected parquet outputs.
+"""
 
 from __future__ import annotations
 
@@ -18,6 +25,7 @@ from frust.workflows.methods import CalculatorSpec, MethodPlan, preset as method
 
 
 ExecutionMode = Literal["single_job", "dft_staged", "fully_staged"]
+DEFAULT_WORKFLOW_RESOURCES = Resources(cpus=4, mem_gb=20, timeout_min=720)
 
 
 @dataclass(frozen=True)
@@ -32,6 +40,13 @@ class WorkflowTarget:
         Serializable target payload used by the workflow preparation stage.
     metadata : dict, optional
         Lightweight target metadata for inspection.
+
+    Notes
+    -----
+    A target is intentionally lightweight. ``wf.targets()`` should be safe to
+    call for inspection and scheduling because expensive embedding and
+    calculator work belongs in ``_prepare_initial_df(...)`` during
+    ``wf.run(...)`` or inside a submitted job.
     """
 
     tag: str
@@ -41,7 +56,40 @@ class WorkflowTarget:
 
 @dataclass(frozen=True)
 class StageDef:
-    """One typed stage in a FRUST workflow graph."""
+    """One typed stage in a FRUST workflow graph.
+
+    Parameters
+    ----------
+    id : str
+        Stable stage identifier. This is normally the key used to look up the
+        stage's :class:`frust.workflows.methods.CalculatorSpec` from the active
+        method plan.
+    name : str
+        Calculation name passed to :class:`frust.stepper.Stepper`. Stepper uses
+        this as the dataframe column prefix, for example ``"OptTS"`` produces
+        columns such as ``"OptTS-EE"`` and ``"OptTS-NT"``.
+    kind : {"prepare", "calc", "filter"}, optional
+        Stage kind. ``"prepare"`` creates the initial dataframe, ``"calc"``
+        dispatches to a calculator, and ``"filter"`` keeps lowest-energy rows.
+    method_stage : str, optional
+        Alternate method-plan key. Use this only when a stage should reuse the
+        calculator settings from another stage id.
+    constraint : bool, optional
+        Whether constrained calculator input should be generated from dataframe
+        constraint columns where supported.
+    lowest : int, optional
+        Number of rows to keep after this stage, grouped by FRUST structure
+        identity.
+    n_cores : int, optional
+        Stage-local calculator core count forwarded to Stepper. Submission
+        resources still control the scheduler allocation.
+    read_files : list of str, optional
+        Files that ORCA should read from the previous saved calculation output.
+    use_last_hess : bool, optional
+        Whether ORCA should reuse the previous Hessian when supported.
+    save_files : list of str, optional
+        Extra files to preserve from the stage output directory.
+    """
 
     id: str
     name: str
@@ -57,7 +105,22 @@ class StageDef:
 
 @dataclass(frozen=True)
 class ExecutionOptions:
-    """Runtime options shared by local and cluster workflow execution."""
+    """Runtime options passed to workflow stage execution.
+
+    Parameters
+    ----------
+    n_cores : int, optional
+        Core count used by embedding and by calculators unless a ``StageDef``
+        overrides its calculator-level core count.
+    mem_gb : int, optional
+        Memory in GB forwarded to Stepper and calculator backends.
+    debug : bool, optional
+        Debug flag forwarded to workflow preparation and calculator stages.
+    save_output_dir : bool, optional
+        Whether calculator output directories should be retained by Stepper.
+    work_dir : str, optional
+        Scratch/work directory used by calculator backends.
+    """
 
     n_cores: int = 4
     mem_gb: int = 20
@@ -67,7 +130,30 @@ class ExecutionOptions:
 
 
 class BaseWorkflow:
-    """Base class for additive FRUST workflows."""
+    """Base class for local and cluster FRUST workflows.
+
+    Parameters
+    ----------
+    method : MethodPlan or str or None, optional
+        Calculator method plan. Strings are resolved with
+        :func:`frust.workflows.methods.preset`; ``None`` uses the built-in
+        ``"wb97xd3-631g"`` preset.
+    n_confs : int or None, optional
+        Conformer count forwarded to the workflow's initial dataframe
+        preparation. ``None`` lets the relevant FRUST builder choose its
+        heuristic count.
+    top_n : int, optional
+        Number of conformers/rows kept by stages that rank and filter.
+    dft : bool, optional
+        Whether the concrete workflow includes DFT stages.
+
+    Notes
+    -----
+    Subclasses provide chemistry by implementing ``_build_targets()``,
+    ``_prepare_initial_df(...)``, ``_stage_defs()``, and optionally
+    ``_step_type_for_target(...)``. This base class owns target selection,
+    stage grouping, local execution, cluster submission, and result collection.
+    """
 
     workflow_name = "workflow"
 
@@ -86,7 +172,20 @@ class BaseWorkflow:
         self._target_cache: list[WorkflowTarget] | None = None
 
     def targets(self) -> list[WorkflowTarget]:
-        """Return workflow scientific targets without running calculators."""
+        """Return the workflow's scientific targets.
+
+        Returns
+        -------
+        list of WorkflowTarget
+            Cached target objects. Each target has a scheduler-safe ``tag``, a
+            serializable ``payload`` used by the first stage, and optional
+            metadata for inspection.
+
+        Notes
+        -----
+        This method must not run calculators or expensive embedding. It is used
+        for inspection, target indexing, and cluster submission planning.
+        """
         if self._target_cache is None:
             self._target_cache = self._build_targets()
         return list(self._target_cache)
@@ -103,7 +202,46 @@ class BaseWorkflow:
         save_output_dir: bool = True,
         work_dir: str | Path | None = None,
     ) -> pd.DataFrame:
-        """Run selected workflow targets locally in the current Python process."""
+        """Run selected workflow targets locally.
+
+        Parameters
+        ----------
+        targets : iterable of WorkflowTarget or int or None, optional
+            Targets to run. Integers select positions from ``wf.targets()``. If
+            omitted, all workflow targets are run.
+        out_dir : str or pathlib.Path or None, optional
+            Output root. When provided, FRUST creates one subdirectory per
+            target and writes staged parquet files inside each target directory.
+            When omitted, stages run in memory and no staged parquet files are
+            written.
+        execution : {"single_job", "dft_staged", "fully_staged"} or None, optional
+            Local stage grouping. ``None`` defaults to ``"single_job"`` for
+            local runs. Staged modes are most useful when ``out_dir`` is set
+            because they mirror the cluster parquet layout.
+        n_cores : int, optional
+            Core count forwarded to embedding and calculators.
+        mem_gb : int, optional
+            Memory in GB forwarded to Stepper.
+        debug : bool, optional
+            Debug flag forwarded to stage preparation and calculators.
+        save_output_dir : bool, optional
+            Whether Stepper should retain calculator output directories.
+        work_dir : str or pathlib.Path or None, optional
+            Scratch/work directory forwarded to Stepper.
+
+        Returns
+        -------
+        pandas.DataFrame
+            Concatenated results for the selected targets with merged workflow
+            provenance in ``df.attrs``.
+
+        Examples
+        --------
+        Run a one-target smoke test with the same stage boundaries used for a
+        later cluster run:
+
+        >>> df = wf.run(targets=[0], out_dir="debug/screen_ts", execution="dft_staged")
+        """
         selected = self._select_targets(targets)
         options = ExecutionOptions(
             n_cores=n_cores,
@@ -169,7 +307,46 @@ class BaseWorkflow:
         save_output_dir: bool = True,
         work_dir: str | Path | None = None,
     ) -> JobSubmissionResult:
-        """Submit selected workflow targets to a submitit cluster executor."""
+        """Submit selected workflow targets to a submitit cluster executor.
+
+        Parameters
+        ----------
+        out_dir : str or pathlib.Path
+            Root output directory. FRUST creates one subdirectory per selected
+            workflow target and writes staged parquet files inside that target
+            directory.
+        cluster : frust.cluster.config.ClusterConfig
+            Shared executor configuration, such as Slurm partition, log
+            directory, and optional scratch ``work_dir``.
+        execution : {"single_job", "dft_staged", "fully_staged"} or None, optional
+            Job grouping strategy. If omitted, DFT workflows use
+            ``"dft_staged"`` and non-DFT workflows use ``"single_job"``.
+            ``"single_job"`` submits one job per target. ``"dft_staged"`` keeps
+            initialization stages together, then submits dependent DFT-stage
+            jobs. ``"fully_staged"`` submits one dependent job per stage.
+        stage_resources : dict[str, Resources] or None, optional
+            Optional resource overrides by stage-group name. Missing groups use
+            ``Resources(cpus=4, mem_gb=20, timeout_min=720)``. For a DFT screen
+            TS workflow in ``"dft_staged"`` mode, common keys are ``"init"``,
+            ``"hess"``, ``"optts"``, ``"freq"``, and ``"solv"``.
+        targets : iterable of WorkflowTarget or int or None, optional
+            Targets to submit. Integers select positions from ``wf.targets()``.
+            If omitted, all workflow targets are submitted.
+        debug : bool, optional
+            Forwarded to workflow stages and calculators.
+        save_output_dir : bool, optional
+            Forwarded to workflow stages that save calculator output
+            directories.
+        work_dir : str or pathlib.Path or None, optional
+            Scratch/work directory override. If omitted, ``cluster.work_dir`` is
+            used when configured.
+
+        Returns
+        -------
+        frust.cluster.config.JobSubmissionResult
+            Submitted scheduler job IDs, target tags, target save directories,
+            workflow execution mode, and backend.
+        """
         selected = self._select_targets(targets)
         mode = execution or ("dft_staged" if self.dft else "single_job")
         groups = self._stage_groups(mode)
@@ -194,7 +371,7 @@ class BaseWorkflow:
                     "single_job",
                     groups[0],
                     stage_resources,
-                    default=Resources(cpus=4, mem_gb=20, timeout_min=720),
+                    default=DEFAULT_WORKFLOW_RESOURCES,
                 )
                 update_executor_with_dependency(
                     executor,
@@ -220,7 +397,7 @@ class BaseWorkflow:
                     group_name,
                     group,
                     stage_resources,
-                    default=Resources(cpus=4, mem_gb=20, timeout_min=720),
+                    default=DEFAULT_WORKFLOW_RESOURCES,
                 )
                 update_executor_with_dependency(
                     executor,
@@ -266,7 +443,32 @@ class BaseWorkflow:
         output: str | Path | None = None,
         require_normal_termination: bool = False,
     ) -> pd.DataFrame:
-        """Collect final per-target parquet files from a workflow output tree."""
+        """Collect finished per-target workflow outputs.
+
+        Parameters
+        ----------
+        out_dir : str or pathlib.Path
+            Root directory passed to ``wf.run(...)`` or ``wf.submit(...)``.
+            FRUST looks below each known target subdirectory and reads the
+            deepest staged parquet file, or ``final.parquet`` for single-job
+            outputs.
+        output : str or pathlib.Path or None, optional
+            Optional parquet path for the merged dataframe.
+        require_normal_termination : bool, optional
+            If ``True``, skip target outputs where normal-termination columns
+            ending in ``"-NT"`` are present and not all true.
+
+        Returns
+        -------
+        pandas.DataFrame
+            Merged target outputs with dataframe attrs combined so helpers such
+            as ``ft.show_steps(...)`` still summarize the workflow.
+
+        Raises
+        ------
+        FileNotFoundError
+            If no final staged parquet files are found below ``out_dir``.
+        """
         root = Path(out_dir)
         frames: list[pd.DataFrame] = []
         files: list[Path] = []
@@ -302,6 +504,20 @@ class BaseWorkflow:
         return merged
 
     def _build_targets(self) -> list[WorkflowTarget]:
+        """Build lightweight scientific targets for this workflow.
+
+        Returns
+        -------
+        list of WorkflowTarget
+            Targets used by ``targets()``, ``run(...)``, ``submit(...)``, and
+            ``collect(...)``.
+
+        Notes
+        -----
+        Subclasses should avoid expensive conformer generation, embedding, or
+        calculator calls here. The returned payloads must be serializable for
+        cluster submission.
+        """
         raise NotImplementedError
 
     def _prepare_initial_df(
@@ -311,18 +527,75 @@ class BaseWorkflow:
         save_dir: Path | None,
         options: ExecutionOptions,
     ) -> pd.DataFrame:
+        """Create the first FRUST dataframe for one target.
+
+        Parameters
+        ----------
+        target : WorkflowTarget
+            Target selected by ``run(...)`` or ``submit(...)``.
+        save_dir : pathlib.Path or None
+            Target output directory, when output is being written.
+        options : ExecutionOptions
+            Runtime options for embedding and calculators.
+
+        Returns
+        -------
+        pandas.DataFrame
+            Initial dataframe with atoms, embedded coordinates, and workflow
+            metadata columns needed by later stages.
+
+        Notes
+        -----
+        This is where expensive workflow-specific structure generation belongs,
+        because it runs inside the local execution path or inside the submitted
+        cluster job.
+        """
         raise NotImplementedError
 
     def _step_type_for_target(self, target: WorkflowTarget) -> str | None:
+        """Return the Stepper ``step_type`` for a target.
+
+        Parameters
+        ----------
+        target : WorkflowTarget
+            Target about to be prepared or calculated.
+
+        Returns
+        -------
+        str or None
+            Stepper type such as ``"MOLS"``, ``"TS1"``, or ``"INT3"``. ``None``
+            leaves Stepper to infer behavior from the dataframe where possible.
+        """
         return None
 
     def _stage_defs(self) -> list[StageDef]:
+        """Return the ordered stage graph for the workflow.
+
+        Returns
+        -------
+        list of StageDef
+            Stage definitions used identically by local execution and cluster
+            submission.
+        """
         raise NotImplementedError
 
     def _select_targets(
         self,
         targets: Iterable[WorkflowTarget] | Iterable[int] | None,
     ) -> list[WorkflowTarget]:
+        """Resolve user target selection to concrete target objects.
+
+        Parameters
+        ----------
+        targets : iterable of WorkflowTarget or int or None
+            ``None`` selects all targets. Integers index into ``wf.targets()``.
+            Explicit ``WorkflowTarget`` objects are returned as supplied.
+
+        Returns
+        -------
+        list of WorkflowTarget
+            Selected targets in execution order.
+        """
         all_targets = self.targets()
         if targets is None:
             return all_targets
@@ -334,6 +607,20 @@ class BaseWorkflow:
         return selected  # type: ignore[return-value]
 
     def _stage_groups(self, execution: ExecutionMode) -> list[list[StageDef]]:
+        """Group stages according to an execution mode.
+
+        Parameters
+        ----------
+        execution : {"single_job", "dft_staged", "fully_staged"}
+            Execution grouping strategy.
+
+        Returns
+        -------
+        list of list of StageDef
+            Stage groups. Each group runs serially in one local section or one
+            submitted job. ``"dft_staged"`` keeps initialization together and
+            splits out known DFT stages for DFT workflows.
+        """
         stages = self._stage_defs()
         if execution == "single_job":
             return [stages]
@@ -357,6 +644,19 @@ class BaseWorkflow:
         return groups
 
     def _group_name(self, group: list[StageDef]) -> str:
+        """Return the resource/parquet name for a stage group.
+
+        Parameters
+        ----------
+        group : list of StageDef
+            Stages that run together.
+
+        Returns
+        -------
+        str
+            ``"init"`` for a group containing the prepare stage, otherwise the
+            last stage id in the group.
+        """
         if any(stage.kind == "prepare" for stage in group):
             return "init"
         return group[-1].id
@@ -370,7 +670,27 @@ class BaseWorkflow:
         save_dir: Path | None,
         options: ExecutionOptions,
     ) -> pd.DataFrame:
-        """Run a sequence of stages for one target."""
+        """Run a serial stage group for one target.
+
+        Parameters
+        ----------
+        target : WorkflowTarget
+            Target being processed.
+        stages : list of StageDef
+            Ordered stages to run in this group.
+        input_df : pandas.DataFrame or None
+            Input dataframe for non-prepare groups. The first group usually
+            starts with ``None`` and a ``"prepare"`` stage.
+        save_dir : pathlib.Path or None
+            Target output directory, when outputs should be retained.
+        options : ExecutionOptions
+            Runtime options for preparation and calculators.
+
+        Returns
+        -------
+        pandas.DataFrame
+            Output dataframe after all stages in the group have run.
+        """
         df = input_df
         for stage in stages:
             if stage.kind == "prepare":
@@ -398,7 +718,24 @@ def _run_target_job(
     save_dir: str | Path | None,
     options: ExecutionOptions,
 ) -> pd.DataFrame:
-    """Run all stages for one target."""
+    """Run every workflow stage for one target.
+
+    Parameters
+    ----------
+    workflow : BaseWorkflow
+        Workflow object supplying stage definitions and stage behavior.
+    target : WorkflowTarget
+        Target to process.
+    save_dir : str or pathlib.Path or None
+        Target output directory, or ``None`` for in-memory execution.
+    options : ExecutionOptions
+        Runtime options forwarded to stage execution.
+
+    Returns
+    -------
+    pandas.DataFrame
+        Final target dataframe after all stages have run.
+    """
     target_dir = None if save_dir is None else Path(save_dir)
     return workflow._run_stage_group(
         target,
@@ -418,7 +755,31 @@ def _run_stage_group_job(
     save_dir: str | Path,
     options: ExecutionOptions,
 ) -> pd.DataFrame:
-    """Run one serializable stage group for submitit."""
+    """Run one submitted or staged-local stage group.
+
+    Parameters
+    ----------
+    workflow : BaseWorkflow
+        Serialized workflow object.
+    target : WorkflowTarget
+        Serialized target object.
+    stage_ids : list of str
+        Stage ids to run in this group.
+    input_parquet : str or None
+        Previous staged parquet filename inside ``save_dir``. ``None`` means the
+        group starts from workflow preparation.
+    output_parquet : str
+        Output parquet filename to write inside ``save_dir``.
+    save_dir : str or pathlib.Path
+        Target output directory.
+    options : ExecutionOptions
+        Runtime options forwarded to stage execution.
+
+    Returns
+    -------
+    pandas.DataFrame
+        Stage-group output dataframe, also written to ``output_parquet``.
+    """
     target_dir = Path(save_dir)
     input_df = None if input_parquet is None else pd.read_parquet(target_dir / input_parquet)
     stages_by_id = {stage.id: stage for stage in workflow._stage_defs()}
@@ -435,7 +796,19 @@ def _run_stage_group_job(
 
 
 def _coerce_method(method: MethodPlan | str | None) -> MethodPlan:
-    """Normalize method input to a MethodPlan."""
+    """Normalize user method input to a method plan.
+
+    Parameters
+    ----------
+    method : MethodPlan or str or None
+        Explicit method plan, registered preset name, or ``None`` for the
+        workflow default.
+
+    Returns
+    -------
+    MethodPlan
+        Resolved calculator plan.
+    """
     if method is None:
         return method_preset("wb97xd3-631g")
     if isinstance(method, str):
@@ -452,7 +825,25 @@ def _resource_for_group(
     *,
     default: Resources,
 ) -> Resources:
-    """Resolve resources for a stage group."""
+    """Resolve scheduler resources for a stage group.
+
+    Parameters
+    ----------
+    group_name : str
+        Resource key for the stage group, usually ``"init"`` or the last stage
+        id in the group.
+    group : list of StageDef
+        Stages in the group. Individual stage ids are accepted as fallback keys.
+    resources : dict of str to Resources or None
+        User-provided overrides.
+    default : Resources
+        Resources used when no override matches.
+
+    Returns
+    -------
+    Resources
+        Resource settings for the submitted job.
+    """
     if resources is None:
         return default
     if group_name in resources:
@@ -464,7 +855,21 @@ def _resource_for_group(
 
 
 def _next_parquet(current: str | None, group_name: str) -> str:
-    """Return the output parquet name after a stage group."""
+    """Return the staged parquet filename after a group.
+
+    Parameters
+    ----------
+    current : str or None
+        Previous staged parquet filename. ``None`` starts the chain.
+    group_name : str
+        New stage-group name.
+
+    Returns
+    -------
+    str
+        ``"init.parquet"`` for the first group, then dotted filenames such as
+        ``"init.hess.optts.parquet"``.
+    """
     if current is None:
         return "init.parquet"
     stem = current.rsplit(".", 1)[0]
@@ -472,7 +877,19 @@ def _next_parquet(current: str | None, group_name: str) -> str:
 
 
 def _deepest_parquet(target_dir: Path) -> Path | None:
-    """Return the deepest parquet file from one target directory."""
+    """Return the final-looking parquet file from one target directory.
+
+    Parameters
+    ----------
+    target_dir : pathlib.Path
+        Directory for one workflow target.
+
+    Returns
+    -------
+    pathlib.Path or None
+        ``final.parquet`` when present; otherwise the staged parquet with the
+        deepest dotted name; otherwise ``None``.
+    """
     if not target_dir.is_dir():
         return None
     final_file = target_dir / "final.parquet"
@@ -485,7 +902,19 @@ def _deepest_parquet(target_dir: Path) -> Path | None:
 
 
 def _all_normal_terminated(df: pd.DataFrame) -> bool:
-    """Return whether all normal-termination columns are true."""
+    """Return whether all normal-termination columns are true.
+
+    Parameters
+    ----------
+    df : pandas.DataFrame
+        Workflow output dataframe.
+
+    Returns
+    -------
+    bool
+        ``True`` when there are no ``"-NT"`` columns or when all such columns are
+        truthy after missing values are treated as failures.
+    """
     nt_cols = [col for col in df.columns if str(col).endswith("-NT")]
     if not nt_cols:
         return True
@@ -498,7 +927,26 @@ def _apply_calculator(
     stage: StageDef,
     spec: CalculatorSpec,
 ) -> pd.DataFrame:
-    """Apply one calculator spec through Stepper."""
+    """Dispatch one calculator stage through Stepper.
+
+    Parameters
+    ----------
+    step : frust.stepper.Stepper
+        Stepper configured for the current target and runtime options.
+    df : pandas.DataFrame
+        Input dataframe for this stage.
+    stage : StageDef
+        Workflow stage being run.
+    spec : CalculatorSpec
+        Calculator engine, options, and extra input selected from the method
+        plan.
+
+    Returns
+    -------
+    pandas.DataFrame
+        Dataframe returned by ``Stepper.xtb(...)``, ``Stepper.gxtb(...)``, or
+        ``Stepper.orca(...)``.
+    """
     kwargs = {
         "name": stage.name,
         "options": spec.options,
@@ -540,7 +988,28 @@ def _run_stage_calculation(
     save_dir: Path | None,
     options: ExecutionOptions,
 ) -> pd.DataFrame:
-    """Run one non-prepare stage."""
+    """Run one calculation or filter stage.
+
+    Parameters
+    ----------
+    workflow : BaseWorkflow
+        Workflow supplying method plan and target step type.
+    target : WorkflowTarget
+        Target being processed.
+    stage : StageDef
+        Non-prepare stage to run.
+    df : pandas.DataFrame
+        Input dataframe.
+    save_dir : pathlib.Path or None
+        Target output directory for Stepper output folders.
+    options : ExecutionOptions
+        Runtime options forwarded to Stepper.
+
+    Returns
+    -------
+    pandas.DataFrame
+        Stage output dataframe.
+    """
     if stage.kind == "filter":
         return lowest_energy_rows(df)
 
@@ -563,7 +1032,22 @@ def _attach_workflow_attrs(
     workflow: BaseWorkflow,
     target: WorkflowTarget,
 ) -> pd.DataFrame:
-    """Attach compact workflow attrs to a dataframe."""
+    """Attach compact workflow provenance to a dataframe.
+
+    Parameters
+    ----------
+    df : pandas.DataFrame
+        Stage output dataframe.
+    workflow : BaseWorkflow
+        Workflow that produced the dataframe.
+    target : WorkflowTarget
+        Target that produced the dataframe.
+
+    Returns
+    -------
+    pandas.DataFrame
+        Same dataframe with ``df.attrs["frust_workflow"]`` populated.
+    """
     df.attrs.setdefault("frust_workflow", {})
     df.attrs["frust_workflow"].update(
         {

@@ -1,8 +1,9 @@
-"""Additive workflow API for FRUST.
+"""Lazy public namespace for FRUST workflow objects.
 
-The workflow namespace keeps chemistry target expansion, calculator method
-plans, and execution strategy together. Existing ``frust.pipes`` and
-``frust.pipelines`` APIs remain available separately.
+The workflow namespace exposes factory functions such as ``mols`` and
+``screen_ts`` plus the ``methods`` submodule. Imports are resolved lazily so
+``import frust as ft`` stays light while still supporting user-facing calls such
+as ``ft.workflows.screen_ts(...)`` and ``ft.workflows.methods.preset(...)``.
 """
 
 from __future__ import annotations
@@ -29,7 +30,23 @@ __all__ = sorted({*_PUBLIC_MODULES, *_PUBLIC_API})
 
 
 def __getattr__(name: str) -> Any:
-    """Lazily resolve workflow modules and public factories."""
+    """Lazily resolve workflow modules and public factories.
+
+    Parameters
+    ----------
+    name : str
+        Public workflow attribute requested from ``frust.workflows``.
+
+    Returns
+    -------
+    object
+        Imported public module, factory, or class.
+
+    Raises
+    ------
+    AttributeError
+        If ``name`` is not part of the workflow public API.
+    """
     if name in _PUBLIC_MODULES:
         module = import_module(_PUBLIC_MODULES[name])
         globals()[name] = module
@@ -46,7 +63,13 @@ def __getattr__(name: str) -> Any:
 
 
 def __dir__() -> list[str]:
-    """Return module globals plus lazy public workflow names."""
+    """Return module globals plus lazy public workflow names.
+
+    Returns
+    -------
+    list of str
+        Names shown by ``dir(frust.workflows)``.
+    """
     return sorted(set(globals()) | set(__all__))
 
 

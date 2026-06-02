@@ -108,11 +108,36 @@ df = wf.run(targets=[0], out_dir="debug/screen_ts", execution="dft_staged")
 result = wf.submit(out_dir="runs/screen_ts", cluster=cluster, execution="dft_staged")
 ```
 
+That cluster call submits all targets. Because `stage_resources` is omitted,
+every submitted job group uses `Resources(cpus=4, mem_gb=20, timeout_min=720)`.
+
 | execution | Local behavior | Cluster behavior |
 | --- | --- | --- |
 | `single_job` | run all stages for each target in one call | submit one job per target |
 | `dft_staged` | write staged parquet files at DFT boundaries | submit dependent jobs for DFT stages |
 | `fully_staged` | write one parquet per stage | submit one dependent job per stage |
+
+For a DFT workflow, omitting `execution` also defaults to `dft_staged`. For a
+non-DFT workflow, omitting it defaults to `single_job`.
+
+Resource overrides are optional and use stage-group names:
+
+```python
+from frust.cluster import Resources
+
+result = wf.submit(
+    out_dir="runs/screen_ts",
+    cluster=cluster,
+    execution="dft_staged",
+    stage_resources={
+        "init": Resources(cpus=24, mem_gb=20, timeout_min=7200),
+        "hess": Resources(cpus=8, mem_gb=64, timeout_min=7200),
+        "optts": Resources(cpus=24, mem_gb=20, timeout_min=7200),
+        "freq": Resources(cpus=8, mem_gb=64, timeout_min=7200),
+        "solv": Resources(cpus=24, mem_gb=20, timeout_min=7200),
+    },
+)
+```
 
 !!! tip "Recommended production mode"
 

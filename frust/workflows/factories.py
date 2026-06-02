@@ -1,4 +1,10 @@
-"""Public workflow factories."""
+"""Concrete workflow factories for FRUST chemistry workflows.
+
+The public functions in this module create workflow objects but do not run
+calculators. A workflow object first expands user input into lightweight
+``WorkflowTarget`` objects, then ``BaseWorkflow.run`` or ``BaseWorkflow.submit``
+prepares structures and executes the stage graph.
+"""
 
 from __future__ import annotations
 
@@ -25,7 +31,41 @@ SplitMode = Literal["per_input", "per_rpos"]
 
 
 class MolsWorkflow(BaseWorkflow):
-    """Workflow for catalytic-cycle molecular states."""
+    """Workflow for catalytic-cycle molecular states.
+
+    Parameters
+    ----------
+    csv_path : str or pathlib.Path or None, optional
+        CSV file containing at least a ``smiles`` column. Optional columns such
+        as ``compound_name``, ``substrate_name``, and ``rpos`` are used to label
+        and expand targets.
+    dataframe : pandas.DataFrame or None, optional
+        In-memory input table with the same columns as ``csv_path``.
+    smiles : list of str or None, optional
+        Direct list of SMILES strings for quick molecule workflows.
+    split : {"per_input", "per_rpos"}, optional
+        Target expansion mode. ``"per_input"`` creates one target per input row.
+        ``"per_rpos"`` expands catalytic-cycle molecule structures per reactive
+        position using :func:`frust.utils.mols.create_mol_per_rpos`.
+    select_mols : str or list of str, optional
+        Molecule subset forwarded to ``create_mol_per_rpos``. Common values are
+        ``"all"``, ``"uniques"``, and ``"generics"``.
+    method : MethodPlan or str or None, optional
+        Calculator method plan or registered preset name.
+    n_confs : int or None, optional
+        Conformer count passed to ``Stepper.build_initial_df``.
+    top_n : int, optional
+        Number of rows kept after ranking/filtering stages.
+    dft : bool, optional
+        If ``True``, add DFT optimization and solvent stages. If ``False``, end
+        with a lowest-energy filter after xTB stages.
+
+    Notes
+    -----
+    The default stage graph is ``prepare -> xtb_preopt -> xtb_sp -> xtb_opt``.
+    DFT workflows then run ``dft_pre_sp -> dft_opt -> solv``; non-DFT workflows
+    run a final ``filter`` stage.
+    """
 
     workflow_name = "mols"
 
@@ -50,6 +90,19 @@ class MolsWorkflow(BaseWorkflow):
         self.select_mols = select_mols
 
     def _input_df(self) -> pd.DataFrame:
+        """Return the molecule workflow input table.
+
+        Returns
+        -------
+        pandas.DataFrame
+            Copy of the input dataframe, CSV contents, or a dataframe built from
+            ``smiles``.
+
+        Raises
+        ------
+        ValueError
+            If no input source was supplied.
+        """
         if self.dataframe is not None:
             return self.dataframe.copy()
         if self.csv_path is not None:
@@ -59,6 +112,14 @@ class MolsWorkflow(BaseWorkflow):
         raise ValueError("MolsWorkflow requires csv_path, dataframe, or smiles")
 
     def _build_targets(self) -> list[WorkflowTarget]:
+        """Build molecule workflow targets.
+
+        Returns
+        -------
+        list of WorkflowTarget
+            ``per_input`` targets carry one input row. ``per_rpos`` targets carry
+            one prepared molecule payload returned by ``create_mol_per_rpos``.
+        """
         df = self._input_df()
         if "smiles" not in df.columns:
             raise ValueError("mols workflow input must contain a 'smiles' column")
@@ -98,6 +159,22 @@ class MolsWorkflow(BaseWorkflow):
         save_dir: Path | None,
         options: ExecutionOptions,
     ) -> pd.DataFrame:
+        """Embed one molecule target into the initial FRUST dataframe.
+
+        Parameters
+        ----------
+        target : WorkflowTarget
+            Molecule target selected for execution.
+        save_dir : pathlib.Path or None
+            Unused for molecule preparation.
+        options : ExecutionOptions
+            Runtime options controlling conformer embedding.
+
+        Returns
+        -------
+        pandas.DataFrame
+            Initial molecule dataframe with atoms and ``coords_embedded``.
+        """
         del save_dir
         payload = target.payload
         if isinstance(payload, pd.DataFrame):
@@ -120,10 +197,12 @@ class MolsWorkflow(BaseWorkflow):
         )
 
     def _step_type_for_target(self, target: WorkflowTarget) -> str | None:
+        """Return the Stepper type for molecule calculations."""
         del target
         return "MOLS"
 
     def _stage_defs(self) -> list[StageDef]:
+        """Return molecule workflow stages."""
         stages = [
             StageDef("prepare", "prepare", kind="prepare"),
             StageDef("xtb_preopt", "xtb_preopt", n_cores=2),
@@ -144,7 +223,39 @@ class MolsWorkflow(BaseWorkflow):
 
 
 class ScreenTSWorkflow(BaseWorkflow):
-    """Workflow for substrate/catalyst screen TS guesses."""
+    """Workflow for substrate/catalyst transition-state screens.
+
+    Parameters
+    ----------
+    csv_path : str or pathlib.Path or None, optional
+        Component CSV accepted by :func:`frust.screen.read`. The table normally
+        contains substrate and catalyst rows with ``role``, ``smiles``, optional
+        ``compound_name``, and optional substrate ``rpos``.
+    dataframe : pandas.DataFrame or None, optional
+        Component dataframe accepted by ``frust.screen.read`` or an already
+        expanded systems dataframe containing ``system_name``,
+        ``substrate_smiles``, ``catalyst_smiles``, and ``rpos``.
+    ts_types : tuple or list of str, optional
+        Built-in TS types to generate. Supported values are ``"TS1"``,
+        ``"TS2"``, ``"TS3"``, and ``"TS4"``.
+    method : MethodPlan or str or None, optional
+        Calculator method plan or registered preset name.
+    n_confs : int or None, optional
+        Number of TS guess conformers generated per target. ``None`` uses the
+        screen TS conformer heuristic.
+    top_n : int, optional
+        Number of rows kept after constrained xTB optimization.
+    dft : bool, optional
+        If ``True``, add Hessian, ``OptTS``, frequency, and solvent DFT stages.
+        If ``False``, stop after xTB ranking/filtering.
+
+    Notes
+    -----
+    Targets are the Cartesian product of expanded systems, requested TS types,
+    and reactive positions. Each target prepares TS guesses through
+    :func:`frust.screen.create_ts_guesses`, writes ``ts_guess.parquet`` when an
+    output directory is available, and then runs the shared TS stage graph.
+    """
 
     workflow_name = "screen_ts"
 
@@ -165,6 +276,15 @@ class ScreenTSWorkflow(BaseWorkflow):
         self.ts_types = tuple(str(ts_type).upper() for ts_type in ts_types)
 
     def _systems(self) -> pd.DataFrame:
+        """Return expanded substrate/catalyst systems.
+
+        Returns
+        -------
+        pandas.DataFrame
+            Expanded systems dataframe. Already-expanded dataframes are copied
+            directly; component tables are normalized with ``frust.screen.read``
+            and expanded with ``frust.screen.expand``.
+        """
         system_cols = {"system_name", "substrate_smiles", "catalyst_smiles", "rpos"}
         if self.dataframe is not None and system_cols.issubset(self.dataframe.columns):
             return self.dataframe.copy()
@@ -174,6 +294,14 @@ class ScreenTSWorkflow(BaseWorkflow):
         return expand_screen(read_screen(source))
 
     def _build_targets(self) -> list[WorkflowTarget]:
+        """Build one TS target per system, TS type, and reactive position.
+
+        Returns
+        -------
+        list of WorkflowTarget
+            Targets whose payload is a one-row systems dataframe with resolved
+            ``ts_type`` and integer ``rpos``.
+        """
         unknown = sorted(set(self.ts_types) - set(BUILTIN_TS_SPECS))
         if unknown:
             supported = ", ".join(sorted(BUILTIN_TS_SPECS))
@@ -208,6 +336,23 @@ class ScreenTSWorkflow(BaseWorkflow):
         save_dir: Path | None,
         options: ExecutionOptions,
     ) -> pd.DataFrame:
+        """Generate TS guesses for one screen target.
+
+        Parameters
+        ----------
+        target : WorkflowTarget
+            One system, TS type, and reactive position.
+        save_dir : pathlib.Path or None
+            Target output directory. When provided, the raw TS guesses are also
+            written as ``ts_guess.parquet`` before calculator stages start.
+        options : ExecutionOptions
+            Runtime options controlling TS guess conformer generation.
+
+        Returns
+        -------
+        pandas.DataFrame
+            TS guess dataframe for the target's TS type.
+        """
         screen_target = target.payload
         ts_type = str(screen_target["ts_type"].iloc[0]).upper()
         guesses = create_ts_guesses(
@@ -222,10 +367,12 @@ class ScreenTSWorkflow(BaseWorkflow):
         return df
 
     def _step_type_for_target(self, target: WorkflowTarget) -> str | None:
+        """Return the target TS type for Stepper dispatch."""
         metadata = target.metadata or {}
         return metadata.get("ts_type")
 
     def _stage_defs(self) -> list[StageDef]:
+        """Return screen TS workflow stages."""
         stages = _ts_init_stages(self.top_n)
         if self.dft:
             stages.extend(_ts_dft_stages())
@@ -235,7 +382,33 @@ class ScreenTSWorkflow(BaseWorkflow):
 
 
 class LegacyTSWorkflow(BaseWorkflow):
-    """Workflow for legacy transformer TS/INT inputs."""
+    """Workflow for legacy transformer TS and INT template inputs.
+
+    Parameters
+    ----------
+    csv_path : str or pathlib.Path
+        Ligand/substrate CSV containing SMILES and optional ``rpos`` values.
+    ts_xyz : str or pathlib.Path
+        Template XYZ file used by the legacy transformer functions. The TS type
+        is inferred from the XYZ comment line unless ``int3=True`` is set.
+    int3 : bool, optional
+        Treat the workflow as an INT3 workflow instead of a TS workflow.
+    method : MethodPlan or str or None, optional
+        Calculator method plan or registered preset name.
+    n_confs : int or None, optional
+        Conformer count passed to ``Stepper.build_initial_df``.
+    top_n : int, optional
+        Number of rows kept after constrained xTB optimization.
+    dft : bool, optional
+        If ``True``, add TS or INT3 DFT continuation stages. If ``False``, stop
+        after xTB ranking/filtering.
+
+    Notes
+    -----
+    This workflow preserves the older template-transformer path based on
+    :func:`frust.utils.mols.create_ts_per_rpos`. For new substrate/catalyst
+    screens, prefer :func:`screen_ts`.
+    """
 
     workflow_name = "legacy_ts"
 
@@ -256,6 +429,7 @@ class LegacyTSWorkflow(BaseWorkflow):
         self.int3 = int3
 
     def _build_targets(self) -> list[WorkflowTarget]:
+        """Build legacy transformer targets from the input CSV and template."""
         df = pd.read_csv(self.csv_path)
         jobs = create_ts_per_rpos(df, str(self.ts_xyz), return_format="list")
         return [
@@ -268,6 +442,19 @@ class LegacyTSWorkflow(BaseWorkflow):
         ]
 
     def _default_step_type(self, job: dict[str, Any]) -> str:
+        """Infer the Stepper type for a legacy transformed target.
+
+        Parameters
+        ----------
+        job : dict
+            Single transformed structure payload.
+
+        Returns
+        -------
+        str
+            ``"INT3"`` when requested, otherwise the TS type inferred from the
+            template XYZ file or generated structure name.
+        """
         if self.int3:
             return "INT3"
         try:
@@ -283,6 +470,22 @@ class LegacyTSWorkflow(BaseWorkflow):
         save_dir: Path | None,
         options: ExecutionOptions,
     ) -> pd.DataFrame:
+        """Embed one legacy TS or INT target into an initial dataframe.
+
+        Parameters
+        ----------
+        target : WorkflowTarget
+            Legacy transformed target.
+        save_dir : pathlib.Path or None
+            Unused for legacy preparation.
+        options : ExecutionOptions
+            Runtime options controlling embedding and TS optimization.
+
+        Returns
+        -------
+        pandas.DataFrame
+            Initial TS or INT dataframe for calculator stages.
+        """
         del save_dir
         step = Stepper(
             step_type=self._step_type_for_target(target),
@@ -300,9 +503,11 @@ class LegacyTSWorkflow(BaseWorkflow):
         )
 
     def _step_type_for_target(self, target: WorkflowTarget) -> str | None:
+        """Return the TS or INT structure type stored in target metadata."""
         return (target.metadata or {}).get("structure_type")
 
     def _stage_defs(self) -> list[StageDef]:
+        """Return legacy TS or INT3 workflow stages."""
         stages = _ts_init_stages(self.top_n)
         if not self.dft:
             stages.append(StageDef("filter", "filter", kind="filter"))
@@ -332,7 +537,50 @@ def mols(
     top_n: int = 10,
     dft: bool = False,
 ) -> MolsWorkflow:
-    """Create a molecule workflow."""
+    """Create a molecule-state workflow.
+
+    Parameters
+    ----------
+    csv_path : str or pathlib.Path or None, optional
+        CSV file with a ``smiles`` column. Optional ``rpos`` values control
+        reactive-position expansion when ``split="per_rpos"``.
+    dataframe : pandas.DataFrame or None, optional
+        In-memory input table with the same columns as ``csv_path``.
+    smiles : list of str or None, optional
+        Quick input for simple molecule workflows.
+    split : {"per_input", "per_rpos"}, optional
+        ``"per_input"`` submits/runs one target per input row. ``"per_rpos"``
+        expands FRUST catalytic-cycle molecule structures per reactive position.
+    select_mols : str or list of str, optional
+        Molecule subset to generate for ``per_rpos`` targets. Common values are
+        ``"all"``, ``"uniques"``, and ``"generics"``.
+    method : MethodPlan or str or None, optional
+        Calculator method plan or preset name such as ``"r2scan-3c"``.
+    n_confs : int or None, optional
+        Conformer count for initial dataframe preparation.
+    top_n : int, optional
+        Number of rows retained by ranking/filtering stages.
+    dft : bool, optional
+        Include DFT optimization and solvent stages when ``True``.
+
+    Returns
+    -------
+    MolsWorkflow
+        Workflow object. Call ``wf.targets()`` to inspect targets, ``wf.run(...)``
+        for local execution, or ``wf.submit(...)`` for cluster submission.
+
+    Examples
+    --------
+    >>> import frust as ft
+    >>> wf = ft.workflows.mols(
+    ...     csv_path="molecules.csv",
+    ...     split="per_rpos",
+    ...     select_mols=["int2", "mol2"],
+    ...     method="r2scan-3c",
+    ...     dft=True,
+    ... )
+    >>> wf.targets()[:2]
+    """
     return MolsWorkflow(
         csv_path=csv_path,
         dataframe=dataframe,
@@ -356,7 +604,44 @@ def screen_ts(
     top_n: int = 10,
     dft: bool = True,
 ) -> ScreenTSWorkflow:
-    """Create a screen TS workflow."""
+    """Create a substrate/catalyst transition-state screen workflow.
+
+    Parameters
+    ----------
+    csv_path : str or pathlib.Path or None, optional
+        Component CSV accepted by ``ft.screen.read(...)``. It should contain
+        substrate and catalyst rows with ``role`` and ``smiles`` columns.
+    dataframe : pandas.DataFrame or None, optional
+        Component dataframe or already-expanded systems dataframe.
+    ts_types : tuple or list of str, optional
+        Built-in TS types to generate, usually some subset of ``"TS1"``,
+        ``"TS2"``, ``"TS3"``, and ``"TS4"``.
+    method : MethodPlan or str or None, optional
+        Calculator method plan or preset name such as ``"r2scan-3c"``.
+    n_confs : int or None, optional
+        Number of TS guess conformers generated per target.
+    top_n : int, optional
+        Number of xTB-ranked TS guesses kept before DFT stages.
+    dft : bool, optional
+        Include Hessian, ``OptTS``, frequency, and solvent stages when ``True``.
+
+    Returns
+    -------
+    ScreenTSWorkflow
+        Workflow object whose targets are combinations of system, TS type, and
+        reactive position.
+
+    Examples
+    --------
+    >>> import frust as ft
+    >>> wf = ft.workflows.screen_ts(
+    ...     csv_path="screen.csv",
+    ...     ts_types=["TS1", "TS4"],
+    ...     method=ft.workflows.methods.preset("r2scan-3c"),
+    ...     dft=True,
+    ... )
+    >>> df = wf.run(targets=[0], out_dir="debug/screen_ts", execution="dft_staged")
+    """
     return ScreenTSWorkflow(
         csv_path=csv_path,
         dataframe=dataframe,
@@ -377,7 +662,40 @@ def legacy_ts(
     top_n: int = 10,
     dft: bool = True,
 ) -> LegacyTSWorkflow:
-    """Create a legacy TS workflow from a transformer template XYZ file."""
+    """Create a legacy template-based TS workflow.
+
+    Parameters
+    ----------
+    csv_path : str or pathlib.Path
+        Ligand/substrate CSV containing a ``smiles`` column and optional
+        ``rpos`` values.
+    ts_xyz : str or pathlib.Path
+        Template XYZ file used by the legacy TS transformer. The template
+        comment line is used to infer the TS type when possible.
+    method : MethodPlan or str or None, optional
+        Calculator method plan or preset name.
+    n_confs : int or None, optional
+        Conformer count for initial TS embedding.
+    top_n : int, optional
+        Number of constrained xTB structures kept before DFT stages.
+    dft : bool, optional
+        Include Hessian, ``OptTS``, frequency, and solvent stages when ``True``.
+
+    Returns
+    -------
+    LegacyTSWorkflow
+        Workflow object for the older transformer/template TS path.
+
+    Examples
+    --------
+    >>> import frust as ft
+    >>> wf = ft.workflows.legacy_ts(
+    ...     csv_path="ligands.csv",
+    ...     ts_xyz="templates/TS3.xyz",
+    ...     method="r2scan-3c",
+    ... )
+    >>> wf.targets()[:1]
+    """
     return LegacyTSWorkflow(
         csv_path=csv_path,
         ts_xyz=ts_xyz,
@@ -397,7 +715,40 @@ def int3(
     top_n: int = 10,
     dft: bool = True,
 ) -> LegacyTSWorkflow:
-    """Create a legacy INT3 workflow from a transformer template XYZ file."""
+    """Create a legacy template-based INT3 workflow.
+
+    Parameters
+    ----------
+    csv_path : str or pathlib.Path
+        Ligand/substrate CSV containing a ``smiles`` column and optional
+        ``rpos`` values.
+    ts_xyz : str or pathlib.Path
+        INT3-compatible template XYZ file used by the legacy transformer path.
+    method : MethodPlan or str or None, optional
+        Calculator method plan or preset name.
+    n_confs : int or None, optional
+        Conformer count for initial INT3 embedding.
+    top_n : int, optional
+        Number of xTB-ranked structures kept before DFT stages.
+    dft : bool, optional
+        Include INT3 DFT optimization, frequency, and solvent stages when
+        ``True``.
+
+    Returns
+    -------
+    LegacyTSWorkflow
+        Workflow object whose ``workflow_name`` is set to ``"int3"``.
+
+    Examples
+    --------
+    >>> import frust as ft
+    >>> wf = ft.workflows.int3(
+    ...     csv_path="ligands.csv",
+    ...     ts_xyz="templates/INT3.xyz",
+    ...     method="r2scan-3c",
+    ... )
+    >>> result = wf.submit(out_dir="runs/int3", cluster=cluster)
+    """
     workflow = LegacyTSWorkflow(
         csv_path=csv_path,
         ts_xyz=ts_xyz,
@@ -412,7 +763,20 @@ def int3(
 
 
 def _ts_init_stages(top_n: int) -> list[StageDef]:
-    """Return common constrained TS initialization stages."""
+    """Return common constrained TS initialization stages.
+
+    Parameters
+    ----------
+    top_n : int
+        Number of constrained xTB-optimized rows to keep before DFT
+        pre-optimization.
+
+    Returns
+    -------
+    list of StageDef
+        ``prepare``, constrained GFNFF preoptimization, xTB ranking,
+        constrained xTB optimization, DFT pre-SP, and constrained DFT pre-opt.
+    """
     return [
         StageDef("prepare", "prepare", kind="prepare"),
         StageDef("xtb_preopt", "xtb_preopt", constraint=True, n_cores=2),
@@ -424,7 +788,13 @@ def _ts_init_stages(top_n: int) -> list[StageDef]:
 
 
 def _ts_dft_stages() -> list[StageDef]:
-    """Return common TS DFT continuation stages."""
+    """Return common TS DFT continuation stages.
+
+    Returns
+    -------
+    list of StageDef
+        Hessian, ``OptTS``, final frequency, and solvent single-point stages.
+    """
     return [
         StageDef("hess", "Hess", read_files=["input.hess"]),
         StageDef("optts", "OptTS", use_last_hess=True),

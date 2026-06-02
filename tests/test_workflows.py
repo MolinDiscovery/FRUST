@@ -205,6 +205,27 @@ class WorkflowExecutionTests(unittest.TestCase):
         self.assertEqual(dependencies[1], "afterok:job-1")
         self.assertEqual(dependencies[2], "afterok:job-2")
 
+    def test_submit_dft_staged_uses_default_resources_when_stage_resources_omitted(self):
+        df = pd.DataFrame({"smiles": ["CN1C=CC=C1"], "rpos": ["2"]})
+        fake = FakeExecutor()
+        cluster = ClusterConfig(backend="slurm", partition="kemi1", log_dir="logs/workflow-test")
+
+        with (
+            tempfile.TemporaryDirectory() as tmp,
+            patch("frust.workflows.factories.create_mol_per_rpos", return_value=[_mol_jobs()[0]]),
+            patch("frust.workflows.core.create_executor", return_value=fake),
+        ):
+            wf = ft.workflows.mols(dataframe=df, split="per_rpos", dft=True)
+            result = wf.submit(out_dir=tmp, cluster=cluster, execution="dft_staged")
+
+        self.assertEqual(result.mode, "mols:dft_staged")
+        self.assertEqual(len(fake.submissions), 3)
+        resource_params = [
+            (params["cpus_per_task"], params["mem_gb"], params["timeout_min"])
+            for params in fake.parameters
+        ]
+        self.assertEqual(resource_params, [(4, 20, 720), (4, 20, 720), (4, 20, 720)])
+
     def test_submit_single_job_submits_one_job_per_target(self):
         df = pd.DataFrame({"smiles": ["CN1C=CC=C1"], "rpos": ["2,3"]})
         fake = FakeExecutor()

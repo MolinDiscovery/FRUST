@@ -98,7 +98,7 @@ can first be tested locally with `wf.run(...)`, then submitted to Slurm with
 
 ```python
 import frust as ft
-from frust.cluster import ClusterConfig, Resources
+from frust.cluster import ClusterConfig
 
 method = ft.workflows.methods.preset("r2scan-3c")
 
@@ -119,6 +119,32 @@ result = wf.submit(
         log_dir="logs/screen_ts",
     ),
     execution="dft_staged",
+)
+```
+
+The workflow object prepares one submitted chain per scientific target. For a
+screen TS workflow, a target is one `TS type + substrate/catalyst system +
+rpos`.
+
+With no `stage_resources`, every submitted job group uses:
+
+```python
+Resources(cpus=4, mem_gb=20, timeout_min=720)
+```
+
+For production DFT stages, pass explicit resources by stage-group name:
+
+```python
+from frust.cluster import Resources
+
+result = wf.submit(
+    out_dir="runs/screen_ts",
+    cluster=ClusterConfig(
+        backend="slurm",
+        partition="kemi1",
+        log_dir="logs/screen_ts",
+    ),
+    execution="dft_staged",
     stage_resources={
         "init": Resources(cpus=24, mem_gb=20, timeout_min=7200),
         "hess": Resources(cpus=8, mem_gb=64, timeout_min=7200),
@@ -129,20 +155,29 @@ result = wf.submit(
 )
 ```
 
-The workflow object prepares one submitted chain per scientific target. For a
-screen TS workflow, a target is one `TS type + substrate/catalyst system +
-rpos`.
-
 | execution | Submitted shape |
 | --- | --- |
 | `single_job` | one job per target |
 | `dft_staged` | one initialization job, then dependent DFT jobs per target |
 | `fully_staged` | one dependent job per stage per target |
 
+| `dft_staged` stage-resource key | Submitted work |
+| --- | --- |
+| `init` | TS guess generation, constrained GFNFF, xTB ranking/optimization, DFT pre-SP, and DFT pre-opt |
+| `hess` | ORCA Hessian/frequency input Hessian stage |
+| `optts` | ORCA `OptTS` stage |
+| `freq` | final frequency check |
+| `solv` | final solvent single point |
+
 !!! tip "Use `dft_staged` for production DFT"
 
     `dft_staged` keeps cheap TS generation and xTB filtering together, then
     gives Hessian, `OptTS`, frequency, and solvent stages their own resources.
+
+!!! info "Default execution mode"
+
+    If `execution` is omitted, DFT workflows use `dft_staged`; non-DFT workflows
+    use `single_job`.
 
 Collect the finished outputs with the same workflow object:
 
