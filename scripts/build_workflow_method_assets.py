@@ -46,7 +46,6 @@ def build_assets() -> list[Path]:
         row_indices=[0, 1],
         show_roles=True,
         show_constraint_distances=True,
-        show_constraint_angles=True,
         columns=2,
         cell_size=(360, 360),
         linked=False,

@@ -9,7 +9,6 @@ from typing import Any
 import numpy as np
 import pandas as pd
 from tooltoad.scene3d import (
-    AngleOverlay,
     AtomHighlight,
     AtomLabel,
     DistanceOverlay,
@@ -274,41 +273,11 @@ def ts_guess_scene_from_dataframe(
     coords_col: str = "coords_embedded",
     show_roles: bool = True,
     show_constraint_distances: bool = False,
-    show_constraint_angles: bool = False,
     columns: int = 2,
     cell_size: tuple[int, int] = (400, 400),
     linked: bool = False,
 ) -> GridScene:
-    """Create a TS-guess scene with optional role and constraint overlays.
-
-    Parameters
-    ----------
-    df
-        Dataframe containing TS-guess rows with ``atoms``, coordinates, and
-        optional ``constraint_roles`` / ``constraint_spec`` metadata.
-    row_indices
-        Optional positional rows to include. When omitted, include all rows.
-    coords_col
-        Coordinate column to render.
-    show_roles
-        Draw labels and highlights for atoms listed in ``constraint_roles``.
-    show_constraint_distances
-        Draw distance constraints from ``constraint_spec`` as cylinders.
-    show_constraint_angles
-        Draw angle constraints from ``constraint_spec`` as orange arcs around
-        the central role atom.
-    columns
-        Number of grid columns.
-    cell_size
-        Grid cell size in pixels.
-    linked
-        Link viewer motion across cells.
-
-    Returns
-    -------
-    tooltoad.scene3d.GridScene
-        Scene ready for rendering with :func:`show_scene`.
-    """
+    """Create a TS-guess scene with optional role and constraint overlays."""
 
     rows = df.iloc[list(row_indices)] if row_indices is not None else df
     cells: list[SceneCell] = []
@@ -325,8 +294,6 @@ def ts_guess_scene_from_dataframe(
                 )
         if show_constraint_distances and isinstance(roles, Mapping):
             overlays.extend(_constraint_distance_overlays(row, roles))
-        if show_constraint_angles and isinstance(roles, Mapping):
-            overlays.extend(_constraint_angle_overlays(row, roles))
 
         cells.append(
             SceneCell(
@@ -559,44 +526,6 @@ def _constraint_distance_overlays(
                 atom1=int(roles[role1]),
                 atom2=int(roles[role2]),
                 label=f"{role1}-{role2}",
-            )
-        )
-    return overlays
-
-
-def _constraint_angle_overlays(
-    row: pd.Series,
-    roles: Mapping[str, Any],
-) -> list[AngleOverlay]:
-    spec = row.get("constraint_spec", [])
-    if isinstance(spec, Mapping):
-        spec = [spec]
-    overlays = []
-    for entry in spec:
-        if not isinstance(entry, Mapping):
-            continue
-        if str(entry.get("kind", "")).lower() != "angle":
-            continue
-        entry_roles = entry.get("roles", [])
-        if (
-            isinstance(entry_roles, (str, bytes))
-            or not isinstance(entry_roles, Sequence)
-            or len(entry_roles) != 3
-        ):
-            continue
-        role1, role2, role3 = (
-            str(entry_roles[0]),
-            str(entry_roles[1]),
-            str(entry_roles[2]),
-        )
-        if role1 not in roles or role2 not in roles or role3 not in roles:
-            continue
-        overlays.append(
-            AngleOverlay(
-                atom1=int(roles[role1]),
-                atom2=int(roles[role2]),
-                atom3=int(roles[role3]),
-                label=f"{role1}-{role2}-{role3}",
             )
         )
     return overlays

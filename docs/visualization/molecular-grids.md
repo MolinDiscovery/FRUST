@@ -98,14 +98,10 @@ scene = ft.vis.ts_guess_scene(
     row_indices=[0],
     show_roles=True,
     show_constraint_distances=True,
-    show_constraint_angles=True,
 )
 
 ft.vis.show_scene(scene)
 ```
-
-Distance constraints are drawn as cylinders. Angle constraints are drawn as
-orange arcs around the central role atom.
 
 ## Reaction Grids
 

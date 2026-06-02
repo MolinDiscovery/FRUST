@@ -16,7 +16,6 @@ from scipy.stats import linregress
 import frust.vis as vis
 from frust.vis import MolTo3DGrid, RxnTo3DGrid, plot_energy_profile, plot_mols
 from frust.vis import (
-    AngleOverlay,
     ArrowOverlay,
     GridScene,
     MoleculeModel,
@@ -115,7 +114,6 @@ class PlotEnergyProfileTests(unittest.TestCase):
         self.assertIs(vis.MolTo3DGrid, MolTo3DGrid)
         self.assertIs(vis.RxnTo3DGrid, RxnTo3DGrid)
         self.assertTrue(callable(vis.reaction_scene_cells))
-        self.assertIs(vis.AngleOverlay, AngleOverlay)
         self.assertIs(vis.ArrowOverlay, ArrowOverlay)
         self.assertIs(vis.ScreenLabelOverlay, ScreenLabelOverlay)
         self.assertTrue(callable(vis.show_scene))
@@ -496,54 +494,6 @@ class SceneAdapterTests(unittest.TestCase):
         self.assertIn("AtomLabel", overlay_types)
         self.assertIn("AtomHighlight", overlay_types)
         self.assertIn("DistanceOverlay", overlay_types)
-
-    def test_ts_guess_scene_adds_angle_overlays(self):
-        df = pd.DataFrame(
-            {
-                "substrate_name": ["furan"],
-                "rpos": [0],
-                "atoms": [["C", "C", "C"]],
-                "coords_embedded": [
-                    [[1.0, 0.0, 0.0], [0.0, 0.0, 0.0], [0.0, 1.0, 0.0]]
-                ],
-                "connectivity_bonds": [[(0, 1), (1, 2)]],
-                "constraint_roles": [{"role1": 0, "center": 1, "role3": 2}],
-                "constraint_spec": [
-                    [{"kind": "angle", "roles": ["role1", "center", "role3"], "value": 90.0}]
-                ],
-            }
-        )
-
-        scene = vis.ts_guess_scene(
-            df,
-            row_indices=[0],
-            show_roles=False,
-            show_constraint_angles=True,
-        )
-
-        overlay_types = {type(overlay).__name__ for overlay in scene.cells[0].overlays}
-        self.assertEqual(overlay_types, {"AngleOverlay"})
-        overlay = scene.cells[0].overlays[0]
-        self.assertEqual((overlay.atom1, overlay.atom2, overlay.atom3), (0, 1, 2))
-        self.assertEqual(overlay.label, "role1-center-role3")
-
-    def test_ts_guess_scene_distance_only_behavior_remains_unchanged(self):
-        df = self.small_molecule_df().iloc[[0]].copy()
-        df["constraint_roles"] = [{"cat_B": 0, "transfer_H": 1}]
-        df["constraint_spec"] = [
-            [{"kind": "distance", "roles": ["cat_B", "transfer_H"], "value": 1.2}]
-        ]
-
-        scene = ts_guess_scene_from_dataframe(
-            df,
-            row_indices=[0],
-            show_roles=False,
-            show_constraint_distances=True,
-            show_constraint_angles=False,
-        )
-
-        overlay_types = [type(overlay).__name__ for overlay in scene.cells[0].overlays]
-        self.assertEqual(overlay_types, ["DistanceOverlay"])
 
 
 if __name__ == "__main__":
