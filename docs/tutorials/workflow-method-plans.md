@@ -109,6 +109,7 @@ ft.vis.ts_guess_scene(
     row_indices=[0, 1],
     show_roles=True,
     show_constraint_distances=True,
+    show_constraint_angles=True,
 )
 ```
 
@@ -122,7 +123,8 @@ ft.vis.ts_guess_scene(
 ></iframe>
 
 The viewer shows the kind of structure the workflow prepares before any xTB or
-DFT calculation runs. Role labels and constraint distances are row-level data:
+DFT calculation runs. Role labels, constraint distances, and constraint angles
+are row-level data:
 they move with the dataframe and are what later constrained stages use.
 
 ## Inspect The Method Plan

@@ -476,11 +476,19 @@ class SceneAdapterTests(unittest.TestCase):
         self.assertEqual(scene.cells[0].models[0].bonds, [(0, 1)])
         self.assertEqual(viewer, "viewer")
 
-    def test_ts_guess_scene_adds_role_and_distance_overlays(self):
+    def test_ts_guess_scene_adds_role_distance_and_angle_overlays(self):
         df = self.small_molecule_df().iloc[[0]].copy()
-        df["constraint_roles"] = [{"cat_B": 0, "transfer_H": 1}]
+        df["atoms"] = [["C", "H", "B"]]
+        df["coords_embedded"] = [
+            [[0.0, 0.0, 0.0], [0.0, 0.0, 1.0], [1.0, 0.0, 1.0]]
+        ]
+        df["connectivity_bonds"] = [[(0, 1), (1, 2)]]
+        df["constraint_roles"] = [{"cat_B": 0, "transfer_H": 1, "pin_B": 2}]
         df["constraint_spec"] = [
-            [{"kind": "distance", "roles": ["cat_B", "transfer_H"], "value": 1.2}]
+            [
+                {"kind": "distance", "roles": ["cat_B", "transfer_H"], "value": 1.2},
+                {"kind": "angle", "roles": ["cat_B", "transfer_H", "pin_B"], "value": 89.48},
+            ]
         ]
 
         scene = ts_guess_scene_from_dataframe(
@@ -488,12 +496,51 @@ class SceneAdapterTests(unittest.TestCase):
             row_indices=[0],
             show_roles=True,
             show_constraint_distances=True,
+            show_constraint_angles=True,
         )
 
         overlay_types = {type(overlay).__name__ for overlay in scene.cells[0].overlays}
         self.assertIn("AtomLabel", overlay_types)
         self.assertIn("AtomHighlight", overlay_types)
         self.assertIn("DistanceOverlay", overlay_types)
+        self.assertIn("AngleOverlay", overlay_types)
+
+        angle_overlay = next(
+            overlay
+            for overlay in scene.cells[0].overlays
+            if type(overlay).__name__ == "AngleOverlay"
+        )
+        self.assertEqual(
+            (angle_overlay.atom1, angle_overlay.atom2, angle_overlay.atom3),
+            (0, 1, 2),
+        )
+        self.assertEqual(angle_overlay.label, "89.5 deg")
+
+    def test_ts_guess_scene_can_show_angles_without_distances(self):
+        df = self.small_molecule_df().iloc[[0]].copy()
+        df["atoms"] = [["C", "H", "B"]]
+        df["coords_embedded"] = [
+            [[0.0, 0.0, 0.0], [0.0, 0.0, 1.0], [1.0, 0.0, 1.0]]
+        ]
+        df["connectivity_bonds"] = [[(0, 1), (1, 2)]]
+        df["constraint_roles"] = [{"cat_B": 0, "transfer_H": 1, "pin_B": 2}]
+        df["constraint_spec"] = [
+            [
+                {"kind": "distance", "roles": ["cat_B", "transfer_H"], "value": 1.2},
+                {"kind": "angle", "roles": ["cat_B", "transfer_H", "pin_B"], "value": 89.48},
+            ]
+        ]
+
+        scene = ts_guess_scene_from_dataframe(
+            df,
+            row_indices=[0],
+            show_roles=False,
+            show_constraint_distances=False,
+            show_constraint_angles=True,
+        )
+
+        overlay_types = {type(overlay).__name__ for overlay in scene.cells[0].overlays}
+        self.assertEqual(overlay_types, {"AngleOverlay"})
 
 
 if __name__ == "__main__":

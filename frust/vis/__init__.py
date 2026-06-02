@@ -18,6 +18,7 @@ _PUBLIC_API: dict[str, tuple[str, str]] = {
     "SceneCell": ("tooltoad.scene3d", "SceneCell"),
     "MoleculeModel": ("tooltoad.scene3d", "MoleculeModel"),
     "VibrationAnimation": ("tooltoad.scene3d", "VibrationAnimation"),
+    "AngleOverlay": ("tooltoad.scene3d", "AngleOverlay"),
     "AtomLabel": ("tooltoad.scene3d", "AtomLabel"),
     "AtomHighlight": ("tooltoad.scene3d", "AtomHighlight"),
     "ArrowOverlay": ("tooltoad.scene3d", "ArrowOverlay"),
@@ -65,6 +66,7 @@ def __dir__() -> list[str]:
 if TYPE_CHECKING:
     from tooltoad.vis import DrawMolSvg, MolTo3DGrid, RxnTo3DGrid
     from tooltoad.scene3d import (
+        AngleOverlay,
         AtomHighlight,
         AtomLabel,
         ArrowOverlay,

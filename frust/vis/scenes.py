@@ -9,6 +9,7 @@ from typing import Any
 import numpy as np
 import pandas as pd
 from tooltoad.scene3d import (
+    AngleOverlay,
     AtomHighlight,
     AtomLabel,
     DistanceOverlay,
@@ -273,11 +274,40 @@ def ts_guess_scene_from_dataframe(
     coords_col: str = "coords_embedded",
     show_roles: bool = True,
     show_constraint_distances: bool = False,
+    show_constraint_angles: bool = False,
     columns: int = 2,
     cell_size: tuple[int, int] = (400, 400),
     linked: bool = False,
 ) -> GridScene:
-    """Create a TS-guess scene with optional role and constraint overlays."""
+    """Create a TS-guess scene with optional role and constraint overlays.
+
+    Parameters
+    ----------
+    df : pandas.DataFrame
+        TS-guess dataframe with atoms, coordinates, ``constraint_roles``, and
+        ``constraint_spec`` columns.
+    row_indices : sequence of int, optional
+        Positional dataframe rows to include. When omitted, all rows are shown.
+    coords_col : str, optional
+        Coordinate column to render.
+    show_roles : bool, optional
+        If ``True``, highlight role atoms and label them by role name.
+    show_constraint_distances : bool, optional
+        If ``True``, draw ``kind="distance"`` entries from ``constraint_spec``.
+    show_constraint_angles : bool, optional
+        If ``True``, label ``kind="angle"`` entries from ``constraint_spec``.
+    columns : int, optional
+        Number of grid columns.
+    cell_size : tuple of int, optional
+        Width and height of each grid cell in pixels.
+    linked : bool, optional
+        Link viewer motion across cells.
+
+    Returns
+    -------
+    tooltoad.scene3d.GridScene
+        Scene ready for rendering with :func:`show_scene`.
+    """
 
     rows = df.iloc[list(row_indices)] if row_indices is not None else df
     cells: list[SceneCell] = []
@@ -294,6 +324,8 @@ def ts_guess_scene_from_dataframe(
                 )
         if show_constraint_distances and isinstance(roles, Mapping):
             overlays.extend(_constraint_distance_overlays(row, roles))
+        if show_constraint_angles and isinstance(roles, Mapping):
+            overlays.extend(_constraint_angle_overlays(row, roles))
 
         cells.append(
             SceneCell(
@@ -506,13 +538,8 @@ def _constraint_distance_overlays(
     row: pd.Series,
     roles: Mapping[str, Any],
 ) -> list[DistanceOverlay]:
-    spec = row.get("constraint_spec", [])
-    if isinstance(spec, Mapping):
-        spec = [spec]
     overlays = []
-    for entry in spec:
-        if not isinstance(entry, Mapping):
-            continue
+    for entry in _constraint_entries(row):
         if str(entry.get("kind", "")).lower() != "distance":
             continue
         entry_roles = entry.get("roles", [])
@@ -529,3 +556,57 @@ def _constraint_distance_overlays(
             )
         )
     return overlays
+
+
+def _constraint_angle_overlays(
+    row: pd.Series,
+    roles: Mapping[str, Any],
+) -> list[AngleOverlay]:
+    overlays = []
+    for entry in _constraint_entries(row):
+        if str(entry.get("kind", "")).lower() != "angle":
+            continue
+        entry_roles = entry.get("roles", [])
+        if not isinstance(entry_roles, Sequence) or len(entry_roles) != 3:
+            continue
+        role1, role2, role3 = (
+            str(entry_roles[0]),
+            str(entry_roles[1]),
+            str(entry_roles[2]),
+        )
+        if role1 not in roles or role2 not in roles or role3 not in roles:
+            continue
+        overlays.append(
+            AngleOverlay(
+                atom1=int(roles[role1]),
+                atom2=int(roles[role2]),
+                atom3=int(roles[role3]),
+                label=_constraint_angle_label(entry),
+            )
+        )
+    return overlays
+
+
+def _constraint_entries(row: pd.Series) -> list[Mapping[str, Any]]:
+    spec = row.get("constraint_spec", [])
+    if isinstance(spec, Mapping):
+        spec = [spec]
+    if not isinstance(spec, Sequence):
+        return []
+    entries = []
+    for entry in spec:
+        if not isinstance(entry, Mapping):
+            continue
+        entries.append(entry)
+    return entries
+
+
+def _constraint_angle_label(entry: Mapping[str, Any]) -> str | None:
+    value = entry.get("value")
+    if value is None:
+        return None
+    try:
+        angle = float(value)
+    except (TypeError, ValueError):
+        return None
+    return f"{angle:.1f} deg"
