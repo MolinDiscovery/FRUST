@@ -1,0 +1,13 @@
+role,smiles
+substrate,CN1C=CC=C1
+substrate,N1(CC2=CC=CC=C2)C=CC=C1
+substrate,CC([Si](N1C=CC=C1)(C(C)C)C(C)C)C
+substrate,C[Si](N1C=CC=C1)(C)C
+substrate,CN1C2=C(C=CC=C2)C=C1
+substrate,C12=CSC=C1OCCO2
+substrate,C1=CC=CO1
+substrate,CC1=CC=CO1
+substrate,CC(C1=CC=CO1)(C)C
+substrate,COC1=CC=CO1
+substrate,C[Si](C)(OC1=CC=CO1)C
+catalyst,BC1=C(N2C(C)(C)CCCC2(C)C)C=CC=C1
