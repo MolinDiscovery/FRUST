@@ -20,6 +20,7 @@ _PUBLIC_API: dict[str, tuple[str, str]] = {
     "VibrationAnimation": ("tooltoad.scene3d", "VibrationAnimation"),
     "AtomLabel": ("tooltoad.scene3d", "AtomLabel"),
     "AtomHighlight": ("tooltoad.scene3d", "AtomHighlight"),
+    "AngleOverlay": ("tooltoad.scene3d", "AngleOverlay"),
     "ArrowOverlay": ("tooltoad.scene3d", "ArrowOverlay"),
     "DistanceOverlay": ("tooltoad.scene3d", "DistanceOverlay"),
     "ScreenLabelOverlay": ("tooltoad.scene3d", "ScreenLabelOverlay"),
@@ -67,6 +68,7 @@ if TYPE_CHECKING:
     from tooltoad.scene3d import (
         AtomHighlight,
         AtomLabel,
+        AngleOverlay,
         ArrowOverlay,
         DistanceOverlay,
         GridScene,
