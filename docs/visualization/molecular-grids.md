@@ -90,7 +90,8 @@ ft.vis.show_scene(scene)
 ```
 
 This is useful when you want to inspect or combine scenes before rendering.
-For example, a TS-guess scene can label role atoms from `constraint_roles`:
+For example, a TS-guess scene can label role atoms from `constraint_roles` and
+constraint distances/angles from `constraint_spec`:
 
 ```python
 scene = ft.vis.ts_guess_scene(
@@ -98,6 +99,7 @@ scene = ft.vis.ts_guess_scene(
     row_indices=[0],
     show_roles=True,
     show_constraint_distances=True,
+    show_constraint_angles=True,
 )
 
 ft.vis.show_scene(scene)
