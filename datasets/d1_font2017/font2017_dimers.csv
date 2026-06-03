@@ -1,0 +1,5 @@
+compound_name,smiles
+TMP_dimer,CC1(C)N(C(C)(C)CCC1)C2=CC=CC=C2[BH-]3[H+][BH-]([H+]3)C4=CC=CC=C4N5C(C)(C)CCCC5(C)C
+pip_dimer,C1(N2CCCCC2)=CC=CC=C1[BH-]3[H+][BH-]([H+]3)C4=CC=CC=C4N5CCCCC5
+NEt_dimer,CCN(CC)C1=CC=CC=C1[BH-]2[H+][BH-]([H+]2)C3=CC=CC=C3N(CC)CC
+NMe_dimer,CN(C)C1=CC=CC=C1[BH-]2[H+][BH-]([H+]2)C3=CC=CC=C3N(C)C
