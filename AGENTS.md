@@ -8,7 +8,7 @@ When writing documentation, prefer "show, then explain" over abstract descriptio
 
 ## User-Facing Docs
 
-For user-facing docs:
+For docs pages, tutorials, guides, README-style pages, and other prose documentation:
 * Start with the practical mental model or concrete artifact the user should understand.
 * Show realistic FRUST inputs and outputs. For dataframe workflows, prefer compact tables that show the relevant columns and values.
 * Keep code examples focused on the action being taught. Avoid long setup or dataframe-construction blocks unless constructing the dataframe is the lesson.
@@ -18,6 +18,14 @@ For user-facing docs:
 * Prefer current FRUST naming conventions in examples, especially `substrate_name` and canonical stage columns such as `*-oc`, while mentioning legacy names only when useful.
 * Use admonitions for important defaults, caveats, or safety notes. Do not use admonitions for maintainer-only details such as how documentation assets are generated.
 * Keep documentation reader-focused. Do not expose repository internals, asset paths, or build details unless the reader needs them to use FRUST.
+
+## Code Documentation And Docstrings
+
+For code docstrings and comments:
+* Use NumPy docstrings for public functions, classes, and methods.
+* Treat public API docstrings as user-facing documentation. The reader is often discovering behavior in an editor or notebook, not in the rendered docs.
+* When a parameter, return column, dataframe value, status, filter, mode, or enum accepts or emits named values, define what each value means near the list in the docstring.
+* Keep inline comments rare and focused on non-obvious implementation details; do not use comments to restate what the code already says.
 
 ## Public API Style
 

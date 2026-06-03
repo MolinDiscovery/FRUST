@@ -104,7 +104,12 @@ class MolsWorkflow(BaseWorkflow):
         Molecule subset forwarded to ``create_mol_per_rpos``. Common values are
         ``"all"``, ``"uniques"``, and ``"generics"``.
     method : MethodPlan or str or None, optional
-        Calculator method plan or registered preset name.
+        Calculator plan for all workflow stages. Accepts ``None`` for the
+        default ``"wb97xd3-631g"`` preset, a preset string, or a custom
+        :class:`frust.workflows.methods.MethodPlan`. Built-in preset strings
+        are ``"r2scan-3c"`` (ORCA r2SCAN-3c composite DFT stages),
+        ``"wb97xd3-631g"`` (default ORCA wB97X-D3/6-31G** workflow), and
+        ``"r2scan-def2svp"`` (ORCA R2SCAN/def2-SVP DFT stages).
     n_confs : int or None, optional
         Conformer count passed to ``Stepper.build_initial_df``.
     top_n : int, optional
@@ -271,7 +276,12 @@ class RawMolsWorkflow(BaseWorkflow):
     smiles : list of str or None, optional
         Direct list of exact molecule SMILES strings.
     method : MethodPlan or str or None, optional
-        Calculator method plan or registered preset name.
+        Calculator plan for all workflow stages. Accepts ``None`` for the
+        default ``"wb97xd3-631g"`` preset, a preset string, or a custom
+        :class:`frust.workflows.methods.MethodPlan`. Built-in preset strings
+        are ``"r2scan-3c"`` (ORCA r2SCAN-3c composite DFT stages),
+        ``"wb97xd3-631g"`` (default ORCA wB97X-D3/6-31G** workflow), and
+        ``"r2scan-def2svp"`` (ORCA R2SCAN/def2-SVP DFT stages).
     n_confs : int or None, optional
         Conformer count passed to ``Stepper.build_initial_df``.
     top_n : int, optional
@@ -415,7 +425,12 @@ class ScreenTSWorkflow(BaseWorkflow):
         Built-in TS types to generate. Supported values are ``"TS1"``,
         ``"TS2"``, ``"TS3"``, and ``"TS4"``.
     method : MethodPlan or str or None, optional
-        Calculator method plan or registered preset name.
+        Calculator plan for all workflow stages. Accepts ``None`` for the
+        default ``"wb97xd3-631g"`` preset, a preset string, or a custom
+        :class:`frust.workflows.methods.MethodPlan`. Built-in preset strings
+        are ``"r2scan-3c"`` (ORCA r2SCAN-3c composite DFT stages),
+        ``"wb97xd3-631g"`` (default ORCA wB97X-D3/6-31G** workflow), and
+        ``"r2scan-def2svp"`` (ORCA R2SCAN/def2-SVP DFT stages).
     n_confs : int or None, optional
         Number of TS guess conformers generated per target. ``None`` uses the
         screen TS conformer heuristic.
@@ -570,7 +585,12 @@ class LegacyTSWorkflow(BaseWorkflow):
     int3 : bool, optional
         Treat the workflow as an INT3 workflow instead of a TS workflow.
     method : MethodPlan or str or None, optional
-        Calculator method plan or registered preset name.
+        Calculator plan for all workflow stages. Accepts ``None`` for the
+        default ``"wb97xd3-631g"`` preset, a preset string, or a custom
+        :class:`frust.workflows.methods.MethodPlan`. Built-in preset strings
+        are ``"r2scan-3c"`` (ORCA r2SCAN-3c composite DFT stages),
+        ``"wb97xd3-631g"`` (default ORCA wB97X-D3/6-31G** workflow), and
+        ``"r2scan-def2svp"`` (ORCA R2SCAN/def2-SVP DFT stages).
     n_confs : int or None, optional
         Conformer count passed to ``Stepper.build_initial_df``.
     top_n : int, optional
@@ -731,7 +751,12 @@ def mols(
         Molecule subset to generate for ``per_rpos`` targets. Common values are
         ``"all"``, ``"uniques"``, and ``"generics"``.
     method : MethodPlan or str or None, optional
-        Calculator method plan or preset name such as ``"r2scan-3c"``.
+        Calculator plan for all workflow stages. Accepts ``None`` for the
+        default ``"wb97xd3-631g"`` preset, a preset string, or a custom
+        :class:`frust.workflows.methods.MethodPlan`. Built-in preset strings
+        are ``"r2scan-3c"`` (ORCA r2SCAN-3c composite DFT stages),
+        ``"wb97xd3-631g"`` (default ORCA wB97X-D3/6-31G** workflow), and
+        ``"r2scan-def2svp"`` (ORCA R2SCAN/def2-SVP DFT stages).
     n_confs : int or None, optional
         Conformer count for initial dataframe preparation.
     top_n : int, optional
@@ -791,7 +816,12 @@ def raw_mols(
     smiles : list of str or None, optional
         Direct list of exact molecule SMILES strings.
     method : MethodPlan or str or None, optional
-        Calculator method plan or preset name such as ``"r2scan-3c"``.
+        Calculator plan for all workflow stages. Accepts ``None`` for the
+        default ``"wb97xd3-631g"`` preset, a preset string, or a custom
+        :class:`frust.workflows.methods.MethodPlan`. Built-in preset strings
+        are ``"r2scan-3c"`` (ORCA r2SCAN-3c composite DFT stages),
+        ``"wb97xd3-631g"`` (default ORCA wB97X-D3/6-31G** workflow), and
+        ``"r2scan-def2svp"`` (ORCA R2SCAN/def2-SVP DFT stages).
     n_confs : int or None, optional
         Conformer count for initial dataframe preparation.
     top_n : int, optional
@@ -850,7 +880,12 @@ def screen_ts(
         Built-in TS types to generate, usually some subset of ``"TS1"``,
         ``"TS2"``, ``"TS3"``, and ``"TS4"``.
     method : MethodPlan or str or None, optional
-        Calculator method plan or preset name such as ``"r2scan-3c"``.
+        Calculator plan for all workflow stages. Accepts ``None`` for the
+        default ``"wb97xd3-631g"`` preset, a preset string, or a custom
+        :class:`frust.workflows.methods.MethodPlan`. Built-in preset strings
+        are ``"r2scan-3c"`` (ORCA r2SCAN-3c composite DFT stages),
+        ``"wb97xd3-631g"`` (default ORCA wB97X-D3/6-31G** workflow), and
+        ``"r2scan-def2svp"`` (ORCA R2SCAN/def2-SVP DFT stages).
     n_confs : int or None, optional
         Number of TS guess conformers generated per target.
     top_n : int, optional
@@ -906,7 +941,12 @@ def legacy_ts(
         Template XYZ file used by the legacy TS transformer. The template
         comment line is used to infer the TS type when possible.
     method : MethodPlan or str or None, optional
-        Calculator method plan or preset name.
+        Calculator plan for all workflow stages. Accepts ``None`` for the
+        default ``"wb97xd3-631g"`` preset, a preset string, or a custom
+        :class:`frust.workflows.methods.MethodPlan`. Built-in preset strings
+        are ``"r2scan-3c"`` (ORCA r2SCAN-3c composite DFT stages),
+        ``"wb97xd3-631g"`` (default ORCA wB97X-D3/6-31G** workflow), and
+        ``"r2scan-def2svp"`` (ORCA R2SCAN/def2-SVP DFT stages).
     n_confs : int or None, optional
         Conformer count for initial TS embedding.
     top_n : int, optional
@@ -958,7 +998,12 @@ def int3(
     ts_xyz : str or pathlib.Path
         INT3-compatible template XYZ file used by the legacy transformer path.
     method : MethodPlan or str or None, optional
-        Calculator method plan or preset name.
+        Calculator plan for all workflow stages. Accepts ``None`` for the
+        default ``"wb97xd3-631g"`` preset, a preset string, or a custom
+        :class:`frust.workflows.methods.MethodPlan`. Built-in preset strings
+        are ``"r2scan-3c"`` (ORCA r2SCAN-3c composite DFT stages),
+        ``"wb97xd3-631g"`` (default ORCA wB97X-D3/6-31G** workflow), and
+        ``"r2scan-def2svp"`` (ORCA R2SCAN/def2-SVP DFT stages).
     n_confs : int or None, optional
         Conformer count for initial INT3 embedding.
     top_n : int, optional

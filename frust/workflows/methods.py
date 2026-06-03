@@ -25,8 +25,9 @@ class CalculatorSpec:
     Parameters
     ----------
     engine : str
-        Calculator engine name. Supported values are ``"xtb"``, ``"gxtb"``,
-        and ``"orca"``.
+        Calculator engine name. Supported values are ``"xtb"`` for the xTB
+        wrapper, ``"gxtb"`` for the OET g-xTB wrapper, and ``"orca"`` for ORCA
+        calculations.
     options : dict
         Options forwarded to the corresponding :class:`frust.stepper.Stepper`
         method.
@@ -372,8 +373,15 @@ def preset(name: str) -> MethodPlan:
     ----------
     name : str
         Preset name. Matching is case-insensitive and treats underscores like
-        hyphens. Built-ins include ``"r2scan-3c"``, ``"wb97xd3-631g"``, and
-        ``"r2scan-def2svp"``.
+        hyphens. Built-in values are:
+
+        - ``"r2scan-3c"``: use the ORCA ``r2SCAN-3c`` composite method for DFT
+          stages.
+        - ``"wb97xd3-631g"``: use ORCA ``wB97X-D3`` with ``6-31G**`` for most
+          DFT stages and ``6-31+G**`` for the solvent single-point stage. This
+          is the workflow default when ``method=None``.
+        - ``"r2scan-def2svp"``: use ORCA ``R2SCAN`` with the ``def2-SVP`` basis
+          for DFT stages.
 
     Returns
     -------

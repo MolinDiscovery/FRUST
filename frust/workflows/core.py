@@ -135,9 +135,13 @@ class BaseWorkflow:
     Parameters
     ----------
     method : MethodPlan or str or None, optional
-        Calculator method plan. Strings are resolved with
-        :func:`frust.workflows.methods.preset`; ``None`` uses the built-in
-        ``"wb97xd3-631g"`` preset.
+        Calculator plan for all workflow stages. Use ``None`` for the default
+        ``"wb97xd3-631g"`` preset, a string preset name resolved with
+        :func:`frust.workflows.methods.preset`, or a custom
+        :class:`frust.workflows.methods.MethodPlan`. Built-in preset strings
+        are ``"r2scan-3c"`` (ORCA r2SCAN-3c composite DFT stages),
+        ``"wb97xd3-631g"`` (default ORCA wB97X-D3/6-31G** workflow), and
+        ``"r2scan-def2svp"`` (ORCA R2SCAN/def2-SVP DFT stages).
     n_confs : int or None, optional
         Conformer count forwarded to the workflow's initial dataframe
         preparation. ``None`` lets the relevant FRUST builder choose its
@@ -802,7 +806,10 @@ def _coerce_method(method: MethodPlan | str | None) -> MethodPlan:
     ----------
     method : MethodPlan or str or None
         Explicit method plan, registered preset name, or ``None`` for the
-        workflow default.
+        workflow default. Built-in preset strings are ``"r2scan-3c"`` for ORCA
+        r2SCAN-3c composite DFT stages, ``"wb97xd3-631g"`` for the default ORCA
+        wB97X-D3/6-31G** workflow, and ``"r2scan-def2svp"`` for ORCA
+        R2SCAN/def2-SVP DFT stages.
 
     Returns
     -------
