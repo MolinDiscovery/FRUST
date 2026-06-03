@@ -18,6 +18,7 @@ _PUBLIC_MODULES: dict[str, str] = {
 
 _PUBLIC_API: dict[str, tuple[str, str]] = {
     "mols": ("frust.workflows.factories", "mols"),
+    "raw_mols": ("frust.workflows.factories", "raw_mols"),
     "screen_ts": ("frust.workflows.factories", "screen_ts"),
     "legacy_ts": ("frust.workflows.factories", "legacy_ts"),
     "int3": ("frust.workflows.factories", "int3"),
@@ -76,5 +77,5 @@ def __dir__() -> list[str]:
 if TYPE_CHECKING:
     from frust.workflows import methods
     from frust.workflows.core import WorkflowTarget
-    from frust.workflows.factories import int3, legacy_ts, mols, screen_ts
+    from frust.workflows.factories import int3, legacy_ts, mols, raw_mols, screen_ts
     from frust.workflows.methods import CalculatorSpec, MethodPlan

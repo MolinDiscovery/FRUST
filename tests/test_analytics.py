@@ -127,7 +127,7 @@ class AnalyticsTests(unittest.TestCase):
                 "rpos": [1, 2, 3],
                 "Freq-vibs": [
                     [{"frequency": -250.0}, {"frequency": 40.0}],
-                    [{"frequency": -35.0}, {"frequency": 20.0}],
+                    [{"frequency": -35.0}, {"frequency": 5.0}],
                     [{"frequency": 15.0}, {"frequency": 42.0}],
                 ],
             }

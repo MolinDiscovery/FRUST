@@ -30,6 +30,59 @@ from frust.workflows.methods import MethodPlan
 SplitMode = Literal["per_input", "per_rpos"]
 
 
+def _row_label(row: pd.Series, position: int, columns: tuple[str, ...]) -> str:
+    """Return the first non-empty label value from a dataframe row."""
+    for column in columns:
+        if column not in row.index:
+            continue
+        value = row[column]
+        if pd.isna(value):
+            continue
+        text = str(value).strip()
+        if text:
+            return text
+    return f"row_{position:03d}"
+
+
+def _unique_sanitized_tags(labels: list[str]) -> list[str]:
+    """Return scheduler-safe unique tags while preserving input order."""
+    used: set[str] = set()
+    next_suffix: dict[str, int] = {}
+    tags: list[str] = []
+    for label in labels:
+        base = sanitize_tag(label)
+        candidate = base
+        suffix = next_suffix.get(base, 1)
+        while candidate in used:
+            candidate = f"{base}_{suffix:03d}"
+            suffix += 1
+        next_suffix[base] = suffix
+        used.add(candidate)
+        tags.append(candidate)
+    return tags
+
+
+def _molecule_stage_defs(*, top_n: int, dft: bool) -> list[StageDef]:
+    """Return the shared molecule stage graph."""
+    stages = [
+        StageDef("prepare", "prepare", kind="prepare"),
+        StageDef("xtb_preopt", "xtb_preopt", n_cores=2),
+        StageDef("xtb_sp", "xtb_sp", n_cores=2),
+        StageDef("xtb_opt", "xtb_opt", lowest=top_n, n_cores=2),
+    ]
+    if dft:
+        stages.extend(
+            [
+                StageDef("dft_pre_sp", "DFT-pre-SP"),
+                StageDef("dft_opt", "DFT-Opt", lowest=1),
+                StageDef("solv", "DFT-SP"),
+            ]
+        )
+    else:
+        stages.append(StageDef("filter", "filter", kind="filter"))
+    return stages
+
+
 class MolsWorkflow(BaseWorkflow):
     """Workflow for catalytic-cycle molecular states.
 
@@ -203,23 +256,146 @@ class MolsWorkflow(BaseWorkflow):
 
     def _stage_defs(self) -> list[StageDef]:
         """Return molecule workflow stages."""
-        stages = [
-            StageDef("prepare", "prepare", kind="prepare"),
-            StageDef("xtb_preopt", "xtb_preopt", n_cores=2),
-            StageDef("xtb_sp", "xtb_sp", n_cores=2),
-            StageDef("xtb_opt", "xtb_opt", lowest=self.top_n, n_cores=2),
-        ]
-        if self.dft:
-            stages.extend(
-                [
-                    StageDef("dft_pre_sp", "DFT-pre-SP"),
-                    StageDef("dft_opt", "DFT-Opt", lowest=1),
-                    StageDef("solv", "DFT-SP"),
-                ]
+        return _molecule_stage_defs(top_n=self.top_n, dft=self.dft)
+
+
+class RawMolsWorkflow(BaseWorkflow):
+    """Workflow for explicit molecule SMILES without FRUST cycle expansion.
+
+    Parameters
+    ----------
+    csv_path : str or pathlib.Path or None, optional
+        CSV file containing one exact molecule per row in a ``smiles`` column.
+    dataframe : pandas.DataFrame or None, optional
+        In-memory input table with the same columns as ``csv_path``.
+    smiles : list of str or None, optional
+        Direct list of exact molecule SMILES strings.
+    method : MethodPlan or str or None, optional
+        Calculator method plan or registered preset name.
+    n_confs : int or None, optional
+        Conformer count passed to ``Stepper.build_initial_df``.
+    top_n : int, optional
+        Number of rows kept after ranking/filtering stages.
+    dft : bool, optional
+        If ``True``, add DFT optimization and solvent stages. If ``False``, end
+        with a lowest-energy filter after xTB stages.
+
+    Notes
+    -----
+    This workflow treats each input SMILES as the structure to calculate. It
+    does not call ``create_mol_per_rpos`` and does not support ``select_mols``.
+    """
+
+    workflow_name = "raw_mols"
+
+    def __init__(
+        self,
+        *,
+        csv_path: str | Path | None = None,
+        dataframe: pd.DataFrame | None = None,
+        smiles: list[str] | None = None,
+        method: MethodPlan | str | None = None,
+        n_confs: int | None = None,
+        top_n: int = 10,
+        dft: bool = False,
+    ) -> None:
+        super().__init__(method=method, n_confs=n_confs, top_n=top_n, dft=dft)
+        self.csv_path = csv_path
+        self.dataframe = dataframe
+        self.smiles = smiles
+
+    def _input_df(self) -> pd.DataFrame:
+        """Return the raw molecule workflow input table."""
+        if self.dataframe is not None:
+            return self.dataframe.copy()
+        if self.csv_path is not None:
+            return pd.read_csv(self.csv_path)
+        if self.smiles is not None:
+            return pd.DataFrame({"smiles": list(self.smiles)})
+        raise ValueError("RawMolsWorkflow requires csv_path, dataframe, or smiles")
+
+    def _normalized_input_df(self) -> pd.DataFrame:
+        """Return validated raw molecule inputs with stable labels."""
+        df = self._input_df().copy()
+        if "smiles" not in df.columns:
+            raise ValueError("raw_mols workflow input must contain a 'smiles' column")
+        if df["smiles"].isna().any():
+            raise ValueError("raw_mols workflow input contains missing SMILES values")
+
+        if "compound_name" in df.columns:
+            if "substrate_name" not in df.columns:
+                df["substrate_name"] = df["compound_name"]
+            else:
+                existing = df["substrate_name"].astype("string").fillna("").str.strip()
+                missing = existing.eq("")
+                df.loc[missing, "substrate_name"] = df.loc[missing, "compound_name"]
+
+        if "substrate_name" not in df.columns:
+            df["substrate_name"] = [
+                _row_label(row, pos, ("compound_name", "name", "custom_name"))
+                for pos, (_, row) in enumerate(df.iterrows())
+            ]
+        return df
+
+    def _build_targets(self) -> list[WorkflowTarget]:
+        """Build one raw molecule target per input row."""
+        df = self._normalized_input_df()
+        labels = [
+            _row_label(
+                row,
+                pos,
+                ("compound_name", "substrate_name", "name", "custom_name"),
             )
-        else:
-            stages.append(StageDef("filter", "filter", kind="filter"))
-        return stages
+            for pos, (_, row) in enumerate(df.iterrows())
+        ]
+        tags = _unique_sanitized_tags(labels)
+        targets: list[WorkflowTarget] = []
+        for pos, ((idx, row), tag) in enumerate(zip(df.iterrows(), tags)):
+            payload = pd.DataFrame([row]).reset_index(drop=True)
+            targets.append(
+                WorkflowTarget(
+                    tag=tag,
+                    payload=payload,
+                    metadata={
+                        "kind": "raw_molecule",
+                        "input_index": idx,
+                        "input_position": int(pos),
+                        "smiles": row["smiles"],
+                    },
+                )
+            )
+        return targets
+
+    def _prepare_initial_df(
+        self,
+        target: WorkflowTarget,
+        *,
+        save_dir: Path | None,
+        options: ExecutionOptions,
+    ) -> pd.DataFrame:
+        """Embed one exact molecule target into the initial FRUST dataframe."""
+        del save_dir
+        step = Stepper(
+            step_type="MOLS",
+            n_cores=options.n_cores,
+            memory_gb=options.mem_gb,
+            debug=options.debug,
+            save_output_dir=False,
+        )
+        return step.build_initial_df(
+            target.payload,
+            n_confs=self.n_confs,
+            n_cores=options.n_cores,
+        )
+
+    def _step_type_for_target(self, target: WorkflowTarget) -> str | None:
+        """Return the Stepper type for raw molecule calculations."""
+        del target
+        return "MOLS"
+
+    def _stage_defs(self) -> list[StageDef]:
+        """Return raw molecule workflow stages."""
+        return _molecule_stage_defs(top_n=self.top_n, dft=self.dft)
 
 
 class ScreenTSWorkflow(BaseWorkflow):
@@ -587,6 +763,63 @@ def mols(
         smiles=smiles,
         split=split,
         select_mols=select_mols,
+        method=method,
+        n_confs=n_confs,
+        top_n=top_n,
+        dft=dft,
+    )
+
+
+def raw_mols(
+    *,
+    csv_path: str | Path | None = None,
+    dataframe: pd.DataFrame | None = None,
+    smiles: list[str] | None = None,
+    method: MethodPlan | str | None = None,
+    n_confs: int | None = None,
+    top_n: int = 10,
+    dft: bool = False,
+) -> RawMolsWorkflow:
+    """Create a raw molecule workflow.
+
+    Parameters
+    ----------
+    csv_path : str or pathlib.Path or None, optional
+        CSV file containing one exact molecule per row in a ``smiles`` column.
+    dataframe : pandas.DataFrame or None, optional
+        In-memory input table with the same columns as ``csv_path``.
+    smiles : list of str or None, optional
+        Direct list of exact molecule SMILES strings.
+    method : MethodPlan or str or None, optional
+        Calculator method plan or preset name such as ``"r2scan-3c"``.
+    n_confs : int or None, optional
+        Conformer count for initial dataframe preparation.
+    top_n : int, optional
+        Number of rows retained by ranking/filtering stages.
+    dft : bool, optional
+        Include DFT optimization and solvent stages when ``True``.
+
+    Returns
+    -------
+    RawMolsWorkflow
+        Workflow object. Call ``wf.targets()`` to inspect one target per input
+        molecule, ``wf.run(...)`` for local execution, or ``wf.submit(...)`` for
+        cluster submission.
+
+    Examples
+    --------
+    >>> import frust as ft
+    >>> wf = ft.workflows.raw_mols(
+    ...     csv_path="raw_dimers.csv",
+    ...     method="r2scan-3c",
+    ...     dft=True,
+    ... )
+    >>> [target.tag for target in wf.targets()]
+    """
+    return RawMolsWorkflow(
+        csv_path=csv_path,
+        dataframe=dataframe,
+        smiles=smiles,
         method=method,
         n_confs=n_confs,
         top_n=top_n,

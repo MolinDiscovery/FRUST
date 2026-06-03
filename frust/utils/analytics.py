@@ -161,10 +161,21 @@ def inspect_ts_vibrations(
         Explicit vibration column. If omitted, the latest non-missing
         vibration column is selected per dataframe.
     status : str, optional
-        Filter rows by ``"all"``, ``"review"``, ``"problems"``,
-        ``"first_order"``, ``"minimum"``, ``"higher_order"``, or
-        ``"missing_vibs"``. ``"review"`` and ``"problems"`` include all
-        non-first-order rows plus flagged first-order rows.
+        Filter rows by inspection status. Accepted values are:
+
+        - ``"all"``: return every inspected row.
+        - ``"review"``: return rows that need human inspection, meaning all
+          non-first-order rows plus first-order rows with review flags.
+        - ``"problems"``: alias for ``"review"``.
+        - ``"first_order"``: return rows with exactly one imaginary
+          frequency. This is the expected frequency pattern for a first-order
+          transition state, although flagged rows may still need review.
+        - ``"minimum"``: return rows with no imaginary frequencies, which are
+          optimized minima rather than transition states.
+        - ``"higher_order"``: return rows with more than one imaginary
+          frequency, indicating a higher-order saddle point.
+        - ``"missing_vibs"``: return rows where no usable vibration data are
+          available.
     weak_imag_threshold : float, optional
         Flag first-order rows whose imaginary frequency magnitude is below this
         value in cm^-1.
@@ -180,7 +191,12 @@ def inspect_ts_vibrations(
     pandas.DataFrame
         Compact inspection report. Aggregate counts are stored in
         ``report.attrs["summary"]`` and selected vibration columns in
-        ``report.attrs["vibration_columns"]``.
+        ``report.attrs["vibration_columns"]``. The ``status`` column uses the
+        row classifications described under ``status`` above. The ``flags``
+        column uses ``"weak_imag"`` when the single imaginary frequency is
+        smaller than ``weak_imag_threshold`` in magnitude, and
+        ``"very_low_pos"`` when the lowest non-negative frequency is below
+        ``low_pos_threshold``.
     """
     status = str(status).lower()
     allowed_status = {

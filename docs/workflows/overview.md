@@ -85,6 +85,52 @@ This layer keeps three decisions separate:
 | calculator choices | `ft.workflows.methods.preset("r2scan-3c")` |
 | local or cluster execution | `wf.run(...)` or `wf.submit(...)` |
 
+For an input where each SMILES is already the exact molecule to calculate, use
+`raw_mols`:
+
+```csv
+compound_name,smiles
+piperidine_dimer,C1(N2CCCCC2)=CC=CC=C1[BH-]3[H+][BH-]([H+]3)C4=CC=CC=C4N5CCCCC5
+diethylamino_dimer,CCN(CC)C1=CC=CC=C1[BH-]2[H+][BH-]([H+]2)C3=CC=CC=C3N(CC)CC
+dimethylamino_dimer,CN(C)C1=CC=CC=C1[BH-]2[H+][BH-]([H+]2)C3=CC=CC=C3N(C)C
+```
+
+```python
+import frust as ft
+from frust import ClusterConfig, Resources
+
+cluster = ClusterConfig(
+    backend="slurm",
+    partition="kemi1",
+    log_dir="logs/raw_dimers_r2scan3c",
+)
+
+wf = ft.workflows.raw_mols(
+    csv_path="raw_dimers.csv",
+    method="r2scan-3c",
+    n_confs=None,
+    top_n=10,
+    dft=True,
+)
+
+result = wf.submit(
+    out_dir="runs/raw_dimers_r2scan3c",
+    cluster=cluster,
+    execution="dft_staged",
+    stage_resources={
+        "init": Resources(cpus=24, mem_gb=20, timeout_min=7200),
+        "dft_opt": Resources(cpus=24, mem_gb=20, timeout_min=7200),
+        "solv": Resources(cpus=24, mem_gb=20, timeout_min=3600),
+    },
+)
+```
+
+!!! note "Raw molecules versus generated molecule states"
+
+    Use `ft.workflows.raw_mols(...)` when the `smiles` value is the molecule to
+    calculate. Use `ft.workflows.mols(..., select_mols=...)` when FRUST should
+    generate catalytic-cycle structures such as `dimer`, `int2`, or `mol2`.
+
 See [Workflow Method Plans](workflow-methods.md) for the full pattern.
 
 ### 2. High-Level Pipelines

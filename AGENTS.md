@@ -12,6 +12,7 @@ For user-facing docs:
 * Start with the practical mental model or concrete artifact the user should understand.
 * Show realistic FRUST inputs and outputs. For dataframe workflows, prefer compact tables that show the relevant columns and values.
 * Keep code examples focused on the action being taught. Avoid long setup or dataframe-construction blocks unless constructing the dataframe is the lesson.
+* When documenting user-facing status, filter, mode, or enum values, define what each value means near the list. Do not assume names such as `review`, `problems`, or `first_order` are self-explanatory.
 * Use example output blocks, directory trees, before/after snippets, and small mapping tables to make behavior obvious.
 * Explain just enough around the example so the user can generalize it.
 * Prefer current FRUST naming conventions in examples, especially `substrate_name` and canonical stage columns such as `*-oc`, while mentioning legacy names only when useful.

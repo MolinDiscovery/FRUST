@@ -48,6 +48,7 @@ class PublicApiTests(unittest.TestCase):
         from frust.vis import ArrowOverlay, ScreenLabelOverlay
         from frust.vis import reaction_scene_cells
         from frust.workflows import mols as workflow_mols
+        from frust.workflows import raw_mols as workflow_raw_mols
         from frust.workflows import methods as workflow_methods
 
         expected = {
@@ -122,6 +123,8 @@ class PublicApiTests(unittest.TestCase):
         self.assertIs(ft.workflows, workflows_direct)
         self.assertIs(workflows, workflows_direct)
         self.assertIs(ft.workflows.mols, workflow_mols)
+        self.assertIs(ft.workflows.raw_mols, workflow_raw_mols)
+        self.assertNotIn("raw_mols", ft.__all__)
         self.assertIs(ft.workflows.methods, workflow_methods)
         self.assertIs(ft.pipelines, pipelines_direct)
         self.assertIs(ft.screen, screen_direct)

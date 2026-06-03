@@ -119,6 +119,25 @@ class WorkflowTargetTests(unittest.TestCase):
         self.assertEqual([target.tag for target in targets], ["int2_rpos_2", "int2_rpos_3"])
         self.assertEqual(targets[0].payload, _mol_jobs()[0])
 
+    def test_raw_mols_targets_use_exact_smiles_payloads(self):
+        df = pd.DataFrame(
+            {
+                "compound_name": ["cat A", "cat_A", "cat A"],
+                "smiles": ["CCO", "CCN", "CCC"],
+            }
+        )
+        with patch("frust.workflows.factories.create_mol_per_rpos") as create:
+            wf = ft.workflows.raw_mols(dataframe=df)
+            targets = wf.targets()
+
+        create.assert_not_called()
+        self.assertEqual([target.tag for target in targets], ["cat_A", "cat_A_001", "cat_A_002"])
+        self.assertEqual([target.payload.loc[0, "smiles"] for target in targets], ["CCO", "CCN", "CCC"])
+        self.assertEqual(
+            [target.payload.loc[0, "substrate_name"] for target in targets],
+            ["cat A", "cat_A", "cat A"],
+        )
+
     def test_screen_ts_targets_expand_ts_type_system_and_rpos(self):
         wf = ft.workflows.screen_ts(dataframe=_screen_df(), ts_types=["TS1", "TS4"])
         targets = wf.targets()
@@ -172,6 +191,40 @@ class WorkflowExecutionTests(unittest.TestCase):
         gxtb_calls = [call for call in FakeStepper.calls if call[0] == "gxtb"]
         self.assertEqual(gxtb_calls[0][2], {})
 
+    def test_raw_mols_local_run_writes_staged_parquets_and_dispatches_method(self):
+        df = pd.DataFrame({"compound_name": ["raw dimer"], "smiles": ["CCO"]})
+        method = methods.preset("r2scan-3c").replace(
+            xtb_sp=methods.gxtb(job="sp"),
+            xtb_opt=methods.gxtb(job="opt"),
+        )
+        with tempfile.TemporaryDirectory() as tmp:
+            with (
+                patch("frust.workflows.factories.create_mol_per_rpos") as create,
+                patch("frust.workflows.factories.Stepper", FakeStepper),
+                patch("frust.workflows.core.Stepper", FakeStepper),
+            ):
+                wf = ft.workflows.raw_mols(dataframe=df, method=method, dft=True)
+                out = wf.run(
+                    targets=[0],
+                    out_dir=tmp,
+                    execution="dft_staged",
+                    n_cores=3,
+                    mem_gb=9,
+                )
+
+            create.assert_not_called()
+            target_dir = Path(tmp) / "raw_dimer"
+            self.assertTrue((target_dir / "init.parquet").exists())
+            self.assertTrue((target_dir / "init.dft_opt.parquet").exists())
+            self.assertTrue((target_dir / "init.dft_opt.solv.parquet").exists())
+
+        self.assertEqual(len(out), 1)
+        engines = [call[0] for call in FakeStepper.calls]
+        self.assertIn("gxtb", engines)
+        build_calls = [call for call in FakeStepper.calls if call[0] == "build_initial_df"]
+        payload = build_calls[0][1][0]
+        self.assertEqual(payload.loc[0, "substrate_name"], "raw dimer")
+
     def test_submit_dft_staged_submits_dependent_groups(self):
         df = pd.DataFrame({"smiles": ["CN1C=CC=C1"], "rpos": ["2"]})
         fake = FakeExecutor()
@@ -205,6 +258,38 @@ class WorkflowExecutionTests(unittest.TestCase):
         self.assertEqual(dependencies[1], "afterok:job-1")
         self.assertEqual(dependencies[2], "afterok:job-2")
 
+    def test_raw_mols_submit_dft_staged_submits_dependent_groups(self):
+        df = pd.DataFrame({"compound_name": ["raw"], "smiles": ["CCO"]})
+        fake = FakeExecutor()
+        cluster = ClusterConfig(backend="slurm", partition="kemi1", log_dir="logs/workflow-test")
+
+        with (
+            tempfile.TemporaryDirectory() as tmp,
+            patch("frust.workflows.core.create_executor", return_value=fake),
+        ):
+            wf = ft.workflows.raw_mols(dataframe=df, dft=True)
+            result = wf.submit(
+                out_dir=tmp,
+                cluster=cluster,
+                execution="dft_staged",
+                stage_resources={
+                    "init": Resources(cpus=5, mem_gb=11, timeout_min=120),
+                    "dft_opt": Resources(cpus=7, mem_gb=13, timeout_min=240),
+                    "solv": Resources(cpus=3, mem_gb=6, timeout_min=60),
+                },
+            )
+
+        self.assertEqual(result.mode, "raw_mols:dft_staged")
+        self.assertEqual(result.tags, ["raw"])
+        self.assertEqual(len(fake.submissions), 3)
+        dependencies = [
+            params.get("slurm_additional_parameters", {}).get("dependency")
+            for params in fake.parameters
+        ]
+        self.assertEqual(dependencies[0], None)
+        self.assertEqual(dependencies[1], "afterok:job-1")
+        self.assertEqual(dependencies[2], "afterok:job-2")
+
     def test_submit_dft_staged_uses_default_resources_when_stage_resources_omitted(self):
         df = pd.DataFrame({"smiles": ["CN1C=CC=C1"], "rpos": ["2"]})
         fake = FakeExecutor()
@@ -219,6 +304,26 @@ class WorkflowExecutionTests(unittest.TestCase):
             result = wf.submit(out_dir=tmp, cluster=cluster, execution="dft_staged")
 
         self.assertEqual(result.mode, "mols:dft_staged")
+        self.assertEqual(len(fake.submissions), 3)
+        resource_params = [
+            (params["cpus_per_task"], params["mem_gb"], params["timeout_min"])
+            for params in fake.parameters
+        ]
+        self.assertEqual(resource_params, [(4, 20, 720), (4, 20, 720), (4, 20, 720)])
+
+    def test_raw_mols_submit_uses_default_resources_when_stage_resources_omitted(self):
+        df = pd.DataFrame({"compound_name": ["raw"], "smiles": ["CCO"]})
+        fake = FakeExecutor()
+        cluster = ClusterConfig(backend="slurm", partition="kemi1", log_dir="logs/workflow-test")
+
+        with (
+            tempfile.TemporaryDirectory() as tmp,
+            patch("frust.workflows.core.create_executor", return_value=fake),
+        ):
+            wf = ft.workflows.raw_mols(dataframe=df, dft=True)
+            result = wf.submit(out_dir=tmp, cluster=cluster, execution="dft_staged")
+
+        self.assertEqual(result.mode, "raw_mols:dft_staged")
         self.assertEqual(len(fake.submissions), 3)
         resource_params = [
             (params["cpus_per_task"], params["mem_gb"], params["timeout_min"])
@@ -242,6 +347,23 @@ class WorkflowExecutionTests(unittest.TestCase):
         self.assertEqual(result.mode, "mols:single_job")
         self.assertEqual(len(result.tags), 2)
         self.assertEqual(len(fake.submissions), 2)
+
+    def test_raw_mols_validates_input_table(self):
+        with self.assertRaisesRegex(ValueError, "smiles"):
+            ft.workflows.raw_mols(dataframe=pd.DataFrame({"compound_name": ["raw"]})).targets()
+
+        with self.assertRaisesRegex(ValueError, "missing SMILES"):
+            ft.workflows.raw_mols(
+                dataframe=pd.DataFrame({"compound_name": ["raw"], "smiles": [pd.NA]})
+            ).targets()
+
+    def test_raw_mols_invalid_smiles_fails_during_prepare(self):
+        wf = ft.workflows.raw_mols(
+            dataframe=pd.DataFrame({"compound_name": ["bad"], "smiles": ["not_a_smiles"]})
+        )
+
+        with self.assertRaisesRegex(ValueError, "Invalid SMILES"):
+            wf.run(targets=[0], execution="single_job", n_cores=1, mem_gb=1)
 
 
 if __name__ == "__main__":
