@@ -180,8 +180,10 @@ For the `screen_ts` workflow above, `dft_staged` uses TS-stage resource groups:
 | `solv` | `solv` | `solv` | `orca` | `r2SCAN-3c TightSCF SP NoSym` |
 
 For `ft.workflows.raw_mols(..., dft=True)`, the same method preset would show
-`init -> dft_opt -> solv` groups instead. Raw molecule workflows do not run
-the TS-only `hess`, `optts`, or `freq` stages.
+`init -> dft_opt -> freq -> solv` groups instead. Raw molecule workflows do not
+run the TS-only `hess` or `optts` stages. They do run `freq` after `dft_opt` so
+thermochemistry, including Gibbs energies, is available for the optimized
+molecule.
 
 ### Replace xTB Stages With g-xTB
 

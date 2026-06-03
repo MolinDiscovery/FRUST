@@ -92,10 +92,13 @@ stages are molecule stages:
 | `init` | `xtb_opt` | `xtb_opt` | `xtb` | `gfn=2 opt` |
 | `init` | `dft_pre_sp` | `dft_pre_sp` | `orca` | `r2SCAN-3c TightSCF SP NoSym` |
 | `dft_opt` | `dft_opt` | `dft_opt` | `orca` | `r2SCAN-3c TightSCF SlowConv Opt NoSym` |
+| `freq` | `freq` | `freq` | `orca` | `r2SCAN-3c TightSCF SlowConv Freq NoSym` |
 | `solv` | `solv` | `solv` | `orca` | `r2SCAN-3c TightSCF SP NoSym` |
 
-The same preset also contains `hess`, `optts`, and `freq`, but raw molecule
-workflows do not run those TS-only stages.
+The same preset also contains `hess` and `optts`, but raw molecule workflows do
+not run those TS-only stages. The `freq` row is a normal minimum-frequency
+calculation after `dft_opt`, so Gibbs-energy columns can be parsed from the
+optimized molecule.
 
 Replace individual stages when you want a different engine or options:
 
@@ -164,8 +167,8 @@ result = wf.submit(
 
 Use `wf.show_stages(execution="dft_staged")` and read the `group` column to see
 the resource keys for a specific workflow. A raw molecule DFT workflow uses
-`init`, `dft_opt`, and `solv`; a screen TS DFT workflow uses `init`, `hess`,
-`optts`, `freq`, and `solv`.
+`init`, `dft_opt`, `freq`, and `solv`; a screen TS DFT workflow uses `init`,
+`hess`, `optts`, `freq`, and `solv`.
 
 !!! tip "Recommended production mode"
 

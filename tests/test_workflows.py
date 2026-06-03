@@ -172,16 +172,16 @@ class WorkflowExecutionTests(unittest.TestCase):
                 "xtb_opt",
                 "dft_pre_sp",
                 "dft_opt",
+                "freq",
                 "solv",
             ],
         )
         self.assertEqual(
             list(stages["group"]),
-            ["init", "init", "init", "init", "init", "dft_opt", "solv"],
+            ["init", "init", "init", "init", "init", "dft_opt", "freq", "solv"],
         )
         self.assertNotIn("hess", stages["stage"].tolist())
         self.assertNotIn("optts", stages["stage"].tolist())
-        self.assertNotIn("freq", stages["stage"].tolist())
         self.assertEqual(stages.loc[stages["stage"].eq("xtb_sp"), "options"].item(), "gfn=2")
 
     def test_screen_ts_show_stages_lists_ts_dft_stages(self):
@@ -229,7 +229,7 @@ class WorkflowExecutionTests(unittest.TestCase):
         self.assertEqual(single_job["group"].unique().tolist(), ["single_job"])
         self.assertEqual(
             list(fully_staged["group"]),
-            ["init", "xtb_preopt", "xtb_sp", "xtb_opt", "dft_pre_sp", "dft_opt", "solv"],
+            ["init", "xtb_preopt", "xtb_sp", "xtb_opt", "dft_pre_sp", "dft_opt", "freq", "solv"],
         )
         self.assertEqual(non_dft_default["group"].unique().tolist(), ["single_job"])
         self.assertIn("filter", non_dft_default["stage"].tolist())
@@ -287,7 +287,7 @@ class WorkflowExecutionTests(unittest.TestCase):
             target_dir = Path(tmp) / "int2_rpos_2"
             self.assertTrue((target_dir / "init.parquet").exists())
             self.assertTrue((target_dir / "init.dft_opt.parquet").exists())
-            self.assertTrue((target_dir / "init.dft_opt.solv.parquet").exists())
+            self.assertTrue((target_dir / "init.dft_opt.freq.solv.parquet").exists())
             collected = wf.collect(tmp)
 
         self.assertEqual(len(out), 1)
@@ -322,7 +322,7 @@ class WorkflowExecutionTests(unittest.TestCase):
             target_dir = Path(tmp) / "raw_dimer"
             self.assertTrue((target_dir / "init.parquet").exists())
             self.assertTrue((target_dir / "init.dft_opt.parquet").exists())
-            self.assertTrue((target_dir / "init.dft_opt.solv.parquet").exists())
+            self.assertTrue((target_dir / "init.dft_opt.freq.solv.parquet").exists())
 
         self.assertEqual(len(out), 1)
         engines = [call[0] for call in FakeStepper.calls]
@@ -349,13 +349,14 @@ class WorkflowExecutionTests(unittest.TestCase):
                 stage_resources={
                     "init": Resources(cpus=5, mem_gb=11, timeout_min=120),
                     "dft_opt": Resources(cpus=7, mem_gb=13, timeout_min=240),
+                    "freq": Resources(cpus=3, mem_gb=8, timeout_min=180),
                     "solv": Resources(cpus=3, mem_gb=6, timeout_min=60),
                 },
             )
 
         self.assertEqual(result.mode, "mols:dft_staged")
         self.assertEqual(result.tags, ["int2_rpos_2"])
-        self.assertEqual(len(fake.submissions), 3)
+        self.assertEqual(len(fake.submissions), 4)
         dependencies = [
             params.get("slurm_additional_parameters", {}).get("dependency")
             for params in fake.parameters
@@ -363,6 +364,7 @@ class WorkflowExecutionTests(unittest.TestCase):
         self.assertEqual(dependencies[0], None)
         self.assertEqual(dependencies[1], "afterok:job-1")
         self.assertEqual(dependencies[2], "afterok:job-2")
+        self.assertEqual(dependencies[3], "afterok:job-3")
 
     def test_raw_mols_submit_dft_staged_submits_dependent_groups(self):
         df = pd.DataFrame({"compound_name": ["raw"], "smiles": ["CCO"]})
@@ -381,13 +383,14 @@ class WorkflowExecutionTests(unittest.TestCase):
                 stage_resources={
                     "init": Resources(cpus=5, mem_gb=11, timeout_min=120),
                     "dft_opt": Resources(cpus=7, mem_gb=13, timeout_min=240),
+                    "freq": Resources(cpus=3, mem_gb=8, timeout_min=180),
                     "solv": Resources(cpus=3, mem_gb=6, timeout_min=60),
                 },
             )
 
         self.assertEqual(result.mode, "raw_mols:dft_staged")
         self.assertEqual(result.tags, ["raw"])
-        self.assertEqual(len(fake.submissions), 3)
+        self.assertEqual(len(fake.submissions), 4)
         dependencies = [
             params.get("slurm_additional_parameters", {}).get("dependency")
             for params in fake.parameters
@@ -395,6 +398,7 @@ class WorkflowExecutionTests(unittest.TestCase):
         self.assertEqual(dependencies[0], None)
         self.assertEqual(dependencies[1], "afterok:job-1")
         self.assertEqual(dependencies[2], "afterok:job-2")
+        self.assertEqual(dependencies[3], "afterok:job-3")
 
     def test_submit_dft_staged_uses_default_resources_when_stage_resources_omitted(self):
         df = pd.DataFrame({"smiles": ["CN1C=CC=C1"], "rpos": ["2"]})
@@ -410,12 +414,15 @@ class WorkflowExecutionTests(unittest.TestCase):
             result = wf.submit(out_dir=tmp, cluster=cluster, execution="dft_staged")
 
         self.assertEqual(result.mode, "mols:dft_staged")
-        self.assertEqual(len(fake.submissions), 3)
+        self.assertEqual(len(fake.submissions), 4)
         resource_params = [
             (params["cpus_per_task"], params["mem_gb"], params["timeout_min"])
             for params in fake.parameters
         ]
-        self.assertEqual(resource_params, [(4, 20, 720), (4, 20, 720), (4, 20, 720)])
+        self.assertEqual(
+            resource_params,
+            [(4, 20, 720), (4, 20, 720), (4, 20, 720), (4, 20, 720)],
+        )
 
     def test_raw_mols_submit_uses_default_resources_when_stage_resources_omitted(self):
         df = pd.DataFrame({"compound_name": ["raw"], "smiles": ["CCO"]})
@@ -430,12 +437,15 @@ class WorkflowExecutionTests(unittest.TestCase):
             result = wf.submit(out_dir=tmp, cluster=cluster, execution="dft_staged")
 
         self.assertEqual(result.mode, "raw_mols:dft_staged")
-        self.assertEqual(len(fake.submissions), 3)
+        self.assertEqual(len(fake.submissions), 4)
         resource_params = [
             (params["cpus_per_task"], params["mem_gb"], params["timeout_min"])
             for params in fake.parameters
         ]
-        self.assertEqual(resource_params, [(4, 20, 720), (4, 20, 720), (4, 20, 720)])
+        self.assertEqual(
+            resource_params,
+            [(4, 20, 720), (4, 20, 720), (4, 20, 720), (4, 20, 720)],
+        )
 
     def test_submit_single_job_submits_one_job_per_target(self):
         df = pd.DataFrame({"smiles": ["CN1C=CC=C1"], "rpos": ["2,3"]})

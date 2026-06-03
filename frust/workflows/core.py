@@ -408,8 +408,9 @@ class BaseWorkflow:
             ``wf.show_stages(execution="dft_staged")`` to see the active group
             names before choosing overrides. In ``"dft_staged"`` mode, raw
             molecule and molecule workflows usually use ``"init"``,
-            ``"dft_opt"``, and ``"solv"``; screen TS workflows usually use
-            ``"init"``, ``"hess"``, ``"optts"``, ``"freq"``, and ``"solv"``.
+            ``"dft_opt"``, ``"freq"``, and ``"solv"``; screen TS workflows
+            usually use ``"init"``, ``"hess"``, ``"optts"``, ``"freq"``, and
+            ``"solv"``.
         targets : iterable of WorkflowTarget or int or None, optional
             Targets to submit. Integers select positions from ``wf.targets()``.
             If omitted, all workflow targets are submitted.

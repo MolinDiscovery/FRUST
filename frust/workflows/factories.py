@@ -75,6 +75,7 @@ def _molecule_stage_defs(*, top_n: int, dft: bool) -> list[StageDef]:
             [
                 StageDef("dft_pre_sp", "DFT-pre-SP"),
                 StageDef("dft_opt", "DFT-Opt", lowest=1),
+                StageDef("freq", "Freq"),
                 StageDef("solv", "DFT-SP"),
             ]
         )
@@ -117,14 +118,14 @@ class MolsWorkflow(BaseWorkflow):
     top_n : int, optional
         Number of rows kept after ranking/filtering stages.
     dft : bool, optional
-        If ``True``, add DFT optimization and solvent stages. If ``False``, end
-        with a lowest-energy filter after xTB stages.
+        If ``True``, add DFT optimization, frequency, and solvent stages. If
+        ``False``, end with a lowest-energy filter after xTB stages.
 
     Notes
     -----
     The default stage graph is ``prepare -> xtb_preopt -> xtb_sp -> xtb_opt``.
-    DFT workflows then run ``dft_pre_sp -> dft_opt -> solv``; non-DFT workflows
-    run a final ``filter`` stage.
+    DFT workflows then run ``dft_pre_sp -> dft_opt -> freq -> solv``;
+    non-DFT workflows run a final ``filter`` stage.
     """
 
     workflow_name = "mols"
@@ -291,15 +292,16 @@ class RawMolsWorkflow(BaseWorkflow):
     top_n : int, optional
         Number of rows kept after ranking/filtering stages.
     dft : bool, optional
-        If ``True``, add DFT optimization and solvent stages. If ``False``, end
-        with a lowest-energy filter after xTB stages.
+        If ``True``, add DFT optimization, frequency, and solvent stages. If
+        ``False``, end with a lowest-energy filter after xTB stages.
 
     Notes
     -----
     This workflow treats each input SMILES as the structure to calculate. It
     does not call ``create_mol_per_rpos`` and does not support ``select_mols``.
     With ``dft=True``, the active DFT stages are ``dft_pre_sp -> dft_opt ->
-    solv``; TS-specific ``hess``, ``optts``, and ``freq`` stages are not run.
+    freq -> solv``. The ``freq`` stage is a normal minimum-frequency check used
+    for thermochemistry; TS-specific ``hess`` and ``optts`` stages are not run.
     """
 
     workflow_name = "raw_mols"
@@ -774,7 +776,7 @@ def mols(
     top_n : int, optional
         Number of rows retained by ranking/filtering stages.
     dft : bool, optional
-        Include DFT optimization and solvent stages when ``True``.
+        Include DFT optimization, frequency, and solvent stages when ``True``.
 
     Returns
     -------
@@ -841,7 +843,7 @@ def raw_mols(
     top_n : int, optional
         Number of rows retained by ranking/filtering stages.
     dft : bool, optional
-        Include DFT optimization and solvent stages when ``True``.
+        Include DFT optimization, frequency, and solvent stages when ``True``.
 
     Returns
     -------

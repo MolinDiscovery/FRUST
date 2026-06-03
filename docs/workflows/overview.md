@@ -128,6 +128,7 @@ wf.show_stages()[["group", "stage", "engine", "options"]]
 | `init` | `xtb_opt` | `xtb` | `gfn=2 opt` |
 | `init` | `dft_pre_sp` | `orca` | `r2SCAN-3c TightSCF SP NoSym` |
 | `dft_opt` | `dft_opt` | `orca` | `r2SCAN-3c TightSCF SlowConv Opt NoSym` |
+| `freq` | `freq` | `orca` | `r2SCAN-3c TightSCF SlowConv Freq NoSym` |
 | `solv` | `solv` | `orca` | `r2SCAN-3c TightSCF SP NoSym` |
 
 ```python
@@ -138,6 +139,7 @@ result = wf.submit(
     stage_resources={
         "init": Resources(cpus=24, mem_gb=20, timeout_min=7200),
         "dft_opt": Resources(cpus=24, mem_gb=20, timeout_min=7200),
+        "freq": Resources(cpus=8, mem_gb=64, timeout_min=7200),
         "solv": Resources(cpus=24, mem_gb=20, timeout_min=3600),
     },
 )
@@ -148,8 +150,8 @@ result = wf.submit(
     Use `ft.workflows.raw_mols(...)` when the `smiles` value is the molecule to
     calculate. Use `ft.workflows.mols(..., select_mols=...)` when FRUST should
     generate catalytic-cycle structures such as `dimer`, `int2`, or `mol2`.
-    A raw molecule DFT workflow uses `init`, `dft_opt`, and `solv` resource
-    groups; it does not run TS-only `hess`, `optts`, or `freq` stages.
+    A raw molecule DFT workflow uses `init`, `dft_opt`, `freq`, and `solv`
+    resource groups; it does not run TS-only `hess` or `optts` stages.
 
 See [Workflow Method Plans](workflow-methods.md) for the full pattern.
 
