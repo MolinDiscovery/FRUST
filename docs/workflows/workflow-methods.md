@@ -74,6 +74,29 @@ The default screen workflow uses these stage ids:
 | `freq` | `orca` | final frequency check |
 | `solv` | `orca` | final solvent single point |
 
+`method.stages` is the reusable calculator map. To see which parts of that map
+a specific workflow will actually run, inspect the workflow:
+
+```python
+wf.show_stages()[["group", "stage", "method_key", "engine", "options"]]
+```
+
+For `ft.workflows.raw_mols(..., method="r2scan-3c", dft=True)`, the active
+stages are molecule stages:
+
+| group | stage | method_key | engine | options |
+| --- | --- | --- | --- | --- |
+| `init` | `prepare` |  | `prepare` |  |
+| `init` | `xtb_preopt` | `xtb_preopt` | `xtb` | `gfnff opt` |
+| `init` | `xtb_sp` | `xtb_sp` | `xtb` | `gfn=2` |
+| `init` | `xtb_opt` | `xtb_opt` | `xtb` | `gfn=2 opt` |
+| `init` | `dft_pre_sp` | `dft_pre_sp` | `orca` | `r2SCAN-3c TightSCF SP NoSym` |
+| `dft_opt` | `dft_opt` | `dft_opt` | `orca` | `r2SCAN-3c TightSCF SlowConv Opt NoSym` |
+| `solv` | `solv` | `solv` | `orca` | `r2SCAN-3c TightSCF SP NoSym` |
+
+The same preset also contains `hess`, `optts`, and `freq`, but raw molecule
+workflows do not run those TS-only stages.
+
 Replace individual stages when you want a different engine or options:
 
 ```python
@@ -138,6 +161,11 @@ result = wf.submit(
     },
 )
 ```
+
+Use `wf.show_stages(execution="dft_staged")` and read the `group` column to see
+the resource keys for a specific workflow. A raw molecule DFT workflow uses
+`init`, `dft_opt`, and `solv`; a screen TS DFT workflow uses `init`, `hess`,
+`optts`, `freq`, and `solv`.
 
 !!! tip "Recommended production mode"
 

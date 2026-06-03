@@ -109,7 +109,9 @@ class MolsWorkflow(BaseWorkflow):
         :class:`frust.workflows.methods.MethodPlan`. Built-in preset strings
         are ``"r2scan-3c"`` (ORCA r2SCAN-3c composite DFT stages),
         ``"wb97xd3-631g"`` (default ORCA wB97X-D3/6-31G** workflow), and
-        ``"r2scan-def2svp"`` (ORCA R2SCAN/def2-SVP DFT stages).
+        ``"r2scan-def2svp"`` (ORCA R2SCAN/def2-SVP DFT stages). A preset may
+        contain stage keys this molecule workflow does not use; call
+        ``wf.show_stages()`` to inspect the active stages.
     n_confs : int or None, optional
         Conformer count passed to ``Stepper.build_initial_df``.
     top_n : int, optional
@@ -281,7 +283,9 @@ class RawMolsWorkflow(BaseWorkflow):
         :class:`frust.workflows.methods.MethodPlan`. Built-in preset strings
         are ``"r2scan-3c"`` (ORCA r2SCAN-3c composite DFT stages),
         ``"wb97xd3-631g"`` (default ORCA wB97X-D3/6-31G** workflow), and
-        ``"r2scan-def2svp"`` (ORCA R2SCAN/def2-SVP DFT stages).
+        ``"r2scan-def2svp"`` (ORCA R2SCAN/def2-SVP DFT stages). A preset may
+        contain TS-specific calculator keys, but ``raw_mols`` only uses the
+        molecule stages shown by ``wf.show_stages()``.
     n_confs : int or None, optional
         Conformer count passed to ``Stepper.build_initial_df``.
     top_n : int, optional
@@ -294,6 +298,8 @@ class RawMolsWorkflow(BaseWorkflow):
     -----
     This workflow treats each input SMILES as the structure to calculate. It
     does not call ``create_mol_per_rpos`` and does not support ``select_mols``.
+    With ``dft=True``, the active DFT stages are ``dft_pre_sp -> dft_opt ->
+    solv``; TS-specific ``hess``, ``optts``, and ``freq`` stages are not run.
     """
 
     workflow_name = "raw_mols"
@@ -430,7 +436,9 @@ class ScreenTSWorkflow(BaseWorkflow):
         :class:`frust.workflows.methods.MethodPlan`. Built-in preset strings
         are ``"r2scan-3c"`` (ORCA r2SCAN-3c composite DFT stages),
         ``"wb97xd3-631g"`` (default ORCA wB97X-D3/6-31G** workflow), and
-        ``"r2scan-def2svp"`` (ORCA R2SCAN/def2-SVP DFT stages).
+        ``"r2scan-def2svp"`` (ORCA R2SCAN/def2-SVP DFT stages). A preset may
+        contain molecule-specific calculator keys this TS workflow does not use;
+        call ``wf.show_stages()`` to inspect the active stages.
     n_confs : int or None, optional
         Number of TS guess conformers generated per target. ``None`` uses the
         screen TS conformer heuristic.
@@ -590,7 +598,9 @@ class LegacyTSWorkflow(BaseWorkflow):
         :class:`frust.workflows.methods.MethodPlan`. Built-in preset strings
         are ``"r2scan-3c"`` (ORCA r2SCAN-3c composite DFT stages),
         ``"wb97xd3-631g"`` (default ORCA wB97X-D3/6-31G** workflow), and
-        ``"r2scan-def2svp"`` (ORCA R2SCAN/def2-SVP DFT stages).
+        ``"r2scan-def2svp"`` (ORCA R2SCAN/def2-SVP DFT stages). A preset may
+        contain stage keys this legacy workflow does not use; call
+        ``wf.show_stages()`` to inspect the active stages.
     n_confs : int or None, optional
         Conformer count passed to ``Stepper.build_initial_df``.
     top_n : int, optional
@@ -756,7 +766,9 @@ def mols(
         :class:`frust.workflows.methods.MethodPlan`. Built-in preset strings
         are ``"r2scan-3c"`` (ORCA r2SCAN-3c composite DFT stages),
         ``"wb97xd3-631g"`` (default ORCA wB97X-D3/6-31G** workflow), and
-        ``"r2scan-def2svp"`` (ORCA R2SCAN/def2-SVP DFT stages).
+        ``"r2scan-def2svp"`` (ORCA R2SCAN/def2-SVP DFT stages). A preset may
+        contain stage keys this molecule workflow does not use; call
+        ``wf.show_stages()`` to inspect the active stages.
     n_confs : int or None, optional
         Conformer count for initial dataframe preparation.
     top_n : int, optional
@@ -821,7 +833,9 @@ def raw_mols(
         :class:`frust.workflows.methods.MethodPlan`. Built-in preset strings
         are ``"r2scan-3c"`` (ORCA r2SCAN-3c composite DFT stages),
         ``"wb97xd3-631g"`` (default ORCA wB97X-D3/6-31G** workflow), and
-        ``"r2scan-def2svp"`` (ORCA R2SCAN/def2-SVP DFT stages).
+        ``"r2scan-def2svp"`` (ORCA R2SCAN/def2-SVP DFT stages). A preset may
+        contain TS-specific calculator keys, but ``raw_mols`` only uses the
+        molecule stages shown by ``wf.show_stages()``.
     n_confs : int or None, optional
         Conformer count for initial dataframe preparation.
     top_n : int, optional
@@ -845,6 +859,7 @@ def raw_mols(
     ...     dft=True,
     ... )
     >>> [target.tag for target in wf.targets()]
+    >>> wf.show_stages()[["group", "stage", "engine"]]
     """
     return RawMolsWorkflow(
         csv_path=csv_path,

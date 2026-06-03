@@ -77,6 +77,14 @@ class MethodPlan:
     stage explicitly sets ``StageDef.method_stage``. For example, the screen TS
     workflow asks for keys such as ``"xtb_preopt"``, ``"hess"``, ``"optts"``,
     ``"freq"``, and ``"solv"``.
+
+    A method plan can contain more stages than a specific workflow will run.
+    For example, the built-in ``"r2scan-3c"`` preset contains TS-specific keys
+    such as ``"hess"``, ``"optts"``, and ``"freq"``, but
+    ``ft.workflows.raw_mols(..., dft=True)`` only uses the molecule stages
+    ``prepare -> xtb_preopt -> xtb_sp -> xtb_opt -> dft_pre_sp -> dft_opt ->
+    solv``. Use ``wf.show_stages()`` on a workflow object to see the active
+    stages and resource-group names before running or submitting.
     """
 
     name: str
@@ -387,6 +395,13 @@ def preset(name: str) -> MethodPlan:
     -------
     MethodPlan
         Registered method plan.
+
+        The returned plan is a reusable stage-to-calculator map. A workflow may
+        use only some of its keys depending on the chemistry and ``dft`` value.
+        For example, raw molecule DFT workflows use ``dft_opt`` and ``solv``
+        but do not use TS-only ``hess``, ``optts``, or ``freq`` stages. Call
+        ``wf.show_stages()`` after constructing a workflow to inspect the active
+        subset.
 
     Raises
     ------

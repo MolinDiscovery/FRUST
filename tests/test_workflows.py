@@ -157,6 +157,112 @@ class WorkflowExecutionTests(unittest.TestCase):
     def setUp(self):
         FakeStepper.calls = []
 
+    def test_raw_mols_show_stages_lists_active_molecule_stages(self):
+        df = pd.DataFrame({"compound_name": ["raw"], "smiles": ["CCO"]})
+        wf = ft.workflows.raw_mols(dataframe=df, method="r2scan-3c", dft=True)
+
+        stages = wf.show_stages()
+
+        self.assertEqual(
+            list(stages["stage"]),
+            [
+                "prepare",
+                "xtb_preopt",
+                "xtb_sp",
+                "xtb_opt",
+                "dft_pre_sp",
+                "dft_opt",
+                "solv",
+            ],
+        )
+        self.assertEqual(
+            list(stages["group"]),
+            ["init", "init", "init", "init", "init", "dft_opt", "solv"],
+        )
+        self.assertNotIn("hess", stages["stage"].tolist())
+        self.assertNotIn("optts", stages["stage"].tolist())
+        self.assertNotIn("freq", stages["stage"].tolist())
+        self.assertEqual(stages.loc[stages["stage"].eq("xtb_sp"), "options"].item(), "gfn=2")
+
+    def test_screen_ts_show_stages_lists_ts_dft_stages(self):
+        wf = ft.workflows.screen_ts(
+            dataframe=_screen_df(),
+            ts_types=["TS1"],
+            method="r2scan-3c",
+            dft=True,
+        )
+
+        stages = wf.show_stages()
+
+        self.assertEqual(
+            list(stages["stage"]),
+            [
+                "prepare",
+                "xtb_preopt",
+                "xtb_sp",
+                "xtb_opt",
+                "dft_pre_sp",
+                "dft_pre_opt",
+                "hess",
+                "optts",
+                "freq",
+                "solv",
+            ],
+        )
+        self.assertEqual(
+            list(stages["group"]),
+            ["init", "init", "init", "init", "init", "init", "hess", "optts", "freq", "solv"],
+        )
+        optts = stages.loc[stages["stage"].eq("optts")].iloc[0]
+        self.assertEqual(optts["calculation"], "OptTS")
+        self.assertEqual(optts["method_key"], "optts")
+
+    def test_show_stages_execution_grouping_modes(self):
+        df = pd.DataFrame({"compound_name": ["raw"], "smiles": ["CCO"]})
+        wf = ft.workflows.raw_mols(dataframe=df, dft=True)
+        non_dft = ft.workflows.raw_mols(dataframe=df, dft=False)
+
+        single_job = wf.show_stages(execution="single_job")
+        fully_staged = wf.show_stages(execution="fully_staged")
+        non_dft_default = non_dft.show_stages()
+
+        self.assertEqual(single_job["group"].unique().tolist(), ["single_job"])
+        self.assertEqual(
+            list(fully_staged["group"]),
+            ["init", "xtb_preopt", "xtb_sp", "xtb_opt", "dft_pre_sp", "dft_opt", "solv"],
+        )
+        self.assertEqual(non_dft_default["group"].unique().tolist(), ["single_job"])
+        self.assertIn("filter", non_dft_default["stage"].tolist())
+
+    def test_show_stages_reflects_replaced_method_stage(self):
+        df = pd.DataFrame({"compound_name": ["raw"], "smiles": ["CCO"]})
+        method = methods.preset("r2scan-3c").replace(xtb_sp=methods.gxtb(job="sp"))
+        wf = ft.workflows.raw_mols(dataframe=df, method=method, dft=False)
+
+        stages = wf.show_stages()
+
+        self.assertEqual(stages.loc[stages["stage"].eq("xtb_sp"), "engine"].item(), "gxtb")
+
+    def test_show_stages_does_not_build_targets(self):
+        df = pd.DataFrame({"compound_name": ["raw"], "smiles": ["CCO"]})
+        wf = ft.workflows.raw_mols(dataframe=df, dft=True)
+
+        with patch.object(wf, "_build_targets", side_effect=AssertionError("targets built")):
+            stages = wf.show_stages()
+
+        self.assertEqual(stages["stage"].iloc[0], "prepare")
+
+    def test_show_stages_missing_method_stage_raises_key_error(self):
+        df = pd.DataFrame({"compound_name": ["raw"], "smiles": ["CCO"]})
+        method = methods.MethodPlan(
+            name="missing",
+            stages={"xtb_preopt": methods.xtb(gfn=2)},
+        )
+        wf = ft.workflows.raw_mols(dataframe=df, method=method, dft=True)
+
+        with self.assertRaisesRegex(KeyError, "xtb_sp"):
+            wf.show_stages()
+
     def test_local_run_dispatches_gxtb_stage_and_writes_staged_parquets(self):
         df = pd.DataFrame({"smiles": ["CN1C=CC=C1"], "rpos": ["2"]})
         method = methods.preset("r2scan-3c").replace(

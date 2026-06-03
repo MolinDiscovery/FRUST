@@ -142,8 +142,8 @@ Compactly, the important stage choices are:
 | stage | engine | options |
 | --- | --- | --- |
 | `xtb_preopt` | `xtb` | `gfnff opt` |
-| `xtb_sp` | `xtb` | `gfn` |
-| `xtb_opt` | `xtb` | `gfn opt` |
+| `xtb_sp` | `xtb` | `gfn=2` |
+| `xtb_opt` | `xtb` | `gfn=2 opt` |
 | `dft_pre_sp` | `orca` | `r2SCAN-3c TightSCF SP NoSym` |
 | `dft_pre_opt` | `orca` | `r2SCAN-3c TightSCF SlowConv Opt NoSym` |
 | `hess` | `orca` | `r2SCAN-3c TightSCF SlowConv Freq NoSym` |
@@ -156,6 +156,32 @@ Compactly, the important stage choices are:
     `MethodPlan` changes calculator engines and options. It does not change
     which TS targets exist, which reactive positions are expanded, or how the
     TS guess roles are assigned.
+
+To see the stages this workflow will actually run, inspect the workflow instead
+of reading the full preset map:
+
+```python
+wf.show_stages()[["group", "stage", "method_key", "engine", "options"]]
+```
+
+For the `screen_ts` workflow above, `dft_staged` uses TS-stage resource groups:
+
+| group | stage | method_key | engine | options |
+| --- | --- | --- | --- | --- |
+| `init` | `prepare` |  | `prepare` |  |
+| `init` | `xtb_preopt` | `xtb_preopt` | `xtb` | `gfnff opt` |
+| `init` | `xtb_sp` | `xtb_sp` | `xtb` | `gfn=2` |
+| `init` | `xtb_opt` | `xtb_opt` | `xtb` | `gfn=2 opt` |
+| `init` | `dft_pre_sp` | `dft_pre_sp` | `orca` | `r2SCAN-3c TightSCF SP NoSym` |
+| `init` | `dft_pre_opt` | `dft_pre_opt` | `orca` | `r2SCAN-3c TightSCF SlowConv Opt NoSym` |
+| `hess` | `hess` | `hess` | `orca` | `r2SCAN-3c TightSCF SlowConv Freq NoSym` |
+| `optts` | `optts` | `optts` | `orca` | `r2SCAN-3c TightSCF SlowConv OptTS NoSym` |
+| `freq` | `freq` | `freq` | `orca` | `r2SCAN-3c TightSCF SlowConv Freq NoSym` |
+| `solv` | `solv` | `solv` | `orca` | `r2SCAN-3c TightSCF SP NoSym` |
+
+For `ft.workflows.raw_mols(..., dft=True)`, the same method preset would show
+`init -> dft_opt -> solv` groups instead. Raw molecule workflows do not run
+the TS-only `hess`, `optts`, or `freq` stages.
 
 ### Replace xTB Stages With g-xTB
 
@@ -209,8 +235,8 @@ Typical `ft.show_steps(df)` output is compact:
 | --- | --- | --- | --- | ---: | ---: |
 | `initial_conformers` | `embedder` | `requested=None; resolved=50; generated=50` |  |  |  |
 | `xtb_preopt` | `xtb` | `gfnff opt` | `xtb_preopt-EE, xtb_preopt-NT, xtb_preopt-oc` | 2 |  |
-| `xtb_sp` | `xtb` | `gfn` | `xtb_sp-EE, xtb_sp-NT` | 2 |  |
-| `xtb_opt` | `xtb` | `gfn opt; lowest=10` | `xtb_opt-EE, xtb_opt-NT, xtb_opt-oc` | 2 |  |
+| `xtb_sp` | `xtb` | `gfn=2` | `xtb_sp-EE, xtb_sp-NT` | 2 |  |
+| `xtb_opt` | `xtb` | `gfn=2 opt; lowest=10` | `xtb_opt-EE, xtb_opt-NT, xtb_opt-oc` | 2 |  |
 | `DFT-pre-SP` | `orca` | `r2SCAN-3c TightSCF SP NoSym` | `DFT-pre-SP-EE, DFT-pre-SP-NT` | 4 | 20 |
 
 The exact rows depend on how far the local run went. The important part is that
@@ -319,8 +345,10 @@ result = wf.submit(
 ```
 
 The `stage_resources` keys are workflow stage-group names. Missing keys still
-fall back to `Resources(cpus=4, mem_gb=20, timeout_min=720)`. For a screen TS
-workflow in `dft_staged` mode, the common keys are:
+fall back to `Resources(cpus=4, mem_gb=20, timeout_min=720)`. Use
+`wf.show_stages(execution="dft_staged")` and read the `group` column before
+choosing overrides. For a screen TS workflow in `dft_staged` mode, the common
+keys are:
 
 | key | Contains |
 | --- | --- |

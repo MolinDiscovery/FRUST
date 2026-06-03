@@ -9,6 +9,7 @@ collected parquet outputs.
 
 from __future__ import annotations
 
+from collections.abc import Mapping
 from dataclasses import dataclass
 from pathlib import Path
 from typing import Any, Iterable, Literal
@@ -194,6 +195,79 @@ class BaseWorkflow:
             self._target_cache = self._build_targets()
         return list(self._target_cache)
 
+    def show_stages(self, *, execution: ExecutionMode | None = None) -> pd.DataFrame:
+        """Return the active workflow stage graph as a compact dataframe.
+
+        Parameters
+        ----------
+        execution : {"single_job", "dft_staged", "fully_staged"} or None, optional
+            Execution grouping to inspect. ``None`` uses the same default as
+            ``submit(...)``: DFT workflows use ``"dft_staged"`` and non-DFT
+            workflows use ``"single_job"``. ``"single_job"`` runs all stages in
+            one job per target, ``"dft_staged"`` keeps initialization together
+            and splits DFT stages into dependent jobs, and ``"fully_staged"``
+            splits every stage into its own dependent job.
+
+        Returns
+        -------
+        pandas.DataFrame
+            One row per active workflow stage. Important columns are ``group``
+            for the scheduler/resource group, ``stage`` for the workflow stage
+            id, ``method_key`` for the calculator key read from
+            ``method.stages``, ``engine`` for the calculator backend, and
+            ``options`` for the compact calculator keywords. The table
+            describes the method-plan keys this workflow will actually use; it
+            does not list unused entries from ``method.stages`` and does not
+            build targets, embed structures, or run calculators.
+
+        Examples
+        --------
+        Inspect the stage groups before deciding ``stage_resources``:
+
+        >>> import frust as ft
+        >>> wf = ft.workflows.raw_mols(csv_path="raw_dimers.csv", method="r2scan-3c", dft=True)
+        >>> wf.show_stages()[["group", "stage", "engine"]]
+        """
+        mode = execution or ("dft_staged" if self.dft else "single_job")
+        rows: list[dict[str, Any]] = []
+        for group in self._stage_groups(mode):
+            group_name = "single_job" if mode == "single_job" else self._group_name(group)
+            for stage in group:
+                method_key = stage.method_stage or stage.id
+                spec: CalculatorSpec | None = None
+                if stage.kind == "calc":
+                    spec = self.method.for_stage(method_key)
+
+                rows.append(
+                    {
+                        "group": group_name,
+                        "stage": stage.id,
+                        "calculation": stage.name,
+                        "kind": stage.kind,
+                        "method_key": method_key if stage.kind == "calc" else None,
+                        "engine": _stage_engine(stage, spec),
+                        "options": _format_stage_options(spec.options if spec is not None else None),
+                        "lowest": stage.lowest,
+                        "constraint": stage.constraint,
+                        "n_cores": stage.n_cores,
+                    }
+                )
+        return pd.DataFrame(
+            rows,
+            columns=[
+                "group",
+                "stage",
+                "calculation",
+                "kind",
+                "method_key",
+                "engine",
+                "options",
+                "lowest",
+                "constraint",
+                "n_cores",
+            ],
+        )
+
     def run(
         self,
         *,
@@ -330,9 +404,12 @@ class BaseWorkflow:
             jobs. ``"fully_staged"`` submits one dependent job per stage.
         stage_resources : dict[str, Resources] or None, optional
             Optional resource overrides by stage-group name. Missing groups use
-            ``Resources(cpus=4, mem_gb=20, timeout_min=720)``. For a DFT screen
-            TS workflow in ``"dft_staged"`` mode, common keys are ``"init"``,
-            ``"hess"``, ``"optts"``, ``"freq"``, and ``"solv"``.
+            ``Resources(cpus=4, mem_gb=20, timeout_min=720)``. Call
+            ``wf.show_stages(execution="dft_staged")`` to see the active group
+            names before choosing overrides. In ``"dft_staged"`` mode, raw
+            molecule and molecule workflows usually use ``"init"``,
+            ``"dft_opt"``, and ``"solv"``; screen TS workflows usually use
+            ``"init"``, ``"hess"``, ``"optts"``, ``"freq"``, and ``"solv"``.
         targets : iterable of WorkflowTarget or int or None, optional
             Targets to submit. Integers select positions from ``wf.targets()``.
             If omitted, all workflow targets are submitted.
@@ -797,6 +874,30 @@ def _run_stage_group_job(
     )
     df.to_parquet(target_dir / output_parquet)
     return df
+
+
+def _stage_engine(stage: StageDef, spec: CalculatorSpec | None) -> str | None:
+    """Return the inspection-table engine label for a workflow stage."""
+    if stage.kind == "prepare":
+        return "prepare"
+    if stage.kind == "filter":
+        return "filter"
+    if spec is None:
+        return None
+    return spec.engine
+
+
+def _format_stage_options(options: Mapping[str, Any] | None) -> str | None:
+    """Format calculator options for ``BaseWorkflow.show_stages``."""
+    if not options:
+        return None
+    parts: list[str] = []
+    for key, value in options.items():
+        if value is None or value is True:
+            parts.append(str(key))
+        else:
+            parts.append(f"{key}={value}")
+    return " ".join(parts)
 
 
 def _coerce_method(method: MethodPlan | str | None) -> MethodPlan:
