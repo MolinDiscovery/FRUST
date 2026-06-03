@@ -312,6 +312,7 @@ With this exact call, FRUST uses these defaults:
 | `targets` omitted | submit every target from `wf.targets()` |
 | `stage_resources` omitted | use `Resources(cpus=4, mem_gb=20, timeout_min=720)` for every submitted job group |
 | `execution="dft_staged"` | submit one `init` job, then dependent DFT jobs for each target |
+| `collect` omitted | submit a final collector job that writes `runs/screen_ts/merged.parquet` and `runs/screen_ts/collection_report.json` |
 | `out_dir="runs/screen_ts"` | write one subdirectory per target under `runs/screen_ts/` |
 
 Representative result:
@@ -323,6 +324,9 @@ JobSubmissionResult(
     save_dirs=["runs/screen_ts/TS1__furan__TMP__r0", "..."],
     mode="screen_ts:dft_staged",
     backend="slurm",
+    collection_job_id="...",
+    collection_output="runs/screen_ts/merged.parquet",
+    collection_report="runs/screen_ts/collection_report.json",
 )
 ```
 
@@ -365,22 +369,27 @@ keys are:
     DFT workflows default to `execution="dft_staged"`. Non-DFT workflows default
     to `execution="single_job"`.
 
-## Collect Finished Outputs
+## Read Finished Outputs
 
-When the jobs are done, collect the deepest parquet from each target directory:
+When the target jobs are done, the final collector job writes the merged parquet
+and a collection report:
 
 ```python
-merged = wf.collect(
-    "runs/screen_ts",
-    output="screen_ts_merged.parquet",
-    require_normal_termination=True,
-)
+import pandas as pd
 
+merged = pd.read_parquet(result.collection_output)
 ft.show_steps(merged)
 ```
 
-`wf.collect(...)` preserves merged dataframe attrs, so `ft.show_steps(...)`
-still works after combining many target outputs.
+`collection_report.json` lists collected, skipped, missing, and errored target
+outputs. By default the collector skips targets whose final normal-termination
+columns are present and not all true.
+
+Use manual `wf.collect(...)` for recovery or custom merges:
+
+```python
+merged = wf.collect("runs/screen_ts", output="custom_merged.parquet")
+```
 
 ## The Same Pattern For Molecules
 

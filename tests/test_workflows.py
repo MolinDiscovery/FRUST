@@ -1,5 +1,6 @@
 from __future__ import annotations
 
+import json
 import tempfile
 import unittest
 from pathlib import Path
@@ -10,6 +11,7 @@ import pandas as pd
 
 import frust as ft
 from frust.cluster import ClusterConfig, Resources
+from frust.workflows import core as workflow_core
 from frust.workflows import methods
 
 
@@ -346,6 +348,7 @@ class WorkflowExecutionTests(unittest.TestCase):
                 out_dir=tmp,
                 cluster=cluster,
                 execution="dft_staged",
+                collect=False,
                 stage_resources={
                     "init": Resources(cpus=5, mem_gb=11, timeout_min=120),
                     "dft_opt": Resources(cpus=7, mem_gb=13, timeout_min=240),
@@ -365,6 +368,7 @@ class WorkflowExecutionTests(unittest.TestCase):
         self.assertEqual(dependencies[1], "afterok:job-1")
         self.assertEqual(dependencies[2], "afterok:job-2")
         self.assertEqual(dependencies[3], "afterok:job-3")
+        self.assertIsNone(result.collection_job_id)
 
     def test_raw_mols_submit_dft_staged_submits_dependent_groups(self):
         df = pd.DataFrame({"compound_name": ["raw"], "smiles": ["CCO"]})
@@ -380,6 +384,7 @@ class WorkflowExecutionTests(unittest.TestCase):
                 out_dir=tmp,
                 cluster=cluster,
                 execution="dft_staged",
+                collect=False,
                 stage_resources={
                     "init": Resources(cpus=5, mem_gb=11, timeout_min=120),
                     "dft_opt": Resources(cpus=7, mem_gb=13, timeout_min=240),
@@ -399,6 +404,40 @@ class WorkflowExecutionTests(unittest.TestCase):
         self.assertEqual(dependencies[1], "afterok:job-1")
         self.assertEqual(dependencies[2], "afterok:job-2")
         self.assertEqual(dependencies[3], "afterok:job-3")
+        self.assertIsNone(result.collection_job_id)
+
+    def test_submit_defaults_to_collection_job_with_afterany_dependency(self):
+        df = pd.DataFrame({"smiles": ["CN1C=CC=C1"], "rpos": ["2,3"]})
+        fake = FakeExecutor()
+        cluster = ClusterConfig(backend="slurm", partition="kemi1", log_dir="logs/workflow-test")
+
+        with (
+            tempfile.TemporaryDirectory() as tmp,
+            patch("frust.workflows.factories.create_mol_per_rpos", return_value=_mol_jobs()),
+            patch("frust.workflows.core.create_executor", return_value=fake),
+        ):
+            wf = ft.workflows.mols(dataframe=df, split="per_rpos", dft=True)
+            result = wf.submit(out_dir=tmp, cluster=cluster, execution="dft_staged")
+
+        self.assertEqual(len(fake.submissions), 9)
+        self.assertEqual(len(result.job_ids), 8)
+        self.assertEqual(result.collection_job_id, "job-9")
+        self.assertEqual(result.collection_output, str(Path(tmp) / "merged.parquet"))
+        self.assertEqual(result.collection_report, str(Path(tmp) / "collection_report.json"))
+        dependencies = [
+            params.get("slurm_additional_parameters", {}).get("dependency")
+            for params in fake.parameters
+        ]
+        self.assertEqual(dependencies[-1], "afterany:job-4:job-8")
+        collector_fn, collector_args, _ = fake.submissions[-1]
+        self.assertEqual(collector_fn.__name__, "_collect_expected_outputs")
+        self.assertEqual(
+            collector_args[3],
+            {
+                "int2_rpos_2": "init.dft_opt.freq.solv.parquet",
+                "int2_rpos_3": "init.dft_opt.freq.solv.parquet",
+            },
+        )
 
     def test_submit_dft_staged_uses_default_resources_when_stage_resources_omitted(self):
         df = pd.DataFrame({"smiles": ["CN1C=CC=C1"], "rpos": ["2"]})
@@ -411,7 +450,7 @@ class WorkflowExecutionTests(unittest.TestCase):
             patch("frust.workflows.core.create_executor", return_value=fake),
         ):
             wf = ft.workflows.mols(dataframe=df, split="per_rpos", dft=True)
-            result = wf.submit(out_dir=tmp, cluster=cluster, execution="dft_staged")
+            result = wf.submit(out_dir=tmp, cluster=cluster, execution="dft_staged", collect=False)
 
         self.assertEqual(result.mode, "mols:dft_staged")
         self.assertEqual(len(fake.submissions), 4)
@@ -434,7 +473,7 @@ class WorkflowExecutionTests(unittest.TestCase):
             patch("frust.workflows.core.create_executor", return_value=fake),
         ):
             wf = ft.workflows.raw_mols(dataframe=df, dft=True)
-            result = wf.submit(out_dir=tmp, cluster=cluster, execution="dft_staged")
+            result = wf.submit(out_dir=tmp, cluster=cluster, execution="dft_staged", collect=False)
 
         self.assertEqual(result.mode, "raw_mols:dft_staged")
         self.assertEqual(len(fake.submissions), 4)
@@ -458,11 +497,81 @@ class WorkflowExecutionTests(unittest.TestCase):
             patch("frust.workflows.core.create_executor", return_value=fake),
         ):
             wf = ft.workflows.mols(dataframe=df, split="per_rpos", dft=True)
-            result = wf.submit(out_dir=tmp, cluster=cluster, execution="single_job")
+            result = wf.submit(out_dir=tmp, cluster=cluster, execution="single_job", collect=False)
 
         self.assertEqual(result.mode, "mols:single_job")
         self.assertEqual(len(result.tags), 2)
         self.assertEqual(len(fake.submissions), 2)
+
+    def test_collect_expected_outputs_writes_report_and_skips_failed_outputs(self):
+        df = pd.DataFrame(
+            {
+                "compound_name": ["ok", "bad", "missing"],
+                "smiles": ["CCO", "CCN", "CCC"],
+            }
+        )
+        wf = ft.workflows.raw_mols(dataframe=df)
+        targets = wf.targets()
+        expected = {target.tag: "final.parquet" for target in targets}
+
+        with tempfile.TemporaryDirectory() as tmp:
+            root = Path(tmp)
+            ok_dir = root / "ok"
+            bad_dir = root / "bad"
+            missing_dir = root / "missing"
+            ok_dir.mkdir()
+            bad_dir.mkdir()
+            missing_dir.mkdir()
+            pd.DataFrame({"value": [1], "calc-NT": [True]}).to_parquet(ok_dir / "final.parquet")
+            pd.DataFrame({"value": [2], "calc-NT": [False]}).to_parquet(bad_dir / "final.parquet")
+            pd.DataFrame({"value": [3], "calc-NT": [True]}).to_parquet(missing_dir / "init.parquet")
+
+            merged = workflow_core._collect_expected_outputs(
+                wf,
+                targets,
+                root,
+                expected,
+                root / "merged.parquet",
+                root / "collection_report.json",
+                True,
+            )
+
+            report = json.loads((root / "collection_report.json").read_text())
+
+        self.assertEqual(len(merged), 1)
+        self.assertEqual(report["n_targets"], 3)
+        self.assertEqual(report["n_collected"], 1)
+        self.assertEqual(report["n_skipped"], 1)
+        self.assertEqual(report["n_missing"], 1)
+        self.assertEqual(report["n_errored"], 0)
+        self.assertTrue(report["missing_files"][0].endswith("missing/final.parquet"))
+
+    def test_collect_expected_outputs_writes_report_before_raising_when_empty(self):
+        df = pd.DataFrame({"compound_name": ["bad"], "smiles": ["CCN"]})
+        wf = ft.workflows.raw_mols(dataframe=df)
+        targets = wf.targets()
+
+        with tempfile.TemporaryDirectory() as tmp:
+            root = Path(tmp)
+            bad_dir = root / "bad"
+            bad_dir.mkdir()
+            pd.DataFrame({"value": [2], "calc-NT": [False]}).to_parquet(bad_dir / "final.parquet")
+
+            with self.assertRaisesRegex(FileNotFoundError, "No usable workflow outputs"):
+                workflow_core._collect_expected_outputs(
+                    wf,
+                    targets,
+                    root,
+                    {"bad": "final.parquet"},
+                    root / "merged.parquet",
+                    root / "collection_report.json",
+                    True,
+                )
+
+            report = json.loads((root / "collection_report.json").read_text())
+
+        self.assertEqual(report["n_collected"], 0)
+        self.assertEqual(report["n_skipped"], 1)
 
     def test_raw_mols_validates_input_table(self):
         with self.assertRaisesRegex(ValueError, "smiles"):

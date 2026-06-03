@@ -136,6 +136,14 @@ result = wf.submit(out_dir="runs/screen_ts", cluster=cluster, execution="dft_sta
 
 That cluster call submits all targets. Because `stage_resources` is omitted,
 every submitted job group uses `Resources(cpus=4, mem_gb=20, timeout_min=720)`.
+It also submits a final collector job by default. When all target jobs have
+finished, that collector writes:
+
+```text
+runs/screen_ts/
+├── merged.parquet
+└── collection_report.json
+```
 
 | execution | Local behavior | Cluster behavior |
 | --- | --- | --- |
@@ -176,20 +184,30 @@ the resource keys for a specific workflow. A raw molecule DFT workflow uses
     together, then gives Hessian, `OptTS`, frequency, and solvent stages their
     own resources and scheduler jobs.
 
-## Collecting Results
+## Automatic Collection
 
 ```python
-merged = wf.collect(
-    "runs/screen_ts",
-    output="screen_ts_merged.parquet",
-    require_normal_termination=True,
-)
+result.collection_output
+result.collection_report
+```
 
+By default, `wf.submit(...)` uses `collect_require_normal_termination=True`.
+The merged parquet contains targets whose final normal-termination columns are
+all true. `collection_report.json` lists collected, skipped, missing, and
+errored target outputs so failed calculations are visible.
+
+After the collector job finishes, load the merged output normally:
+
+```python
+import pandas as pd
+
+merged = pd.read_parquet(result.collection_output)
 ft.show_steps(merged)
 ```
 
-`wf.collect(...)` reads the deepest parquet file from each target directory and
-merges dataframe attrs so provenance inspection still works after collection.
+Use `wf.collect(...)` manually for recovery, custom output paths, or old runs
+submitted before automatic collection. Manual collection still reads the deepest
+parquet file from each target directory and merges dataframe attrs.
 
 ## Relationship To Existing APIs
 

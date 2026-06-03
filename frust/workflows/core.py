@@ -9,6 +9,7 @@ collected parquet outputs.
 
 from __future__ import annotations
 
+import json
 from collections.abc import Mapping
 from dataclasses import dataclass
 from pathlib import Path
@@ -17,9 +18,13 @@ from typing import Any, Iterable, Literal
 import pandas as pd
 
 from frust.cluster.config import ClusterConfig, JobSubmissionResult, Resources
-from frust.cluster.executor import create_executor, update_executor_with_dependency
+from frust.cluster.executor import (
+    create_executor,
+    update_executor_with_dependencies,
+    update_executor_with_dependency,
+)
 from frust.cluster.naming import sanitize_tag
-from frust.schema import normalize_dataframe
+from frust.schema import normal_termination_columns, normalize_dataframe
 from frust.stepper import Stepper
 from frust.utils.dataframes import lowest_energy_rows, merge_dataframe_attrs
 from frust.workflows.methods import CalculatorSpec, MethodPlan, preset as method_preset
@@ -27,6 +32,7 @@ from frust.workflows.methods import CalculatorSpec, MethodPlan, preset as method
 
 ExecutionMode = Literal["single_job", "dft_staged", "fully_staged"]
 DEFAULT_WORKFLOW_RESOURCES = Resources(cpus=4, mem_gb=20, timeout_min=720)
+DEFAULT_COLLECTION_RESOURCES = Resources(cpus=2, mem_gb=4, timeout_min=120)
 
 
 @dataclass(frozen=True)
@@ -384,6 +390,11 @@ class BaseWorkflow:
         debug: bool = False,
         save_output_dir: bool = True,
         work_dir: str | Path | None = None,
+        collect: bool = True,
+        collect_output: str | Path | None = None,
+        collect_report: str | Path | None = None,
+        collect_require_normal_termination: bool = True,
+        collect_resources: Resources | None = None,
     ) -> JobSubmissionResult:
         """Submit selected workflow targets to a submitit cluster executor.
 
@@ -422,12 +433,29 @@ class BaseWorkflow:
         work_dir : str or pathlib.Path or None, optional
             Scratch/work directory override. If omitted, ``cluster.work_dir`` is
             used when configured.
+        collect : bool, optional
+            If ``True``, submit one final dependent collection job after the
+            target jobs. The collector writes a merged parquet and JSON report.
+        collect_output : str or pathlib.Path or None, optional
+            Merged parquet written by the automatic collector. ``None`` writes
+            ``merged.parquet`` inside ``out_dir``.
+        collect_report : str or pathlib.Path or None, optional
+            JSON report written by the automatic collector. ``None`` writes
+            ``collection_report.json`` inside ``out_dir``.
+        collect_require_normal_termination : bool, optional
+            If ``True``, the automatic collector skips target outputs whose
+            normal-termination columns are present and not all true. Skipped
+            files are listed in the JSON report.
+        collect_resources : Resources or None, optional
+            Scheduler resources for the automatic collection job. ``None`` uses
+            ``Resources(cpus=2, mem_gb=4, timeout_min=120)``.
 
         Returns
         -------
         frust.cluster.config.JobSubmissionResult
             Submitted scheduler job IDs, target tags, target save directories,
-            workflow execution mode, and backend.
+            workflow execution mode, backend, and automatic collection metadata
+            when ``collect=True``.
         """
         selected = self._select_targets(targets)
         mode = execution or ("dft_staged" if self.dft else "single_job")
@@ -439,6 +467,9 @@ class BaseWorkflow:
         job_ids: list[str | int] = []
         tags: list[str] = []
         save_dirs: list[str] = []
+        final_job_ids: list[str | int] = []
+        final_jobs: list[Any] = []
+        expected_parquets: dict[str, str] = {}
 
         for target in selected:
             target_dir = root / target.tag
@@ -470,7 +501,11 @@ class BaseWorkflow:
                     work_dir=str(work_dir or cluster.work_dir) if (work_dir or cluster.work_dir) else None,
                 )
                 job = executor.submit(_run_target_job, self, target, target_dir, options)
-                job_ids.append(getattr(job, "job_id", f"{target.tag}_workflow"))
+                job_id = getattr(job, "job_id", f"{target.tag}_workflow")
+                job_ids.append(job_id)
+                final_job_ids.append(job_id)
+                final_jobs.append(job)
+                expected_parquets[target.tag] = "final.parquet"
                 continue
 
             for group in groups:
@@ -506,9 +541,46 @@ class BaseWorkflow:
                     target_dir,
                     options,
                 )
-                job_ids.append(getattr(job, "job_id", f"{target.tag}_{group_name}"))
+                job_id = getattr(job, "job_id", f"{target.tag}_{group_name}")
+                job_ids.append(job_id)
                 last_job = job
                 current_parquet = output_parquet
+
+            if last_job is not None and current_parquet is not None:
+                final_job_id = getattr(last_job, "job_id", f"{target.tag}_{self._group_name(groups[-1])}")
+                final_job_ids.append(final_job_id)
+                final_jobs.append(last_job)
+                expected_parquets[target.tag] = current_parquet
+
+        collection_job_id: str | int | None = None
+        collection_output_path: Path | None = None
+        collection_report_path: Path | None = None
+        if collect and selected and final_job_ids:
+            collection_output_path = Path(collect_output) if collect_output is not None else root / "merged.parquet"
+            collection_report_path = (
+                Path(collect_report) if collect_report is not None else root / "collection_report.json"
+            )
+            update_executor_with_dependencies(
+                executor,
+                cluster,
+                collect_resources or DEFAULT_COLLECTION_RESOURCES,
+                job_name=f"{self.workflow_name}_collect",
+                dependency_job_ids=final_job_ids,
+                dependency_type="afterany",
+            )
+            wait_jobs = final_jobs if cluster.backend == "local" else None
+            collection_job = executor.submit(
+                _collect_expected_outputs,
+                self,
+                selected,
+                root,
+                expected_parquets,
+                collection_output_path,
+                collection_report_path,
+                collect_require_normal_termination,
+                wait_jobs,
+            )
+            collection_job_id = getattr(collection_job, "job_id", f"{self.workflow_name}_collect")
 
         return JobSubmissionResult(
             job_ids=job_ids,
@@ -516,6 +588,9 @@ class BaseWorkflow:
             save_dirs=save_dirs,
             mode=f"{self.workflow_name}:{mode}",
             backend=cluster.backend,
+            collection_job_id=collection_job_id,
+            collection_output=None if collection_output_path is None else str(collection_output_path),
+            collection_report=None if collection_report_path is None else str(collection_report_path),
         )
 
     def collect(
@@ -819,13 +894,16 @@ def _run_target_job(
         Final target dataframe after all stages have run.
     """
     target_dir = None if save_dir is None else Path(save_dir)
-    return workflow._run_stage_group(
+    df = workflow._run_stage_group(
         target,
         workflow._stage_defs(),
         input_df=None,
         save_dir=target_dir,
         options=options,
     )
+    if target_dir is not None:
+        df.to_parquet(target_dir / "final.parquet")
+    return df
 
 
 def _run_stage_group_job(
@@ -875,6 +953,132 @@ def _run_stage_group_job(
     )
     df.to_parquet(target_dir / output_parquet)
     return df
+
+
+def _collect_expected_outputs(
+    workflow: BaseWorkflow,
+    targets: list[WorkflowTarget],
+    out_dir: str | Path,
+    expected_parquets: dict[str, str],
+    output: str | Path,
+    report: str | Path,
+    require_normal_termination: bool,
+    wait_jobs: list[Any] | None = None,
+) -> pd.DataFrame:
+    """Collect exact expected workflow outputs and write a JSON report.
+
+    Parameters
+    ----------
+    workflow : BaseWorkflow
+        Workflow object used for collection context.
+    targets : list of WorkflowTarget
+        Targets submitted for this workflow run.
+    out_dir : str or pathlib.Path
+        Root output directory passed to ``wf.submit(...)``.
+    expected_parquets : dict of str to str
+        Mapping from target tag to the exact final parquet filename expected in
+        that target directory.
+    output : str or pathlib.Path
+        Merged parquet path to write.
+    report : str or pathlib.Path
+        JSON collection report path to write.
+    require_normal_termination : bool
+        Whether to skip outputs with failed normal-termination columns.
+    wait_jobs : list, optional
+        Submitit jobs to wait for before collecting. This is used for local
+        submitit backends that do not receive Slurm dependency parameters.
+
+    Returns
+    -------
+    pandas.DataFrame
+        Merged dataframe written to ``output``.
+
+    Raises
+    ------
+    FileNotFoundError
+        If no usable rows can be collected. The report is written before this
+        error is raised.
+    """
+    for job in wait_jobs or []:
+        job.wait()
+
+    root = Path(out_dir)
+    output_path = Path(output)
+    report_path = Path(report)
+    frames: list[pd.DataFrame] = []
+    collected_files: list[str] = []
+    skipped_files: list[str] = []
+    missing_files: list[str] = []
+    errored_files: list[str] = []
+    errors: list[dict[str, str]] = []
+
+    for target in targets:
+        expected_name = expected_parquets.get(target.tag)
+        final_file = root / target.tag / expected_name if expected_name else root / target.tag / "final.parquet"
+        if not final_file.exists():
+            missing_files.append(str(final_file))
+            continue
+        try:
+            df = normalize_dataframe(pd.read_parquet(final_file))
+        except Exception as exc:
+            errored_files.append(str(final_file))
+            errors.append({"file": str(final_file), "error": str(exc)})
+            continue
+        if require_normal_termination and not _all_normal_terminated(df):
+            skipped_files.append(str(final_file))
+            continue
+        frames.append(df)
+        collected_files.append(str(final_file))
+
+    report_payload: dict[str, Any] = {
+        "workflow": workflow.workflow_name,
+        "output": str(output_path),
+        "require_normal_termination": bool(require_normal_termination),
+        "n_targets": len(targets),
+        "n_collected": len(collected_files),
+        "n_skipped": len(skipped_files),
+        "n_missing": len(missing_files),
+        "n_errored": len(errored_files),
+        "collected_files": collected_files,
+        "skipped_files": skipped_files,
+        "missing_files": missing_files,
+        "errored_files": errored_files,
+        "errors": errors,
+    }
+
+    if frames:
+        merged = pd.concat(frames, ignore_index=True)
+        merged.attrs.update(
+            merge_dataframe_attrs(
+                frames,
+                source_files=collected_files,
+                skipped_files=[*skipped_files, *missing_files, *errored_files],
+            )
+        )
+        output_path.parent.mkdir(parents=True, exist_ok=True)
+        merged.to_parquet(output_path)
+    else:
+        merged = pd.DataFrame()
+
+    report_path.parent.mkdir(parents=True, exist_ok=True)
+    report_path.write_text(json.dumps(report_payload, indent=2, sort_keys=True))
+
+    if skipped_files or missing_files or errored_files:
+        print(
+            "FRUST collection warning: "
+            f"collected={len(collected_files)}, "
+            f"skipped={len(skipped_files)}, "
+            f"missing={len(missing_files)}, "
+            f"errored={len(errored_files)}. "
+            f"See {report_path}."
+        )
+
+    if not frames:
+        raise FileNotFoundError(
+            f"No usable workflow outputs collected under {root}. "
+            f"See collection report: {report_path}"
+        )
+    return merged
 
 
 def _stage_engine(stage: StageDef, spec: CalculatorSpec | None) -> str | None:
@@ -1024,7 +1228,7 @@ def _all_normal_terminated(df: pd.DataFrame) -> bool:
         ``True`` when there are no ``"-NT"`` columns or when all such columns are
         truthy after missing values are treated as failures.
     """
-    nt_cols = [col for col in df.columns if str(col).endswith("-NT")]
+    nt_cols = normal_termination_columns(df)
     if not nt_cols:
         return True
     return bool(df[nt_cols].fillna(False).astype(bool).all().all())

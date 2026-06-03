@@ -79,6 +79,13 @@ class JobSubmissionResult:
         Submitted workflow mode, such as a pipeline name or chain preset.
     backend : str
         Backend used for submission, typically ``"slurm"`` or ``"local"``.
+    collection_job_id : str or int or None, optional
+        Scheduler or executor job identifier for the automatic collection job,
+        when one was submitted.
+    collection_output : str or None, optional
+        Path to the merged parquet written by the automatic collection job.
+    collection_report : str or None, optional
+        Path to the JSON report written by the automatic collection job.
     """
 
     job_ids: list[str | int]
@@ -86,6 +93,9 @@ class JobSubmissionResult:
     save_dirs: list[str]
     mode: str
     backend: str
+    collection_job_id: str | int | None = None
+    collection_output: str | None = None
+    collection_report: str | None = None
 
 
 DEFAULT_CUSTOM_STAGE_RESOURCES = Resources(cpus=4, mem_gb=20, timeout_min=720)

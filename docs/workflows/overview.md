@@ -77,6 +77,10 @@ result = wf.submit(
 )
 ```
 
+By default, `wf.submit(...)` also submits a final collector job. When the jobs
+finish, the run directory contains `merged.parquet` and
+`collection_report.json`.
+
 This layer keeps three decisions separate:
 
 | Decision | Example |
@@ -144,6 +148,10 @@ result = wf.submit(
     },
 )
 ```
+
+The automatic collector writes the merged normal-termination output to
+`runs/raw_dimers_r2scan3c/merged.parquet` and lists skipped or missing targets
+in `runs/raw_dimers_r2scan3c/collection_report.json`.
 
 !!! note "Raw molecules versus generated molecule states"
 

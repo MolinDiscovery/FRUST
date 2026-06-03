@@ -124,7 +124,9 @@ result = wf.submit(
 
 The workflow object prepares one submitted chain per scientific target. For a
 screen TS workflow, a target is one `TS type + substrate/catalyst system +
-rpos`.
+rpos`. `wf.submit(...)` also submits one final collector job by default. The
+collector waits for the target jobs, writes `runs/screen_ts/merged.parquet`, and
+writes `runs/screen_ts/collection_report.json`.
 
 With no `stage_resources`, every submitted job group uses:
 
@@ -179,17 +181,18 @@ result = wf.submit(
     If `execution` is omitted, DFT workflows use `dft_staged`; non-DFT workflows
     use `single_job`.
 
-Collect the finished outputs with the same workflow object:
+When the collector job finishes, read the merged parquet:
 
 ```python
-merged = wf.collect(
-    "runs/screen_ts",
-    output="screen_ts_merged.parquet",
-    require_normal_termination=True,
-)
+import pandas as pd
 
+merged = pd.read_parquet(result.collection_output)
 ft.show_steps(merged)
 ```
+
+The collection report lists collected, skipped, missing, and errored target
+outputs. By default, automatic collection requires normal termination and skips
+failed outputs instead of silently mixing them into the merged table.
 
 See [Workflow Method Plans](../workflows/workflow-methods.md) for method
 presets and local smoke tests.
@@ -628,6 +631,9 @@ JobSubmissionResult(
     save_dirs=[...],
     mode="...",
     backend="slurm",
+    collection_job_id="...",
+    collection_output="runs/.../merged.parquet",
+    collection_report="runs/.../collection_report.json",
 )
 ```
 
@@ -636,6 +642,8 @@ This is mainly useful for:
 - printing or storing scheduler ids
 - inspecting which tags were submitted
 - locating output directories programmatically
+- finding the automatic merged parquet and collection report for workflow
+  object submissions
 
 ## Current Presets
 
