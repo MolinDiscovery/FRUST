@@ -138,12 +138,17 @@ import frust as ft
 ft.show_steps(df)
 ```
 
-Example output:
+Example output from a merged workflow:
 
 | step | engine | calc_name | mode | options | n_columns | n_cores | memory_gb | xtra_inp_str |
 | --- | --- | --- | --- | --- | ---: | ---: | ---: | --- |
 | `gxtb_opt` | `gxtb` | `gxtb` | `direct_gxtb` | `opt` | 3 | 8 |  |  |
 | `DFT-SP-solvent` | `orca` | `orca` | `direct` | `wB97X-D3 6-31+G** TightSCF SP NoSym` | 3 | 8 | 20.0 | `%CPCM ...` |
+
+For merged workflow outputs, the default summary collapses stored variants such
+as `xtb_opt__variant_001` into one logical `xtb_opt` row. The compact columns
+`n_variants` and `n_sources` show how many provenance variants and source files
+were represented.
 
 The helper also includes compact `executables` and `environment` columns when
 you ask for the full view:
@@ -152,11 +157,11 @@ you ask for the full view:
 ft.show_steps(df, detail="full")
 ```
 
-Use the default summary view for quick inspection. It includes ORCA
-`xtra_inp_str` because solvent models, custom geometry blocks, and other extra
-input can change the chemistry. Use `detail="full"` when you need the full
-call-level `input` block, executable paths, environment paths, compatibility
-aliases such as `gxtb_exe`, or the backend callable name.
+Use the default summary view for quick inspection. Multiline ORCA
+`xtra_inp_str` values are collapsed to one line so markdown output stays
+readable. Use `detail="full"` when you need per-target `__variant_*` rows, the
+full call-level `input` block, executable paths, environment paths,
+compatibility aliases such as `gxtb_exe`, or the backend callable name.
 
 !!! note
     Provenance is best effort. If an executable is not discoverable, FRUST keeps

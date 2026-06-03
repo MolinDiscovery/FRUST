@@ -118,7 +118,8 @@ class DataFrameUtilityTests(unittest.TestCase):
         self.assertEqual(out.loc["gxtb_opt", "output_rows"], 10)
         self.assertEqual(out.loc["gxtb_opt", "dropped_rows"], 0)
         self.assertIn("xtra_inp_str", out.columns)
-        self.assertIn("SMDSOLVENT", out.loc["gxtb_opt", "xtra_inp_str"])
+        self.assertEqual(out.loc["gxtb_opt", "xtra_inp_str"], "%CPCM ... (4 lines)")
+        self.assertNotIn("\n", out.loc["gxtb_opt", "xtra_inp_str"])
 
         full = show_steps(df, detail="full")
 
@@ -180,6 +181,83 @@ class DataFrameUtilityTests(unittest.TestCase):
         self.assertNotIn("n_confs_missing", out.columns)
         self.assertEqual(out.loc["initial_conformers", "output_rows"], 9)
         self.assertEqual(out.loc["initial_conformers", "n_cores"], 8)
+
+    def test_show_steps_summary_collapses_merged_step_variants(self):
+        df = pd.DataFrame({"x": [1]})
+        columns = ["DFT-pre-Opt-EE", "DFT-pre-Opt-NT", "DFT-pre-Opt-oc"]
+        options = {
+            "r2SCAN-3c": None,
+            "TightSCF": None,
+            "SlowConv": None,
+            "Opt": None,
+            "NoSym": None,
+        }
+
+        def step_meta(label, *, source_files, input_rows=20, output_rows=1, dropped_rows=19):
+            return {
+                "engine": "orca",
+                "columns": columns,
+                "options": options,
+                "row_counts": {
+                    "input_rows": input_rows,
+                    "output_rows": output_rows,
+                    "dropped_rows": dropped_rows,
+                },
+                "filtering": {
+                    "lowest": 1,
+                    "energy_col": "DFT-pre-SP-EE",
+                    "input_rows": input_rows,
+                    "output_rows": output_rows,
+                    "dropped_rows": dropped_rows,
+                },
+                "input": {
+                    "xtra_inp_str": f"{label}\nend",
+                    "constraint": True,
+                },
+                "calculator": {
+                    "name": "orca",
+                    "mode": "direct",
+                    "resources": {"n_cores": 24, "memory_gb": 20},
+                },
+                "source_files": source_files,
+            }
+
+        df.attrs["frust_steps"] = {
+            "DFT-pre-Opt": step_meta("A", source_files=["a.parquet", "b.parquet"]),
+            "DFT-pre-Opt__variant_001": step_meta("B", source_files=["c.parquet"]),
+            "DFT-pre-Opt__variant_002": step_meta(
+                "C",
+                source_files=["d.parquet"],
+                input_rows=10,
+                output_rows=1,
+                dropped_rows=9,
+            ),
+        }
+
+        summary = show_steps(df)
+
+        self.assertEqual(list(summary.index), ["DFT-pre-Opt"])
+        self.assertEqual(summary.loc["DFT-pre-Opt", "n_variants"], 3)
+        self.assertEqual(summary.loc["DFT-pre-Opt", "n_sources"], 4)
+        self.assertEqual(summary.loc["DFT-pre-Opt", "input_rows"], 70)
+        self.assertEqual(summary.loc["DFT-pre-Opt", "output_rows"], 4)
+        self.assertEqual(summary.loc["DFT-pre-Opt", "dropped_rows"], 66)
+        self.assertEqual(summary.loc["DFT-pre-Opt", "n_cores"], 24)
+        self.assertEqual(summary.loc["DFT-pre-Opt", "memory_gb"], 20)
+        self.assertEqual(
+            summary.loc["DFT-pre-Opt", "xtra_inp_str"],
+            "mixed: A ... (2 lines); B ... (2 lines); C ... (2 lines)",
+        )
+        self.assertNotIn("\n", summary.loc["DFT-pre-Opt", "xtra_inp_str"])
+
+        full = show_steps(df, detail="full")
+
+        self.assertEqual(
+            list(full.index),
+            ["DFT-pre-Opt", "DFT-pre-Opt__variant_001", "DFT-pre-Opt__variant_002"],
+        )
+        self.assertEqual(full.loc["DFT-pre-Opt", "xtra_inp_str"], "A\nend")
+        self.assertEqual(full.loc["DFT-pre-Opt", "source_files"], "a.parquet, b.parquet")
 
     def test_merge_dataframe_attrs_preserves_steps_and_namespaces_conflicts(self):
         first = pd.DataFrame({"x": [1]})

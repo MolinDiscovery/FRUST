@@ -3,6 +3,7 @@
 from __future__ import annotations
 
 import copy
+import re
 import warnings
 from collections.abc import Mapping
 from pathlib import Path
@@ -20,6 +21,38 @@ _PUBCHEM_CACHE_COLUMNS = [
     "lookup_status",
     "lookup_error",
 ]
+_STEP_VARIANT_RE = re.compile(r"^(?P<base>.+)__variant_\d{3}$")
+_SUMMARY_COLUMNS = [
+    "engine",
+    "calc_name",
+    "mode",
+    "options",
+    "columns",
+    "n_columns",
+    "n_variants",
+    "n_sources",
+    "lowest",
+    "filter_energy_col",
+    "input_rows",
+    "output_rows",
+    "dropped_rows",
+    "n_cores",
+    "memory_gb",
+    "xtra_inp_str",
+]
+_SUMMARY_STABLE_COLUMNS = [
+    "engine",
+    "calc_name",
+    "mode",
+    "options",
+    "columns",
+    "n_columns",
+    "lowest",
+    "filter_energy_col",
+    "n_cores",
+    "memory_gb",
+]
+_SUMMARY_COUNT_COLUMNS = ["input_rows", "output_rows", "dropped_rows"]
 
 
 def merge_dataframe_attrs(
@@ -126,14 +159,16 @@ def show_steps(df: pd.DataFrame, *, detail: str = "summary") -> pd.DataFrame:
         when present.
     detail : {"summary", "full"}, optional
         Level of detail to return. ``"summary"`` is intended for quick
-        inspection and omits verbose executable and environment provenance.
-        ``"full"`` includes every available metadata column.
+        inspection, collapses merged step variants such as
+        ``"xtb_opt__variant_001"``, and omits verbose executable and environment
+        provenance. ``"full"`` includes every available metadata column and
+        keeps stored variants as separate rows.
 
     Returns
     -------
     pandas.DataFrame
-        One row per recorded calculation step, indexed by step name. Columns
-        that are entirely empty are removed.
+        Summary rows or full provenance rows indexed by step name. Columns that
+        are entirely empty are removed.
     """
     if detail not in {"summary", "full"}:
         raise ValueError("detail must be 'summary' or 'full'")
@@ -195,6 +230,7 @@ def show_steps(df: pd.DataFrame, *, detail: str = "summary") -> pd.DataFrame:
                 "gxtb": step.get("gxtb"),
                 "gxtb_exe": step.get("gxtb_exe"),
                 "gxtb_exe_source": step.get("gxtb_exe_source"),
+                "_source_files": _step_source_files(step),
             }
         )
 
@@ -205,25 +241,160 @@ def show_steps(df: pd.DataFrame, *, detail: str = "summary") -> pd.DataFrame:
 
     out = pd.DataFrame(rows).set_index("step")
     if detail == "summary":
-        out = out[
-            [
-                "engine",
-                "calc_name",
-                "mode",
-                "options",
-                "columns",
-                "n_columns",
-                "lowest",
-                "filter_energy_col",
-                "input_rows",
-                "output_rows",
-                "dropped_rows",
-                "n_cores",
-                "memory_gb",
-                "xtra_inp_str",
-            ]
-        ]
+        out = _summarize_step_rows(out)
+        out = out[[column for column in _SUMMARY_COLUMNS if column in out.columns]]
+    else:
+        out = _format_full_step_rows(out)
     return out.dropna(axis=1, how="all")
+
+
+def _summarize_step_rows(rows: pd.DataFrame) -> pd.DataFrame:
+    """Collapse stored step variants into one compact row per logical step."""
+    grouped: dict[str, list[pd.Series]] = {}
+    for step_name, row in rows.iterrows():
+        grouped.setdefault(_base_step_name(str(step_name)), []).append(row)
+
+    summary_rows: list[dict[str, Any]] = []
+    for step_name, group_rows in grouped.items():
+        source_files = _unique_strings(
+            [
+                source
+                for row in group_rows
+                for source in _coerce_source_files(row.get("_source_files"))
+            ]
+        )
+        weights = [
+            max(1, len(_coerce_source_files(row.get("_source_files"))))
+            for row in group_rows
+        ]
+
+        summary: dict[str, Any] = {
+            "step": step_name,
+            "n_variants": len(group_rows),
+            "n_sources": len(source_files) if source_files else None,
+        }
+        for column in _SUMMARY_STABLE_COLUMNS:
+            summary[column] = _summarize_mixed_values(
+                [row.get(column) for row in group_rows]
+            )
+        for column in _SUMMARY_COUNT_COLUMNS:
+            summary[column] = _weighted_sum(
+                [row.get(column) for row in group_rows],
+                weights,
+            )
+        summary["xtra_inp_str"] = _summarize_mixed_values(
+            [
+                _compact_multiline_text(row.get("xtra_inp_str"))
+                for row in group_rows
+            ]
+        )
+        summary_rows.append(summary)
+
+    if not summary_rows:
+        out = pd.DataFrame()
+        out.index.name = "step"
+        return out
+    return pd.DataFrame(summary_rows).set_index("step")
+
+
+def _format_full_step_rows(rows: pd.DataFrame) -> pd.DataFrame:
+    """Format internal full-detail helper columns for display."""
+    out = rows.copy()
+    if "_source_files" in out.columns:
+        source_values = out["_source_files"].map(
+            lambda value: _format_list(_coerce_source_files(value))
+        )
+        if source_values.notna().any():
+            out["source_files"] = source_values
+        out = out.drop(columns=["_source_files"])
+    return out
+
+
+def _base_step_name(step_name: str) -> str:
+    """Return the logical step name for a stored variant row."""
+    match = _STEP_VARIANT_RE.match(step_name)
+    if match is None:
+        return step_name
+    return match.group("base")
+
+
+def _step_source_files(step: Mapping[str, Any]) -> list[str]:
+    """Return source files recorded on one step metadata block."""
+    return _coerce_source_files(step.get("source_files"))
+
+
+def _coerce_source_files(value: Any) -> list[str]:
+    """Normalize source-file metadata to a unique string list."""
+    if isinstance(value, (list, tuple, set)):
+        return _unique_strings(value)
+    if _none_if_missing(value) is None:
+        return []
+    return [str(value)]
+
+
+def _weighted_sum(values: Sequence[Any], weights: Sequence[int]) -> int | float | None:
+    """Return a weighted numeric sum while ignoring missing values."""
+    total = 0.0
+    any_value = False
+    for value, weight in zip(values, weights):
+        value = _none_if_missing(value)
+        if value is None:
+            continue
+        try:
+            numeric = float(value)
+        except (TypeError, ValueError):
+            continue
+        total += numeric * int(weight)
+        any_value = True
+    if not any_value:
+        return None
+    if total.is_integer():
+        return int(total)
+    return total
+
+
+def _summarize_mixed_values(values: Sequence[Any]) -> Any:
+    """Return one value, a compact mixed label, or a mixed count."""
+    unique: list[Any] = []
+    fingerprints = set()
+    for value in values:
+        value = _none_if_missing(value)
+        if value is None:
+            continue
+        fingerprint = _attr_fingerprint(value)
+        if fingerprint in fingerprints:
+            continue
+        fingerprints.add(fingerprint)
+        unique.append(value)
+
+    if not unique:
+        return None
+    if len(unique) == 1:
+        return unique[0]
+
+    labels = [str(value) for value in unique]
+    if (
+        len(labels) <= 3
+        and all("\n" not in label for label in labels)
+        and all(len(label) <= 80 for label in labels)
+    ):
+        return "mixed: " + "; ".join(labels)
+    return f"mixed ({len(labels)} values)"
+
+
+def _compact_multiline_text(value: Any) -> str | None:
+    """Return text with multiline blocks collapsed to one display line."""
+    value = _none_if_missing(value)
+    if value is None:
+        return None
+    text = str(value)
+    lines = text.splitlines()
+    if len(lines) <= 1:
+        return text
+    first = lines[0].strip()
+    if not first:
+        first = next((line.strip() for line in lines if line.strip()), "")
+    return f"{first} ... ({len(lines)} lines)"
 
 
 def map_substrate_names(
