@@ -13,6 +13,63 @@ from .render import _annotate_energy_only
 from .styles import _resolve_colors, _style_meta_for_side_label
 
 
+def _explicit_overlay_colors(overlay_colors, profile_name, overlay_idx):
+    if overlay_colors is None:
+        return None
+
+    spec = None
+    if isinstance(overlay_colors, dict):
+        spec = overlay_colors.get(profile_name)
+    elif (
+        isinstance(overlay_colors, (list, tuple))
+        and overlay_idx < len(overlay_colors)
+    ):
+        spec = overlay_colors[overlay_idx]
+
+    if spec is None:
+        return None
+
+    if isinstance(spec, (tuple, list)) and len(spec) == 2:
+        return spec[0], spec[1]
+
+    return spec, spec
+
+
+def _plan_profile_colors(profiles, side_token, overlay_colors):
+    color_pairs = []
+    next_color_idx = 1
+
+    for profile_idx, (profile_name, profile_states) in enumerate(profiles):
+        _, seg_ids, _, _, _ = _parse_entries(profile_states, side_token)
+        needs_side = any(sid == 1 for sid in seg_ids)
+
+        if profile_idx == 0:
+            color_pairs.append(("C0", "C1" if needs_side else "C0"))
+            next_color_idx = 2 if needs_side else 1
+            continue
+
+        overlay_idx = profile_idx - 1
+        explicit = _explicit_overlay_colors(
+            overlay_colors,
+            profile_name,
+            overlay_idx,
+        )
+        if explicit is not None:
+            color_pairs.append(explicit)
+        else:
+            main_color = f"C{next_color_idx % 10}"
+            side_color = (
+                f"C{(next_color_idx + 1) % 10}"
+                if needs_side
+                else main_color
+            )
+            color_pairs.append((main_color, side_color))
+
+        next_color_idx += 2 if needs_side else 1
+
+    return color_pairs
+
+
 def plot_energy_profile(
     states,
     ylabel: str = "ΔG (kcal/mol)",
@@ -51,7 +108,7 @@ def plot_energy_profile(
     profile_label: str | None = None,
     overlay_colors=None,
     same_energy_tol: float = 1e-3,
-    same_energy_mode: str = "hide",  # "hide" | "tag"
+    same_energy_mode: str = "hide",  # "hide" | "tag" | "show"
     same_energy_tag: str = "≡",
     # --- NEW: bottom state labels (recommended for overlays) ---
     show_state_labels: bool | None = None,
@@ -130,7 +187,10 @@ def plot_energy_profile(
         Optional overlay color mapping or sequence. A two-item tuple sets
         ``(main_color, side_color)``.
     same_energy_tol, same_energy_mode, same_energy_tag
-        Controls for suppressing or tagging matching overlay energies.
+        Controls matching overlay energies. ``"hide"`` suppresses overlay
+        energy labels that match the reference profile at the same state,
+        ``"tag"`` suppresses those labels and marks the reference label with
+        `same_energy_tag`, and ``"show"`` annotates matching overlay energies.
     show_state_labels, state_label_rotation, state_label_pad
         X-axis state-label controls.
     font_size, state_label_fontsize, energy_fontsize, axis_label_fontsize,
@@ -174,6 +234,11 @@ def plot_energy_profile(
         else float(same_energy_tag_fontsize)
     )
 
+    valid_same_energy_modes = {"hide", "tag", "show"}
+    if same_energy_mode not in valid_same_energy_modes:
+        allowed = "', '".join(["hide", "tag", "show"])
+        raise ValueError(f"same_energy_mode must be one of '{allowed}'.")
+
 
 
 
@@ -195,6 +260,7 @@ def plot_energy_profile(
         ref_prod_xs,
         ref_energy_map,
         overlay_idx,
+        color_pair=None,
     ):
         (
             entries,
@@ -202,9 +268,7 @@ def plot_energy_profile(
             side_anchor_label,
             side_connector_rise_frac,
             side_legend_label,
-        ) = _parse_entries(
-            profile_states
-        )
+        ) = _parse_entries(profile_states, side_token)
 
         names = [e[0] for e in entries]
         E = np.array([e[1] for e in entries], dtype=float)
@@ -233,13 +297,16 @@ def plot_energy_profile(
                 side_start_idx = i
                 break
 
-        main_color, side_color = _resolve_colors(
-            overlay_colors,
-            profile_name,
-            is_reference,
-            overlay_idx,
-            side_start_idx is not None,
-        )
+        if color_pair is None:
+            main_color, side_color = _resolve_colors(
+                overlay_colors,
+                profile_name,
+                is_reference,
+                overlay_idx,
+                side_start_idx is not None,
+            )
+        else:
+            main_color, side_color = color_pair
         point_colors = [main_color] * len(entries)
         a = 1.0 if is_reference else float(overlay_alpha)
         lw = (1.5 * float(overlay_lw_scale)) if not is_reference else 1.5
@@ -262,6 +329,12 @@ def plot_energy_profile(
             if side_start_idx is not None
             else None
         )
+        profile_legend_meta = {
+            "profile_name": None if profile_name is None else str(profile_name),
+            "color": main_color,
+            "alpha": a,
+            "marker": legend_marker,
+        }
 
         if side_start_idx is None:
             x_i, E_i = _dedup_for_interp(x, E)
@@ -518,7 +591,7 @@ def plot_energy_profile(
                     ref_e = ref_energy_map.get(key)
                     if ref_e is not None and abs(float(Ei) - float(ref_e)) <= float(
                         same_energy_tol
-                    ):
+                    ) and same_energy_mode in {"hide", "tag"}:
                         continue
 
                 placement_counts = _parse_placement(entries[i - 1][2])
@@ -621,9 +694,23 @@ def plot_energy_profile(
                 ordered.append((float(xi), str(lab)))
                 if _is_product(lab):
                     prod_xs.append(float(xi))
-            return x_map, prod_xs, profile_energy_map, ordered, side_legend_meta
+            return (
+                x_map,
+                prod_xs,
+                profile_energy_map,
+                ordered,
+                side_legend_meta,
+                profile_legend_meta,
+            )
 
-        return None, None, profile_energy_map, None, side_legend_meta
+        return (
+            None,
+            None,
+            profile_energy_map,
+            None,
+            side_legend_meta,
+            profile_legend_meta,
+        )
 
     # ---- Detect multi-profile input (no breaking of current list input) ----
     multi = False
@@ -665,9 +752,10 @@ def plot_energy_profile(
     ref_energy_map = None
     ref_ordered = None
     side_legend_metas = []
+    profile_legend_metas = []
 
     if not multi:
-        _, _, _, _, side_meta = _plot_one(
+        _, _, _, _, side_meta, _ = _plot_one(
             profile_name=None,
             profile_states=states,
             ax_=ax,
@@ -680,8 +768,20 @@ def plot_energy_profile(
         if side_meta is not None:
             side_legend_metas.append(side_meta)
     else:
+        profile_color_pairs = _plan_profile_colors(
+            profiles,
+            side_token,
+            overlay_colors,
+        )
         ref_name, ref_states = profiles[0]
-        ref_x_map, ref_prod_xs, ref_energy_map, ref_ordered, side_meta = _plot_one(
+        (
+            ref_x_map,
+            ref_prod_xs,
+            ref_energy_map,
+            ref_ordered,
+            side_meta,
+            profile_meta,
+        ) = _plot_one(
             profile_name=ref_name,
             profile_states=ref_states,
             ax_=ax,
@@ -690,13 +790,15 @@ def plot_energy_profile(
             ref_prod_xs=ref_prod_xs,
             ref_energy_map=None,
             overlay_idx=0,
+            color_pair=profile_color_pairs[0],
         )
+        profile_legend_metas.append(profile_meta)
         if side_meta is not None:
             side_legend_metas.append(side_meta)
 
         overlay_energy_maps = []
         for k, (name, st) in enumerate(profiles[1:], start=0):
-            _, _, e_map, _, side_meta = _plot_one(
+            _, _, e_map, _, side_meta, profile_meta = _plot_one(
                 profile_name=name,
                 profile_states=st,
                 ax_=ax,
@@ -705,8 +807,10 @@ def plot_energy_profile(
                 ref_prod_xs=ref_prod_xs,
                 ref_energy_map=ref_energy_map,
                 overlay_idx=k,
+                color_pair=profile_color_pairs[k + 1],
             )
             overlay_energy_maps.append(e_map)
+            profile_legend_metas.append(profile_meta)
             if side_meta is not None:
                 side_legend_metas.append(side_meta)
 
@@ -740,33 +844,17 @@ def plot_energy_profile(
         if show_legend:
             handles = []
             labels = []
-            for i, (name, _) in enumerate(profiles):
+            for meta in profile_legend_metas:
+                name = meta["profile_name"]
                 if name is None:
                     continue
-                if i == 0:
-                    color = "C0"
-                    a = 1.0
-                else:
-                    if isinstance(overlay_colors, dict) and name in overlay_colors:
-                        spec = overlay_colors[name]
-                        color = spec[0] if isinstance(spec, (tuple, list)) else spec
-                    else:
-                        color = f"C{i}"
-                    a = overlay_alpha
-                if i == 0:
-                    m = marker
-                else:
-                    if isinstance(overlay_markers, dict):
-                        m = overlay_markers.get(name, marker)
-                    else:
-                        m = marker
 
                 h = plt.Line2D(
                     [0],
                     [0],
-                    color=color,
-                    alpha=a,
-                    marker=m,
+                    color=meta["color"],
+                    alpha=meta["alpha"],
+                    marker=meta["marker"],
                     linestyle="-",
                 )
                 handles.append(h)

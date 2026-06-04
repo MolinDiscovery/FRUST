@@ -154,6 +154,73 @@ class PlotEnergyProfileTests(unittest.TestCase):
 
         self.assertEqual(x.tolist(), [0.0, 0.75, 1.25])
 
+    def test_overlay_legend_uses_profile_colors_for_energy_labels(self):
+        profiles = {
+            "ref": [("A", 0.0), ("TS", 1.0)],
+            "first": [("A", 0.0), ("TS", 2.0)],
+            "second": [("A", 0.0), ("TS", 3.0)],
+            "third": [("A", 0.0), ("TS", 4.0)],
+        }
+
+        fig, ax = plot_energy_profile(profiles, overlay_alpha=1.0)
+        self.addCleanup(lambda: plt.close(fig))
+
+        legend = ax.get_legend()
+        legend_colors = {
+            label.get_text(): handle.get_color()
+            for label, handle in zip(legend.get_texts(), legend.legend_handles)
+        }
+        text_colors = {text.get_text(): text.get_color() for text in ax.texts}
+
+        expected = {
+            "ref": ("1.0", "C0"),
+            "first": ("2.0", "C1"),
+            "second": ("3.0", "C2"),
+            "third": ("4.0", "C3"),
+        }
+        for profile_name, (energy_label, expected_color) in expected.items():
+            self.assertTrue(same_color(legend_colors[profile_name], expected_color))
+            self.assertTrue(
+                same_color(legend_colors[profile_name], text_colors[energy_label])
+            )
+
+    def test_same_energy_show_keeps_matching_overlay_labels(self):
+        profiles = {
+            "ref": [("A", 0.0), ("TS", 1.0)],
+            "overlay": [("A", 0.0), ("TS", 1.0, "r")],
+        }
+
+        fig, ax = plot_energy_profile(
+            profiles,
+            overlay_alpha=1.0,
+            same_energy_mode="show",
+        )
+        self.addCleanup(lambda: plt.close(fig))
+
+        matching_labels = [text for text in ax.texts if text.get_text() == "1.0"]
+
+        self.assertEqual(len(matching_labels), 2)
+        self.assertTrue(same_color(matching_labels[0].get_color(), "C0"))
+        self.assertTrue(same_color(matching_labels[1].get_color(), "C1"))
+
+    def test_same_energy_hide_suppresses_matching_overlay_labels(self):
+        profiles = {
+            "ref": [("A", 0.0), ("TS", 1.0)],
+            "overlay": [("A", 0.0), ("TS", 1.0, "r")],
+        }
+
+        fig, ax = plot_energy_profile(
+            profiles,
+            overlay_alpha=1.0,
+            same_energy_mode="hide",
+        )
+        self.addCleanup(lambda: plt.close(fig))
+
+        matching_labels = [text for text in ax.texts if text.get_text() == "1.0"]
+
+        self.assertEqual(len(matching_labels), 1)
+        self.assertTrue(same_color(matching_labels[0].get_color(), "C0"))
+
     def test_main_product_label_keeps_main_color_after_side_reaction(self):
         profiles = {
             "main": [

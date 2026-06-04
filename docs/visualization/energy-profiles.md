@@ -280,6 +280,7 @@ overlap.
 | `overlay_colors={...}` | set colors for specific profiles |
 | `state_label_rotation=45` | rotate crowded x-axis labels |
 | `same_energy_mode="hide"` | hide duplicate energy annotations in overlays |
+| `same_energy_mode="show"` | show overlay energy annotations even when they match the reference profile |
 | `product_x_offset=0.5` | separate multiple product-like states |
 | `font_size=14` | scale labels, energies, and legend together |
 | `hide_y_ticks=False` | show the numeric y-axis |
