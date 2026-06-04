@@ -1,0 +1,11 @@
+role,smiles,rpos
+substrate,OC1=CC(OC)=CC=C1,8;
+substrate,OC1=CC=CC=C1,2;
+substrate,O=C(CC(C)(C)C)NC1=CC=CC=C1,9;
+substrate,N#CC1=CC=C(NC(C)=O)C=C1,4;
+substrate,COC1=CC=CC(OC)=C1,3;
+substrate,CC1=CC=CC(N(C)C)=C1,2;
+catalyst,BC1=C(N(C)C)C=CC=C1,
+catalyst,BC1=C(N(CC)CC)C=CC=C1,
+catalyst,BC1=C(N2CCCCC2)C=CC=C1,
+catalyst,BC1=C(N2C(C)(C)CCCC2(C)C)C=CC=C1
