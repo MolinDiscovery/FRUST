@@ -10,6 +10,7 @@ collected parquet outputs.
 from __future__ import annotations
 
 import json
+import os
 from collections.abc import Mapping
 from dataclasses import dataclass
 from pathlib import Path
@@ -27,6 +28,14 @@ from frust.cluster.naming import sanitize_tag
 from frust.schema import normal_termination_columns, normalize_dataframe
 from frust.stepper import Stepper
 from frust.utils.dataframes import lowest_energy_rows, merge_dataframe_attrs
+from frust.utils.timing import (
+    append_workflow_timing,
+    build_workflow_timing_record,
+    elapsed_seconds,
+    monotonic_seconds,
+    utc_timestamp,
+    write_timing_sidecar,
+)
 from frust.workflows.methods import CalculatorSpec, MethodPlan, preset as method_preset
 
 
@@ -500,7 +509,15 @@ class BaseWorkflow:
                     save_output_dir=save_output_dir,
                     work_dir=str(work_dir or cluster.work_dir) if (work_dir or cluster.work_dir) else None,
                 )
-                job = executor.submit(_run_target_job, self, target, target_dir, options)
+                submitted_at = utc_timestamp()
+                job = executor.submit(
+                    _run_target_job,
+                    self,
+                    target,
+                    target_dir,
+                    options,
+                    submitted_at,
+                )
                 job_id = getattr(job, "job_id", f"{target.tag}_workflow")
                 job_ids.append(job_id)
                 final_job_ids.append(job_id)
@@ -531,6 +548,7 @@ class BaseWorkflow:
                     save_output_dir=save_output_dir,
                     work_dir=str(work_dir or cluster.work_dir) if (work_dir or cluster.work_dir) else None,
                 )
+                submitted_at = utc_timestamp()
                 job = executor.submit(
                     _run_stage_group_job,
                     self,
@@ -540,6 +558,7 @@ class BaseWorkflow:
                     output_parquet,
                     target_dir,
                     options,
+                    submitted_at,
                 )
                 job_id = getattr(job, "job_id", f"{target.tag}_{group_name}")
                 job_ids.append(job_id)
@@ -849,7 +868,11 @@ class BaseWorkflow:
             Output dataframe after all stages in the group have run.
         """
         df = input_df
+        group_name = self._group_name(stages)
         for stage in stages:
+            stage_started_at = utc_timestamp()
+            stage_start = monotonic_seconds()
+            input_rows = None if df is None else int(len(df))
             if stage.kind == "prepare":
                 df = self._prepare_initial_df(target, save_dir=save_dir, options=options)
             else:
@@ -864,6 +887,25 @@ class BaseWorkflow:
                     options=options,
                 )
             df = _attach_workflow_attrs(df, workflow=self, target=target)
+            append_workflow_timing(
+                df.attrs,
+                build_workflow_timing_record(
+                    workflow=self.workflow_name,
+                    target=target.tag,
+                    group=group_name,
+                    stage=stage.id,
+                    kind=stage.kind,
+                    started_at=stage_started_at,
+                    finished_at=utc_timestamp(),
+                    elapsed_s=elapsed_seconds(stage_start),
+                    input_rows=input_rows,
+                    output_rows=int(len(df)),
+                    resources={
+                        "n_cores": options.n_cores,
+                        "memory_gb": options.mem_gb,
+                    },
+                ),
+            )
         if df is None:
             raise ValueError("No workflow stages were run")
         return df
@@ -874,6 +916,7 @@ def _run_target_job(
     target: WorkflowTarget,
     save_dir: str | Path | None,
     options: ExecutionOptions,
+    submitted_at: str | None = None,
 ) -> pd.DataFrame:
     """Run every workflow stage for one target.
 
@@ -894,6 +937,8 @@ def _run_target_job(
         Final target dataframe after all stages have run.
     """
     target_dir = None if save_dir is None else Path(save_dir)
+    group_started_at = utc_timestamp()
+    group_start = monotonic_seconds()
     df = workflow._run_stage_group(
         target,
         workflow._stage_defs(),
@@ -901,7 +946,32 @@ def _run_target_job(
         save_dir=target_dir,
         options=options,
     )
+    group_record = build_workflow_timing_record(
+        workflow=workflow.workflow_name,
+        target=target.tag,
+        group="single_job",
+        stage=None,
+        kind="group",
+        job_id=_current_job_id(),
+        started_at=group_started_at,
+        finished_at=utc_timestamp(),
+        elapsed_s=elapsed_seconds(group_start),
+        input_rows=None,
+        output_rows=int(len(df)),
+        resources=_options_resources(options),
+    )
+    append_workflow_timing(df.attrs, group_record)
     if target_dir is not None:
+        write_timing_sidecar(
+            target_dir / "single_job.timing.json",
+            {
+                "schema_version": 1,
+                "submitted_at": submitted_at,
+                "record": group_record,
+                "stage_ids": [stage.id for stage in workflow._stage_defs()],
+                "output_parquet": "final.parquet",
+            },
+        )
         df.to_parquet(target_dir / "final.parquet")
     return df
 
@@ -914,6 +984,7 @@ def _run_stage_group_job(
     output_parquet: str,
     save_dir: str | Path,
     options: ExecutionOptions,
+    submitted_at: str | None = None,
 ) -> pd.DataFrame:
     """Run one submitted or staged-local stage group.
 
@@ -941,15 +1012,44 @@ def _run_stage_group_job(
         Stage-group output dataframe, also written to ``output_parquet``.
     """
     target_dir = Path(save_dir)
+    group_started_at = utc_timestamp()
+    group_start = monotonic_seconds()
     input_df = None if input_parquet is None else pd.read_parquet(target_dir / input_parquet)
     stages_by_id = {stage.id: stage for stage in workflow._stage_defs()}
     stages = [stages_by_id[stage_id] for stage_id in stage_ids]
+    group_name = workflow._group_name(stages)
     df = workflow._run_stage_group(
         target,
         stages,
         input_df=input_df,
         save_dir=target_dir,
         options=options,
+    )
+    group_record = build_workflow_timing_record(
+        workflow=workflow.workflow_name,
+        target=target.tag,
+        group=group_name,
+        stage=None,
+        kind="group",
+        job_id=_current_job_id(),
+        started_at=group_started_at,
+        finished_at=utc_timestamp(),
+        elapsed_s=elapsed_seconds(group_start),
+        input_rows=None if input_df is None else int(len(input_df)),
+        output_rows=int(len(df)),
+        resources=_options_resources(options),
+    )
+    append_workflow_timing(df.attrs, group_record)
+    write_timing_sidecar(
+        target_dir / f"{sanitize_tag(group_name)}.timing.json",
+        {
+            "schema_version": 1,
+            "submitted_at": submitted_at,
+            "record": group_record,
+            "stage_ids": stage_ids,
+            "input_parquet": input_parquet,
+            "output_parquet": output_parquet,
+        },
     )
     df.to_parquet(target_dir / output_parquet)
     return df
@@ -1030,6 +1130,7 @@ def _collect_expected_outputs(
         frames.append(df)
         collected_files.append(str(final_file))
 
+    timing_report = _collect_timing_sidecars(root, targets)
     report_payload: dict[str, Any] = {
         "workflow": workflow.workflow_name,
         "output": str(output_path),
@@ -1044,6 +1145,7 @@ def _collect_expected_outputs(
         "missing_files": missing_files,
         "errored_files": errored_files,
         "errors": errors,
+        "timing": timing_report,
     }
 
     if frames:
@@ -1079,6 +1181,68 @@ def _collect_expected_outputs(
             f"See collection report: {report_path}"
         )
     return merged
+
+
+def _collect_timing_sidecars(
+    root: Path,
+    targets: list[WorkflowTarget],
+) -> dict[str, Any]:
+    """Read workflow timing sidecars for a collection report."""
+    records: list[dict[str, Any]] = []
+    timing_files: list[str] = []
+    missing_targets: list[str] = []
+    errored_files: list[dict[str, str]] = []
+
+    for target in targets:
+        target_dir = root / target.tag
+        files = sorted(target_dir.glob("*.timing.json"))
+        if not files:
+            missing_targets.append(target.tag)
+            continue
+        for path in files:
+            try:
+                payload = json.loads(path.read_text())
+            except Exception as exc:
+                errored_files.append({"file": str(path), "error": str(exc)})
+                continue
+            record = payload.get("record")
+            if isinstance(record, Mapping):
+                records.append(dict(record))
+                timing_files.append(str(path))
+
+    total_elapsed_s = sum(
+        float(record.get("elapsed_s") or 0.0)
+        for record in records
+    )
+    total_core_hours = 0.0
+    for record in records:
+        resources = record.get("resources")
+        n_cores = None
+        if isinstance(resources, Mapping):
+            n_cores = resources.get("n_cores")
+        try:
+            total_core_hours += (
+                float(record.get("elapsed_s") or 0.0)
+                * float(n_cores or 0.0)
+                / 3600.0
+            )
+        except (TypeError, ValueError):
+            continue
+
+    slowest = sorted(
+        records,
+        key=lambda record: float(record.get("elapsed_s") or 0.0),
+        reverse=True,
+    )[:5]
+    return {
+        "n_timing_files": len(timing_files),
+        "timing_files": timing_files,
+        "missing_timing_targets": missing_targets,
+        "errored_timing_files": errored_files,
+        "total_elapsed_s": round(total_elapsed_s, 6),
+        "total_core_hours": round(total_core_hours, 6),
+        "slowest_groups": slowest,
+    }
 
 
 def _stage_engine(stage: StageDef, spec: CalculatorSpec | None) -> str | None:
@@ -1126,7 +1290,11 @@ def _coerce_method(method: MethodPlan | str | None) -> MethodPlan:
         return method_preset("wb97xd3-631g")
     if isinstance(method, str):
         return method_preset(method)
-    if isinstance(method, MethodPlan):
+    if isinstance(method, MethodPlan) or (
+        method.__class__.__name__ == "MethodPlan"
+        and hasattr(method, "stages")
+        and hasattr(method, "for_stage")
+    ):
         return method
     raise TypeError("method must be a MethodPlan, preset name, or None")
 
@@ -1232,6 +1400,26 @@ def _all_normal_terminated(df: pd.DataFrame) -> bool:
     if not nt_cols:
         return True
     return bool(df[nt_cols].fillna(False).astype(bool).all().all())
+
+
+def _options_resources(options: ExecutionOptions) -> dict[str, Any]:
+    """Return workflow execution resources for timing metadata."""
+    return {
+        "n_cores": options.n_cores,
+        "memory_gb": options.mem_gb,
+    }
+
+
+def _current_job_id() -> str | None:
+    """Return the active scheduler job id when one is visible to Python."""
+    if os.getenv("SLURM_JOB_ID"):
+        return os.getenv("SLURM_JOB_ID")
+    try:
+        import submitit
+
+        return str(submitit.JobEnvironment().job_id)
+    except Exception:
+        return None
 
 
 def _apply_calculator(

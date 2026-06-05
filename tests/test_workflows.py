@@ -290,10 +290,18 @@ class WorkflowExecutionTests(unittest.TestCase):
             self.assertTrue((target_dir / "init.parquet").exists())
             self.assertTrue((target_dir / "init.dft_opt.parquet").exists())
             self.assertTrue((target_dir / "init.dft_opt.freq.solv.parquet").exists())
+            self.assertTrue((target_dir / "init.timing.json").exists())
+            self.assertTrue((target_dir / "dft_opt.timing.json").exists())
+            timing_payload = json.loads((target_dir / "init.timing.json").read_text())
+            self.assertEqual(timing_payload["record"]["target"], "int2_rpos_2")
+            self.assertEqual(timing_payload["record"]["kind"], "group")
             collected = wf.collect(tmp)
 
         self.assertEqual(len(out), 1)
         self.assertEqual(len(collected), 1)
+        workflow_timing = ft.show_timing(out, detail="workflow")
+        self.assertIn("group", workflow_timing["kind"].tolist())
+        self.assertIn("prepare", workflow_timing["kind"].tolist())
         engines = [call[0] for call in FakeStepper.calls]
         self.assertIn("gxtb", engines)
         gxtb_calls = [call for call in FakeStepper.calls if call[0] == "gxtb"]

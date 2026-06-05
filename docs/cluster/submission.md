@@ -188,11 +188,24 @@ import pandas as pd
 
 merged = pd.read_parquet(result.collection_output)
 ft.show_steps(merged)
+ft.show_timing(merged, detail="workflow")
 ```
 
 The collection report lists collected, skipped, missing, and errored target
 outputs. By default, automatic collection requires normal termination and skips
 failed outputs instead of silently mixing them into the merged table.
+
+Each submitted workflow target also writes timing sidecars in its target
+directory, such as:
+
+```text
+runs/screen_ts/TS1_pyrrole_rpos_2/init.timing.json
+runs/screen_ts/TS1_pyrrole_rpos_2/optts.timing.json
+```
+
+The collector summarizes discovered timing sidecars in
+`collection_report.json`, including missing timing files and the slowest stage
+groups.
 
 See [Workflow Method Plans](../workflows/workflow-methods.md) for method
 presets and local smoke tests.

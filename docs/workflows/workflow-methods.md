@@ -60,7 +60,29 @@ Built-in method plans are selected by name:
 method = ft.workflows.methods.preset("r2scan-3c")
 ```
 
-The default screen workflow uses these stage ids:
+Preset names are forgiving: matching is case-insensitive, and underscores are
+treated like hyphens. These calls resolve to the same built-in preset:
+
+```python
+ft.workflows.methods.preset("r2scan-3c")
+ft.workflows.methods.preset("R2SCAN-3C")
+ft.workflows.methods.preset("r2scan_3c")
+```
+
+If a workflow receives `method=None`, FRUST currently uses
+`"wb97xd3-631g"`. Passing a string is clearer for notebooks and cluster scripts
+because the calculation level is visible at the workflow construction site.
+
+### Built-In Presets
+
+| preset name | DFT stages | solvent stage | Use when |
+| --- | --- | --- | --- |
+| `"r2scan-3c"` | ORCA `r2SCAN-3c` composite method | ORCA `r2SCAN-3c` single point with SMD chloroform | You want the compact composite-method workflow currently used in most new examples. |
+| `"wb97xd3-631g"` | ORCA `wB97X-D3/6-31G**` | ORCA `wB97X-D3/6-31+G**` single point with SMD chloroform | You want FRUST's legacy/default workflow behavior. |
+| `"r2scan-def2svp"` | ORCA `R2SCAN/def2-SVP` | ORCA `R2SCAN/def2-SVPD` single point with SMD chloroform | You want a conventional R2SCAN/basis-set workflow instead of the `r2SCAN-3c` composite method. |
+
+All three built-ins use the same stage ids. The xTB stages are identical across
+presets; the ORCA options differ by preset.
 
 | stage id | default engine | role |
 | --- | --- | --- |
@@ -69,6 +91,7 @@ The default screen workflow uses these stage ids:
 | `xtb_opt` | `xtb` | constrained xTB optimization and conformer filtering |
 | `dft_pre_sp` | `orca` | DFT single point before DFT optimization |
 | `dft_pre_opt` | `orca` | constrained DFT preoptimization |
+| `dft_opt` | `orca` | DFT optimization for molecule workflows |
 | `hess` | `orca` | Hessian/frequency stage for TS optimization |
 | `optts` | `orca` | ORCA `OptTS` |
 | `freq` | `orca` | final frequency check |
@@ -80,6 +103,82 @@ a specific workflow will actually run, inspect the workflow:
 ```python
 wf.show_stages()[["group", "stage", "method_key", "engine", "options"]]
 ```
+
+!!! note "Presets are larger than any one workflow"
+
+    A preset contains both molecule-stage keys such as `dft_opt` and TS-stage
+    keys such as `hess` and `optts`. The workflow decides which keys are active.
+    For example, `raw_mols(..., dft=True)` uses `dft_opt`, `freq`, and `solv`;
+    `screen_ts(..., dft=True)` uses `hess`, `optts`, `freq`, and `solv`.
+
+### Exact Built-In Stage Maps
+
+Use these tables when you need to know what a preset means before running a
+large cluster job. The `solv` stage also includes this ORCA extra input block:
+
+```text
+%CPCM
+SMD TRUE
+SMDSOLVENT "chloroform"
+end
+```
+
+#### `r2scan-3c`
+
+```python
+method = ft.workflows.methods.preset("r2scan-3c")
+```
+
+| stage id | engine | options |
+| --- | --- | --- |
+| `xtb_preopt` | `xtb` | `gfnff opt` |
+| `xtb_sp` | `xtb` | `gfn=2` |
+| `xtb_opt` | `xtb` | `gfn=2 opt` |
+| `dft_pre_sp` | `orca` | `r2SCAN-3c TightSCF SP NoSym` |
+| `dft_pre_opt` | `orca` | `r2SCAN-3c TightSCF SlowConv Opt NoSym` |
+| `dft_opt` | `orca` | `r2SCAN-3c TightSCF SlowConv Opt NoSym` |
+| `hess` | `orca` | `r2SCAN-3c TightSCF SlowConv Freq NoSym` |
+| `optts` | `orca` | `r2SCAN-3c TightSCF SlowConv OptTS NoSym` |
+| `freq` | `orca` | `r2SCAN-3c TightSCF SlowConv Freq NoSym` |
+| `solv` | `orca` | `r2SCAN-3c TightSCF SP NoSym` plus SMD chloroform block |
+
+#### `wb97xd3-631g`
+
+```python
+method = ft.workflows.methods.preset("wb97xd3-631g")
+```
+
+| stage id | engine | options |
+| --- | --- | --- |
+| `xtb_preopt` | `xtb` | `gfnff opt` |
+| `xtb_sp` | `xtb` | `gfn=2` |
+| `xtb_opt` | `xtb` | `gfn=2 opt` |
+| `dft_pre_sp` | `orca` | `wB97X-D3 6-31G** TightSCF SP NoSym` |
+| `dft_pre_opt` | `orca` | `wB97X-D3 6-31G** TightSCF SlowConv Opt NoSym` |
+| `dft_opt` | `orca` | `wB97X-D3 6-31G** TightSCF SlowConv Opt NoSym` |
+| `hess` | `orca` | `wB97X-D3 6-31G** TightSCF SlowConv Freq NoSym` |
+| `optts` | `orca` | `wB97X-D3 6-31G** TightSCF SlowConv OptTS NoSym` |
+| `freq` | `orca` | `wB97X-D3 6-31G** TightSCF SlowConv Freq NoSym` |
+| `solv` | `orca` | `wB97X-D3 6-31+G** TightSCF SP NoSym` plus SMD chloroform block |
+
+#### `r2scan-def2svp`
+
+```python
+method = ft.workflows.methods.preset("r2scan-def2svp")
+```
+
+| stage id | engine | options |
+| --- | --- | --- |
+| `xtb_preopt` | `xtb` | `gfnff opt` |
+| `xtb_sp` | `xtb` | `gfn=2` |
+| `xtb_opt` | `xtb` | `gfn=2 opt` |
+| `dft_pre_sp` | `orca` | `R2SCAN def2-SVP TightSCF SP NoSym` |
+| `dft_pre_opt` | `orca` | `R2SCAN def2-SVP TightSCF SlowConv Opt NoSym` |
+| `dft_opt` | `orca` | `R2SCAN def2-SVP TightSCF SlowConv Opt NoSym` |
+| `hess` | `orca` | `R2SCAN def2-SVP TightSCF SlowConv Freq NoSym` |
+| `optts` | `orca` | `R2SCAN def2-SVP TightSCF SlowConv OptTS NoSym` |
+| `freq` | `orca` | `R2SCAN def2-SVP TightSCF SlowConv Freq NoSym` |
+| `solv` | `orca` | `R2SCAN def2-SVPD TightSCF SP NoSym` plus SMD chloroform block |
 
 For `ft.workflows.raw_mols(..., method="r2scan-3c", dft=True)`, the active
 stages are molecule stages:

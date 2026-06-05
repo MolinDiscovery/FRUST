@@ -12,6 +12,7 @@ from typing import Any, Sequence
 import pandas as pd
 
 from frust.schema import energy_columns, infer_group_columns, normalize_dataframe
+from frust.utils.timing import format_duration
 
 _PUBCHEM_CACHE_COLUMNS = [
     "canonical_smiles",
@@ -26,6 +27,10 @@ _SUMMARY_COLUMNS = [
     "engine",
     "calc_name",
     "mode",
+    "elapsed",
+    "mean_row",
+    "max_row",
+    "core_hours",
     "options",
     "columns",
     "n_columns",
@@ -102,12 +107,22 @@ def merge_dataframe_attrs(
     if conformers:
         merged["frust_conformers"] = conformers
 
+    workflow_timing = _merge_workflow_timing(attr_items)
+    if workflow_timing:
+        merged["frust_workflow_timing"] = workflow_timing
+
     attr_keys = sorted(
         {
             key
             for _, attrs in attr_items
             for key in attrs
-            if key not in {"frust_steps", "frust_conformers", "frust_merge"}
+            if key
+            not in {
+                "frust_steps",
+                "frust_conformers",
+                "frust_merge",
+                "frust_workflow_timing",
+            }
         },
         key=str,
     )
@@ -202,7 +217,18 @@ def show_steps(df: pd.DataFrame, *, detail: str = "summary") -> pd.DataFrame:
         if not isinstance(row_counts, Mapping):
             row_counts = {}
 
+        timing = step.get("timing", {})
+        if not isinstance(timing, Mapping):
+            timing = {}
+        row_elapsed = timing.get("row_elapsed_s", {})
+        if not isinstance(row_elapsed, Mapping):
+            row_elapsed = {}
+
         columns = step.get("columns")
+        elapsed_s = timing.get("elapsed_s")
+        mean_row_s = row_elapsed.get("mean_s")
+        max_row_s = row_elapsed.get("max_s")
+        n_cores = resources.get("n_cores")
 
         rows.append(
             {
@@ -211,6 +237,15 @@ def show_steps(df: pd.DataFrame, *, detail: str = "summary") -> pd.DataFrame:
                 "calc_name": calculator.get("name"),
                 "mode": calculator.get("mode"),
                 "backend": calculator.get("backend"),
+                "elapsed_s": elapsed_s,
+                "elapsed": format_duration(elapsed_s),
+                "mean_row_s": mean_row_s,
+                "mean_row": format_duration(mean_row_s),
+                "max_row_s": max_row_s,
+                "max_row": format_duration(max_row_s),
+                "core_hours": _core_hours(elapsed_s, n_cores),
+                "processed_rows": timing.get("processed_rows"),
+                "skipped_rows": timing.get("skipped_rows"),
                 "options": _format_keys(step.get("options")),
                 "columns": _format_list(columns),
                 "n_columns": len(columns) if isinstance(columns, list) else 0,
@@ -220,7 +255,7 @@ def show_steps(df: pd.DataFrame, *, detail: str = "summary") -> pd.DataFrame:
                 "output_rows": row_counts.get("output_rows", filtering.get("output_rows")),
                 "dropped_rows": row_counts.get("dropped_rows", filtering.get("dropped_rows")),
                 "n_filter_groups": filtering.get("n_groups"),
-                "n_cores": resources.get("n_cores"),
+                "n_cores": n_cores,
                 "memory_gb": resources.get("memory_gb"),
                 "xtra_inp_str": input_data.get("xtra_inp_str"),
                 "detailed_inp_str": input_data.get("detailed_inp_str"),
@@ -246,6 +281,158 @@ def show_steps(df: pd.DataFrame, *, detail: str = "summary") -> pd.DataFrame:
     else:
         out = _format_full_step_rows(out)
     return out.dropna(axis=1, how="all")
+
+
+def show_timing(df: pd.DataFrame, *, detail: str = "summary") -> pd.DataFrame:
+    """Summarize FRUST timing metadata as a dataframe.
+
+    Parameters
+    ----------
+    df : pandas.DataFrame
+        FRUST results dataframe. The helper reads timing metadata from
+        ``df.attrs["frust_steps"]`` and ``df.attrs["frust_workflow_timing"]``.
+    detail : {"summary", "rows", "workflow"}, optional
+        Timing view to return. ``"summary"`` shows one row per calculator
+        stage, ``"rows"`` shows stored slowest-row diagnostics, and
+        ``"workflow"`` shows workflow target, stage, and stage-group records.
+
+    Returns
+    -------
+    pandas.DataFrame
+        Timing summary table. Empty timing metadata returns an empty dataframe.
+    """
+    if detail not in {"summary", "rows", "workflow"}:
+        raise ValueError("detail must be 'summary', 'rows', or 'workflow'")
+
+    if detail == "workflow":
+        return _workflow_timing_frame(df)
+    if detail == "rows":
+        return _row_timing_frame(df)
+    return _step_timing_frame(df)
+
+
+def _step_timing_frame(df: pd.DataFrame) -> pd.DataFrame:
+    """Return one timing summary row per calculator step."""
+    rows: list[dict[str, Any]] = []
+    for step_name, step in _steps_mapping(df).items():
+        if not isinstance(step, Mapping):
+            continue
+        timing = step.get("timing", {})
+        if not isinstance(timing, Mapping):
+            continue
+        calculator = step.get("calculator", {})
+        if not isinstance(calculator, Mapping):
+            calculator = {}
+        resources = calculator.get("resources", {})
+        if not isinstance(resources, Mapping):
+            resources = {}
+        row_elapsed = timing.get("row_elapsed_s", {})
+        if not isinstance(row_elapsed, Mapping):
+            row_elapsed = {}
+
+        elapsed_s = timing.get("elapsed_s")
+        mean_row_s = row_elapsed.get("mean_s")
+        max_row_s = row_elapsed.get("max_s")
+        n_cores = resources.get("n_cores")
+        rows.append(
+            {
+                "step": step_name,
+                "engine": step.get("engine"),
+                "elapsed": format_duration(elapsed_s),
+                "elapsed_s": elapsed_s,
+                "input_rows": timing.get("input_rows"),
+                "output_rows": timing.get("output_rows"),
+                "processed_rows": timing.get("processed_rows"),
+                "skipped_rows": timing.get("skipped_rows"),
+                "mean_row": format_duration(mean_row_s),
+                "mean_row_s": mean_row_s,
+                "max_row": format_duration(max_row_s),
+                "max_row_s": max_row_s,
+                "n_cores": n_cores,
+                "core_hours": _core_hours(elapsed_s, n_cores),
+                "started_at": timing.get("started_at"),
+                "finished_at": timing.get("finished_at"),
+            }
+        )
+
+    if not rows:
+        out = pd.DataFrame()
+        out.index.name = "step"
+        return out
+    return pd.DataFrame(rows).set_index("step").dropna(axis=1, how="all")
+
+
+def _row_timing_frame(df: pd.DataFrame) -> pd.DataFrame:
+    """Return stored slowest-row timing diagnostics."""
+    rows: list[dict[str, Any]] = []
+    for step_name, step in _steps_mapping(df).items():
+        if not isinstance(step, Mapping):
+            continue
+        timing = step.get("timing", {})
+        if not isinstance(timing, Mapping):
+            continue
+        for record in timing.get("slowest_rows", []) or []:
+            if not isinstance(record, Mapping):
+                continue
+            elapsed_s = record.get("elapsed_s")
+            rows.append(
+                {
+                    "step": step_name,
+                    "row_number": record.get("row_number"),
+                    "row_index": record.get("row_index"),
+                    "label": record.get("label"),
+                    "cid": record.get("cid"),
+                    "elapsed": format_duration(elapsed_s),
+                    "elapsed_s": elapsed_s,
+                    "normal_termination": record.get("normal_termination"),
+                }
+            )
+    if not rows:
+        out = pd.DataFrame()
+        out.index.name = "step"
+        return out
+    return pd.DataFrame(rows).dropna(axis=1, how="all")
+
+
+def _workflow_timing_frame(df: pd.DataFrame) -> pd.DataFrame:
+    """Return workflow timing records stored in dataframe attrs."""
+    timing = df.attrs.get("frust_workflow_timing", {})
+    if not isinstance(timing, Mapping):
+        return pd.DataFrame()
+    records = timing.get("records", [])
+    if not isinstance(records, list):
+        return pd.DataFrame()
+
+    rows: list[dict[str, Any]] = []
+    for record in records:
+        if not isinstance(record, Mapping):
+            continue
+        resources = record.get("resources")
+        if not isinstance(resources, Mapping):
+            resources = {}
+        elapsed_s = record.get("elapsed_s")
+        n_cores = resources.get("n_cores")
+        rows.append(
+            {
+                "workflow": record.get("workflow"),
+                "target": record.get("target"),
+                "group": record.get("group"),
+                "stage": record.get("stage"),
+                "kind": record.get("kind"),
+                "elapsed": format_duration(elapsed_s),
+                "elapsed_s": elapsed_s,
+                "input_rows": record.get("input_rows"),
+                "output_rows": record.get("output_rows"),
+                "n_cores": n_cores,
+                "memory_gb": resources.get("memory_gb"),
+                "core_hours": _core_hours(elapsed_s, n_cores),
+                "job_id": record.get("job_id"),
+                "started_at": record.get("started_at"),
+                "finished_at": record.get("finished_at"),
+                "source_files": _format_list(record.get("source_files")),
+            }
+        )
+    return pd.DataFrame(rows).dropna(axis=1, how="all")
 
 
 def _summarize_step_rows(rows: pd.DataFrame) -> pd.DataFrame:
@@ -282,6 +469,18 @@ def _summarize_step_rows(rows: pd.DataFrame) -> pd.DataFrame:
                 [row.get(column) for row in group_rows],
                 weights,
             )
+        elapsed_s = _numeric_sum([row.get("elapsed_s") for row in group_rows])
+        mean_row_s = _weighted_mean(
+            [row.get("mean_row_s") for row in group_rows],
+            [row.get("processed_rows") for row in group_rows],
+        )
+        max_row_s = _numeric_max([row.get("max_row_s") for row in group_rows])
+        summary["elapsed"] = format_duration(elapsed_s)
+        summary["mean_row"] = format_duration(mean_row_s)
+        summary["max_row"] = format_duration(max_row_s)
+        summary["core_hours"] = _numeric_sum(
+            [row.get("core_hours") for row in group_rows]
+        )
         summary["xtra_inp_str"] = _summarize_mixed_values(
             [
                 _compact_multiline_text(row.get("xtra_inp_str"))
@@ -351,6 +550,97 @@ def _weighted_sum(values: Sequence[Any], weights: Sequence[int]) -> int | float 
     if total.is_integer():
         return int(total)
     return total
+
+
+def _numeric_sum(values: Sequence[Any]) -> float | None:
+    """Return a numeric sum while ignoring missing values."""
+    total = 0.0
+    any_value = False
+    for value in values:
+        value = _none_if_missing(value)
+        if value is None:
+            continue
+        try:
+            total += float(value)
+        except (TypeError, ValueError):
+            continue
+        any_value = True
+    return total if any_value else None
+
+
+def _numeric_max(values: Sequence[Any]) -> float | None:
+    """Return the maximum numeric value while ignoring missing values."""
+    numeric = []
+    for value in values:
+        value = _none_if_missing(value)
+        if value is None:
+            continue
+        try:
+            numeric.append(float(value))
+        except (TypeError, ValueError):
+            continue
+    return max(numeric) if numeric else None
+
+
+def _numeric_min(values: Sequence[Any]) -> float | None:
+    """Return the minimum numeric value while ignoring missing values."""
+    numeric = []
+    for value in values:
+        value = _none_if_missing(value)
+        if value is None:
+            continue
+        try:
+            numeric.append(float(value))
+        except (TypeError, ValueError):
+            continue
+    return min(numeric) if numeric else None
+
+
+def _weighted_mean(values: Sequence[Any], weights: Sequence[Any]) -> float | None:
+    """Return a weighted mean while ignoring missing values."""
+    total = 0.0
+    total_weight = 0.0
+    for value, weight in zip(values, weights):
+        value = _none_if_missing(value)
+        weight = _none_if_missing(weight)
+        if value is None or weight is None:
+            continue
+        try:
+            numeric = float(value)
+            numeric_weight = float(weight)
+        except (TypeError, ValueError):
+            continue
+        if numeric_weight <= 0:
+            continue
+        total += numeric * numeric_weight
+        total_weight += numeric_weight
+    if total_weight <= 0:
+        return None
+    return total / total_weight
+
+
+def _core_hours(elapsed_s: Any, n_cores: Any) -> float | None:
+    """Return core-hours from elapsed seconds and core count."""
+    elapsed_s = _none_if_missing(elapsed_s)
+    n_cores = _none_if_missing(n_cores)
+    if elapsed_s is None or n_cores is None:
+        return None
+    try:
+        return round(float(elapsed_s) * float(n_cores) / 3600.0, 6)
+    except (TypeError, ValueError):
+        return None
+
+
+def _min_text(values: Sequence[Any]) -> str | None:
+    """Return the lexicographically earliest non-empty text value."""
+    texts = [str(value) for value in values if _none_if_missing(value) is not None]
+    return min(texts) if texts else None
+
+
+def _max_text(values: Sequence[Any]) -> str | None:
+    """Return the lexicographically latest non-empty text value."""
+    texts = [str(value) for value in values if _none_if_missing(value) is not None]
+    return max(texts) if texts else None
 
 
 def _summarize_mixed_values(values: Sequence[Any]) -> Any:
@@ -928,18 +1218,27 @@ def _merge_frust_steps(
             if not isinstance(step_meta, Mapping):
                 continue
             comparison_meta = copy.deepcopy(dict(step_meta))
+            step_timing = comparison_meta.pop("timing", None)
             step_sources = _existing_step_sources(comparison_meta, source)
             variants = variants_by_step.setdefault(str(step_name), [])
             fingerprint = _attr_fingerprint(comparison_meta)
             for variant in variants:
                 if variant["fingerprint"] == fingerprint:
                     variant["source_files"].extend(step_sources)
+                    if isinstance(step_timing, Mapping):
+                        variant["metadata"]["timing"] = _merge_step_timing(
+                            variant["metadata"].get("timing"),
+                            step_timing,
+                        )
                     break
             else:
+                metadata = comparison_meta
+                if isinstance(step_timing, Mapping):
+                    metadata["timing"] = copy.deepcopy(dict(step_timing))
                 variants.append(
                     {
                         "fingerprint": fingerprint,
-                        "metadata": comparison_meta,
+                        "metadata": metadata,
                         "source_files": step_sources,
                     }
                 )
@@ -963,6 +1262,101 @@ def _merge_frust_steps(
             merge_info["step_variants"][step_name] = variant_records
 
     return merged_steps
+
+
+def _merge_step_timing(
+    existing: Any,
+    new: Mapping[str, Any],
+) -> dict[str, Any]:
+    """Merge compatible calculator timing metadata across dataframe attrs."""
+    if not isinstance(existing, Mapping):
+        return copy.deepcopy(dict(new))
+
+    merged = copy.deepcopy(dict(existing))
+    new_dict = dict(new)
+    merged["schema_version"] = 1
+    merged["started_at"] = _min_text(
+        [merged.get("started_at"), new_dict.get("started_at")]
+    )
+    merged["finished_at"] = _max_text(
+        [merged.get("finished_at"), new_dict.get("finished_at")]
+    )
+    for key in (
+        "elapsed_s",
+        "input_rows",
+        "output_rows",
+        "processed_rows",
+        "skipped_rows",
+    ):
+        total = _numeric_sum([merged.get(key), new_dict.get(key)])
+        if total is not None:
+            merged[key] = round(total, 6) if key == "elapsed_s" else int(total)
+
+    existing_rows = _row_elapsed_mapping(merged.get("row_elapsed_s"))
+    new_rows = _row_elapsed_mapping(new_dict.get("row_elapsed_s"))
+    row_elapsed = {}
+    min_s = _numeric_min([existing_rows.get("min_s"), new_rows.get("min_s")])
+    max_s = _numeric_max([existing_rows.get("max_s"), new_rows.get("max_s")])
+    mean_s = _weighted_mean(
+        [existing_rows.get("mean_s"), new_rows.get("mean_s")],
+        [existing.get("processed_rows"), new_dict.get("processed_rows")],
+    )
+    if min_s is not None:
+        row_elapsed["min_s"] = round(min_s, 6)
+    if mean_s is not None:
+        row_elapsed["mean_s"] = round(mean_s, 6)
+    if max_s is not None:
+        row_elapsed["max_s"] = round(max_s, 6)
+    if row_elapsed:
+        merged["row_elapsed_s"] = row_elapsed
+
+    slowest_rows = []
+    for source in (existing, new_dict):
+        rows = source.get("slowest_rows", [])
+        if isinstance(rows, list):
+            slowest_rows.extend(
+                copy.deepcopy(dict(row))
+                for row in rows
+                if isinstance(row, Mapping)
+            )
+    if slowest_rows:
+        merged["slowest_rows"] = sorted(
+            slowest_rows,
+            key=lambda row: float(row.get("elapsed_s") or 0.0),
+            reverse=True,
+        )[:5]
+    return merged
+
+
+def _merge_workflow_timing(
+    attr_items: Sequence[tuple[str, Mapping[str, Any]]],
+) -> dict[str, Any]:
+    """Merge workflow timing records across result dataframes."""
+    records: list[dict[str, Any]] = []
+    for source, attrs in attr_items:
+        timing = attrs.get("frust_workflow_timing", {})
+        if not isinstance(timing, Mapping):
+            continue
+        for record in timing.get("records", []) or []:
+            if not isinstance(record, Mapping):
+                continue
+            item = copy.deepcopy(dict(record))
+            item["source_files"] = _unique_strings(
+                [*(_coerce_source_files(item.get("source_files"))), source]
+            )
+            records.append(item)
+
+    if not records:
+        return {}
+    return {
+        "schema_version": 1,
+        "records": records,
+    }
+
+
+def _row_elapsed_mapping(value: Any) -> Mapping[str, Any]:
+    """Return row elapsed stats as a mapping."""
+    return value if isinstance(value, Mapping) else {}
 
 
 def _merge_frust_conformers(

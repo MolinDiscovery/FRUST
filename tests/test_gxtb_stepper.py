@@ -5,7 +5,8 @@ import unittest
 import pandas as pd
 
 from frust.stepper import Stepper
-from frust.utils import show_steps
+from frust.utils import show_steps, show_timing
+from frust.utils.dataframes import merge_dataframe_attrs
 
 
 def _df() -> pd.DataFrame:
@@ -62,6 +63,20 @@ class StepperGxtbTests(unittest.TestCase):
         self.assertIn("gxtb-opt-EE", out.columns)
         self.assertIn("gxtb-opt-oc", out.columns)
         self.assertEqual(out.attrs["frust_steps"]["gxtb-opt"]["engine"], "gxtb")
+        timing = out.attrs["frust_steps"]["gxtb-opt"]["timing"]
+        self.assertEqual(timing["input_rows"], 1)
+        self.assertEqual(timing["output_rows"], 1)
+        self.assertEqual(timing["processed_rows"], 1)
+        self.assertIn("elapsed_s", timing)
+        self.assertIn("row_elapsed_s", timing)
+        self.assertEqual(timing["slowest_rows"][0]["label"], "mol")
+
+        steps = show_steps(out)
+        self.assertIn("elapsed", steps.columns)
+        timing_summary = show_timing(out)
+        self.assertEqual(timing_summary.loc["gxtb-opt", "processed_rows"], 1)
+        row_timing = show_timing(out, detail="rows")
+        self.assertEqual(row_timing.loc[0, "step"], "gxtb-opt")
 
     def test_gxtb_lowest_and_failure_columns(self):
         calls = []
@@ -102,6 +117,47 @@ class StepperGxtbTests(unittest.TestCase):
         self.assertEqual(steps.loc["gxtb", "lowest"], 1)
         self.assertEqual(steps.loc["gxtb", "filter_energy_col"], "prev-EE")
         self.assertEqual(steps.loc["gxtb", "dropped_rows"], 1)
+
+    def test_merged_timing_does_not_create_step_variants(self):
+        base_step = {
+            "engine": "gxtb",
+            "columns": ["gxtb-NT", "gxtb-EE"],
+            "row_counts": {"input_rows": 1, "output_rows": 1, "dropped_rows": 0},
+            "calculator": {"resources": {"n_cores": 2}},
+        }
+        frames = []
+        for elapsed in (1.0, 2.0):
+            frame = pd.DataFrame({"value": [elapsed]})
+            frame.attrs["frust_steps"] = {
+                "gxtb": {
+                    **base_step,
+                    "timing": {
+                        "schema_version": 1,
+                        "started_at": "2026-01-01T00:00:00Z",
+                        "finished_at": "2026-01-01T00:00:01Z",
+                        "elapsed_s": elapsed,
+                        "input_rows": 1,
+                        "output_rows": 1,
+                        "processed_rows": 1,
+                        "skipped_rows": 0,
+                        "row_elapsed_s": {"mean_s": elapsed, "max_s": elapsed},
+                        "slowest_rows": [{"label": "mol", "elapsed_s": elapsed}],
+                    },
+                },
+            }
+            frames.append(frame)
+
+        merged = pd.concat(frames, ignore_index=True)
+        merged.attrs.update(
+            merge_dataframe_attrs(frames, source_files=["a.parquet", "b.parquet"])
+        )
+
+        steps = show_steps(merged)
+
+        self.assertIn("gxtb", steps.index)
+        self.assertNotIn("gxtb__variant_001", merged.attrs["frust_steps"])
+        self.assertEqual(steps.loc["gxtb", "n_sources"], 2)
+        self.assertAlmostEqual(steps.loc["gxtb", "core_hours"], 6.0 / 3600.0, places=6)
 
     def test_gxtb_constraints_are_forwarded_as_detailed_input(self):
         calls = []

@@ -23,6 +23,13 @@ from frust.utils.provenance import (
     oet_executable,
 )
 from frust.utils.slurm import detect_job_id
+from frust.utils.timing import (
+    build_step_timing,
+    elapsed_seconds,
+    format_duration,
+    monotonic_seconds,
+    utc_timestamp,
+)
 from frust.schema import (
     energy_columns,
     infer_group_columns,
@@ -1493,6 +1500,11 @@ class Stepper:
         coord_col = self._last_coord_col(df_out)
         all_row_data: list[dict[str, object]] = []
         filtering_meta: dict[str, Any] | None = None
+        stage_started_at = utc_timestamp()
+        stage_start = monotonic_seconds()
+        row_timings: list[dict[str, Any]] = []
+        processed_rows = 0
+        skipped_rows = 0
 
         if lowest is not None and lowest < 1:
             self.logger.warning(f"ignoring lowest={lowest!r}, must be ≥1")
@@ -1501,7 +1513,15 @@ class Stepper:
         if lowest:
             df_out, filtering_meta = self._lowest_filter(df_out, lowest=lowest)
 
-        for i, row in df_out.iterrows():
+        stage_rows = int(len(df_out))
+        self.logger.info(
+            f"[{prefix}] starting {stage_rows} row(s)"
+            + (f" from {step_input_rows} input row(s)" if stage_rows != step_input_rows else "")
+        )
+
+        for row_number, (i, row) in enumerate(df_out.iterrows(), start=1):
+            row_name = self._row_name(row, i)
+            row_conf_id = self._row_conf_id(row, i)
             coords = row[coord_col]
             # --- skip any row with no coords ---
             # if coords is None or (_pd.isna(coords) if not isinstance(coords, (list, tuple)) else False):
@@ -1510,6 +1530,21 @@ class Stepper:
                     output_column(prefix, "normal_termination"): False,
                     output_column(prefix, "electronic_energy"):  np.nan
                 })
+                skipped_rows += 1
+                row_timings.append(
+                    {
+                        "row_number": row_number,
+                        "row_index": self._metadata_scalar(i),
+                        "label": row_name,
+                        "cid": row_conf_id,
+                        "elapsed_s": 0.0,
+                        "normal_termination": False,
+                        "skipped": True,
+                    }
+                )
+                self.logger.info(
+                    f"[{prefix}] row {row_number}/{stage_rows} ({row_name}) skipped: missing coordinates"
+                )
                 continue
 
             row_save_files = save_files
@@ -1573,8 +1608,8 @@ class Stepper:
                 pass
 
             # step 3: run engine, catch exceptions
-            row_name = self._row_name(row, i)
             self.logger.info(f"[{prefix}] row {i} ({row_name})…")
+            row_start = monotonic_seconds()
             try:
                 out = engine_fn(**inputs) or {}
             except Exception as e:
@@ -1584,6 +1619,8 @@ class Stepper:
                     "error": f"{type(e).__name__}: {e}",
                 }
             finally:
+                row_elapsed = elapsed_seconds(row_start)
+                processed_rows += 1
                 if save_step and save_dir:
                     try:
                         import shutil
@@ -1645,6 +1682,25 @@ class Stepper:
                     row_data[col] = out[key]
 
             all_row_data.append(row_data)
+            row_timings.append(
+                {
+                    "row_number": row_number,
+                    "row_index": self._metadata_scalar(i),
+                    "label": row_name,
+                    "cid": row_conf_id,
+                    "elapsed_s": row_elapsed,
+                    "normal_termination": bool(out.get("normal_termination")),
+                }
+            )
+            stage_elapsed = elapsed_seconds(stage_start)
+            remaining = max(0, stage_rows - row_number)
+            eta = (stage_elapsed / row_number) * remaining if row_number else 0.0
+            self.logger.info(
+                f"[{prefix}] row {row_number}/{stage_rows} ({row_name}) "
+                f"done in {format_duration(row_elapsed)}; "
+                f"elapsed {format_duration(stage_elapsed)}; "
+                f"ETA {format_duration(eta)}"
+            )
 
         # --- now assemble all_row_data back into df_out ---
         all_cols = sorted({c for rd in all_row_data for c in rd})
@@ -1680,8 +1736,29 @@ class Stepper:
         }
         if filtering_meta is not None:
             step_meta["filtering"] = filtering_meta
+        step_meta["timing"] = build_step_timing(
+            started_at=stage_started_at,
+            finished_at=utc_timestamp(),
+            elapsed_s=elapsed_seconds(stage_start),
+            input_rows=step_input_rows,
+            output_rows=int(len(df_out)),
+            processed_rows=processed_rows,
+            skipped_rows=skipped_rows,
+            row_records=row_timings,
+        )
         steps[prefix] = step_meta
         df_out.attrs["frust_steps"] = steps
+
+        failures = sum(
+            1
+            for record in row_timings
+            if not record.get("skipped") and not record.get("normal_termination")
+        )
+        self.logger.info(
+            f"[{prefix}] finished {processed_rows} row(s)"
+            f" in {format_duration(step_meta['timing']['elapsed_s'])}; "
+            f"failed={failures}, skipped={skipped_rows}"
+        )
 
         return df_out
 

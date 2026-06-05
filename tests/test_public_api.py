@@ -14,6 +14,7 @@ class PublicApiTests(unittest.TestCase):
         from frust import (
             Stepper,
             show_steps,
+            show_timing,
             lowest_energy_rows,
             map_substrate_names,
             pipelines,
@@ -39,6 +40,7 @@ class PublicApiTests(unittest.TestCase):
         from frust.utils.analytics import inspect_ts_vibrations as inspect_vibs_direct
         from frust.utils.analytics import summarize_ts_vibrations as summarize_direct
         from frust.utils.dataframes import show_steps as show_steps_direct
+        from frust.utils.dataframes import show_timing as show_timing_direct
         from frust.utils.dataframes import lowest_energy_rows as lowest_direct
         from frust.utils.dataframes import map_substrate_names as map_names_direct
         from frust.utils.io import write_xyz as write_xyz_direct
@@ -61,6 +63,7 @@ class PublicApiTests(unittest.TestCase):
             "vis",
             "workflows",
             "show_steps",
+            "show_timing",
             "lowest_energy_rows",
             "map_substrate_names",
             "inspect_ts_vibrations",
@@ -88,6 +91,8 @@ class PublicApiTests(unittest.TestCase):
         self.assertIs(Stepper, StepperDirect)
         self.assertIs(ft.show_steps, show_steps_direct)
         self.assertIs(show_steps, show_steps_direct)
+        self.assertIs(ft.show_timing, show_timing_direct)
+        self.assertIs(show_timing, show_timing_direct)
         self.assertIs(ft.lowest_energy_rows, lowest_direct)
         self.assertIs(lowest_energy_rows, lowest_direct)
         self.assertIs(ft.map_substrate_names, map_names_direct)
@@ -109,6 +114,7 @@ class PublicApiTests(unittest.TestCase):
         self.assertIs(ft.utils, utils_direct)
         self.assertIs(utils, utils_direct)
         self.assertIs(ft.utils.write_xyz, write_xyz_direct)
+        self.assertIs(ft.utils.show_timing, show_timing_direct)
         self.assertIs(ft.utils.inspect_ts_vibrations, inspect_vibs_direct)
         self.assertIs(ft.utils.summarize_ts_vibrations, summarize_direct)
         self.assertIs(ft.utils.map_substrate_names, map_names_direct)

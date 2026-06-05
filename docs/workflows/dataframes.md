@@ -168,6 +168,40 @@ compatibility aliases such as `gxtb_exe`, or the backend callable name.
     the configured value and records `resolved=False` instead of turning
     metadata collection into a new failure mode.
 
+## Timing Metadata
+
+Completed `Stepper` and workflow runs store timing in dataframe attrs, so the
+main calculation table stays focused on chemistry columns.
+
+```python
+ft.show_timing(df)
+```
+
+Example output:
+
+| step | engine | elapsed | input_rows | output_rows | mean_row | max_row | core_hours |
+| --- | --- | --- | ---: | ---: | --- | --- | ---: |
+| `gxtb_opt` | `gxtb` | `18m 12s` | 120 | 20 | `9.1s` | `43.0s` | 2.43 |
+| `DFT_opt` | `orca` | `7h 31m` | 20 | 20 | `22m 33s` | `41m 08s` | 180.4 |
+
+To inspect the slowest stored row diagnostics:
+
+```python
+ft.show_timing(df, detail="rows")
+```
+
+For workflow target, stage, and stage-group timing:
+
+```python
+ft.show_timing(df, detail="workflow")
+```
+
+!!! info "Timing lives in attrs"
+
+    Timing is stored in `df.attrs["frust_steps"][step]["timing"]` and
+    `df.attrs["frust_workflow_timing"]`. FRUST does not add runtime columns to
+    every calculation row by default.
+
 ## Coordinates
 
 Most `Stepper` stages need:
