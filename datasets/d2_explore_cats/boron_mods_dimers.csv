@@ -1,0 +1,11 @@
+compound_name,smiles
+B_methyl_NMe2_dimer,CN(C)C1=CC=CC=C1[B-]2(C)[H+][B-](C)([H+]2)C3=CC=CC=C3N(C)C
+B_ethyl_NMe2_dimer,CN(C)C1=CC=CC=C1[B-]2(CC)[H+][B-](CC)([H+]2)C3=CC=CC=C3N(C)C
+B_isopropyl_NMe2_dimer,CN(C)C1=CC=CC=C1[B-]2(C(C)C)[H+][B-](C(C)C)([H+]2)C3=CC=CC=C3N(C)C
+B_tertbutyl_NMe2_dimer,CN(C)C1=CC=CC=C1[B-]2(C(C)(C)C)[H+][B-](C(C)(C)C)([H+]2)C3=CC=CC=C3N(C)C
+B_phenyl_NMe2_dimer,CN(C)C1=CC=CC=C1[B-]2(C4=CC=CC=C4)[H+][B-](C5=CC=CC=C5)([H+]2)C3=CC=CC=C3N(C)C
+B_vinyl_NMe2_dimer,CN(C)C1=CC=CC=C1[B-]2(C=C)[H+][B-](C=C)([H+]2)C3=CC=CC=C3N(C)C
+B_ethynyl_NMe2_dimer,CN(C)C1=CC=CC=C1[B-]2(C#C)[H+][B-](C#C)([H+]2)C3=CC=CC=C3N(C)C
+B_methoxy_NMe2_dimer,CN(C)C1=CC=CC=C1[B-]2(OC)[H+][B-](OC)([H+]2)C3=CC=CC=C3N(C)C
+B_fluoro_NMe2_dimer,CN(C)C1=CC=CC=C1[B-]2(F)[H+][B-](F)([H+]2)C3=CC=CC=C3N(C)C
+B_chloro_NMe2_dimer,CN(C)C1=CC=CC=C1[B-]2(Cl)[H+][B-](Cl)([H+]2)C3=CC=CC=C3N(C)C

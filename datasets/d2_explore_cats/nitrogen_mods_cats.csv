@@ -1,0 +1,12 @@
+role,compound_name,smiles
+substrate,example_substrate,CN1C=CC=C1
+catalyst,morpholine,BC1=C(N2CCOCC2)C=CC=C1
+catalyst,thiomorpholine,BC1=C(N2CCSCC2)C=CC=C1
+catalyst,N_methyl_piperazine,BC1=C(N2CCN(C)CC2)C=CC=C1
+catalyst,pyrrolidine,BC1=C(N2CCCC2)C=CC=C1
+catalyst,azepane,BC1=C(N2CCCCCC2)C=CC=C1
+catalyst,diisopropylamino,BC1=C(N(C(C)C)C(C)C)C=CC=C1
+catalyst,phenylpiperidine,BC1=C(N2CCC(CC2)C3=CC=CC=C3)C=CC=C1
+catalyst,para_fluoro_NMe,CN(C)C1=CC=C(F)C=C1B
+catalyst,para_trifluoromethyl_NMe,CN(C)C1=CC=C(C(F)(F)F)C=C1B
+catalyst,para_methoxy_NMe,CN(C)C1=CC=C(OC)C=C1B

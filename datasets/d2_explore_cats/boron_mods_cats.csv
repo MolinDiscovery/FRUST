@@ -1,0 +1,12 @@
+role,compound_name,smiles
+substrate,example_substrate,CN1C=CC=C1
+catalyst,B_methyl_NMe2,CB(C1=C(N(C)C)C=CC=C1)
+catalyst,B_ethyl_NMe2,CCB(C1=C(N(C)C)C=CC=C1)
+catalyst,B_isopropyl_NMe2,CC(C)B(C1=C(N(C)C)C=CC=C1)
+catalyst,B_tertbutyl_NMe2,CC(C)(C)B(C1=C(N(C)C)C=CC=C1)
+catalyst,B_phenyl_NMe2,C1=CC=CC=C1B(C2=C(N(C)C)C=CC=C2)
+catalyst,B_vinyl_NMe2,C=CB(C1=C(N(C)C)C=CC=C1)
+catalyst,B_ethynyl_NMe2,C#CB(C1=C(N(C)C)C=CC=C1)
+catalyst,B_methoxy_NMe2,COB(C1=C(N(C)C)C=CC=C1)
+catalyst,B_fluoro_NMe2,FB(C1=C(N(C)C)C=CC=C1)
+catalyst,B_chloro_NMe2,ClB(C1=C(N(C)C)C=CC=C1)
