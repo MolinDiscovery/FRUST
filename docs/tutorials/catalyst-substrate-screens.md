@@ -1,5 +1,14 @@
 # Catalyst And Substrate Screens
 
+!!! info "Main documentation moved into its own section"
+
+    The complete reference-style guide now lives under
+    [Catalyst Screen Workflow](../catalyst-screens/overview.md), with separate
+    pages for [input tables](../catalyst-screens/input-tables.md),
+    [TS guess dataframes](../catalyst-screens/ts-guesses.md), and
+    [running screens](../catalyst-screens/running.md). This tutorial remains a
+    linear walkthrough.
+
 The catalyst-screen workflow starts from a CSV that contains substrates and
 catalysts. FRUST expands that component table into explicit substrate-catalyst
 systems, then constructs transition-state guess dataframes for `TS1`, `TS2`,

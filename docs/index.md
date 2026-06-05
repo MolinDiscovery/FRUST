@@ -18,6 +18,9 @@ defaults may still change as the project evolves.
   high-level and `Stepper` workflows.
 - [Workflow overview](workflows/overview.md) explains when to use the high-level
   pipeline functions, staged cluster pipelines, or direct `Stepper` calls.
+- [Catalyst screen workflow](catalyst-screens/overview.md) documents the
+  substrate/catalyst screen module, TS1-TS4 guess generation, local smoke
+  tests, cluster runs, and output inspection.
 - [TS guess generation](workflows/ts-guess-generation.md) explains how
   templates, reactive positions, and conformers become TS inputs.
 - [Inspecting results](workflows/inspecting-results.md) gives the practical
@@ -43,5 +46,6 @@ using UMA or ORCA-driven g-xTB. Then use the [UMA](external-tools/uma.md) and
 ## API Reference
 
 The [API reference](api/stepper.md) focuses on the public surface most users
-touch directly: `Stepper`, `frust.pipes`, cluster submission helpers, dataframe
-schema helpers, and selected external-tool utilities.
+touch directly: `Stepper`, `frust.screen`, `frust.tsguess`, `frust.pipes`,
+workflow objects, cluster submission helpers, dataframe schema helpers, and
+selected external-tool utilities.

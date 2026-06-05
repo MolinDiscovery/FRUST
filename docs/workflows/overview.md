@@ -36,6 +36,7 @@ flowchart TD
 
     Start with this overview, then read
     [Workflow Method Plans](workflow-methods.md),
+    [Catalyst Screen Workflow](../catalyst-screens/overview.md),
     [TS Guess Generation](ts-guess-generation.md) and
     [Optimization Pipeline](optimization-pipeline.md) before launching a large
     TS screen.
@@ -162,6 +163,10 @@ in `runs/raw_dimers_r2scan3c/collection_report.json`.
     resource groups; it does not run TS-only `hess` or `optts` stages.
 
 See [Workflow Method Plans](workflow-methods.md) for the full pattern.
+
+For the substrate/catalyst screen-specific input table, TS1-TS4 guess model,
+row-level constraints, and production checklist, see
+[Catalyst Screen Workflow](../catalyst-screens/overview.md).
 
 ### 2. High-Level Pipelines
 

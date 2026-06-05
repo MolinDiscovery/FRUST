@@ -73,6 +73,11 @@ nav:
           - Directory And Outputs: workflows/directory-outputs.md
           - DataFrames And Results: workflows/dataframes.md
           - Exporting XYZ Structures: workflows/xyz-export.md
+      - Catalyst Screens:
+          - Overview: catalyst-screens/overview.md
+          - Input Tables: catalyst-screens/input-tables.md
+          - TS Guess DataFrames: catalyst-screens/ts-guesses.md
+          - Running Screens: catalyst-screens/running.md
       - Visualization:
           - Overview: visualization/overview.md
           - Molecular Grids: visualization/molecular-grids.md
@@ -91,6 +96,8 @@ nav:
           - Transition States: troubleshooting/transition-states.md
           - Cluster Runs: troubleshooting/cluster-runs.md
       - API Reference:
+          - Screen: api/screen.md
+          - TS Guess: api/tsguess.md
           - Visualization: api/vis.md
           - Stepper: api/stepper.md
           - Workflows: api/workflows.md

@@ -6,6 +6,13 @@ FRUST transition-state workflows start from two pieces of information:
 - a transition-state template geometry such as `structures/ts1.xyz` or
   `structures/ts2.xyz`.
 
+!!! info "For the new catalyst/substrate screen workflow"
+
+    Use [Catalyst Screen Workflow](../catalyst-screens/overview.md) when the
+    input is a mixed substrate/catalyst table and FRUST should generate
+    built-in `TS1`-`TS4` guesses from `frust.screen` and `frust.tsguess`.
+    This page describes the older template-XYZ TS path.
+
 The template tells FRUST what kind of TS-like structure to build. The ligand
 table tells FRUST which substrates and reactive positions should be expanded.
 
