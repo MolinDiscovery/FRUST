@@ -88,7 +88,8 @@ flowchart TD
 ```
 
 Local staged execution deliberately mirrors cluster output. When `out_dir` is
-provided, each target gets its own directory and staged parquet files such as:
+provided, each target gets its own directory. During execution, staged parquet
+checkpoints are written as each group finishes:
 
 ```text
 TS1__furan__TMP__r0/
@@ -100,8 +101,10 @@ TS1__furan__TMP__r0/
   init.hess.optts.freq.solv.parquet
 ```
 
-This makes a one-target local smoke test useful for debugging the same files a
-cluster run will produce.
+After a successful target finishes, workflow objects compact the directory by
+default to the final parquet plus `timing.json`. Pass
+`target_retention="all"` to keep every checkpoint for successful targets.
+Failed or interrupted targets keep their intermediate files.
 
 ## Cluster Submission Flow
 

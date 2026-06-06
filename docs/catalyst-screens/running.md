@@ -131,22 +131,20 @@ With `execution="dft_staged"`, cheap generation and pre-screening stay in the
 run as dependent jobs with their own resources.
 
 By default, `wf.submit(...)` also submits a collector job. When the target jobs
-finish, the run directory contains:
+finish, successful target directories are compacted:
 
 ```text
 runs/screen_ts/
 ├── TS1__n_methyl_pyrrole__tmp_bcat__r2/
-│   ├── init.parquet
-│   ├── hess.parquet
-│   ├── optts.parquet
-│   ├── freq.parquet
-│   └── solv.parquet
+│   ├── init.hess.optts.freq.solv.parquet
+│   └── timing.json
 ├── merged.parquet
 └── collection_report.json
 ```
 
 `merged.parquet` contains collected normal-termination outputs. The collection
-report lists collected, skipped, missing, and errored targets.
+report lists collected, skipped, missing, errored, and compacted targets. Failed
+or skipped targets keep intermediate checkpoint parquets for debugging.
 
 ```python
 import pandas as pd
@@ -159,6 +157,12 @@ ft.show_steps(merged)
 
     `wf.targets()` stays lightweight. TS conformers are generated during
     `wf.run(...)` or inside the submitted `init` job for each target.
+
+!!! tip "Keep every checkpoint"
+
+    Pass `target_retention="all"` to `wf.run(...)` or `wf.submit(...)` when you
+    want to keep `init.parquet`, `init.hess.parquet`, and other intermediate
+    checkpoint files for successful targets.
 
 ## Working Directly With `Stepper`
 

@@ -195,17 +195,17 @@ The collection report lists collected, skipped, missing, and errored target
 outputs. By default, automatic collection requires normal termination and skips
 failed outputs instead of silently mixing them into the merged table.
 
-Each submitted workflow target also writes timing sidecars in its target
-directory, such as:
+Each submitted workflow target writes one consolidated timing sidecar:
 
 ```text
-runs/screen_ts/TS1_pyrrole_rpos_2/init.timing.json
-runs/screen_ts/TS1_pyrrole_rpos_2/optts.timing.json
+runs/screen_ts/TS1_pyrrole_rpos_2/timing.json
 ```
 
-The collector summarizes discovered timing sidecars in
+That file contains both scheduler group timings and internal stage timings.
+The collector summarizes discovered `timing.json` files in
 `collection_report.json`, including missing timing files and the slowest stage
-groups.
+groups. Successfully collected targets are compacted by default to their final
+parquet plus `timing.json`; failed or skipped targets keep intermediate files.
 
 See [Workflow Method Plans](../workflows/workflow-methods.md) for method
 presets and local smoke tests.

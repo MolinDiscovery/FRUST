@@ -265,7 +265,7 @@ class WorkflowExecutionTests(unittest.TestCase):
         with self.assertRaisesRegex(KeyError, "xtb_sp"):
             wf.show_stages()
 
-    def test_local_run_dispatches_gxtb_stage_and_writes_staged_parquets(self):
+    def test_local_run_dispatches_gxtb_stage_and_compacts_successful_target(self):
         df = pd.DataFrame({"smiles": ["CN1C=CC=C1"], "rpos": ["2"]})
         method = methods.preset("r2scan-3c").replace(
             xtb_sp=methods.gxtb(job="sp"),
@@ -287,14 +287,18 @@ class WorkflowExecutionTests(unittest.TestCase):
                 )
 
             target_dir = Path(tmp) / "int2_rpos_2"
-            self.assertTrue((target_dir / "init.parquet").exists())
-            self.assertTrue((target_dir / "init.dft_opt.parquet").exists())
+            self.assertFalse((target_dir / "init.parquet").exists())
+            self.assertFalse((target_dir / "init.dft_opt.parquet").exists())
             self.assertTrue((target_dir / "init.dft_opt.freq.solv.parquet").exists())
-            self.assertTrue((target_dir / "init.timing.json").exists())
-            self.assertTrue((target_dir / "dft_opt.timing.json").exists())
-            timing_payload = json.loads((target_dir / "init.timing.json").read_text())
-            self.assertEqual(timing_payload["record"]["target"], "int2_rpos_2")
-            self.assertEqual(timing_payload["record"]["kind"], "group")
+            self.assertTrue((target_dir / "timing.json").exists())
+            self.assertFalse((target_dir / "init.timing.json").exists())
+            timing_payload = json.loads((target_dir / "timing.json").read_text())
+            self.assertEqual(timing_payload["target"], "int2_rpos_2")
+            self.assertEqual(
+                [record["group"] for record in timing_payload["groups"]],
+                ["init", "dft_opt", "freq", "solv"],
+            )
+            self.assertIn("prepare", [record["stage"] for record in timing_payload["stages"]])
             collected = wf.collect(tmp)
 
         self.assertEqual(len(out), 1)
@@ -307,7 +311,7 @@ class WorkflowExecutionTests(unittest.TestCase):
         gxtb_calls = [call for call in FakeStepper.calls if call[0] == "gxtb"]
         self.assertEqual(gxtb_calls[0][2], {})
 
-    def test_raw_mols_local_run_writes_staged_parquets_and_dispatches_method(self):
+    def test_raw_mols_local_run_can_keep_all_staged_parquets(self):
         df = pd.DataFrame({"compound_name": ["raw dimer"], "smiles": ["CCO"]})
         method = methods.preset("r2scan-3c").replace(
             xtb_sp=methods.gxtb(job="sp"),
@@ -326,6 +330,7 @@ class WorkflowExecutionTests(unittest.TestCase):
                     execution="dft_staged",
                     n_cores=3,
                     mem_gb=9,
+                    target_retention="all",
                 )
 
             create.assert_not_called()
@@ -333,6 +338,7 @@ class WorkflowExecutionTests(unittest.TestCase):
             self.assertTrue((target_dir / "init.parquet").exists())
             self.assertTrue((target_dir / "init.dft_opt.parquet").exists())
             self.assertTrue((target_dir / "init.dft_opt.freq.solv.parquet").exists())
+            self.assertTrue((target_dir / "timing.json").exists())
 
         self.assertEqual(len(out), 1)
         engines = [call[0] for call in FakeStepper.calls]
@@ -340,6 +346,29 @@ class WorkflowExecutionTests(unittest.TestCase):
         build_calls = [call for call in FakeStepper.calls if call[0] == "build_initial_df"]
         payload = build_calls[0][1][0]
         self.assertEqual(payload.loc[0, "substrate_name"], "raw dimer")
+
+    def test_failed_local_run_keeps_intermediate_parquets(self):
+        df = pd.DataFrame({"compound_name": ["raw"], "smiles": ["CCO"]})
+
+        class FailingStepper(FakeStepper):
+            def orca(self, df, name, options, lowest=None, **kwargs):
+                if name == "DFT-Opt":
+                    raise RuntimeError("DFT failed")
+                return super().orca(df, name, options, lowest=lowest, **kwargs)
+
+        with tempfile.TemporaryDirectory() as tmp:
+            with (
+                patch("frust.workflows.factories.Stepper", FailingStepper),
+                patch("frust.workflows.core.Stepper", FailingStepper),
+            ):
+                wf = ft.workflows.raw_mols(dataframe=df, dft=True)
+                with self.assertRaisesRegex(RuntimeError, "DFT failed"):
+                    wf.run(targets=[0], out_dir=tmp, execution="dft_staged")
+
+            target_dir = Path(tmp) / "raw"
+            self.assertTrue((target_dir / "init.parquet").exists())
+            self.assertTrue((target_dir / "timing.json").exists())
+            self.assertFalse((target_dir / "init.dft_opt.freq.solv.parquet").exists())
 
     def test_submit_dft_staged_submits_dependent_groups(self):
         df = pd.DataFrame({"smiles": ["CN1C=CC=C1"], "rpos": ["2"]})
@@ -531,7 +560,10 @@ class WorkflowExecutionTests(unittest.TestCase):
             bad_dir.mkdir()
             missing_dir.mkdir()
             pd.DataFrame({"value": [1], "calc-NT": [True]}).to_parquet(ok_dir / "final.parquet")
+            pd.DataFrame({"value": [1], "calc-NT": [True]}).to_parquet(ok_dir / "init.parquet")
+            (ok_dir / "timing.json").write_text(json.dumps({"schema_version": 2, "groups": [], "stages": []}))
             pd.DataFrame({"value": [2], "calc-NT": [False]}).to_parquet(bad_dir / "final.parquet")
+            pd.DataFrame({"value": [2], "calc-NT": [False]}).to_parquet(bad_dir / "init.parquet")
             pd.DataFrame({"value": [3], "calc-NT": [True]}).to_parquet(missing_dir / "init.parquet")
 
             merged = workflow_core._collect_expected_outputs(
@@ -546,13 +578,18 @@ class WorkflowExecutionTests(unittest.TestCase):
 
             report = json.loads((root / "collection_report.json").read_text())
 
-        self.assertEqual(len(merged), 1)
-        self.assertEqual(report["n_targets"], 3)
-        self.assertEqual(report["n_collected"], 1)
-        self.assertEqual(report["n_skipped"], 1)
-        self.assertEqual(report["n_missing"], 1)
-        self.assertEqual(report["n_errored"], 0)
-        self.assertTrue(report["missing_files"][0].endswith("missing/final.parquet"))
+            self.assertEqual(len(merged), 1)
+            self.assertEqual(report["n_targets"], 3)
+            self.assertEqual(report["n_collected"], 1)
+            self.assertEqual(report["n_skipped"], 1)
+            self.assertEqual(report["n_missing"], 1)
+            self.assertEqual(report["n_errored"], 0)
+            self.assertTrue(report["missing_files"][0].endswith("missing/final.parquet"))
+            self.assertEqual(report["compaction"]["n_targets"], 1)
+            self.assertEqual(report["compaction"]["n_removed_files"], 1)
+            self.assertFalse((ok_dir / "init.parquet").exists())
+            self.assertTrue((ok_dir / "final.parquet").exists())
+            self.assertTrue((bad_dir / "init.parquet").exists())
 
     def test_collect_expected_outputs_writes_report_before_raising_when_empty(self):
         df = pd.DataFrame({"compound_name": ["bad"], "smiles": ["CCN"]})

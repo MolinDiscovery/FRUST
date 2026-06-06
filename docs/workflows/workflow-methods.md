@@ -247,11 +247,15 @@ runs/screen_ts/
 | execution | Local behavior | Cluster behavior |
 | --- | --- | --- |
 | `single_job` | run all stages for each target in one call | submit one job per target |
-| `dft_staged` | write staged parquet files at DFT boundaries | submit dependent jobs for DFT stages |
-| `fully_staged` | write one parquet per stage | submit one dependent job per stage |
+| `dft_staged` | run staged checkpoint files, then compact successful targets by default | submit dependent jobs for DFT stages |
+| `fully_staged` | run one checkpoint per stage, then compact successful targets by default | submit one dependent job per stage |
 
 For a DFT workflow, omitting `execution` also defaults to `dft_staged`. For a
 non-DFT workflow, omitting it defaults to `single_job`.
+
+Successful workflow targets keep only their final parquet and `timing.json` by
+default. Pass `target_retention="all"` to `wf.run(...)` or `wf.submit(...)`
+when you want to keep every intermediate checkpoint parquet.
 
 Resource overrides are optional and use stage-group names:
 
@@ -294,6 +298,12 @@ By default, `wf.submit(...)` uses `collect_require_normal_termination=True`.
 The merged parquet contains targets whose final normal-termination columns are
 all true. `collection_report.json` lists collected, skipped, missing, and
 errored target outputs so failed calculations are visible.
+
+For automatic collection, successfully collected targets are compacted by
+default. Failed, skipped, missing, or non-normal-termination targets keep their
+intermediate checkpoint files for debugging. Manual `wf.collect(...)` defaults
+to `target_retention="all"` so recovery on old runs does not unexpectedly
+delete files.
 
 After the collector job finishes, load the merged output normally:
 

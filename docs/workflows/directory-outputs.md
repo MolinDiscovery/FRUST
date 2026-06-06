@@ -2,7 +2,8 @@
 
 FRUST writes ordinary parquet files for tables and optional calculation
 directories for backend files. The exact layout depends on whether you run a
-local pipeline, independent cluster jobs, or a dependent stage chain.
+local pipeline, independent cluster jobs, a legacy dependent stage chain, or a
+workflow object.
 
 ```mermaid
 flowchart TD
@@ -15,6 +16,7 @@ flowchart TD
     G --> H["init.hess.optts.freq.solv.parquet"]
     C --> I["Saved calculation folders<br/>ORCA, xTB, g-xTB files"]
     A --> J["submitit logs<br/>when using frust.cluster"]
+    A --> K["Workflow object target directory<br/>final parquet + timing.json after success"]
 ```
 
 ## Independent Pipeline Outputs
@@ -57,6 +59,22 @@ init.hess.optts.freq.solv.parquet
 
     The deepest suffix usually contains the most complete dataframe. If
     `run_cleanup` was used, earlier parquet files may have been removed.
+
+## Workflow Object Outputs
+
+For `wf.run(..., out_dir=...)` and `wf.submit(..., collect=True)`, successful
+targets are compacted by default:
+
+```text
+runs/screen_ts/<target>/
+├── init.hess.optts.freq.solv.parquet
+└── timing.json
+```
+
+`timing.json` contains both submitted job-group timings and internal stage
+timings. Failed, skipped, or interrupted targets keep their intermediate
+checkpoint parquets. Pass `target_retention="all"` to `wf.run(...)` or
+`wf.submit(...)` when successful targets should keep every checkpoint.
 
 ## Saved Calculation Files
 

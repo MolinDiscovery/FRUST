@@ -60,7 +60,7 @@ df = wf.run(targets=[0], out_dir="debug/screen_ts", execution="dft_staged")
 | Carry optimizer constraints per row | generated `constraint_roles` and `constraint_spec` | `Stepper(..., constraint=True)` can render constraints without fixed atom indices |
 | Inspect generated cores | `ts_core_metrics`, `ft.plot_row(...)`, `ft.plot_mols(...)` | Template distances/angles and visual geometry checks |
 | Run local smoke tests | `wf.run(targets=[0], ...)` | Same target and method graph used for cluster submission |
-| Submit staged production jobs | `wf.submit(...)` | Target directories, staged parquet files, merged output, and collection report |
+| Submit staged production jobs | `wf.submit(...)` | Target final parquets, `timing.json` files, merged output, and collection report |
 
 !!! info "The screen does not discover arbitrary mechanisms"
 

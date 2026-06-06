@@ -40,8 +40,10 @@ from frust.workflows.methods import CalculatorSpec, MethodPlan, preset as method
 
 
 ExecutionMode = Literal["single_job", "dft_staged", "fully_staged"]
+TargetRetention = Literal["compact_success", "all"]
 DEFAULT_WORKFLOW_RESOURCES = Resources(cpus=4, mem_gb=20, timeout_min=720)
 DEFAULT_COLLECTION_RESOURCES = Resources(cpus=2, mem_gb=4, timeout_min=120)
+TARGET_TIMING_FILE = "timing.json"
 
 
 @dataclass(frozen=True)
@@ -294,6 +296,7 @@ class BaseWorkflow:
         debug: bool = False,
         save_output_dir: bool = True,
         work_dir: str | Path | None = None,
+        target_retention: TargetRetention = "compact_success",
     ) -> pd.DataFrame:
         """Run selected workflow targets locally.
 
@@ -304,9 +307,10 @@ class BaseWorkflow:
             omitted, all workflow targets are run.
         out_dir : str or pathlib.Path or None, optional
             Output root. When provided, FRUST creates one subdirectory per
-            target and writes staged parquet files inside each target directory.
-            When omitted, stages run in memory and no staged parquet files are
-            written.
+            target and writes staged parquet checkpoints inside each target
+            directory. Successful targets are compacted according to
+            ``target_retention``. When omitted, stages run in memory and no
+            staged parquet files are written.
         execution : {"single_job", "dft_staged", "fully_staged"} or None, optional
             Local stage grouping. ``None`` defaults to ``"single_job"`` for
             local runs. Staged modes are most useful when ``out_dir`` is set
@@ -321,6 +325,11 @@ class BaseWorkflow:
             Whether Stepper should retain calculator output directories.
         work_dir : str or pathlib.Path or None, optional
             Scratch/work directory forwarded to Stepper.
+        target_retention : {"compact_success", "all"}, optional
+            Output retention policy for successful targets when ``out_dir`` is
+            provided. ``"compact_success"`` keeps only the final target parquet
+            and ``timing.json`` after a target completes successfully.
+            ``"all"`` keeps all intermediate parquet checkpoints.
 
         Returns
         -------
@@ -335,6 +344,7 @@ class BaseWorkflow:
 
         >>> df = wf.run(targets=[0], out_dir="debug/screen_ts", execution="dft_staged")
         """
+        _validate_target_retention(target_retention)
         selected = self._select_targets(targets)
         options = ExecutionOptions(
             n_cores=n_cores,
@@ -350,6 +360,7 @@ class BaseWorkflow:
 
         for target in selected:
             save_dir = None if root is None else root / target.tag
+            final_parquet: Path | None = None
             if save_dir is not None:
                 save_dir.mkdir(parents=True, exist_ok=True)
             if save_dir is None:
@@ -359,7 +370,7 @@ class BaseWorkflow:
                 groups = self._stage_groups(mode)
                 if mode == "single_job":
                     df = _run_target_job(self, target, save_dir, options)
-                    df.to_parquet(save_dir / "final.parquet")
+                    final_parquet = save_dir / "final.parquet"
                 else:
                     current_parquet: str | None = None
                     df = pd.DataFrame()
@@ -375,6 +386,10 @@ class BaseWorkflow:
                             options,
                         )
                         current_parquet = output_parquet
+                    if current_parquet is not None:
+                        final_parquet = save_dir / current_parquet
+                if target_retention == "compact_success" and final_parquet is not None:
+                    _compact_successful_target(save_dir, final_parquet)
             frames.append(df)
 
         if not frames:
@@ -404,6 +419,7 @@ class BaseWorkflow:
         collect_report: str | Path | None = None,
         collect_require_normal_termination: bool = True,
         collect_resources: Resources | None = None,
+        target_retention: TargetRetention = "compact_success",
     ) -> JobSubmissionResult:
         """Submit selected workflow targets to a submitit cluster executor.
 
@@ -411,8 +427,9 @@ class BaseWorkflow:
         ----------
         out_dir : str or pathlib.Path
             Root output directory. FRUST creates one subdirectory per selected
-            workflow target and writes staged parquet files inside that target
-            directory.
+            workflow target and writes staged parquet checkpoints inside that
+            target directory. Successful collected targets are compacted
+            according to ``target_retention``.
         cluster : frust.cluster.config.ClusterConfig
             Shared executor configuration, such as Slurm partition, log
             directory, and optional scratch ``work_dir``.
@@ -458,6 +475,12 @@ class BaseWorkflow:
         collect_resources : Resources or None, optional
             Scheduler resources for the automatic collection job. ``None`` uses
             ``Resources(cpus=2, mem_gb=4, timeout_min=120)``.
+        target_retention : {"compact_success", "all"}, optional
+            Output retention policy for successful collected targets.
+            ``"compact_success"`` keeps only the final target parquet and
+            ``timing.json`` for collected targets. Failed, skipped, missing, and
+            non-normal-termination targets remain untouched. ``"all"`` keeps
+            all intermediate target parquets.
 
         Returns
         -------
@@ -466,6 +489,7 @@ class BaseWorkflow:
             workflow execution mode, backend, and automatic collection metadata
             when ``collect=True``.
         """
+        _validate_target_retention(target_retention)
         selected = self._select_targets(targets)
         mode = execution or ("dft_staged" if self.dft else "single_job")
         groups = self._stage_groups(mode)
@@ -598,6 +622,7 @@ class BaseWorkflow:
                 collection_report_path,
                 collect_require_normal_termination,
                 wait_jobs,
+                target_retention,
             )
             collection_job_id = getattr(collection_job, "job_id", f"{self.workflow_name}_collect")
 
@@ -618,6 +643,7 @@ class BaseWorkflow:
         *,
         output: str | Path | None = None,
         require_normal_termination: bool = False,
+        target_retention: TargetRetention = "all",
     ) -> pd.DataFrame:
         """Collect finished per-target workflow outputs.
 
@@ -633,6 +659,11 @@ class BaseWorkflow:
         require_normal_termination : bool, optional
             If ``True``, skip target outputs where normal-termination columns
             ending in ``"-NT"`` are present and not all true.
+        target_retention : {"all", "compact_success"}, optional
+            Output retention policy for collected targets. The default
+            ``"all"`` preserves existing run directories during manual
+            recovery. ``"compact_success"`` removes intermediate parquet
+            checkpoints for successfully collected targets.
 
         Returns
         -------
@@ -645,6 +676,7 @@ class BaseWorkflow:
         FileNotFoundError
             If no final staged parquet files are found below ``out_dir``.
         """
+        _validate_target_retention(target_retention)
         root = Path(out_dir)
         frames: list[pd.DataFrame] = []
         files: list[Path] = []
@@ -677,6 +709,9 @@ class BaseWorkflow:
             out_path = Path(output)
             out_path.parent.mkdir(parents=True, exist_ok=True)
             merged.to_parquet(out_path)
+        if target_retention == "compact_success":
+            for path in files:
+                _compact_successful_target(path.parent, path)
         return merged
 
     def _build_targets(self) -> list[WorkflowTarget]:
@@ -962,17 +997,18 @@ def _run_target_job(
     )
     append_workflow_timing(df.attrs, group_record)
     if target_dir is not None:
-        write_timing_sidecar(
-            target_dir / "single_job.timing.json",
-            {
-                "schema_version": 1,
-                "submitted_at": submitted_at,
-                "record": group_record,
-                "stage_ids": [stage.id for stage in workflow._stage_defs()],
-                "output_parquet": "final.parquet",
-            },
-        )
         df.to_parquet(target_dir / "final.parquet")
+        _write_target_timing(
+            target_dir,
+            df,
+            workflow=workflow.workflow_name,
+            target=target.tag,
+            submitted_at=submitted_at,
+            group_record=group_record,
+            stage_ids=[stage.id for stage in workflow._stage_defs()],
+            input_parquet=None,
+            output_parquet="final.parquet",
+        )
     return df
 
 
@@ -1040,18 +1076,18 @@ def _run_stage_group_job(
         resources=_options_resources(options),
     )
     append_workflow_timing(df.attrs, group_record)
-    write_timing_sidecar(
-        target_dir / f"{sanitize_tag(group_name)}.timing.json",
-        {
-            "schema_version": 1,
-            "submitted_at": submitted_at,
-            "record": group_record,
-            "stage_ids": stage_ids,
-            "input_parquet": input_parquet,
-            "output_parquet": output_parquet,
-        },
-    )
     df.to_parquet(target_dir / output_parquet)
+    _write_target_timing(
+        target_dir,
+        df,
+        workflow=workflow.workflow_name,
+        target=target.tag,
+        submitted_at=submitted_at,
+        group_record=group_record,
+        stage_ids=stage_ids,
+        input_parquet=input_parquet,
+        output_parquet=output_parquet,
+    )
     return df
 
 
@@ -1064,6 +1100,7 @@ def _collect_expected_outputs(
     report: str | Path,
     require_normal_termination: bool,
     wait_jobs: list[Any] | None = None,
+    target_retention: TargetRetention = "compact_success",
 ) -> pd.DataFrame:
     """Collect exact expected workflow outputs and write a JSON report.
 
@@ -1087,6 +1124,8 @@ def _collect_expected_outputs(
     wait_jobs : list, optional
         Submitit jobs to wait for before collecting. This is used for local
         submitit backends that do not receive Slurm dependency parameters.
+    target_retention : {"compact_success", "all"}, optional
+        Output retention policy for successfully collected targets.
 
     Returns
     -------
@@ -1101,6 +1140,7 @@ def _collect_expected_outputs(
     """
     for job in wait_jobs or []:
         job.wait()
+    _validate_target_retention(target_retention)
 
     root = Path(out_dir)
     output_path = Path(output)
@@ -1161,6 +1201,9 @@ def _collect_expected_outputs(
         merged.to_parquet(output_path)
     else:
         merged = pd.DataFrame()
+    compaction_report = _compact_collected_targets(collected_files) if target_retention == "compact_success" else _empty_compaction_report()
+    report_payload["target_retention"] = target_retention
+    report_payload["compaction"] = compaction_report
 
     report_path.parent.mkdir(parents=True, exist_ok=True)
     report_path.write_text(json.dumps(report_payload, indent=2, sort_keys=True))
@@ -1195,6 +1238,19 @@ def _collect_timing_sidecars(
 
     for target in targets:
         target_dir = root / target.tag
+        consolidated = target_dir / TARGET_TIMING_FILE
+        if consolidated.exists():
+            try:
+                payload = json.loads(consolidated.read_text())
+            except Exception as exc:
+                errored_files.append({"file": str(consolidated), "error": str(exc)})
+                continue
+            groups = payload.get("groups", [])
+            if isinstance(groups, list):
+                records.extend(dict(record) for record in groups if isinstance(record, Mapping))
+            timing_files.append(str(consolidated))
+            continue
+
         files = sorted(target_dir.glob("*.timing.json"))
         if not files:
             missing_targets.append(target.tag)
@@ -1236,6 +1292,7 @@ def _collect_timing_sidecars(
     )[:5]
     return {
         "n_timing_files": len(timing_files),
+        "n_timing_groups": len(records),
         "timing_files": timing_files,
         "missing_timing_targets": missing_targets,
         "errored_timing_files": errored_files,
@@ -1243,6 +1300,166 @@ def _collect_timing_sidecars(
         "total_core_hours": round(total_core_hours, 6),
         "slowest_groups": slowest,
     }
+
+
+def _write_target_timing(
+    target_dir: Path,
+    df: pd.DataFrame,
+    *,
+    workflow: str,
+    target: str,
+    submitted_at: str | None,
+    group_record: dict[str, Any],
+    stage_ids: list[str],
+    input_parquet: str | None,
+    output_parquet: str,
+) -> None:
+    """Write the consolidated timing sidecar for one workflow target."""
+    timing_path = target_dir / TARGET_TIMING_FILE
+    existing_groups: dict[tuple[Any, ...], dict[str, Any]] = {}
+    if timing_path.exists():
+        try:
+            payload = json.loads(timing_path.read_text())
+            for record in payload.get("groups", []) or []:
+                if isinstance(record, Mapping):
+                    existing_groups[_timing_record_key(record)] = dict(record)
+        except Exception:
+            existing_groups = {}
+
+    current_group = {
+        "submitted_at": submitted_at,
+        "stage_ids": list(stage_ids),
+        "input_parquet": input_parquet,
+        "output_parquet": output_parquet,
+    }
+    existing_groups[_timing_record_key(group_record)] = {
+        **existing_groups.get(_timing_record_key(group_record), {}),
+        **dict(group_record),
+        **current_group,
+    }
+
+    records = _workflow_timing_records(df)
+    groups: list[dict[str, Any]] = []
+    for record in records:
+        if record.get("kind") != "group":
+            continue
+        key = _timing_record_key(record)
+        groups.append({**dict(record), **existing_groups.get(key, {})})
+
+    stages = [dict(record) for record in records if record.get("kind") != "group"]
+    write_timing_sidecar(
+        timing_path,
+        {
+            "schema_version": 2,
+            "workflow": workflow,
+            "target": target,
+            "updated_at": utc_timestamp(),
+            "groups": groups,
+            "stages": stages,
+        },
+    )
+
+
+def _workflow_timing_records(df: pd.DataFrame) -> list[dict[str, Any]]:
+    """Return workflow timing records from dataframe attrs."""
+    timing = df.attrs.get("frust_workflow_timing", {})
+    if not isinstance(timing, Mapping):
+        return []
+    records = timing.get("records", [])
+    if not isinstance(records, list):
+        return []
+    return [dict(record) for record in records if isinstance(record, Mapping)]
+
+
+def _timing_record_key(record: Mapping[str, Any]) -> tuple[Any, ...]:
+    """Return a stable key for a workflow timing record."""
+    return (
+        record.get("group"),
+        record.get("job_id"),
+        record.get("started_at"),
+        record.get("finished_at"),
+    )
+
+
+def _compact_collected_targets(collected_files: list[str]) -> dict[str, Any]:
+    """Compact successful collected target directories."""
+    report = _empty_compaction_report()
+    for file_name in collected_files:
+        final_file = Path(file_name)
+        result = _compact_successful_target(final_file.parent, final_file)
+        report["targets"].append(result)
+        report["n_targets"] += 1
+        report["n_removed_files"] += len(result["removed_files"])
+        report["removed_bytes"] += int(result["removed_bytes"])
+        report["errors"].extend(result["errors"])
+    return report
+
+
+def _empty_compaction_report() -> dict[str, Any]:
+    """Return an empty target compaction report."""
+    return {
+        "n_targets": 0,
+        "n_removed_files": 0,
+        "removed_bytes": 0,
+        "targets": [],
+        "errors": [],
+    }
+
+
+def _compact_successful_target(target_dir: Path, final_file: Path) -> dict[str, Any]:
+    """Remove intermediate target checkpoints after a successful run."""
+    target_dir = Path(target_dir)
+    final_file = Path(final_file)
+    result: dict[str, Any] = {
+        "target_dir": str(target_dir),
+        "kept_parquet": str(final_file),
+        "removed_files": [],
+        "removed_bytes": 0,
+        "errors": [],
+    }
+    if not target_dir.is_dir():
+        result["errors"].append({"file": str(target_dir), "error": "target directory does not exist"})
+        return result
+    if not final_file.exists():
+        result["errors"].append({"file": str(final_file), "error": "final parquet does not exist"})
+        return result
+
+    for path in sorted(target_dir.glob("*.parquet")):
+        if _same_file(path, final_file):
+            continue
+        _remove_compaction_file(path, result)
+
+    timing_path = target_dir / TARGET_TIMING_FILE
+    if timing_path.exists():
+        for path in sorted(target_dir.glob("*.timing.json")):
+            _remove_compaction_file(path, result)
+    return result
+
+
+def _remove_compaction_file(path: Path, result: dict[str, Any]) -> None:
+    """Remove one file and update a compaction result."""
+    try:
+        size = path.stat().st_size
+        path.unlink()
+    except Exception as exc:
+        result["errors"].append({"file": str(path), "error": str(exc)})
+        return
+    result["removed_files"].append(str(path))
+    result["removed_bytes"] += int(size)
+
+
+def _same_file(path: Path, other: Path) -> bool:
+    """Return whether two paths refer to the same existing file."""
+    try:
+        return path.samefile(other)
+    except OSError:
+        return path.resolve() == other.resolve()
+
+
+def _validate_target_retention(value: str) -> None:
+    """Validate a workflow target retention policy."""
+    if value not in {"compact_success", "all"}:
+        raise ValueError("target_retention must be 'compact_success' or 'all'")
 
 
 def _stage_engine(stage: StageDef, spec: CalculatorSpec | None) -> str | None:
