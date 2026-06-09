@@ -1,5 +1,5 @@
 from pathlib import Path
-from typing import Any, Optional
+from typing import Any, Optional, Sequence
 
 import numpy as np
 import pandas as pd
@@ -99,6 +99,136 @@ def xyz_to_rdkit_mol(
         ) from exc
 
     return mol
+
+
+def compare_symbols_coords_rmsd(
+    probe_symbols: Sequence[str],
+    probe_coords: Sequence[Sequence[float]],
+    ref_symbols: Sequence[str],
+    ref_coords: Sequence[Sequence[float]],
+    atom_scope: str = "heavy",
+    charge: int = 0,
+) -> dict[str, Any]:
+    """Compare two structures from atomic symbols and coordinates.
+
+    Parameters
+    ----------
+    probe_symbols
+        Atomic symbols for the structure that will be aligned.
+    probe_coords
+        Probe Cartesian coordinates with shape ``(n_atoms, 3)``.
+    ref_symbols
+        Atomic symbols for the reference structure.
+    ref_coords
+        Reference Cartesian coordinates with shape ``(n_atoms, 3)``.
+    atom_scope
+        Atom scope used for topology matching and RMSD. Currently only
+        ``"heavy"`` is supported, meaning hydrogens are ignored during atom
+        mapping and RMSD calculation.
+    charge
+        Total molecular charge used during RDKit bond perception.
+
+    Returns
+    -------
+    dict
+        RMSD result containing the aligned probe molecule, reference molecule,
+        atom map, heavy-atom parent maps, and per-atom deviation dataframe.
+
+    Raises
+    ------
+    ValueError
+        If coordinates are malformed, ``atom_scope`` is unsupported, bond
+        perception fails, or topology-aware atom mapping fails.
+    """
+    if atom_scope != "heavy":
+        raise ValueError(
+            "Currently only atom_scope='heavy' is supported."
+        )
+
+    probe_symbols_list = [str(symbol) for symbol in probe_symbols]
+    ref_symbols_list = [str(symbol) for symbol in ref_symbols]
+    probe_coords_arr = np.asarray(probe_coords, dtype=float)
+    ref_coords_arr = np.asarray(ref_coords, dtype=float)
+
+    _validate_symbols_coords(probe_symbols_list, probe_coords_arr, "probe")
+    _validate_symbols_coords(ref_symbols_list, ref_coords_arr, "reference")
+
+    probe_mol = xyz_to_rdkit_mol(
+        probe_symbols_list,
+        probe_coords_arr,
+        charge=charge,
+    )
+    ref_mol = xyz_to_rdkit_mol(
+        ref_symbols_list,
+        ref_coords_arr,
+        charge=charge,
+    )
+
+    probe_heavy_mol, probe_parent_map = get_heavy_mol_with_parent_map(
+        probe_mol
+    )
+    ref_heavy_mol, ref_parent_map = get_heavy_mol_with_parent_map(ref_mol)
+
+    atom_map = get_best_heavy_atom_map(
+        probe_heavy_mol,
+        ref_heavy_mol,
+        probe_parent_map,
+        ref_parent_map,
+    )
+
+    probe_mol_aligned = Chem.Mol(probe_mol)
+    rmsd = rdMolAlign.AlignMol(
+        probe_mol_aligned,
+        ref_mol,
+        atomMap=atom_map,
+    )
+
+    probe_heavy_mol_aligned = Chem.RemoveHs(probe_mol_aligned)
+    ref_heavy_mol_final = Chem.RemoveHs(ref_mol)
+
+    df_dev = get_atom_pair_deviations(
+        probe_mol_aligned,
+        ref_mol,
+        atom_map,
+    )
+
+    return {
+        "rmsd": rmsd,
+        "atom_scope": atom_scope,
+        "atom_map": atom_map,
+        "df_dev": df_dev,
+        "probe_symbols": probe_symbols_list,
+        "ref_symbols": ref_symbols_list,
+        "probe_coords": probe_coords_arr,
+        "ref_coords": ref_coords_arr,
+        "probe_mol": probe_mol,
+        "ref_mol": ref_mol,
+        "probe_mol_aligned": probe_mol_aligned,
+        "probe_heavy_mol": probe_heavy_mol,
+        "ref_heavy_mol_input": ref_heavy_mol,
+        "probe_heavy_parent_map": probe_parent_map,
+        "ref_heavy_parent_map": ref_parent_map,
+        "probe_heavy_mol_aligned": probe_heavy_mol_aligned,
+        "ref_heavy_mol": ref_heavy_mol_final,
+    }
+
+
+def _validate_symbols_coords(
+    symbols: Sequence[str],
+    coords: np.ndarray,
+    label: str,
+) -> None:
+    """Validate symbol and coordinate array shape."""
+    if coords.ndim != 2 or coords.shape[1] != 3:
+        raise ValueError(
+            f"{label} coordinates must have shape (n_atoms, 3); "
+            f"got {coords.shape}."
+        )
+    if len(symbols) != coords.shape[0]:
+        raise ValueError(
+            f"{label} symbols and coordinates have different lengths: "
+            f"{len(symbols)} symbols vs {coords.shape[0]} coordinate rows."
+        )
 
 
 def get_heavy_mol_with_parent_map(
@@ -436,47 +566,19 @@ def compare_xyz_rmsd(
     ValueError
         If unsupported options are requested or mapping fails.
     """
-    if atom_scope != "heavy":
-        raise ValueError(
-            "Currently only atom_scope='heavy' is supported."
-        )
-
     probe_symbols, probe_coords = read_xyz(probe_xyz_path)
     ref_symbols, ref_coords = read_xyz(ref_xyz_path)
-
-    probe_mol = xyz_to_rdkit_mol(probe_symbols, probe_coords, charge=charge)
-    ref_mol = xyz_to_rdkit_mol(ref_symbols, ref_coords, charge=charge)
-
-    probe_heavy_mol, probe_parent_map = get_heavy_mol_with_parent_map(
-        probe_mol
-    )
-    ref_heavy_mol, ref_parent_map = get_heavy_mol_with_parent_map(ref_mol)
-
-    atom_map = get_best_heavy_atom_map(
-        probe_heavy_mol,
-        ref_heavy_mol,
-        probe_parent_map,
-        ref_parent_map,
-    )
-
-    probe_mol_aligned = Chem.Mol(probe_mol)
-    rmsd = rdMolAlign.AlignMol(
-        probe_mol_aligned,
-        ref_mol,
-        atomMap=atom_map,
-    )
-
-    probe_heavy_mol_aligned = Chem.RemoveHs(probe_mol_aligned)
-    ref_heavy_mol_final = Chem.RemoveHs(ref_mol)
-
-    df_dev = get_atom_pair_deviations(
-        probe_mol_aligned,
-        ref_mol,
-        atom_map,
+    result = compare_symbols_coords_rmsd(
+        probe_symbols,
+        probe_coords,
+        ref_symbols,
+        ref_coords,
+        atom_scope=atom_scope,
+        charge=charge,
     )
 
     worst_row: Optional[pd.Series]
-    worst_row = None if df_dev.empty else df_dev.iloc[0]
+    worst_row = None if result["df_dev"].empty else result["df_dev"].iloc[0]
 
     overlay_view = None
     deviation_view = None
@@ -485,8 +587,8 @@ def compare_xyz_rmsd(
         print(f"Probe file: {Path(probe_xyz_path).name}")
         print(f"Reference file: {Path(ref_xyz_path).name}")
         print(f"Atom scope: {atom_scope}")
-        print(f"Mapped atoms: {len(atom_map)}")
-        print(f"RMSD: {rmsd:.6f} Å")
+        print(f"Mapped atoms: {len(result['atom_map'])}")
+        print(f"RMSD: {result['rmsd']:.6f} Å")
         if worst_row is not None:
             print(
                 "Largest mapped deviation: "
@@ -497,7 +599,7 @@ def compare_xyz_rmsd(
 
     if show_table:
         display(
-            df_dev[
+            result["df_dev"][
                 [
                     "probe_idx",
                     "ref_idx",
@@ -512,32 +614,26 @@ def compare_xyz_rmsd(
 
     if show_overlay_plot:
         overlay_view = show_overlay(
-            probe_heavy_mol_aligned,
-            ref_heavy_mol_final,
-            rmsd,
+            result["probe_heavy_mol_aligned"],
+            result["ref_heavy_mol"],
+            result["rmsd"],
         )
 
     if show_deviation_overlay:
         deviation_view = show_overlay_with_deviation_lines(
-            probe_heavy_mol_aligned,
-            ref_heavy_mol_final,
-            df_dev,
-            rmsd,
+            result["probe_heavy_mol_aligned"],
+            result["ref_heavy_mol"],
+            result["df_dev"],
+            result["rmsd"],
             n_lines=top_n,
         )
 
-    return {
-        "rmsd": rmsd,
-        "atom_scope": atom_scope,
-        "atom_map": atom_map,
-        "df_dev": df_dev,
-        "probe_symbols": probe_symbols,
-        "ref_symbols": ref_symbols,
-        "probe_mol": probe_mol,
-        "ref_mol": ref_mol,
-        "probe_mol_aligned": probe_mol_aligned,
-        "probe_heavy_mol_aligned": probe_heavy_mol_aligned,
-        "ref_heavy_mol": ref_heavy_mol_final,
-        "overlay_view": overlay_view,
-        "deviation_view": deviation_view,
-    }
+    result.update(
+        {
+            "probe_xyz_path": str(probe_xyz_path),
+            "ref_xyz_path": str(ref_xyz_path),
+            "overlay_view": overlay_view,
+            "deviation_view": deviation_view,
+        }
+    )
+    return result

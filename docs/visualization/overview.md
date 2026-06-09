@@ -18,6 +18,7 @@ different ways:
 from frust.vis import (
     MolTo3DGrid,
     RxnTo3DGrid,
+    compare_xyz_rmsd,
     plot_mols,
     plot_vibs,
     plot_energy_profile,
@@ -30,6 +31,7 @@ from frust.vis import (
 | --- | --- |
 | Show molecules from FRUST rows | `plot_mols`, `plot_row`, `plot_lig`, `plot_rpos` |
 | Show arbitrary molecules or XYZ files | `MolTo3DGrid` |
+| Compare aligned structures by RMSD | `compare_xyz_rmsd`, `compare_structure_rmsd` |
 | Show reaction drawings | `RxnTo3DGrid` |
 | Inspect imaginary modes | `plot_vibs` |
 | Plot reaction energy profiles | `plot_energy_profile` |

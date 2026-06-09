@@ -82,6 +82,7 @@ nav:
           - Overview: visualization/overview.md
           - Molecular Grids: visualization/molecular-grids.md
           - DataFrame Inspection: visualization/dataframe-inspection.md
+          - Structure Comparison: visualization/structure-comparison.md
           - Vibrations: visualization/vibrations.md
           - Energy Profiles: visualization/energy-profiles.md
       - External Tools:

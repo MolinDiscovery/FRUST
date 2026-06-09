@@ -1,0 +1,114 @@
+<html>
+<body style="margin: 0; padding: 0; display: block;">
+<div id="3dmolviewer_1780915665094528"  style="position: relative; width: 420px; height: 360px;">
+        <p id="3dmolwarning_1780915665094528" style="background-color:#ffcccc;color:black">3Dmol.js failed to load for some reason.  Please check your browser console for error messages.<br></p>
+        </div>
+<script>
+
+var loadScriptAsync = function(uri){
+  return new Promise((resolve, reject) => {
+    //this is to ignore the existence of requirejs amd
+    var savedexports, savedmodule;
+    if (typeof exports !== 'undefined') savedexports = exports;
+    else exports = {}
+    if (typeof module !== 'undefined') savedmodule = module;
+    else module = {}
+
+    var tag = document.createElement('script');
+    tag.src = uri;
+    tag.async = true;
+    tag.onload = () => {
+        exports = savedexports;
+        module = savedmodule;
+        resolve();
+    };
+  var firstScriptTag = document.getElementsByTagName('script')[0];
+  firstScriptTag.parentNode.insertBefore(tag, firstScriptTag);
+});
+};
+
+if(typeof $3Dmolpromise === 'undefined') {
+$3Dmolpromise = null;
+  $3Dmolpromise = loadScriptAsync('https://cdnjs.cloudflare.com/ajax/libs/3Dmol/2.4.2/3Dmol-min.js');
+}
+
+var viewer_1780915665094528 = null;
+var warn = document.getElementById("3dmolwarning_1780915665094528");
+if(warn) {
+    warn.parentNode.removeChild(warn);
+}
+$3Dmolpromise.then(function() {
+var viewergrid_1780915665094528 = null;
+viewergrid_1780915665094528 = $3Dmol.createViewerGrid(document.getElementById("3dmolviewer_1780915665094528"),{rows: 1, cols: 1, control_all: false},{backgroundColor:"white"});
+viewer_1780915665094528 = viewergrid_1780915665094528[0][0];
+viewergrid_1780915665094528[0][0].zoomTo();	viewergrid_1780915665094528[0][0].setBackgroundColor("blue",0.1);
+	viewergrid_1780915665094528[0][0].addModel("\n     RDKit          3D\n\n  9  8  0  0  0  0  0  0  0  0999 V2000\n    0.9074    0.1364   -0.1443 C   0  0  0  0  0  0  0  0  0  0  0  0\n   -0.5129   -0.4134   -0.0986 C   0  0  0  0  0  0  0  0  0  0  0  0\n   -1.4369    0.6327    0.0293 O   0  0  0  0  0  0  0  0  0  0  0  0\n    1.1417    0.6679    0.8023 H   0  0  0  0  0  0  0  0  0  0  0  0\n    1.0148    0.8417   -0.9955 H   0  0  0  0  0  0  0  0  0  0  0  0\n    1.6278   -0.6984   -0.2750 H   0  0  0  0  0  0  0  0  0  0  0  0\n   -0.7210   -0.9603   -1.0423 H   0  0  0  0  0  0  0  0  0  0  0  0\n   -0.6157   -1.1315    0.7464 H   0  0  0  0  0  0  0  0  0  0  0  0\n   -1.4052    0.9250    0.9777 H   0  0  0  0  0  0  0  0  0  0  0  0\n  2  1  1  0\n  3  2  1  0\n  4  1  1  0\n  5  1  1  0\n  6  1  1  0\n  7  2  1  0\n  8  2  1  0\n  9  3  1  0\nM  END\n","mol");
+	viewergrid_1780915665094528[0][0].setStyle({},{"stick": {"radius": 0.16}, "sphere": {"radius": 0.28}});
+	viewergrid_1780915665094528[0][0].setStyle({"elem": "H"},{});
+	viewergrid_1780915665094528[0][0].addModel("\n     RDKit          3D\n\n  9  8  0  0  0  0  0  0  0  0999 V2000\n    0.8491    0.1117   -0.1426 C   0  0  0  0  0  0  0  0  0  0  0  0\n   -0.3336   -0.5223   -0.1168 C   0  0  0  0  0  0  0  0  0  0  0  0\n   -1.5578    0.7663    0.0458 O   0  0  0  0  0  0  0  0  0  0  0  0\n    1.1276    0.4675    0.8719 H   0  0  0  0  0  0  0  0  0  0  0  0\n    0.9461    0.9509   -0.8636 H   0  0  0  0  0  0  0  0  0  0  0  0\n    1.5434   -0.7019   -0.4409 H   0  0  0  0  0  0  0  0  0  0  0  0\n   -0.8352   -0.7824   -1.1550 H   0  0  0  0  0  0  0  0  0  0  0  0\n   -0.6756   -1.2612    0.5728 H   0  0  0  0  0  0  0  0  0  0  0  0\n   -1.4048    0.7395    1.1822 H   0  0  0  0  0  0  0  0  0  0  0  0\n  2  1  1  0\n  3  2  1  0\n  4  1  1  0\n  5  1  1  0\n  6  1  1  0\n  7  2  1  0\n  8  2  1  0\n  9  3  1  0\nM  END\n","mol");
+	viewergrid_1780915665094528[0][0].setStyle({},{"stick": {"radius": 0.08, "color": "orange"}, "sphere": {"radius": 0.18, "color": "orange"}});
+	viewergrid_1780915665094528[0][0].setStyle({"elem": "H"},{});
+	viewergrid_1780915665094528[0][0].addSphere({"center": {"x": -0.512939576, "y": -0.4133843155, "z": -0.0985506245}, "radius": 0.45, "color": "cyan", "alpha": 0.25});
+	viewergrid_1780915665094528[0][0].addSphere({"center": {"x": -0.33359385558786, "y": -0.5222822202861533, "z": -0.11679201787135782}, "radius": 0.45, "color": "orange", "alpha": 0.3});
+	viewergrid_1780915665094528[0][0].addCylinder({"start": {"x": -0.33359385558786, "y": -0.5222822202861533, "z": -0.11679201787135782}, "end": {"x": -0.512939576, "y": -0.4133843155, "z": -0.0985506245}, "radius": 0.035, "color": "green"});
+	viewergrid_1780915665094528[0][0].addLabel("1. C1 -> C1: 0.211 A",{"fontColor": "green", "backgroundColor": "white", "useScreen": true, "inFront": true, "fontSize": 12, "screenOffset": {"x": 10, "y": 34}});
+	viewergrid_1780915665094528[0][0].addSphere({"center": {"x": -1.4368505695, "y": 0.6326685534, "z": 0.0293157629}, "radius": 0.45, "color": "cyan", "alpha": 0.25});
+	viewergrid_1780915665094528[0][0].addSphere({"center": {"x": -1.5578037749783524, "y": 0.7663137723311424, "z": 0.04582520867421729}, "radius": 0.45, "color": "orange", "alpha": 0.3});
+	viewergrid_1780915665094528[0][0].addCylinder({"start": {"x": -1.5578037749783524, "y": 0.7663137723311424, "z": 0.04582520867421729}, "end": {"x": -1.4368505695, "y": 0.6326685534, "z": 0.0293157629}, "radius": 0.035, "color": "green"});
+	viewergrid_1780915665094528[0][0].addLabel("2. O2 -> O2: 0.181 A",{"fontColor": "green", "backgroundColor": "white", "useScreen": true, "inFront": true, "fontSize": 12, "screenOffset": {"x": 10, "y": 58}});
+	viewergrid_1780915665094528[0][0].addSphere({"center": {"x": 0.9074482801, "y": 0.1364049239, "z": -0.1443179017}, "radius": 0.45, "color": "cyan", "alpha": 0.25});
+	viewergrid_1780915665094528[0][0].addSphere({"center": {"x": 0.8490557651662124, "y": 0.111657609755011, "z": -0.1425859541028595}, "radius": 0.45, "color": "orange", "alpha": 0.3});
+	viewergrid_1780915665094528[0][0].addCylinder({"start": {"x": 0.8490557651662124, "y": 0.111657609755011, "z": -0.1425859541028595}, "end": {"x": 0.9074482801, "y": 0.1364049239, "z": -0.1443179017}, "radius": 0.035, "color": "green"});
+	viewergrid_1780915665094528[0][0].addLabel("3. C0 -> C0: 0.063 A",{"fontColor": "green", "backgroundColor": "white", "useScreen": true, "inFront": true, "fontSize": 12, "screenOffset": {"x": 10, "y": 82}});
+	viewergrid_1780915665094528[0][0].addLabel("gxtb -> orca\nRMSD 0.164 A | 3 mapped | max 0.211 A",{"fontColor": "black", "fontSize": 13, "backgroundColor": "white", "borderColor": "black", "borderWidth": 1, "useScreen": true, "inFront": true, "screenOffset": {"x": 10, "y": 0}});
+	viewergrid_1780915665094528[0][0].setClickable({},true,"function(atom, viewer, event, container) {\n        var DISTANCE_COLOR = 'green';\n        var DISTANCE_RADIUS = 0.06;\n        var ANGLE_COLOR = 'orange';\n        var ANGLE_GUIDE_RADIUS_FRACTION = 0.45;\n        var ANGLE_GUIDE_MAX_RADIUS = 1.0;\n        var ANGLE_GUIDE_CYLINDER_RADIUS = 0.035;\n        var ANGLE_GUIDE_ARC_SEGMENTS = 24;\n        var ANGLE_GUIDE_LABEL_RADIUS_FACTOR = 1.25;\n        var ANGLE_GUIDE_EPSILON = 1.0e-8;\n\n        if(!viewer._picks)       viewer._picks = [];\n        if(!viewer._distLabels)  viewer._distLabels = {};\n        if(!viewer._distLines)   viewer._distLines = {};\n        if(!viewer._anglePicks)  viewer._anglePicks = [];\n        if(!viewer._angleLabels) viewer._angleLabels = {};\n        if(!viewer._angleShapes) viewer._angleShapes = {};\n\n        function xyz(point) {\n            return {x: point.x, y: point.y, z: point.z};\n        }\n\n        function vec(u, v) {\n            return {x: u.x - v.x, y: u.y - v.y, z: u.z - v.z};\n        }\n\n        function add(u, v) {\n            return {x: u.x + v.x, y: u.y + v.y, z: u.z + v.z};\n        }\n\n        function subtract(u, v) {\n            return {x: u.x - v.x, y: u.y - v.y, z: u.z - v.z};\n        }\n\n        function scale(u, factor) {\n            return {x: u.x * factor, y: u.y * factor, z: u.z * factor};\n        }\n\n        function dot(u, v) {\n            return u.x * v.x + u.y * v.y + u.z * v.z;\n        }\n\n        function cross(u, v) {\n            return {\n                x: u.y * v.z - u.z * v.y,\n                y: u.z * v.x - u.x * v.z,\n                z: u.x * v.y - u.y * v.x\n            };\n        }\n\n        function norm(u) {\n            return Math.sqrt(dot(u, u));\n        }\n\n        function unit(u) {\n            var length = norm(u);\n            if(length < ANGLE_GUIDE_EPSILON) {\n                return null;\n            }\n            return scale(u, 1.0 / length);\n        }\n\n        function clamp(value, lower, upper) {\n            return Math.max(lower, Math.min(upper, value));\n        }\n\n        function orthogonalUnitVector(vector) {\n            var axis = {x: 1.0, y: 0.0, z: 0.0};\n            if(Math.abs(dot(vector, axis)) > 0.9) {\n                axis = {x: 0.0, y: 1.0, z: 0.0};\n            }\n            return unit(cross(vector, axis));\n        }\n\n        function removeShapeList(shapeMap, key) {\n            if(key in shapeMap) {\n                for(var i = 0; i < shapeMap[key].length; i++) {\n                    viewer.removeShape(shapeMap[key][i]);\n                }\n                delete shapeMap[key];\n            }\n        }\n\n        function angleKey(a, b, c) {\n            var endpoint1 = Math.min(a.index, c.index);\n            var endpoint2 = Math.max(a.index, c.index);\n            return [endpoint1, b.index, endpoint2].join('-');\n        }\n\n        function angleGuideGeometry(a, b, c) {\n            var vec1 = vec(a, b);\n            var vec3 = vec(c, b);\n            var norm1 = norm(vec1);\n            var norm3 = norm(vec3);\n            if(norm1 < ANGLE_GUIDE_EPSILON || norm3 < ANGLE_GUIDE_EPSILON) {\n                return null;\n            }\n\n            var unit1 = scale(vec1, 1.0 / norm1);\n            var unit3 = scale(vec3, 1.0 / norm3);\n            var cosine = clamp(dot(unit1, unit3), -1.0, 1.0);\n            var angle = Math.acos(cosine);\n            var arcRadius = Math.min(\n                ANGLE_GUIDE_RADIUS_FRACTION * Math.min(norm1, norm3),\n                ANGLE_GUIDE_MAX_RADIUS\n            );\n\n            var planeY = subtract(unit3, scale(unit1, cosine));\n            var planeYNorm = norm(planeY);\n            if(planeYNorm < ANGLE_GUIDE_EPSILON) {\n                planeY = orthogonalUnitVector(unit1);\n            } else {\n                planeY = scale(planeY, 1.0 / planeYNorm);\n            }\n\n            if(planeY === null) {\n                return null;\n            }\n\n            var arcSegments = [];\n            var previousPoint = null;\n            for(var idx = 0; idx <= ANGLE_GUIDE_ARC_SEGMENTS; idx++) {\n                var theta = angle * idx / ANGLE_GUIDE_ARC_SEGMENTS;\n                var direction = add(\n                    scale(unit1, Math.cos(theta)),\n                    scale(planeY, Math.sin(theta))\n                );\n                var point = add(b, scale(direction, arcRadius));\n                if(previousPoint !== null && (idx - 1) % 2 === 0) {\n                    arcSegments.push([previousPoint, point]);\n                }\n                previousPoint = point;\n            }\n\n            var labelDirection = add(unit1, unit3);\n            var labelDirectionNorm = norm(labelDirection);\n            if(labelDirectionNorm < ANGLE_GUIDE_EPSILON) {\n                var halfAngle = angle * 0.5;\n                labelDirection = add(\n                    scale(unit1, Math.cos(halfAngle)),\n                    scale(planeY, Math.sin(halfAngle))\n                );\n            } else {\n                labelDirection = scale(labelDirection, 1.0 / labelDirectionNorm);\n            }\n\n            return {\n                angleDegrees: angle * (180.0 / Math.PI),\n                armEnds: [a, c],\n                arcSegments: arcSegments,\n                labelPosition: add(\n                    b,\n                    scale(\n                        labelDirection,\n                        arcRadius * ANGLE_GUIDE_LABEL_RADIUS_FACTOR\n                    )\n                )\n            };\n        }\n\n        if(event.shiftKey) {\n            viewer._anglePicks.push(atom);\n            if(viewer._anglePicks.length === 3) {\n                var A = viewer._anglePicks[0],\n                    B = viewer._anglePicks[1],\n                    C = viewer._anglePicks[2];\n                var angleMeasurementKey = angleKey(A, B, C);\n                if(angleMeasurementKey in viewer._angleLabels) {\n                    viewer.removeLabel(viewer._angleLabels[angleMeasurementKey]);\n                    delete viewer._angleLabels[angleMeasurementKey];\n                    removeShapeList(viewer._angleShapes, angleMeasurementKey);\n                } else {\n                    var geometry = angleGuideGeometry(A, B, C);\n                    if(geometry !== null) {\n                        viewer._angleShapes[angleMeasurementKey] = [];\n                        for(var armIdx = 0; armIdx < geometry.armEnds.length; armIdx++) {\n                            viewer._angleShapes[angleMeasurementKey].push(\n                                viewer.addCylinder({\n                                    start: xyz(B),\n                                    end: xyz(geometry.armEnds[armIdx]),\n                                    radius: ANGLE_GUIDE_CYLINDER_RADIUS,\n                                    color: ANGLE_COLOR\n                                })\n                            );\n                        }\n                        for(var segIdx = 0; segIdx < geometry.arcSegments.length; segIdx++) {\n                            viewer._angleShapes[angleMeasurementKey].push(\n                                viewer.addCylinder({\n                                    start: xyz(geometry.arcSegments[segIdx][0]),\n                                    end: xyz(geometry.arcSegments[segIdx][1]),\n                                    radius: ANGLE_GUIDE_CYLINDER_RADIUS,\n                                    color: ANGLE_COLOR\n                                })\n                            );\n                        }\n                        var angleText = geometry.angleDegrees.toFixed(2) + '\u00b0';\n                        var angleLabel = viewer.addLabel(angleText, {\n                            position: xyz(geometry.labelPosition),\n                            backgroundColor: 'white',\n                            fontColor: ANGLE_COLOR,\n                            fontSize: 12\n                        });\n                        viewer._angleLabels[angleMeasurementKey] = angleLabel;\n                    }\n                }\n                viewer._anglePicks = [];\n            }\n        } else if(event.ctrlKey) {\n            viewer._picks.push(atom);\n            if(viewer._picks.length === 2) {\n                var a = viewer._picks[0], b = viewer._picks[1];\n                var distanceMeasurementKey = [\n                    Math.min(a.index, b.index),\n                    Math.max(a.index, b.index)\n                ].join('-');\n                if(distanceMeasurementKey in viewer._distLabels) {\n                    viewer.removeLabel(viewer._distLabels[distanceMeasurementKey]);\n                    delete viewer._distLabels[distanceMeasurementKey];\n                    if(distanceMeasurementKey in viewer._distLines) {\n                        viewer.removeShape(viewer._distLines[distanceMeasurementKey]);\n                        delete viewer._distLines[distanceMeasurementKey];\n                    }\n                } else {\n                    var dx = a.x - b.x, dy = a.y - b.y, dz = a.z - b.z;\n                    var dist = Math.sqrt(dx * dx + dy * dy + dz * dz)\n                              .toFixed(3) + ' \u00c5';\n                    var mid = {\n                        x: (a.x + b.x) / 2,\n                        y: (a.y + b.y) / 2,\n                        z: (a.z + b.z) / 2\n                    };\n                    var line = viewer.addCylinder({\n                        start: xyz(a),\n                        end: xyz(b),\n                        radius: DISTANCE_RADIUS,\n                        color: DISTANCE_COLOR\n                    });\n                    var lbl = viewer.addLabel(dist, {\n                        position: mid,\n                        backgroundColor: 'white',\n                        fontColor: DISTANCE_COLOR,\n                        fontSize: 12\n                    });\n                    viewer._distLines[distanceMeasurementKey] = line;\n                    viewer._distLabels[distanceMeasurementKey] = lbl;\n                }\n                viewer._picks = [];\n            }\n        } else {\n            if(atom.label) {\n                viewer.removeLabel(atom.label);\n                delete atom.label;\n            } else {\n                atom.label = viewer.addLabel(atom.index, {\n                    position: atom,\n                    backgroundColor: 'white',\n                    fontColor: 'black',\n                    fontSize: 12\n                });\n            }\n        }\n        viewer.render();\n    }");
+	viewergrid_1780915665094528[0][0].zoomTo();
+	viewergrid_1780915665094528[0][0].setStyle({"model": 0},{"stick": {"radius": 0.16}, "sphere": {"radius": 0.28}});
+	viewergrid_1780915665094528[0][0].setStyle({"model": 1},{"stick": {"radius": 0.08, "color": "orange"}, "sphere": {"radius": 0.18, "color": "orange"}});
+	viewergrid_1780915665094528[0][0].setStyle({"elem": "H"},{});
+
+window.saveView = function(row, col) {
+    const v = viewergrid_1780915665094528[row][col].getView();
+    console.log(JSON.stringify(v));
+    return v;
+};
+
+window.saveAllViews = function() {
+    const out = {};
+    for (let r = 0; r < viewergrid_1780915665094528.length; r++) {
+        for (let c = 0; c < viewergrid_1780915665094528[r].length; c++) {
+            if (viewergrid_1780915665094528[r][c]) {
+                out[`${r},${c}`] = viewergrid_1780915665094528[r][c].getView();
+            }
+        }
+    }
+    console.log(JSON.stringify(out, null, 2));
+    return out;
+};
+
+window.setViewForCell = function(row, col, view) {
+    viewergrid_1780915665094528[row][col].setView(view);
+    viewergrid_1780915665094528[row][col].render();
+};
+
+window.applyViews = function(viewMap) {
+    for (const key in viewMap) {
+        const [r, c] = key.split(",").map(Number);
+        if (viewergrid_1780915665094528[r] && viewergrid_1780915665094528[r][c]) {
+            viewergrid_1780915665094528[r][c].setView(viewMap[key]);
+            viewergrid_1780915665094528[r][c].render();
+        }
+    }
+};
+
+const fixedViews = {
+    // "0,0": [1, 2, 3, 4, 5, 6, 7, 8],
+};
+
+applyViews(fixedViews);
+
+viewergrid_1780915665094528[0][0].render();
+});
+</script>
+</body>
+</html>

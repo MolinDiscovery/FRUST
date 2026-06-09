@@ -36,6 +36,17 @@ _PUBLIC_API: dict[str, tuple[str, str]] = {
     "set_theme": ("frust.vis.theme", "set_theme"),
     "use_darkmode": ("frust.vis.theme", "use_darkmode"),
     "plot_vibs": ("frust.vis.vibrations", "plot_vibs"),
+    "compare_xyz_rmsd": ("frust.vis.structure_comparison", "compare_xyz_rmsd"),
+    "compare_structure_rmsd": ("frust.vis.structure_comparison", "compare_structure_rmsd"),
+    "structure_comparison_scene": ("frust.vis.structure_comparison", "structure_comparison_scene"),
+    "structure_comparison_scene_from_xyz": (
+        "frust.vis.structure_comparison",
+        "structure_comparison_scene_from_xyz",
+    ),
+    "structure_comparison_scene_from_dataframe": (
+        "frust.vis.structure_comparison",
+        "structure_comparison_scene_from_dataframe",
+    ),
     "show_scene": ("frust.vis.scenes", "show_scene"),
     "molecule_scene_from_dataframe": ("frust.vis.scenes", "molecule_scene_from_dataframe"),
     "vibration_scene_from_dataframe": ("frust.vis.scenes", "vibration_scene_from_dataframe"),
@@ -89,6 +100,13 @@ if TYPE_CHECKING:
         show_scene,
         ts_guess_scene_from_dataframe,
         vibration_scene_from_dataframe,
+    )
+    from frust.vis.structure_comparison import (
+        compare_structure_rmsd,
+        compare_xyz_rmsd,
+        structure_comparison_scene,
+        structure_comparison_scene_from_dataframe,
+        structure_comparison_scene_from_xyz,
     )
     from frust.vis.theme import set_theme, use_darkmode
     from frust.vis.vibrations import plot_vibs

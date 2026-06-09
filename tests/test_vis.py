@@ -1,6 +1,8 @@
 import unittest
+import tempfile
 from contextlib import redirect_stdout
 from io import StringIO
+from pathlib import Path
 from unittest.mock import patch
 
 import matplotlib
@@ -11,9 +13,12 @@ import matplotlib.pyplot as plt
 import numpy as np
 import pandas as pd
 from matplotlib.colors import same_color
+from rdkit import Chem
+from rdkit.Chem import AllChem
 from scipy.stats import linregress
 
 import frust.vis as vis
+import frust.vis.structure_comparison as structure_comparison_module
 from frust.vis import MolTo3DGrid, RxnTo3DGrid, plot_energy_profile, plot_mols
 from frust.vis import (
     ArrowOverlay,
@@ -32,6 +37,13 @@ from frust.vis.scenes import (
     select_vibration_coords_column,
     ts_guess_scene_from_dataframe,
     vibration_scene_from_dataframe,
+)
+from frust.vis.structure_comparison import (
+    PROBE_STYLE,
+    REFERENCE_STYLE,
+    compare_structure_rmsd,
+    structure_comparison_scene_from_dataframe,
+    structure_comparison_scene_from_xyz,
 )
 
 
@@ -608,6 +620,267 @@ class SceneAdapterTests(unittest.TestCase):
 
         overlay_types = {type(overlay).__name__ for overlay in scene.cells[0].overlays}
         self.assertEqual(overlay_types, {"AngleOverlay"})
+
+
+class StructureComparisonTests(unittest.TestCase):
+    @staticmethod
+    def _embedded_structure(smiles="CCO"):
+        mol = Chem.AddHs(Chem.MolFromSmiles(smiles))
+        AllChem.EmbedMolecule(mol, randomSeed=17)
+        AllChem.UFFOptimizeMolecule(mol)
+        conf = mol.GetConformer()
+        atoms = [atom.GetSymbol() for atom in mol.GetAtoms()]
+        coords = np.array(
+            [
+                [
+                    conf.GetAtomPosition(i).x,
+                    conf.GetAtomPosition(i).y,
+                    conf.GetAtomPosition(i).z,
+                ]
+                for i in range(mol.GetNumAtoms())
+            ],
+            dtype=float,
+        )
+        return atoms, coords
+
+    @staticmethod
+    def _write_xyz(path: Path, atoms, coords):
+        lines = [str(len(atoms)), "test structure"]
+        for atom, (x, y, z) in zip(atoms, coords):
+            lines.append(f"{atom} {x:.10f} {y:.10f} {z:.10f}")
+        path.write_text("\n".join(lines) + "\n", encoding="utf-8")
+
+    def test_structure_comparison_scene_from_xyz_adds_deviation_overlays(self):
+        atoms, ref_coords = self._embedded_structure()
+        probe_coords = ref_coords.copy()
+        probe_coords[1] += np.array([0.25, -0.10, 0.05])
+
+        with tempfile.TemporaryDirectory() as tmpdir:
+            ref_path = Path(tmpdir) / "ref.xyz"
+            probe_path = Path(tmpdir) / "probe.xyz"
+            self._write_xyz(ref_path, atoms, ref_coords)
+            self._write_xyz(probe_path, atoms, probe_coords)
+
+            scene = structure_comparison_scene_from_xyz(
+                str(probe_path),
+                str(ref_path),
+                top_n=2,
+            )
+
+        self.assertEqual(len(scene.cells), 1)
+        self.assertEqual(len(scene.cells[0].models), 2)
+        overlay_types = [type(overlay).__name__ for overlay in scene.cells[0].overlays]
+        self.assertEqual(overlay_types.count("DistanceOverlay"), 2)
+        self.assertEqual(overlay_types.count("ScreenLabelOverlay"), 2)
+        self.assertEqual(overlay_types.count("AtomHighlight"), 4)
+        distance_overlays = [
+            overlay
+            for overlay in scene.cells[0].overlays
+            if type(overlay).__name__ == "DistanceOverlay"
+        ]
+        screen_labels = [
+            overlay
+            for overlay in scene.cells[0].overlays
+            if type(overlay).__name__ == "ScreenLabelOverlay"
+        ]
+        self.assertTrue(all(overlay.atom1 >= len(atoms) for overlay in distance_overlays))
+        self.assertTrue(all(overlay.atom2 < len(atoms) for overlay in distance_overlays))
+        self.assertTrue(all(overlay.label is None for overlay in distance_overlays))
+        self.assertEqual(screen_labels[0].screen_offset, {"x": 10, "y": 34})
+        self.assertEqual(screen_labels[1].screen_offset, {"x": 10, "y": 58})
+
+    def test_compare_xyz_rmsd_render_false_returns_scene_without_viewer(self):
+        atoms, ref_coords = self._embedded_structure()
+        probe_coords = ref_coords.copy()
+        probe_coords[2] += np.array([0.10, 0.05, -0.20])
+
+        with tempfile.TemporaryDirectory() as tmpdir:
+            ref_path = Path(tmpdir) / "ref.xyz"
+            probe_path = Path(tmpdir) / "probe.xyz"
+            self._write_xyz(ref_path, atoms, ref_coords)
+            self._write_xyz(probe_path, atoms, probe_coords)
+
+            result = vis.compare_xyz_rmsd(
+                str(probe_path),
+                str(ref_path),
+                render=False,
+                print_summary=False,
+            )
+
+        self.assertIsNotNone(result["scene"])
+        self.assertIsNone(result["viewer"])
+        self.assertGreater(result["rmsd"], 0.0)
+        rmsd_from_table = np.sqrt(np.mean(result["df_dev"]["distance_A"].to_numpy() ** 2))
+        self.assertAlmostEqual(result["rmsd"], rmsd_from_table)
+
+    def test_compare_structure_rmsd_uses_dataframe_coordinate_columns(self):
+        atoms, ref_coords = self._embedded_structure()
+        probe_coords = ref_coords.copy()
+        probe_coords[0] += np.array([0.20, 0.00, 0.00])
+        df = pd.DataFrame(
+            {
+                "substrate_name": ["ethanol"],
+                "rpos": [1],
+                "atoms": [atoms],
+                "gxtb-oc": [probe_coords],
+                "orca-oc": [ref_coords],
+            }
+        )
+
+        result = compare_structure_rmsd(
+            df,
+            probe_col="gxtb-oc",
+            ref_col="orca-oc",
+            render=False,
+            print_summary=False,
+        )
+        scene = structure_comparison_scene_from_dataframe(
+            df,
+            probe_col="gxtb-oc",
+            ref_col="orca-oc",
+            top_n=1,
+        )
+
+        self.assertEqual(result["probe_col"], "gxtb-oc")
+        self.assertEqual(result["ref_col"], "orca-oc")
+        self.assertEqual(result["row_label"], "ethanol r1")
+        self.assertGreater(result["rmsd"], 0.0)
+        self.assertIn("ethanol r1", scene.cells[0].title)
+        overlay_types = [type(overlay).__name__ for overlay in scene.cells[0].overlays]
+        self.assertEqual(overlay_types.count("DistanceOverlay"), 1)
+        self.assertEqual(overlay_types.count("ScreenLabelOverlay"), 1)
+
+    def test_compare_structure_rmsd_show_none_skips_scene(self):
+        atoms, coords = self._embedded_structure()
+        df = pd.DataFrame(
+            {
+                "atoms": [atoms],
+                "probe-oc": [coords],
+                "ref-oc": [coords],
+            }
+        )
+
+        result = compare_structure_rmsd(
+            df,
+            probe_col="probe-oc",
+            ref_col="ref-oc",
+            show="none",
+            render=False,
+            print_summary=False,
+        )
+
+        self.assertIsNone(result["scene"])
+        self.assertIsNone(result["viewer"])
+        self.assertAlmostEqual(result["rmsd"], 0.0)
+
+    def test_structure_comparison_rejects_invalid_show_mode(self):
+        atoms, coords = self._embedded_structure()
+        df = pd.DataFrame(
+            {
+                "atoms": [atoms],
+                "probe-oc": [coords],
+                "ref-oc": [coords],
+            }
+        )
+
+        with self.assertRaisesRegex(ValueError, "Invalid show mode"):
+            compare_structure_rmsd(
+                df,
+                probe_col="probe-oc",
+                ref_col="ref-oc",
+                show="bad",
+                render=False,
+                print_summary=False,
+            )
+
+    def test_structure_comparison_scene_accepts_molto3d_style_options(self):
+        atoms, coords = self._embedded_structure()
+        df = pd.DataFrame(
+            {
+                "atoms": [atoms],
+                "probe-oc": [coords],
+                "ref-oc": [coords],
+            }
+        )
+
+        scene = structure_comparison_scene_from_dataframe(
+            df,
+            probe_col="probe-oc",
+            ref_col="ref-oc",
+            show="overlay",
+            background_color=("white", 1.0),
+            show_labels=True,
+            show_charges=False,
+            kekulize=False,
+        )
+
+        self.assertEqual(scene.background_color, ("white", 1.0))
+        for model in scene.cells[0].models:
+            self.assertTrue(model.show_atom_labels)
+            self.assertFalse(model.show_charges)
+            self.assertFalse(model.kekulize)
+
+    def test_compare_xyz_rmsd_applies_model_specific_styles_before_export(self):
+        class FakeViewer:
+            def __init__(self):
+                self.styles = []
+                self.show_calls = 0
+
+            def setStyle(self, selector, style, viewer=None):
+                self.styles.append((selector, style, viewer))
+
+            def show(self):
+                self.show_calls += 1
+
+        class FakeRenderer:
+            instances = []
+
+            def __init__(self, scene):
+                self.scene = scene
+                self.viewer = FakeViewer()
+                self.styles_at_export = None
+                self.export_path = None
+                FakeRenderer.instances.append(self)
+
+            def render(self):
+                return self.viewer
+
+            def write_html(self, path):
+                self.export_path = path
+                self.styles_at_export = list(self.viewer.styles)
+
+        atoms, ref_coords = self._embedded_structure()
+        probe_coords = ref_coords.copy()
+        probe_coords[1] += np.array([0.20, 0.00, 0.00])
+
+        with tempfile.TemporaryDirectory() as tmpdir:
+            ref_path = Path(tmpdir) / "ref.xyz"
+            probe_path = Path(tmpdir) / "probe.xyz"
+            self._write_xyz(ref_path, atoms, ref_coords)
+            self._write_xyz(probe_path, atoms, probe_coords)
+            with patch.object(
+                structure_comparison_module,
+                "Py3DmolGridRenderer",
+                FakeRenderer,
+            ):
+                result = vis.compare_xyz_rmsd(
+                    str(probe_path),
+                    str(ref_path),
+                    render=False,
+                    export_HTML="comparison.html",
+                    print_summary=False,
+                )
+
+        renderer = FakeRenderer.instances[-1]
+        expected_styles = [
+            ({"model": 0}, REFERENCE_STYLE, (0, 0)),
+            ({"model": 1}, PROBE_STYLE, (0, 0)),
+            ({"elem": "H"}, {}, (0, 0)),
+        ]
+        self.assertEqual(result["viewer"].styles, expected_styles)
+        self.assertEqual(renderer.styles_at_export, expected_styles)
+        self.assertEqual(renderer.export_path, "comparison.html")
+        self.assertEqual(result["viewer"].show_calls, 0)
 
 
 if __name__ == "__main__":

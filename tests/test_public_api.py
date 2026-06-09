@@ -45,6 +45,7 @@ class PublicApiTests(unittest.TestCase):
         from frust.utils.dataframes import map_substrate_names as map_names_direct
         from frust.utils.io import write_xyz as write_xyz_direct
         from frust.utils.mols import get_molecule_name
+        from frust.vis import compare_xyz_rmsd as compare_xyz_rmsd_direct
         from frust.vis import plot_mols as plot_mols_direct
         from frust.vis import plot_vibs as plot_vibs_direct
         from frust.vis import ArrowOverlay, ScreenLabelOverlay
@@ -123,6 +124,7 @@ class PublicApiTests(unittest.TestCase):
         self.assertIs(vis, vis_direct)
         self.assertIs(ft.vis.plot_mols, plot_mols_direct)
         self.assertIs(ft.vis.plot_vibs, plot_vibs_direct)
+        self.assertIs(ft.vis.compare_xyz_rmsd, compare_xyz_rmsd_direct)
         self.assertIs(ft.vis.ArrowOverlay, ArrowOverlay)
         self.assertIs(ft.vis.ScreenLabelOverlay, ScreenLabelOverlay)
         self.assertIs(ft.vis.reaction_scene_cells, reaction_scene_cells)
@@ -232,12 +234,20 @@ class PublicApiTests(unittest.TestCase):
             after_vis_namespace = {
                 "frust.vis": "frust.vis" in sys.modules,
                 "frust.vis.molecules": "frust.vis.molecules" in sys.modules,
+                "frust.vis.structure_comparison": "frust.vis.structure_comparison" in sys.modules,
                 "frust.vis.vibrations": "frust.vis.vibrations" in sys.modules,
             }
 
             _ = frust.vis.plot_mols
             after_vis_plot_mols = {
                 "frust.vis.molecules": "frust.vis.molecules" in sys.modules,
+                "frust.vis.vibrations": "frust.vis.vibrations" in sys.modules,
+            }
+
+            _ = frust.vis.compare_xyz_rmsd
+            after_vis_compare_xyz_rmsd = {
+                "frust.vis.molecules": "frust.vis.molecules" in sys.modules,
+                "frust.vis.structure_comparison": "frust.vis.structure_comparison" in sys.modules,
                 "frust.vis.vibrations": "frust.vis.vibrations" in sys.modules,
             }
 
@@ -261,6 +271,7 @@ class PublicApiTests(unittest.TestCase):
                         "after_cluster": after_cluster,
                         "after_vis_namespace": after_vis_namespace,
                         "after_vis_plot_mols": after_vis_plot_mols,
+                        "after_vis_compare_xyz_rmsd": after_vis_compare_xyz_rmsd,
                         "after_plot_vibs": after_plot_vibs,
                     }
                 )
@@ -354,6 +365,7 @@ class PublicApiTests(unittest.TestCase):
             {
                 "frust.vis": True,
                 "frust.vis.molecules": False,
+                "frust.vis.structure_comparison": False,
                 "frust.vis.vibrations": False,
             },
         )
@@ -361,6 +373,14 @@ class PublicApiTests(unittest.TestCase):
             result["after_vis_plot_mols"],
             {
                 "frust.vis.molecules": True,
+                "frust.vis.vibrations": False,
+            },
+        )
+        self.assertEqual(
+            result["after_vis_compare_xyz_rmsd"],
+            {
+                "frust.vis.molecules": True,
+                "frust.vis.structure_comparison": True,
                 "frust.vis.vibrations": False,
             },
         )
