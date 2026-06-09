@@ -131,14 +131,14 @@ def _rows_for_system_rpos(
 ) -> tuple[list[dict[str, Any]], dict[str, Any]]:
     mol, roles = _assemble_system_mol(system, spec, rpos)
     resolved_n_confs = _resolve_n_confs(mol, n_confs)
-    coord_map = _placement_coord_map(mol, spec, roles)
+    coord_map = _embedding_core_coord_map(spec, roles)
     embedded, cids = embed_with_coord_map(
         mol,
         coord_map,
         n_confs=resolved_n_confs,
         n_cores=n_cores,
         allowed_contact_pairs=_allowed_contact_pairs(spec, roles),
-        snap_atom_indices=_hard_placement_atom_indices(spec, roles),
+        snap_atom_indices=set(coord_map),
     )
     embedded = _add_final_ts_bonds(embedded, spec, roles)
     atoms = [atom.GetSymbol() for atom in embedded.GetAtoms()]
@@ -412,15 +412,19 @@ def _add_final_ts_bonds(
     rdkit.Chem.Mol
         Molecule with final plotting/connectivity bonds.
     """
-    final_bonds = {
+    bonded = mol
+    for left, right in _final_ts_role_bonds(spec):
+        bonded = _add_bond_if_missing(bonded, roles[left], roles[right])
+    return bonded
+
+
+def _final_ts_role_bonds(spec: TSSpec) -> tuple[tuple[str, str], ...]:
+    """Return final stored TS connectivity role pairs."""
+    return {
         "TS2": (("cat_B", "substrate_C"),),
         "TS3": (("cat_B", "substrate_C"),),
         "TS4": (("pin_B", "substrate_C"),),
     }.get(spec.name, ())
-    bonded = mol
-    for left, right in final_bonds:
-        bonded = _add_bond_if_missing(bonded, roles[left], roles[right])
-    return bonded
 
 
 def _remove_pin_hydrogens(extra: Chem.Mol) -> Chem.Mol:
@@ -579,12 +583,12 @@ def _connectivity_bonds(mol: Chem.Mol) -> list[tuple[int, int]]:
     ]
 
 
-def _placement_coord_map(
+def _template_coord_map(
     mol: Chem.Mol,
     spec: TSSpec,
     roles: dict[str, int],
 ) -> dict[int, tuple[float, float, float]]:
-    """Return hard and soft placement coordinates for a TS guess.
+    """Return template coordinates for construction diagnostics and fallbacks.
 
     Parameters
     ----------
@@ -598,7 +602,9 @@ def _placement_coord_map(
     Returns
     -------
     dict
-        Mapping from atom indices to Cartesian target coordinates.
+        Mapping from atom indices to Cartesian template coordinates. This map
+        includes soft substrate and HBpin frame anchors and is intentionally
+        not used as the conformer-generation coordinate map.
     """
     coord_map = {
         roles[role]: spec.role_coordinates[role]
@@ -620,6 +626,40 @@ def _placement_coord_map(
     return coord_map
 
 
+def _placement_coord_map(
+    mol: Chem.Mol,
+    spec: TSSpec,
+    roles: dict[str, int],
+) -> dict[int, tuple[float, float, float]]:
+    """Return the construction template coordinate map."""
+    return _template_coord_map(mol, spec, roles)
+
+
+def _embedding_core_coord_map(
+    spec: TSSpec,
+    roles: dict[str, int],
+) -> dict[int, tuple[float, float, float]]:
+    """Return the hard TS core coordinate map used by RDKit embedding.
+
+    Parameters
+    ----------
+    spec : TSSpec
+        Transition-state specification.
+    roles : dict
+        Mapping from role name to atom index.
+
+    Returns
+    -------
+    dict
+        Mapping from hard-core atom indices to Cartesian target coordinates.
+    """
+    return {
+        int(roles[role]): spec.role_coordinates[role]
+        for role in _embedding_core_roles(spec)
+        if role in roles
+    }
+
+
 def _hard_placement_atom_indices(spec: TSSpec, roles: dict[str, int]) -> set[int]:
     """Return atom indices that must be snapped to role coordinates.
 
@@ -635,7 +675,7 @@ def _hard_placement_atom_indices(spec: TSSpec, roles: dict[str, int]) -> set[int
     set of int
         Atom indices that should land exactly on their TS role coordinates.
     """
-    return {int(roles[role]) for role in _placement_roles(spec) if role in roles}
+    return {int(roles[role]) for role in _embedding_core_roles(spec) if role in roles}
 
 
 def _substrate_frame_neighbors(mol: Chem.Mol, roles: dict[str, int]) -> tuple[int, int]:
@@ -709,7 +749,7 @@ def _pin_oxygen_frame_neighbors(mol: Chem.Mol, roles: dict[str, int]) -> tuple[i
 
 
 def _placement_roles(spec: TSSpec) -> tuple[str, ...]:
-    """Return the role anchors used to place disconnected TS fragments.
+    """Return role anchors retained in the full construction template.
 
     Parameters
     ----------
@@ -719,7 +759,7 @@ def _placement_roles(spec: TSSpec) -> tuple[str, ...]:
     Returns
     -------
     tuple of str
-        Role names used as hard placement anchors.
+        Role names used by the construction template.
     """
     if spec.name == "TS1":
         return ("cat_B", "cat_N", "transfer_H", "substrate_C")
@@ -729,6 +769,28 @@ def _placement_roles(spec: TSSpec) -> tuple[str, ...]:
         return ("cat_B", "cat_N", "cat_H", "transfer_H", "pin_B", "substrate_C")
     if spec.name == "TS4":
         return ("cat_B", "cat_N", "cat_H", "transfer_H", "pin_B", "substrate_C")
+    return tuple(spec.role_coordinates)
+
+
+def _embedding_core_roles(spec: TSSpec) -> tuple[str, ...]:
+    """Return hard role anchors for constrained conformer generation.
+
+    Parameters
+    ----------
+    spec : TSSpec
+        Transition-state specification.
+
+    Returns
+    -------
+    tuple of str
+        Role names fixed during RDKit conformer generation.
+    """
+    if spec.name == "TS1":
+        return ("cat_B", "cat_N", "transfer_H", "substrate_C")
+    if spec.name == "TS2":
+        return ("cat_B", "cat_N", "cat_H", "transfer_H", "n_transfer_H", "substrate_C")
+    if spec.name in {"TS3", "TS4"}:
+        return ("cat_B", "pin_B", "transfer_H", "substrate_C")
     return tuple(spec.role_coordinates)
 
 

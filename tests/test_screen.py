@@ -1,3 +1,4 @@
+import math
 import unittest
 from unittest.mock import patch
 
@@ -13,30 +14,6 @@ from frust.vis.molecules import _row_to_mol
 
 
 CATALYST = "CC1(C)CCCC(C)(C)N1C2=CC=CC=C2B"
-TS2_TEMPLATE_SUBSTRATE_FRAME = np.array(
-    [
-        (4.032469, 5.165170, -0.184499),
-        (3.638645, 3.836721, -0.134114),
-        (2.362445, 3.792621, -0.684305),
-    ],
-    dtype=float,
-)
-TS3_TEMPLATE_SUBSTRATE_FRAME = np.array(
-    [
-        (3.160721, 1.507283, 2.235734),
-        (1.976672, 0.248906, 2.068494),
-        (1.648714, -0.239019, 3.315702),
-    ],
-    dtype=float,
-)
-TS4_TEMPLATE_SUBSTRATE_FRAME = np.array(
-    [
-        (-0.719273, 1.363805, 4.969583),
-        (0.013065, 0.446161, 3.676874),
-        (0.189969, -0.867008, 4.103431),
-    ],
-    dtype=float,
-)
 SCREEN_PANEL_SUBSTRATES = [
     "CN1C=CC=C1",
     "C1=CC=CO1",
@@ -45,9 +22,19 @@ SCREEN_PANEL_SUBSTRATES = [
 ]
 
 
-def _unit_normal(points):
-    normal = np.cross(points[0] - points[1], points[2] - points[1])
-    return normal / np.linalg.norm(normal)
+def _single_system(substrate_smiles, *, rpos="2", substrate_name="substrate"):
+    return ft.screen.expand(
+        ft.screen.read(
+            pd.DataFrame(
+                {
+                    "role": ["substrate", "catalyst"],
+                    "smiles": [substrate_smiles, CATALYST],
+                    "compound_name": [substrate_name, "cat"],
+                    "rpos": [rpos, None],
+                }
+            )
+        )
+    )
 
 
 def _excluded_atoms(excluded):
@@ -102,6 +89,53 @@ def _has_distance_constraint(row, left, right):
     )
 
 
+def _dihedral_degrees(p0, p1, p2, p3):
+    b0 = -(p1 - p0)
+    b1 = p2 - p1
+    b2 = p3 - p2
+    b1 = b1 / np.linalg.norm(b1)
+    v = b0 - np.dot(b0, b1) * b1
+    w = b2 - np.dot(b2, b1) * b1
+    x = float(np.dot(v, w))
+    y = float(np.dot(np.cross(b1, v), w))
+    return math.degrees(math.atan2(y, x))
+
+
+def _circular_range_degrees(angles):
+    values = np.sort((np.asarray(angles, dtype=float) + 360.0) % 360.0)
+    gaps = np.diff(np.r_[values, values[0] + 360.0])
+    return 360.0 - float(np.max(gaps))
+
+
+def _substrate_orientation_dihedrals(rows, ts_type):
+    dihedrals = []
+    for _, row in rows.iterrows():
+        roles = row["constraint_roles"]
+        coords = np.array(row["coords_embedded"], dtype=float)
+        mol = _row_to_mol(row, row["atoms"], row["coords_embedded"])
+        substrate_c = roles["substrate_C"]
+        axis_anchor = roles["pin_B"] if ts_type == "TS4" else roles["cat_B"]
+        excluded = {roles["cat_B"]}
+        if "pin_B" in roles:
+            excluded.add(roles["pin_B"])
+        frame_neighbors = _ordered_substrate_frame_neighbors(mol, substrate_c, excluded)
+        dihedrals.append(
+            _dihedral_degrees(
+                coords[axis_anchor],
+                coords[substrate_c],
+                coords[frame_neighbors[0]],
+                coords[frame_neighbors[1]],
+            )
+        )
+    return dihedrals
+
+
+def _assert_bond_length(test_case, coords, atom_i, atom_j, *, lower=1.0, upper=1.8):
+    distance = float(np.linalg.norm(coords[int(atom_i)] - coords[int(atom_j)]))
+    test_case.assertGreater(distance, lower)
+    test_case.assertLess(distance, upper)
+
+
 class ScreenWorkflowTests(unittest.TestCase):
     def assert_core_metrics_close(self, row, *, distance_tol=0.16, angle_tol=4.0):
         for metric in row["ts_core_metrics"]:
@@ -130,10 +164,8 @@ class ScreenWorkflowTests(unittest.TestCase):
 
         frame_neighbors = _ordered_substrate_frame_neighbors(mol, substrate_c, cat_b)
         self.assertEqual(len(frame_neighbors), 2)
-        frame_points = coords[[frame_neighbors[0], substrate_c, frame_neighbors[1]]]
-        template_normal = _unit_normal(TS2_TEMPLATE_SUBSTRATE_FRAME)
-        actual_normal = _unit_normal(frame_points)
-        self.assertGreater(float(np.dot(actual_normal, template_normal)), 0.95)
+        for neighbor in frame_neighbors:
+            _assert_bond_length(self, coords, substrate_c, neighbor)
 
         substrate_heavy = _substrate_heavy_component(mol, substrate_c, cat_b)
         h2_to_substrate = [
@@ -163,8 +195,16 @@ class ScreenWorkflowTests(unittest.TestCase):
             for neighbor in mol.GetAtomWithIdx(pin_b).GetNeighbors()
             if neighbor.GetAtomicNum() == 1
         )
+        pin_b_oxygens = sorted(
+            neighbor.GetIdx()
+            for neighbor in mol.GetAtomWithIdx(pin_b).GetNeighbors()
+            if neighbor.GetAtomicNum() == 8
+        )
         self.assertEqual(cat_b_hydrogens, [cat_h])
         self.assertEqual(pin_b_hydrogens, [transfer_h])
+        self.assertEqual(len(pin_b_oxygens), 2)
+        for oxygen in pin_b_oxygens:
+            _assert_bond_length(self, coords, pin_b, oxygen)
         self.assertTrue(_role_bond_exists(mol, roles, "transfer_H", "pin_B"))
         self.assertFalse(_role_bond_exists(mol, roles, "cat_B", "pin_B"))
         self.assertTrue(_role_bond_exists(mol, roles, "cat_B", "substrate_C"))
@@ -177,9 +217,12 @@ class ScreenWorkflowTests(unittest.TestCase):
             {cat_b, pin_b},
         )
         frame_points = coords[[frame_neighbors[0], substrate_c, frame_neighbors[1]]]
-        template_normal = _unit_normal(TS3_TEMPLATE_SUBSTRATE_FRAME)
-        actual_normal = _unit_normal(frame_points)
-        self.assertGreater(float(np.dot(actual_normal, template_normal)), 0.95)
+        for neighbor in frame_neighbors:
+            _assert_bond_length(self, coords, substrate_c, neighbor)
+        frame_area = np.linalg.norm(
+            np.cross(frame_points[0] - frame_points[1], frame_points[2] - frame_points[1])
+        )
+        self.assertGreater(float(frame_area), 0.1)
         self.assert_core_metrics_close(row)
 
     def assert_sane_ts4_row(self, row):
@@ -202,8 +245,16 @@ class ScreenWorkflowTests(unittest.TestCase):
             for neighbor in mol.GetAtomWithIdx(pin_b).GetNeighbors()
             if neighbor.GetAtomicNum() == 1
         )
+        pin_b_oxygens = sorted(
+            neighbor.GetIdx()
+            for neighbor in mol.GetAtomWithIdx(pin_b).GetNeighbors()
+            if neighbor.GetAtomicNum() == 8
+        )
         self.assertEqual(cat_b_hydrogens, sorted([cat_h, transfer_h]))
         self.assertEqual(pin_b_hydrogens, [])
+        self.assertEqual(len(pin_b_oxygens), 2)
+        for oxygen in pin_b_oxygens:
+            _assert_bond_length(self, coords, pin_b, oxygen)
         self.assertTrue(_role_bond_exists(mol, roles, "cat_B", "transfer_H"))
         self.assertFalse(_role_bond_exists(mol, roles, "cat_B", "pin_B"))
         self.assertTrue(_role_bond_exists(mol, roles, "pin_B", "substrate_C"))
@@ -216,9 +267,12 @@ class ScreenWorkflowTests(unittest.TestCase):
             {cat_b, pin_b},
         )
         frame_points = coords[[frame_neighbors[0], substrate_c, frame_neighbors[1]]]
-        template_normal = _unit_normal(TS4_TEMPLATE_SUBSTRATE_FRAME)
-        actual_normal = _unit_normal(frame_points)
-        self.assertGreater(float(np.dot(actual_normal, template_normal)), 0.95)
+        for neighbor in frame_neighbors:
+            _assert_bond_length(self, coords, substrate_c, neighbor)
+        frame_area = np.linalg.norm(
+            np.cross(frame_points[0] - frame_points[1], frame_points[2] - frame_points[1])
+        )
+        self.assertGreater(float(frame_area), 0.1)
         self.assert_core_metrics_close(row)
 
     def test_read_normalizes_roles_names_and_catalyst_rpos(self):
@@ -367,7 +421,7 @@ class ScreenWorkflowTests(unittest.TestCase):
             self.assertEqual(mol.GetNumBonds(), len(row["connectivity_bonds"]))
             self.assertEqual(substrate_c_hydrogens, [])
 
-    def test_plot_connectivity_avoids_distance_perception_artifacts(self):
+    def test_plot_connectivity_uses_stored_ts_bonds(self):
         systems = ft.screen.expand(
             ft.screen.read(
                 pd.DataFrame(
@@ -384,10 +438,13 @@ class ScreenWorkflowTests(unittest.TestCase):
         inferred = ac2mol(row["atoms"], row["coords_embedded"])
         plotted = _row_to_mol(row, row["atoms"], row["coords_embedded"])
 
-        self.assertGreaterEqual(inferred.GetNumBonds(), len(row["connectivity_bonds"]))
+        self.assertGreater(inferred.GetNumBonds(), 0)
         self.assertEqual(plotted.GetNumBonds(), len(row["connectivity_bonds"]))
+        self.assertTrue(
+            _role_bond_exists(plotted, row["constraint_roles"], "cat_B", "substrate_C")
+        )
 
-    def test_ts2_uses_template_substrate_frame_without_extra_boron_hydride(self):
+    def test_ts2_uses_expected_hydride_topology_without_extra_boron_hydride(self):
         systems = ft.screen.expand(
             ft.screen.read(
                 pd.DataFrame(
@@ -422,7 +479,7 @@ class ScreenWorkflowTests(unittest.TestCase):
         for _, row in rows.iterrows():
             self.assert_sane_ts2_row(row)
 
-    def test_ts3_uses_tmp_hydride_topology_and_substrate_frame(self):
+    def test_ts3_uses_tmp_hydride_topology_and_final_connectivity(self):
         components = ft.screen.read(
             pd.DataFrame(
                 {
@@ -441,7 +498,7 @@ class ScreenWorkflowTests(unittest.TestCase):
         for _, row in rows.iterrows():
             self.assert_sane_ts3_row(row)
 
-    def test_ts4_uses_tmp_hydride_topology_and_substrate_frame(self):
+    def test_ts4_uses_tmp_hydride_topology_and_final_connectivity(self):
         components = ft.screen.read(
             pd.DataFrame(
                 {
@@ -459,6 +516,63 @@ class ScreenWorkflowTests(unittest.TestCase):
         self.assertEqual(len(rows), 9)
         for _, row in rows.iterrows():
             self.assert_sane_ts4_row(row)
+
+    def test_furan_substrate_orientation_varies_across_ts_conformers(self):
+        systems = _single_system("C1=CC=CO1", rpos="2", substrate_name="furan")
+        guesses = ft.screen.create_ts_guesses(
+            systems,
+            ts_types=["TS1", "TS2", "TS3", "TS4"],
+            n_confs=40,
+        )
+
+        for ts_type, rows in guesses.items():
+            self.assertEqual(len(rows), 40)
+            dihedrals = _substrate_orientation_dihedrals(rows, ts_type)
+            self.assertGreater(_circular_range_degrees(dihedrals), 90.0, ts_type)
+            self.assertLess(min(dihedrals), -30.0, ts_type)
+            self.assertGreater(max(dihedrals), 30.0, ts_type)
+
+    def test_ts3_ts4_hard_core_excludes_catalyst_n_and_h(self):
+        systems = _single_system("C1=CC=CO1", rpos="2", substrate_name="furan")
+        guesses = ft.screen.create_ts_guesses(
+            systems,
+            ts_types=["TS3", "TS4"],
+            n_confs=40,
+        )
+
+        for ts_type, rows in guesses.items():
+            roles = rows.iloc[0]["constraint_roles"]
+            coords = np.array(list(rows["coords_embedded"]), dtype=float)
+            for role in ("cat_B", "pin_B", "transfer_H", "substrate_C"):
+                span = np.ptp(coords[:, roles[role], :], axis=0)
+                self.assertLess(float(np.max(span)), 1e-8, role)
+            for role in ("cat_N", "cat_H"):
+                span = np.ptp(coords[:, roles[role], :], axis=0)
+                self.assertGreater(float(np.max(span)), 0.5, role)
+            for _, row in rows.iterrows():
+                if ts_type == "TS3":
+                    self.assert_sane_ts3_row(row)
+                else:
+                    self.assert_sane_ts4_row(row)
+
+    def test_ts1_ts2_keep_catalyst_n_in_hard_core(self):
+        systems = _single_system("C1=CC=CO1", rpos="2", substrate_name="furan")
+        guesses = ft.screen.create_ts_guesses(
+            systems,
+            ts_types=["TS1", "TS2"],
+            n_confs=8,
+        )
+
+        for ts_type, rows in guesses.items():
+            roles = rows.iloc[0]["constraint_roles"]
+            coords = np.array(list(rows["coords_embedded"]), dtype=float)
+            cat_n_span = np.ptp(coords[:, roles["cat_N"], :], axis=0)
+            self.assertLess(float(np.max(cat_n_span)), 1e-8, ts_type)
+            for _, row in rows.iterrows():
+                self.assertIn("constraint_roles", row)
+                self.assertIn("constraint_spec", row)
+                self.assertIn("ts_core_metrics", row)
+                self.assert_core_metrics_close(row)
 
     def test_constraint_renderers_and_stepper_row_first(self):
         row = pd.Series(

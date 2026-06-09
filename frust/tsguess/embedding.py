@@ -9,6 +9,8 @@ from rdkit import Chem, rdBase
 from rdkit.Chem import rdDistGeom
 from rdkit.Geometry.rdGeometry import Point3D
 
+_MIN_CANDIDATE_CONFS_FOR_CLASH_RANKING = 12
+
 
 def embed_with_coord_map(
     mol: Chem.Mol,
@@ -28,7 +30,8 @@ def embed_with_coord_map(
     coord_map : dict
         Mapping from atom index to Cartesian coordinates.
     n_confs : int, optional
-        Number of conformers to embed.
+        Number of conformers to return. Small requests use a deterministic
+        candidate pool for clash ranking before selecting the returned rows.
     n_cores : int, optional
         Number of RDKit threads.
     allowed_contact_pairs : set of tuple of int, optional
@@ -44,7 +47,7 @@ def embed_with_coord_map(
     """
     working = Chem.Mol(mol)
     requested_confs = int(n_confs)
-    candidate_confs = requested_confs
+    candidate_confs = max(requested_confs, _MIN_CANDIDATE_CONFS_FOR_CLASH_RANKING)
     rdkit_coord_map = {
         int(idx): Point3D(float(x), float(y), float(z))
         for idx, (x, y, z) in coord_map.items()
@@ -97,7 +100,27 @@ def embed_with_coord_map(
             snap_indices,
         )
         cids = _rank_conformers_by_clashes(working, cids, allowed_pairs)[:requested_confs]
+    else:
+        for cid in cids:
+            _snap_anchor_positions(working.GetConformer(int(cid)), rdkit_coord_map, snap_indices)
+        cids = _rank_conformers_by_clashes(working, cids, allowed_pairs)[:requested_confs]
+    for cid in cids:
+        _snap_anchor_positions(working.GetConformer(int(cid)), rdkit_coord_map, snap_indices)
+    working, cids = _select_conformers(working, cids)
     return working, cids
+
+
+def _select_conformers(mol: Chem.Mol, cids: list[int]) -> tuple[Chem.Mol, list[int]]:
+    """Return a molecule containing only selected conformers, renumbered."""
+    selected = Chem.Mol(mol)
+    selected.RemoveAllConformers()
+    new_cids: list[int] = []
+    for new_id, cid in enumerate(cids):
+        conf = Chem.Conformer(mol.GetConformer(int(cid)))
+        conf.SetId(int(new_id))
+        selected.AddConformer(conf, assignId=False)
+        new_cids.append(int(new_id))
+    return selected, new_cids
 
 
 def _place_fragments_by_anchors(
