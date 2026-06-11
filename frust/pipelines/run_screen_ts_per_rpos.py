@@ -138,6 +138,7 @@ def _single_screen_target(screen_target: pd.DataFrame) -> tuple[pd.DataFrame, st
 def run_init(
     screen_target: pd.DataFrame,
     *,
+    ts_backend: str = "tsguess2",
     n_confs: int | None = None,
     n_cores: int = 4,
     mem_gb: int = 20,
@@ -157,9 +158,11 @@ def run_init(
     ----------
     screen_target : pandas.DataFrame
         One-row expanded screen dataframe with fixed ``ts_type`` and ``rpos``.
+    ts_backend : {"tsguess2", "tsguess"}, optional
+        TS guess backend used by :func:`frust.screen.create_ts_guesses`.
     n_confs : int or None, optional
-        Number of TS guess conformers to generate. ``None`` selects the legacy
-        rotatable-bond heuristic inside :mod:`frust.tsguess`.
+        Number of TS guess conformers to generate. ``None`` selects the
+        backend's rotatable-bond heuristic.
     n_cores : int, optional
         CPU cores used for embedding and calculator stages.
     mem_gb : int, optional
@@ -198,6 +201,7 @@ def run_init(
         ts_types=[ts_type],
         n_confs=n_confs,
         n_cores=n_cores,
+        backend=ts_backend,
     )
     df = guesses[ts_type]
     if df.empty:

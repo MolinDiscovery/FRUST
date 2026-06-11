@@ -14,6 +14,7 @@ from frust.vis.molecules import _row_to_mol
 
 
 CATALYST = "CC1(C)CCCC(C)(C)N1C2=CC=CC=C2B"
+CATALYST_V2 = "BC1=C(N(C)C)C=CC=C1"
 SCREEN_PANEL_SUBSTRATES = [
     "CN1C=CC=C1",
     "C1=CC=CO1",
@@ -345,6 +346,7 @@ class ScreenWorkflowTests(unittest.TestCase):
             systems,
             ts_types=["TS1", "TS2", "TS3", "TS4"],
             n_confs=1,
+            backend="tsguess",
         )
 
         self.assertEqual(set(guesses), {"TS1", "TS2", "TS3", "TS4"})
@@ -364,6 +366,35 @@ class ScreenWorkflowTests(unittest.TestCase):
             self.assertEqual(conformers["structures"][0]["generated_n_confs"], 1)
             self.assertEqual(conformers["structures"][0]["cids"], [0])
 
+    def test_tsguess2_is_default_backend_and_uses_v2_roles(self):
+        systems = ft.screen.expand(
+            ft.screen.read(
+                pd.DataFrame(
+                    {
+                        "role": ["substrate", "catalyst"],
+                        "smiles": ["CN1C=CC=C1", CATALYST_V2],
+                        "compound_name": ["pyrrole", "cat_v2"],
+                        "rpos": ["2", None],
+                    }
+                )
+            )
+        )
+
+        guesses = ft.screen.create_ts_guesses(
+            systems,
+            ts_types=["TS1", "TS2", "TS3", "TS4"],
+            n_confs=1,
+        )
+
+        self.assertEqual(set(guesses), {"TS1", "TS2", "TS3", "TS4"})
+        ts2 = guesses["TS2"].iloc[0]
+        self.assertEqual(ts2["tsguess_backend"], "tsguess2")
+        self.assertEqual(ts2["ts_spec_id"], "TS2::builtin::methylpyrrole_v2")
+        self.assertIn("B_transfer_H", ts2["constraint_roles"])
+        self.assertIn("N_transfer_H", ts2["constraint_roles"])
+        self.assertTrue(ts2["smiles"])
+        self.assertEqual(guesses["TS2"].attrs["frust_tsguess2"]["backend"], "tsguess2")
+
     def test_multifragment_ts_guess_does_not_collapse_fragments(self):
         systems = ft.screen.expand(
             ft.screen.read(
@@ -376,7 +407,12 @@ class ScreenWorkflowTests(unittest.TestCase):
             )
         )
 
-        guesses = ft.screen.create_ts_guesses(systems, ts_types=["TS4"], n_confs=1)
+        guesses = ft.screen.create_ts_guesses(
+            systems,
+            ts_types=["TS4"],
+            n_confs=1,
+            backend="tsguess",
+        )
         row = guesses["TS4"].loc[guesses["TS4"]["rpos"].eq(8)].iloc[0]
         mol = ac2mol(row["atoms"], row["coords_embedded"])
         distance_deltas = [
@@ -405,6 +441,7 @@ class ScreenWorkflowTests(unittest.TestCase):
             systems,
             ts_types=["TS1", "TS2", "TS3", "TS4"],
             n_confs=1,
+            backend="tsguess",
         )
 
         for df in guesses.values():
@@ -434,7 +471,12 @@ class ScreenWorkflowTests(unittest.TestCase):
             )
         )
 
-        row = ft.screen.create_ts_guesses(systems, ts_types=["TS2"], n_confs=1)["TS2"].iloc[0]
+        row = ft.screen.create_ts_guesses(
+            systems,
+            ts_types=["TS2"],
+            n_confs=1,
+            backend="tsguess",
+        )["TS2"].iloc[0]
         inferred = ac2mol(row["atoms"], row["coords_embedded"])
         plotted = _row_to_mol(row, row["atoms"], row["coords_embedded"])
 
@@ -457,7 +499,12 @@ class ScreenWorkflowTests(unittest.TestCase):
             )
         )
 
-        row = ft.screen.create_ts_guesses(systems, ts_types=["TS2"], n_confs=1)["TS2"].iloc[0]
+        row = ft.screen.create_ts_guesses(
+            systems,
+            ts_types=["TS2"],
+            n_confs=1,
+            backend="tsguess",
+        )["TS2"].iloc[0]
         self.assert_sane_ts2_row(row)
 
     def test_ts2_screen_panel_has_sane_core_graphs(self):
@@ -473,6 +520,7 @@ class ScreenWorkflowTests(unittest.TestCase):
             ft.screen.expand(components),
             ts_types=["TS2"],
             n_confs=1,
+            backend="tsguess",
         )["TS2"]
 
         self.assertEqual(len(rows), 9)
@@ -492,6 +540,7 @@ class ScreenWorkflowTests(unittest.TestCase):
             ft.screen.expand(components),
             ts_types=["TS3"],
             n_confs=1,
+            backend="tsguess",
         )["TS3"]
 
         self.assertEqual(len(rows), 9)
@@ -511,6 +560,7 @@ class ScreenWorkflowTests(unittest.TestCase):
             ft.screen.expand(components),
             ts_types=["TS4"],
             n_confs=1,
+            backend="tsguess",
         )["TS4"]
 
         self.assertEqual(len(rows), 9)
@@ -523,6 +573,7 @@ class ScreenWorkflowTests(unittest.TestCase):
             systems,
             ts_types=["TS1", "TS2", "TS3", "TS4"],
             n_confs=40,
+            backend="tsguess",
         )
 
         for ts_type, rows in guesses.items():
@@ -538,6 +589,7 @@ class ScreenWorkflowTests(unittest.TestCase):
             systems,
             ts_types=["TS3", "TS4"],
             n_confs=40,
+            backend="tsguess",
         )
 
         for ts_type, rows in guesses.items():
@@ -561,6 +613,7 @@ class ScreenWorkflowTests(unittest.TestCase):
             systems,
             ts_types=["TS1", "TS2"],
             n_confs=8,
+            backend="tsguess",
         )
 
         for ts_type, rows in guesses.items():
