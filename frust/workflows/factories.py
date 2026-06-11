@@ -21,6 +21,7 @@ from frust.schema import parse_structure_name
 from frust.stepper import Stepper
 from frust.tsguess.matching import parse_rpos_value
 from frust.tsguess.specs import BUILTIN_TS_SPECS
+from frust.tsguess2.specs import BUILTIN_TS_SPECS_V2
 from frust.utils.io import read_ts_type_from_xyz
 from frust.utils.mols import create_mol_per_rpos, create_ts_per_rpos
 from frust.workflows.core import BaseWorkflow, ExecutionOptions, StageDef, WorkflowTarget
@@ -28,6 +29,16 @@ from frust.workflows.methods import MethodPlan
 
 
 SplitMode = Literal["per_input", "per_rpos"]
+
+
+def _screen_ts_specs_for_backend(backend: str) -> dict[str, Any]:
+    """Return supported screen TS specs for a backend name."""
+    backend_key = str(backend).strip().lower()
+    if backend_key == "tsguess2":
+        return BUILTIN_TS_SPECS_V2
+    if backend_key == "tsguess":
+        return BUILTIN_TS_SPECS
+    raise ValueError("ts_backend must be one of 'tsguess2' or 'tsguess'")
 
 
 def _row_label(row: pd.Series, position: int, columns: tuple[str, ...]) -> str:
@@ -432,6 +443,10 @@ class ScreenTSWorkflow(BaseWorkflow):
     ts_types : tuple or list of str, optional
         Built-in TS types to generate. Supported values are ``"TS1"``,
         ``"TS2"``, ``"TS3"``, and ``"TS4"``.
+    ts_backend : {"tsguess2", "tsguess"}, optional
+        Backend used to create initial TS guesses. ``"tsguess2"`` builds
+        connected TS SMILES and embeds them with V2 role constraints.
+        ``"tsguess"`` uses the original assembly backend.
     method : MethodPlan or str or None, optional
         Calculator plan for all workflow stages. Accepts ``None`` for the
         default ``"wb97xd3-631g"`` preset, a preset string, or a custom
@@ -466,6 +481,7 @@ class ScreenTSWorkflow(BaseWorkflow):
         csv_path: str | Path | None = None,
         dataframe: pd.DataFrame | None = None,
         ts_types: tuple[str, ...] | list[str] = ("TS1", "TS2", "TS3", "TS4"),
+        ts_backend: str = "tsguess2",
         method: MethodPlan | str | None = None,
         n_confs: int | None = None,
         top_n: int = 10,
@@ -475,6 +491,7 @@ class ScreenTSWorkflow(BaseWorkflow):
         self.csv_path = csv_path
         self.dataframe = dataframe
         self.ts_types = tuple(str(ts_type).upper() for ts_type in ts_types)
+        self.ts_backend = str(ts_backend).strip().lower()
 
     def _systems(self) -> pd.DataFrame:
         """Return expanded substrate/catalyst systems.
@@ -503,9 +520,10 @@ class ScreenTSWorkflow(BaseWorkflow):
             Targets whose payload is a one-row systems dataframe with resolved
             ``ts_type`` and integer ``rpos``.
         """
-        unknown = sorted(set(self.ts_types) - set(BUILTIN_TS_SPECS))
+        supported_specs = _screen_ts_specs_for_backend(self.ts_backend)
+        unknown = sorted(set(self.ts_types) - set(supported_specs))
         if unknown:
-            supported = ", ".join(sorted(BUILTIN_TS_SPECS))
+            supported = ", ".join(sorted(supported_specs))
             raise ValueError(f"Unsupported screen TS types {unknown}. Supported: {supported}")
         systems = self._systems()
         targets: list[WorkflowTarget] = []
@@ -561,6 +579,7 @@ class ScreenTSWorkflow(BaseWorkflow):
             ts_types=[ts_type],
             n_confs=self.n_confs,
             n_cores=options.n_cores,
+            backend=self.ts_backend,
         )
         df = guesses[ts_type]
         if save_dir is not None:
@@ -879,6 +898,7 @@ def screen_ts(
     csv_path: str | Path | None = None,
     dataframe: pd.DataFrame | None = None,
     ts_types: tuple[str, ...] | list[str] = ("TS1", "TS2", "TS3", "TS4"),
+    ts_backend: str = "tsguess2",
     method: MethodPlan | str | None = None,
     n_confs: int | None = None,
     top_n: int = 10,
@@ -896,6 +916,9 @@ def screen_ts(
     ts_types : tuple or list of str, optional
         Built-in TS types to generate, usually some subset of ``"TS1"``,
         ``"TS2"``, ``"TS3"``, and ``"TS4"``.
+    ts_backend : {"tsguess2", "tsguess"}, optional
+        TS guess backend. ``"tsguess2"`` is the default SMILES-roundtrip
+        backend; ``"tsguess"`` preserves the original assembly backend.
     method : MethodPlan or str or None, optional
         Calculator plan for all workflow stages. Accepts ``None`` for the
         default ``"wb97xd3-631g"`` preset, a preset string, or a custom
@@ -931,6 +954,7 @@ def screen_ts(
         csv_path=csv_path,
         dataframe=dataframe,
         ts_types=ts_types,
+        ts_backend=ts_backend,
         method=method,
         n_confs=n_confs,
         top_n=top_n,

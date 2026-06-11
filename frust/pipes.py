@@ -63,6 +63,7 @@ def run_screen_ts_per_rpos(
     screen_input: str | Path | pd.DataFrame,
     *,
     ts_types: tuple[str, ...] | list[str] = ("TS1", "TS2", "TS3", "TS4"),
+    ts_backend: str = "tsguess2",
     n_confs: int | None = None,
     n_cores: int = 4,
     mem_gb: int = 20,
@@ -83,6 +84,8 @@ def run_screen_ts_per_rpos(
         expanded systems dataframe from :func:`frust.screen.expand`.
     ts_types : tuple or list of str, optional
         Transition-state types to generate. Defaults to TS1-TS4.
+    ts_backend : {"tsguess2", "tsguess"}, optional
+        TS guess backend used by :func:`frust.screen.create_ts_guesses`.
     n_confs : int or None, optional
         Number of conformers per TS guess. ``None`` uses the TS guess module's
         rotatable-bond heuristic.
@@ -116,6 +119,7 @@ def run_screen_ts_per_rpos(
         ts_types=ts_types,
         n_confs=n_confs,
         n_cores=n_cores,
+        backend=ts_backend,
     )
     df = pd.concat(ts_guesses.values(), ignore_index=True)
     if df.empty:

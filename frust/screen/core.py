@@ -8,7 +8,8 @@ from typing import Any
 
 import pandas as pd
 
-from frust.tsguess import create_ts_guess_dataframes
+from frust.tsguess import create_ts_guess_dataframes as create_tsguess_dataframes
+from frust.tsguess2 import create_ts_guess_dataframes as create_tsguess2_dataframes
 
 ROLE_ALIASES = {"substrate": "substrate", "sub": "substrate", "catalyst": "catalyst", "cat": "catalyst"}
 BASE_COLUMNS = {"role", "smiles", "compound_name", "rpos"}
@@ -114,6 +115,7 @@ def create_ts_guesses(
     n_confs: int | None = 1,
     n_cores: int = 1,
     validate: bool = True,
+    backend: str = "tsguess2",
 ) -> dict[str, pd.DataFrame]:
     """Create grouped TS guess dataframes for an expanded screen.
 
@@ -130,13 +132,24 @@ def create_ts_guesses(
         RDKit embedding threads.
     validate : bool, optional
         Validate required columns before generation.
+    backend : {"tsguess2", "tsguess"}, optional
+        TS guess backend. ``"tsguess2"`` uses the SMILES-roundtrip backend.
+        ``"tsguess"`` uses the original role-assembly backend.
 
     Returns
     -------
     dict
         Mapping from TS type to dataframe.
     """
-    return create_ts_guess_dataframes(
+    backend_key = str(backend).strip().lower()
+    if backend_key == "tsguess2":
+        create = create_tsguess2_dataframes
+    elif backend_key == "tsguess":
+        create = create_tsguess_dataframes
+    else:
+        raise ValueError("backend must be one of 'tsguess2' or 'tsguess'")
+
+    return create(
         systems,
         ts_types=ts_types,
         n_confs=n_confs,
