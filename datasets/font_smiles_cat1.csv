@@ -1,3 +1,3 @@
 compound_name,role,smiles
-furan,substrate,C1=CC=CO1
-TMP,catalyst,BC1=C(N(C)C)C=CC=C1
+methoxyfuran,substrate,COC1=CC=CO1
+NMe,catalyst,BC1=C(N(C)C)C=CC=C1

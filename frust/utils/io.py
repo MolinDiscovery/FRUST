@@ -6,10 +6,11 @@ from typing import Mapping
 
 import numpy as np
 import pandas as pd
-from tooltoad.chemutils import ac2xyz
-from frust.vis import MolTo3DGrid
 from rdkit import Chem
 from rdkit.Chem import rdDetermineBonds
+from tooltoad.chemutils import ac2xyz
+
+import frust.vis as _frust_vis
 
 
 def dump_df(df: pd.DataFrame, step: str, base_dir: Path) -> Path:
@@ -270,7 +271,7 @@ def write_xyz(
                     legends.append(stem)
 
     if show_mols and mols:
-        MolTo3DGrid(mols, legends=legends, **molto3d_kwargs)
+        _frust_vis.MolTo3DGrid(mols, legends=legends, **molto3d_kwargs)
 
     return written_paths
 

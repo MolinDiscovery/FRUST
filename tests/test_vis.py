@@ -1,5 +1,6 @@
-import unittest
+import inspect
 import tempfile
+import unittest
 from contextlib import redirect_stdout
 from io import StringIO
 from pathlib import Path
@@ -16,8 +17,10 @@ from matplotlib.colors import same_color
 from rdkit import Chem
 from rdkit.Chem import AllChem
 from scipy.stats import linregress
+from tooltoad.scene3d import Py3DmolGridRenderer as TooltoadPy3DmolGridRenderer
 
 import frust.vis as vis
+import frust.vis.molecules as molecules_module
 import frust.vis.structure_comparison as structure_comparison_module
 from frust.vis import MolTo3DGrid, RxnTo3DGrid, plot_energy_profile, plot_mols
 from frust.vis import (
@@ -132,6 +135,47 @@ class PlotEnergyProfileTests(unittest.TestCase):
         self.assertTrue(callable(vis.molecule_scene_from_dataframe))
         self.assertTrue(callable(vis.vibration_scene_from_dataframe))
         self.assertTrue(callable(vis.ts_guess_scene))
+
+    def test_mol_to_3d_grid_accepts_measurement_decimals(self):
+        signature = inspect.signature(MolTo3DGrid)
+
+        self.assertIn("decimals_of_measure", signature.parameters)
+        self.assertEqual(signature.parameters["decimals_of_measure"].default, 3)
+
+    def test_mol_to_3d_grid_applies_distance_and_angle_measurement_decimals(self):
+        class FakeRenderer:
+            _CLICK_HANDLER = TooltoadPy3DmolGridRenderer._CLICK_HANDLER
+            instances = []
+
+            def __init__(self, scene):
+                self.scene = scene
+                self._CLICK_HANDLER = self.__class__._CLICK_HANDLER
+                self.show_calls = 0
+                FakeRenderer.instances.append(self)
+
+            def show(self):
+                self.show_calls += 1
+                return "viewer"
+
+            def write_html(self, path):
+                self.export_path = path
+
+        with patch.object(molecules_module, "Py3DmolGridRenderer", FakeRenderer):
+            result = MolTo3DGrid("CC", decimals_of_measure=1)
+
+        self.assertIsNone(result)
+        self.assertEqual(FakeRenderer.instances[-1].show_calls, 1)
+        click_handler = FakeRenderer.instances[-1]._CLICK_HANDLER
+        self.assertEqual(click_handler.count(".toFixed(1)"), 2)
+        self.assertNotIn(".toFixed(3)", click_handler)
+        self.assertNotIn(".toFixed(2)", click_handler)
+
+    def test_mol_to_3d_grid_rejects_invalid_measurement_decimals(self):
+        with self.assertRaisesRegex(ValueError, "non-negative integer"):
+            MolTo3DGrid("CC", decimals_of_measure=-1)
+
+        with self.assertRaisesRegex(TypeError, "non-negative integer"):
+            MolTo3DGrid("CC", decimals_of_measure=1.5)
 
     def test_side_reaction_parsing_extracts_anchor_rise_and_legend(self):
         entries, seg_ids, anchor, rise, legend = _parse_entries(

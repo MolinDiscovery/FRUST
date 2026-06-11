@@ -12,7 +12,7 @@ from typing import TYPE_CHECKING, Any
 
 _PUBLIC_API: dict[str, tuple[str, str]] = {
     "DrawMolSvg": ("tooltoad.vis", "DrawMolSvg"),
-    "MolTo3DGrid": ("tooltoad.vis", "MolTo3DGrid"),
+    "MolTo3DGrid": ("frust.vis.molecules", "MolTo3DGrid"),
     "RxnTo3DGrid": ("tooltoad.vis", "RxnTo3DGrid"),
     "GridScene": ("tooltoad.scene3d", "GridScene"),
     "SceneCell": ("tooltoad.scene3d", "SceneCell"),
@@ -75,7 +75,7 @@ def __dir__() -> list[str]:
 
 
 if TYPE_CHECKING:
-    from tooltoad.vis import DrawMolSvg, MolTo3DGrid, RxnTo3DGrid
+    from tooltoad.vis import DrawMolSvg, RxnTo3DGrid
     from tooltoad.scene3d import (
         AngleOverlay,
         AtomHighlight,
@@ -93,7 +93,7 @@ if TYPE_CHECKING:
 
     from frust.vis.aromatic import DrawUniqueChGrid
     from frust.vis.energy_profile import plot_energy_profile
-    from frust.vis.molecules import plot_lig, plot_mols, plot_row, plot_rpos
+    from frust.vis.molecules import MolTo3DGrid, plot_lig, plot_mols, plot_row, plot_rpos
     from frust.vis.regression import plot_regression_outliers
     from frust.vis.scenes import (
         molecule_scene_from_dataframe,
