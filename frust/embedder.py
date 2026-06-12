@@ -128,7 +128,7 @@ def embed_ts(
         maxAttempts=0,
         randomSeed=0xF00D,
         useRandomCoords=False,
-        pruneRmsThresh=0.5,
+        pruneRmsThresh=0.1,
         coordMap=coord_map,
         ignoreSmoothingFailures=True,
         enforceChirality=True,
