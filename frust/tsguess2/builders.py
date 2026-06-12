@@ -67,11 +67,16 @@ def build_ts1_ts2_connected_smiles(
 
     catalyst_b_idx = catalyst_matches[0][0]
 
-    amine_query = Chem.MolFromSmarts("[NX3]([CH3])([CH3])~[#6]")
+    # # SMARTS: N is trivalent (X3), has no H atoms (H0), is not N+ or amide N; !$(N-C=O),
+    # and is bonded to two carbons plus an aromatic carbon; ([#6])([#6])~[c]
+    amine_query = Chem.MolFromSmarts("[NX3;H0;!$([N+]);!$(N-C=O)]([#6])([#6])~[c]")
     amine_matches = catalyst_mol.GetSubstructMatches(amine_query)
 
     if not amine_matches:
-        raise ValueError("Could not find catalyst NMe2 nitrogen.")
+        raise ValueError(
+            "Could not find catalyst Lewis-base nitrogen matching "
+            "[NX3;H0;!$([N+]);!$(N-C=O)]([#6])([#6])~[c]."
+        )
 
     catalyst_n_idx = amine_matches[0][0]
 
