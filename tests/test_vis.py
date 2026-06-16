@@ -44,9 +44,7 @@ from frust.vis.scenes import (
 from frust.vis.structure_comparison import (
     PROBE_STYLE,
     REFERENCE_STYLE,
-    compare_structure_rmsd,
-    structure_comparison_scene_from_dataframe,
-    structure_comparison_scene_from_xyz,
+    compare_rmsd,
 )
 
 
@@ -694,7 +692,7 @@ class StructureComparisonTests(unittest.TestCase):
             lines.append(f"{atom} {x:.10f} {y:.10f} {z:.10f}")
         path.write_text("\n".join(lines) + "\n", encoding="utf-8")
 
-    def test_structure_comparison_scene_from_xyz_adds_deviation_overlays(self):
+    def test_compare_rmsd_from_xyz_paths_adds_deviation_overlays(self):
         atoms, ref_coords = self._embedded_structure()
         probe_coords = ref_coords.copy()
         probe_coords[1] += np.array([0.25, -0.10, 0.05])
@@ -705,11 +703,14 @@ class StructureComparisonTests(unittest.TestCase):
             self._write_xyz(ref_path, atoms, ref_coords)
             self._write_xyz(probe_path, atoms, probe_coords)
 
-            scene = structure_comparison_scene_from_xyz(
+            result = compare_rmsd(
                 str(probe_path),
                 str(ref_path),
+                render=False,
+                print_summary=False,
                 top_n=2,
             )
+            scene = result["scene"]
 
         self.assertEqual(len(scene.cells), 1)
         self.assertEqual(len(scene.cells[0].models), 2)
@@ -733,7 +734,7 @@ class StructureComparisonTests(unittest.TestCase):
         self.assertEqual(screen_labels[0].screen_offset, {"x": 10, "y": 34})
         self.assertEqual(screen_labels[1].screen_offset, {"x": 10, "y": 58})
 
-    def test_compare_xyz_rmsd_render_false_returns_scene_without_viewer(self):
+    def test_compare_rmsd_render_false_returns_scene_without_viewer(self):
         atoms, ref_coords = self._embedded_structure()
         probe_coords = ref_coords.copy()
         probe_coords[2] += np.array([0.10, 0.05, -0.20])
@@ -744,7 +745,7 @@ class StructureComparisonTests(unittest.TestCase):
             self._write_xyz(ref_path, atoms, ref_coords)
             self._write_xyz(probe_path, atoms, probe_coords)
 
-            result = vis.compare_xyz_rmsd(
+            result = vis.compare_rmsd(
                 str(probe_path),
                 str(ref_path),
                 render=False,
@@ -757,7 +758,7 @@ class StructureComparisonTests(unittest.TestCase):
         rmsd_from_table = np.sqrt(np.mean(result["df_dev"]["distance_A"].to_numpy() ** 2))
         self.assertAlmostEqual(result["rmsd"], rmsd_from_table)
 
-    def test_compare_structure_rmsd_uses_dataframe_coordinate_columns(self):
+    def test_compare_rmsd_uses_dataframe_coordinate_columns(self):
         atoms, ref_coords = self._embedded_structure()
         probe_coords = ref_coords.copy()
         probe_coords[0] += np.array([0.20, 0.00, 0.00])
@@ -771,30 +772,57 @@ class StructureComparisonTests(unittest.TestCase):
             }
         )
 
-        result = compare_structure_rmsd(
-            df,
-            probe_col="gxtb-oc",
-            ref_col="orca-oc",
+        result = compare_rmsd(
+            {"df": df, "coords_col": "gxtb-oc"},
+            {"df": df, "coords_col": "orca-oc"},
             render=False,
             print_summary=False,
-        )
-        scene = structure_comparison_scene_from_dataframe(
-            df,
-            probe_col="gxtb-oc",
-            ref_col="orca-oc",
             top_n=1,
         )
+        scene = result["scene"]
 
-        self.assertEqual(result["probe_col"], "gxtb-oc")
-        self.assertEqual(result["ref_col"], "orca-oc")
-        self.assertEqual(result["row_label"], "ethanol r1")
+        self.assertEqual(result["probe_label"], "ethanol r1 gxtb-oc")
+        self.assertEqual(result["ref_label"], "ethanol r1 orca-oc")
         self.assertGreater(result["rmsd"], 0.0)
         self.assertIn("ethanol r1", scene.cells[0].title)
         overlay_types = [type(overlay).__name__ for overlay in scene.cells[0].overlays]
         self.assertEqual(overlay_types.count("DistanceOverlay"), 1)
         self.assertEqual(overlay_types.count("ScreenLabelOverlay"), 1)
 
-    def test_compare_structure_rmsd_show_none_skips_scene(self):
+    def test_compare_rmsd_mixes_xyz_file_and_dataframe_row(self):
+        atoms, ref_coords = self._embedded_structure()
+        probe_coords = ref_coords.copy()
+        probe_coords[1] += np.array([0.15, -0.05, 0.10])
+        df = pd.DataFrame(
+            {
+                "substrate_name": ["ethanol"],
+                "atoms": [atoms],
+                "wb97-oc": [ref_coords],
+            }
+        )
+
+        with tempfile.TemporaryDirectory() as tmpdir:
+            probe_path = Path(tmpdir) / "font2017.xyz"
+            self._write_xyz(probe_path, atoms, probe_coords)
+            result = compare_rmsd(
+                {"path": probe_path, "label": "Font 2017"},
+                {
+                    "df": df,
+                    "row_index": 0,
+                    "coords_col": "wb97-oc",
+                    "label": "FRUST wb97",
+                },
+                render=False,
+                print_summary=False,
+            )
+
+        self.assertEqual(result["probe_label"], "Font 2017")
+        self.assertEqual(result["ref_label"], "FRUST wb97")
+        self.assertEqual(result["probe_source"], "xyz_path")
+        self.assertEqual(result["ref_source"], "dataframe")
+        self.assertGreater(result["rmsd"], 0.0)
+
+    def test_compare_rmsd_show_none_skips_scene(self):
         atoms, coords = self._embedded_structure()
         df = pd.DataFrame(
             {
@@ -804,10 +832,9 @@ class StructureComparisonTests(unittest.TestCase):
             }
         )
 
-        result = compare_structure_rmsd(
-            df,
-            probe_col="probe-oc",
-            ref_col="ref-oc",
+        result = compare_rmsd(
+            {"df": df, "coords_col": "probe-oc"},
+            {"df": df, "coords_col": "ref-oc"},
             show="none",
             render=False,
             print_summary=False,
@@ -828,14 +855,80 @@ class StructureComparisonTests(unittest.TestCase):
         )
 
         with self.assertRaisesRegex(ValueError, "Invalid show mode"):
-            compare_structure_rmsd(
-                df,
-                probe_col="probe-oc",
-                ref_col="ref-oc",
+            compare_rmsd(
+                {"df": df, "coords_col": "probe-oc"},
+                {"df": df, "coords_col": "ref-oc"},
                 show="bad",
                 render=False,
                 print_summary=False,
             )
+
+    def test_compare_rmsd_accepts_xyz_block_and_atoms_coords_tuple(self):
+        atoms, ref_coords = self._embedded_structure()
+        probe_coords = ref_coords.copy()
+        probe_coords[0] += np.array([0.10, 0.00, 0.00])
+        xyz_block = "\n".join(
+            [
+                str(len(atoms)),
+                "probe",
+                *[
+                    f"{atom} {x:.10f} {y:.10f} {z:.10f}"
+                    for atom, (x, y, z) in zip(atoms, probe_coords)
+                ],
+            ]
+        )
+
+        result = compare_rmsd(
+            {"xyz": xyz_block, "label": "block"},
+            (atoms, ref_coords),
+            mapping="index",
+            render=False,
+            print_summary=False,
+        )
+
+        self.assertEqual(result["mapping"], "index")
+        self.assertEqual(result["probe_label"], "block")
+        self.assertEqual(result["ref_label"], "reference")
+        self.assertGreater(result["rmsd"], 0.0)
+
+    def test_compare_rmsd_bare_xyz_block_string_is_rejected(self):
+        atoms, coords = self._embedded_structure()
+        xyz_block = "\n".join(
+            [
+                str(len(atoms)),
+                "probe",
+                *[
+                    f"{atom} {x:.10f} {y:.10f} {z:.10f}"
+                    for atom, (x, y, z) in zip(atoms, coords)
+                ],
+            ]
+        )
+
+        with self.assertRaisesRegex(ValueError, r"\{'xyz': xyz_block\}"):
+            compare_rmsd(
+                xyz_block,
+                (atoms, coords),
+                render=False,
+                print_summary=False,
+            )
+
+    def test_compare_rmsd_index_mapping_skips_bond_perception(self):
+        atoms, ref_coords = self._embedded_structure()
+        probe_coords = ref_coords.copy()
+        probe_coords[1] += np.array([0.05, 0.00, 0.00])
+
+        with patch("frust.utils.RMSD.rdDetermineBonds.DetermineBonds") as mocked:
+            result = compare_rmsd(
+                {"atoms": atoms, "coords": probe_coords},
+                {"atoms": atoms, "coords": ref_coords},
+                mapping="index",
+                render=False,
+                print_summary=False,
+            )
+
+        mocked.assert_not_called()
+        self.assertEqual(result["mapping"], "index")
+        self.assertGreater(result["rmsd"], 0.0)
 
     def test_structure_comparison_scene_accepts_molto3d_style_options(self):
         atoms, coords = self._embedded_structure()
@@ -847,16 +940,18 @@ class StructureComparisonTests(unittest.TestCase):
             }
         )
 
-        scene = structure_comparison_scene_from_dataframe(
-            df,
-            probe_col="probe-oc",
-            ref_col="ref-oc",
+        result = compare_rmsd(
+            {"df": df, "coords_col": "probe-oc"},
+            {"df": df, "coords_col": "ref-oc"},
             show="overlay",
+            render=False,
+            print_summary=False,
             background_color=("white", 1.0),
             show_labels=True,
             show_charges=False,
             kekulize=False,
         )
+        scene = result["scene"]
 
         self.assertEqual(scene.background_color, ("white", 1.0))
         for model in scene.cells[0].models:
@@ -864,7 +959,7 @@ class StructureComparisonTests(unittest.TestCase):
             self.assertFalse(model.show_charges)
             self.assertFalse(model.kekulize)
 
-    def test_compare_xyz_rmsd_applies_model_specific_styles_before_export(self):
+    def test_compare_rmsd_applies_model_specific_styles_before_export(self):
         class FakeViewer:
             def __init__(self):
                 self.styles = []
@@ -907,7 +1002,7 @@ class StructureComparisonTests(unittest.TestCase):
                 "Py3DmolGridRenderer",
                 FakeRenderer,
             ):
-                result = vis.compare_xyz_rmsd(
+                result = vis.compare_rmsd(
                     str(probe_path),
                     str(ref_path),
                     render=False,

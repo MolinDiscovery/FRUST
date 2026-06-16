@@ -562,7 +562,19 @@ class WorkflowExecutionTests(unittest.TestCase):
             pd.DataFrame({"value": [1], "calc-NT": [True]}).to_parquet(ok_dir / "final.parquet")
             pd.DataFrame({"value": [1], "calc-NT": [True]}).to_parquet(ok_dir / "init.parquet")
             (ok_dir / "timing.json").write_text(json.dumps({"schema_version": 2, "groups": [], "stages": []}))
-            pd.DataFrame({"value": [2], "calc-NT": [False]}).to_parquet(bad_dir / "final.parquet")
+            pd.DataFrame(
+                {
+                    "value": [2],
+                    "ts_type": ["TS2"],
+                    "substrate_name": ["C6_wb97"],
+                    "catalyst_name": ["NEt"],
+                    "rpos": [2],
+                    "cid": [42],
+                    "OptTS-NT": [False],
+                    "OptTS-error": ["RuntimeError: Orca calculation did not terminate normally"],
+                    "OptTS-orca.out": ["ORCA finished by error termination in Startup"],
+                }
+            ).to_parquet(bad_dir / "final.parquet")
             pd.DataFrame({"value": [2], "calc-NT": [False]}).to_parquet(bad_dir / "init.parquet")
             pd.DataFrame({"value": [3], "calc-NT": [True]}).to_parquet(missing_dir / "init.parquet")
 
@@ -584,6 +596,20 @@ class WorkflowExecutionTests(unittest.TestCase):
             self.assertEqual(report["n_skipped"], 1)
             self.assertEqual(report["n_missing"], 1)
             self.assertEqual(report["n_errored"], 0)
+            self.assertEqual(report["n_failures"], 2)
+            failure = report["failure_summary"][0]
+            self.assertEqual(failure["target"], "bad")
+            self.assertEqual(failure["ts_type"], "TS2")
+            self.assertEqual(failure["substrate_name"], "C6_wb97")
+            self.assertEqual(failure["catalyst_name"], "NEt")
+            self.assertEqual(failure["rpos"], 2)
+            self.assertEqual(failure["cid"], 42)
+            self.assertEqual(failure["failed_stage"], "OptTS")
+            self.assertEqual(failure["failed_nt_cols"], ["OptTS-NT"])
+            self.assertEqual(failure["problem"], "failed_stage")
+            self.assertIn("Orca calculation", failure["error"])
+            self.assertIn("Startup", failure["backend_hint"])
+            self.assertEqual(report["failure_summary"][1]["problem"], "missing_output")
             self.assertTrue(report["missing_files"][0].endswith("missing/final.parquet"))
             self.assertEqual(report["compaction"]["n_targets"], 1)
             self.assertEqual(report["compaction"]["n_removed_files"], 1)
@@ -617,6 +643,8 @@ class WorkflowExecutionTests(unittest.TestCase):
 
         self.assertEqual(report["n_collected"], 0)
         self.assertEqual(report["n_skipped"], 1)
+        self.assertEqual(report["n_failures"], 1)
+        self.assertEqual(report["failure_summary"][0]["failed_stage"], "calc")
 
     def test_raw_mols_validates_input_table(self):
         with self.assertRaisesRegex(ValueError, "smiles"):

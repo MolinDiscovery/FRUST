@@ -36,6 +36,7 @@ from frust.utils.timing import (
     utc_timestamp,
     write_timing_sidecar,
 )
+from frust.workflows.diagnostics import _collection_failure_summary
 from frust.workflows.methods import CalculatorSpec, MethodPlan, preset as method_preset
 
 
@@ -1187,6 +1188,14 @@ def _collect_expected_outputs(
         "errors": errors,
         "timing": timing_report,
     }
+    failure_summary = _collection_failure_summary(
+        skipped_files=skipped_files,
+        missing_files=missing_files,
+        errors=errors,
+        errored_files=errored_files,
+    )
+    report_payload["n_failures"] = len(failure_summary)
+    report_payload["failure_summary"] = failure_summary
 
     if frames:
         merged = pd.concat(frames, ignore_index=True)

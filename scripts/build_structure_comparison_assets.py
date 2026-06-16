@@ -64,7 +64,7 @@ def build_assets() -> list[Path]:
         _write_xyz(probe_path, atoms, probe_coords)
         _write_xyz(ref_path, atoms, ref_coords)
 
-        ft.vis.compare_xyz_rmsd(
+        ft.vis.compare_rmsd(
             str(probe_path),
             str(ref_path),
             render=False,

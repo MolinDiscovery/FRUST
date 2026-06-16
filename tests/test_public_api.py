@@ -45,13 +45,14 @@ class PublicApiTests(unittest.TestCase):
         from frust.utils.dataframes import map_substrate_names as map_names_direct
         from frust.utils.io import write_xyz as write_xyz_direct
         from frust.utils.mols import get_molecule_name
-        from frust.vis import compare_xyz_rmsd as compare_xyz_rmsd_direct
+        from frust.vis import compare_rmsd as compare_rmsd_direct
         from frust.vis import plot_mols as plot_mols_direct
         from frust.vis import plot_vibs as plot_vibs_direct
         from frust.vis import ArrowOverlay, ScreenLabelOverlay
         from frust.vis import reaction_scene_cells
         from frust.workflows import mols as workflow_mols
         from frust.workflows import raw_mols as workflow_raw_mols
+        from frust.workflows import inspect_failures as workflow_inspect_failures
         from frust.workflows import methods as workflow_methods
 
         expected = {
@@ -124,7 +125,11 @@ class PublicApiTests(unittest.TestCase):
         self.assertIs(vis, vis_direct)
         self.assertIs(ft.vis.plot_mols, plot_mols_direct)
         self.assertIs(ft.vis.plot_vibs, plot_vibs_direct)
-        self.assertIs(ft.vis.compare_xyz_rmsd, compare_xyz_rmsd_direct)
+        self.assertIs(ft.vis.compare_rmsd, compare_rmsd_direct)
+        self.assertFalse(hasattr(ft.vis, "compare_xyz_rmsd"))
+        self.assertFalse(hasattr(ft.vis, "compare_structure_rmsd"))
+        self.assertFalse(hasattr(ft.vis, "structure_comparison_scene_from_xyz"))
+        self.assertFalse(hasattr(ft.vis, "structure_comparison_scene_from_dataframe"))
         self.assertIs(ft.vis.ArrowOverlay, ArrowOverlay)
         self.assertIs(ft.vis.ScreenLabelOverlay, ScreenLabelOverlay)
         self.assertIs(ft.vis.reaction_scene_cells, reaction_scene_cells)
@@ -132,6 +137,7 @@ class PublicApiTests(unittest.TestCase):
         self.assertIs(workflows, workflows_direct)
         self.assertIs(ft.workflows.mols, workflow_mols)
         self.assertIs(ft.workflows.raw_mols, workflow_raw_mols)
+        self.assertIs(ft.workflows.inspect_failures, workflow_inspect_failures)
         self.assertNotIn("raw_mols", ft.__all__)
         self.assertIs(ft.workflows.methods, workflow_methods)
         self.assertIs(ft.pipelines, pipelines_direct)
@@ -244,8 +250,8 @@ class PublicApiTests(unittest.TestCase):
                 "frust.vis.vibrations": "frust.vis.vibrations" in sys.modules,
             }
 
-            _ = frust.vis.compare_xyz_rmsd
-            after_vis_compare_xyz_rmsd = {
+            _ = frust.vis.compare_rmsd
+            after_vis_compare_rmsd = {
                 "frust.vis.molecules": "frust.vis.molecules" in sys.modules,
                 "frust.vis.structure_comparison": "frust.vis.structure_comparison" in sys.modules,
                 "frust.vis.vibrations": "frust.vis.vibrations" in sys.modules,
@@ -271,7 +277,7 @@ class PublicApiTests(unittest.TestCase):
                         "after_cluster": after_cluster,
                         "after_vis_namespace": after_vis_namespace,
                         "after_vis_plot_mols": after_vis_plot_mols,
-                        "after_vis_compare_xyz_rmsd": after_vis_compare_xyz_rmsd,
+                        "after_vis_compare_rmsd": after_vis_compare_rmsd,
                         "after_plot_vibs": after_plot_vibs,
                     }
                 )
@@ -377,7 +383,7 @@ class PublicApiTests(unittest.TestCase):
             },
         )
         self.assertEqual(
-            result["after_vis_compare_xyz_rmsd"],
+            result["after_vis_compare_rmsd"],
             {
                 "frust.vis.molecules": True,
                 "frust.vis.structure_comparison": True,

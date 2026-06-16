@@ -25,6 +25,66 @@ failed[["substrate_name", "rpos", "cid", "orca_opt-error"]].head()
     `*-error` usually tells you whether the problem happened in FRUST,
     Tooltoad, ORCA, xTB, g-xTB, UMA, or file handling.
 
+## Workflow Failure Reports
+
+For submitted workflows, start from the collection report. The merged parquet
+usually contains only successful targets, while skipped targets are summarized
+in a separate failure table:
+
+```python
+import frust as ft
+
+failures = ft.workflows.inspect_failures(result.collection_report)
+
+failures[
+    [
+        "target",
+        "ts_type",
+        "substrate_name",
+        "catalyst_name",
+        "rpos",
+        "cid",
+        "failed_stage",
+        "error",
+        "backend_hint",
+    ]
+]
+```
+
+Example output:
+
+| target | ts_type | substrate_name | catalyst_name | rpos | cid | failed_stage | error | backend_hint |
+| --- | --- | --- | --- | ---: | ---: | --- | --- | --- |
+| `TS2__substrate_001__catalyst_001__r2` | `TS2` | `C6_wb97` | `NEt` | 2 | 42 | `OptTS` | `RuntimeError: Orca calculation did not terminate normally` | `ORCA finished by error termination in Startup` |
+
+To answer a specific missing-structure question, filter the failure table by the
+same labels you used in the analysis notebook:
+
+```python
+missing = failures.query(
+    "ts_type == 'TS2' and substrate_name == 'C6_wb97' "
+    "and catalyst_name == 'NEt' and rpos == 2"
+)
+
+missing[["target", "cid", "failed_stage", "error", "backend_hint"]]
+```
+
+The main status values are:
+
+| `problem` | Meaning |
+| --- | --- |
+| `failed_stage` | A row exists, but at least one `*-NT` column is false or missing. |
+| `missing_output` | The collector expected a target parquet that was not written. |
+| `read_error` | A parquet or collection report could not be read. |
+| `unknown_skipped` | A skipped file exists, but FRUST could not extract a failed row from it. |
+
+!!! note "Use the report before walking directories"
+
+    `failed_stage` points to the first failed calculation prefix, such as
+    `OptTS`. `error` comes from the matching `OptTS-error` column when present.
+    `backend_hint` is a short line from saved backend output, such as
+    `OptTS-orca.out`, when FRUST has that text in the skipped parquet.
+
 ## Common Symptoms
 
 ??? question "`ModuleNotFoundError` or missing optional dependency"
