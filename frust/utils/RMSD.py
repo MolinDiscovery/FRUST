@@ -1,3 +1,4 @@
+from collections.abc import Sequence as SequenceABC
 from typing import Any, Sequence
 
 import numpy as np
@@ -156,6 +157,8 @@ def compare_symbols_coords_rmsd(
     charge: int = 0,
     mapping: str = "topology",
     atom_map: Sequence[tuple[int, int]] | None = None,
+    probe_bonds: Any | None = None,
+    ref_bonds: Any | None = None,
 ) -> dict[str, Any]:
     """Compare two structures from atomic symbols and coordinates.
 
@@ -180,13 +183,22 @@ def compare_symbols_coords_rmsd(
         Use ``"topology"`` to infer bonds, match the heavy-atom molecular graph,
         and choose the lowest-RMSD substructure match. Use ``"index"`` when
         atom order already defines correspondence; this maps heavy atoms by
-        their order in the two inputs and does not require bond perception.
+        their order in the two inputs and does not require bond perception. Use
+        ``"geometry"`` when topology matching fails and atom order differs;
+        this maps same-element heavy atoms using interatomic distance
+        signatures and alignment refinement, without bond perception.
     atom_map
         Explicit atom-index pairs as ``(probe_idx, ref_idx)`` in the original
         input atom ordering. When supplied, this takes precedence over
         ``mapping`` and does not require bond perception. For
         ``atom_scope="heavy"``, every mapped pair must contain non-hydrogen
         atoms with matching element symbols.
+    probe_bonds, ref_bonds
+        Optional display bonds for the probe and reference as ``(atom_i,
+        atom_j)`` pairs in each input's original atom order. These bonds are
+        only used to build the returned RDKit molecules for visualization when
+        topology mapping is not already using perceived bonds. They do not
+        define or constrain the RMSD atom map.
 
     Returns
     -------
@@ -204,13 +216,15 @@ def compare_symbols_coords_rmsd(
         raise ValueError(
             "Currently only atom_scope='heavy' is supported."
         )
-    if mapping not in {"topology", "index"}:
-        raise ValueError("mapping must be either 'topology' or 'index'.")
+    if mapping not in {"topology", "index", "geometry"}:
+        raise ValueError(
+            "mapping must be one of 'topology', 'index', or 'geometry'."
+        )
 
     probe_symbols_list = [str(symbol) for symbol in probe_symbols]
     ref_symbols_list = [str(symbol) for symbol in ref_symbols]
-    probe_coords_arr = np.asarray(probe_coords, dtype=float)
-    ref_coords_arr = np.asarray(ref_coords, dtype=float)
+    probe_coords_arr = _coerce_coords_array(probe_coords, "probe")
+    ref_coords_arr = _coerce_coords_array(ref_coords, "reference")
 
     _validate_symbols_coords(probe_symbols_list, probe_coords_arr, "probe")
     _validate_symbols_coords(ref_symbols_list, ref_coords_arr, "reference")
@@ -249,6 +263,15 @@ def compare_symbols_coords_rmsd(
             atom_scope=atom_scope,
         )
         mapping_used = "index"
+    elif mapping == "geometry":
+        resolved_atom_map = get_geometry_atom_map(
+            probe_symbols_list,
+            probe_coords_arr,
+            ref_symbols_list,
+            ref_coords_arr,
+            atom_scope=atom_scope,
+        )
+        mapping_used = "geometry"
     else:
         resolved_atom_map = get_best_heavy_atom_map(
             probe_heavy_mol,
@@ -258,19 +281,38 @@ def compare_symbols_coords_rmsd(
         )
         mapping_used = "topology"
 
-    probe_mol_aligned = Chem.Mol(probe_mol)
+    probe_display_mol, probe_display_bonds = _display_mol_with_optional_bonds(
+        probe_symbols_list,
+        probe_coords_arr,
+        charge=charge,
+        fallback_mol=probe_mol,
+        bonds=probe_bonds,
+        label="probe",
+    )
+    ref_display_mol, ref_display_bonds = _display_mol_with_optional_bonds(
+        ref_symbols_list,
+        ref_coords_arr,
+        charge=charge,
+        fallback_mol=ref_mol,
+        bonds=ref_bonds,
+        label="reference",
+    )
+
+    probe_mol_aligned = Chem.Mol(probe_display_mol)
     rmsd = rdMolAlign.AlignMol(
         probe_mol_aligned,
-        ref_mol,
+        ref_display_mol,
         atomMap=resolved_atom_map,
     )
 
-    probe_heavy_mol_aligned = Chem.RemoveHs(probe_mol_aligned)
-    ref_heavy_mol_final = Chem.RemoveHs(ref_mol)
+    probe_heavy_mol_aligned, _ = get_heavy_mol_with_parent_map(
+        probe_mol_aligned
+    )
+    ref_heavy_mol_final, _ = get_heavy_mol_with_parent_map(ref_display_mol)
 
     df_dev = get_atom_pair_deviations(
         probe_mol_aligned,
-        ref_mol,
+        ref_display_mol,
         resolved_atom_map,
     )
 
@@ -284,9 +326,11 @@ def compare_symbols_coords_rmsd(
         "ref_symbols": ref_symbols_list,
         "probe_coords": probe_coords_arr,
         "ref_coords": ref_coords_arr,
-        "probe_mol": probe_mol,
-        "ref_mol": ref_mol,
+        "probe_mol": probe_display_mol,
+        "ref_mol": ref_display_mol,
         "probe_mol_aligned": probe_mol_aligned,
+        "probe_display_bonds": probe_display_bonds,
+        "ref_display_bonds": ref_display_bonds,
         "probe_heavy_mol": probe_heavy_mol,
         "ref_heavy_mol_input": ref_heavy_mol,
         "probe_heavy_parent_map": probe_parent_map,
@@ -314,6 +358,184 @@ def _validate_symbols_coords(
         )
 
 
+def _coerce_coords_array(
+    coords: Sequence[Sequence[float]],
+    label: str,
+) -> np.ndarray:
+    """Coerce coordinate-like input to a numeric ``(n_atoms, 3)`` array."""
+    raw = np.asarray(coords)
+    if raw.dtype == object and raw.ndim == 1:
+        try:
+            arr = np.stack(raw).astype(float)
+        except Exception as exc:
+            raise ValueError(
+                f"{label} coordinates look like a one-dimensional object "
+                "array, but the elements could not be stacked into numeric "
+                "coordinate rows with shape (3,)."
+            ) from exc
+    else:
+        try:
+            arr = np.asarray(coords, dtype=float)
+        except (TypeError, ValueError) as exc:
+            raise ValueError(
+                f"{label} coordinates could not be converted to a numeric "
+                "array. Expected shape (n_atoms, 3)."
+            ) from exc
+
+    if arr.ndim != 2 or arr.shape[1] != 3:
+        raise ValueError(
+            f"{label} coordinates must have shape (n_atoms, 3); "
+            f"got {arr.shape}."
+        )
+    return arr
+
+
+def _display_mol_with_optional_bonds(
+    symbols: Sequence[str],
+    coords: np.ndarray,
+    *,
+    charge: int,
+    fallback_mol: Chem.Mol,
+    bonds: Sequence[tuple[int, int]] | None,
+    label: str,
+) -> tuple[Chem.Mol, str]:
+    """Return a molecule for display, with perceived bonds when possible."""
+    if fallback_mol.GetNumBonds() > 0:
+        return fallback_mol, "perceived"
+    if not _is_missing_value(bonds):
+        return (
+            _symbols_coords_bonds_to_rdkit_mol(
+                [str(symbol) for symbol in symbols],
+                coords,
+                bonds,
+                label=label,
+            ),
+            "input",
+        )
+    try:
+        return (
+            xyz_to_rdkit_mol(
+                [str(symbol) for symbol in symbols],
+                coords,
+                charge=charge,
+                perceive_bonds=True,
+            ),
+            "perceived",
+        )
+    except ValueError:
+        return fallback_mol, "none"
+
+
+def _symbols_coords_bonds_to_rdkit_mol(
+    symbols: Sequence[str],
+    coords: np.ndarray,
+    bonds: Sequence[tuple[int, int]],
+    *,
+    label: str = "structure",
+) -> Chem.Mol:
+    """Build an RDKit molecule from symbols, coordinates, and explicit bonds.
+
+    Parameters
+    ----------
+    symbols
+        Atomic symbols.
+    coords
+        Cartesian coordinates with shape ``(n_atoms, 3)``.
+    bonds
+        Bond pairs as ``(atom_i, atom_j)`` in the same atom order as
+        ``symbols`` and ``coords``.
+    label
+        Human-readable label used in validation errors.
+
+    Returns
+    -------
+    rdkit.Chem.Mol
+        RDKit molecule with one conformer and the supplied bonds.
+    """
+    bond_pairs = _coerce_bond_pairs(bonds, n_atoms=len(symbols), label=label)
+
+    mol = Chem.RWMol()
+    for symbol in symbols:
+        mol.AddAtom(Chem.Atom(str(symbol)))
+
+    for begin, end in bond_pairs:
+        mol.AddBond(int(begin), int(end), Chem.BondType.SINGLE)
+
+    mol = mol.GetMol()
+    conf = Chem.Conformer(len(symbols))
+    for i, (x, y, z) in enumerate(coords):
+        conf.SetAtomPosition(i, (float(x), float(y), float(z)))
+    mol.AddConformer(conf, assignId=True)
+    return Chem.Mol(mol)
+
+
+def _coerce_bond_pairs(
+    bonds: Sequence[tuple[int, int]],
+    *,
+    n_atoms: int,
+    label: str,
+) -> list[tuple[int, int]]:
+    """Validate and normalize bond pairs."""
+    if _is_missing_value(bonds):
+        return []
+
+    if isinstance(bonds, np.ndarray):
+        raw_pairs = bonds.tolist()
+    else:
+        raw_pairs = bonds
+
+    if isinstance(raw_pairs, (str, bytes)) or not isinstance(raw_pairs, SequenceABC):
+        raise ValueError(
+            f"{label} display bonds must be a sequence of (atom_i, atom_j) pairs."
+        )
+
+    normalized: list[tuple[int, int]] = []
+    seen: set[tuple[int, int]] = set()
+    for pair in raw_pairs:
+        if isinstance(pair, np.ndarray):
+            pair = pair.tolist()
+        if not isinstance(pair, SequenceABC) or isinstance(pair, (str, bytes)):
+            raise ValueError(
+                f"{label} display bonds must contain two-index pairs; got {pair!r}."
+            )
+        if len(pair) != 2:
+            raise ValueError(
+                f"{label} display bond pairs must have length 2; got {pair!r}."
+            )
+        begin = int(pair[0])
+        end = int(pair[1])
+        if begin == end:
+            raise ValueError(
+                f"{label} display bond cannot connect atom {begin} to itself."
+            )
+        if begin < 0 or end < 0 or begin >= n_atoms or end >= n_atoms:
+            raise ValueError(
+                f"{label} display bond {(begin, end)} is outside the atom "
+                f"range 0..{n_atoms - 1}."
+            )
+        key = (min(begin, end), max(begin, end))
+        if key in seen:
+            continue
+        seen.add(key)
+        normalized.append((begin, end))
+    return normalized
+
+
+def _is_missing_value(value: Any) -> bool:
+    """Return True for scalar missing values without treating arrays as missing."""
+    if value is None:
+        return True
+    if isinstance(value, np.ndarray):
+        return False
+    try:
+        missing = pd.isna(value)
+    except (TypeError, ValueError):
+        return False
+    if isinstance(missing, (bool, np.bool_)):
+        return bool(missing)
+    return False
+
+
 def get_heavy_mol_with_parent_map(
     mol: Chem.Mol,
 ) -> tuple[Chem.Mol, list[int]]:
@@ -333,8 +555,32 @@ def get_heavy_mol_with_parent_map(
     heavy_atom_indices = [
         atom.GetIdx() for atom in mol.GetAtoms() if atom.GetAtomicNum() > 1
     ]
-    heavy_mol = Chem.RemoveHs(mol)
+    heavy_mol = _copy_mol_subset(mol, heavy_atom_indices)
     return heavy_mol, heavy_atom_indices
+
+
+def _copy_mol_subset(mol: Chem.Mol, atom_indices: Sequence[int]) -> Chem.Mol:
+    """Copy a molecule subset while preserving coordinates and internal bonds."""
+    index_map = {old_idx: new_idx for new_idx, old_idx in enumerate(atom_indices)}
+    out = Chem.RWMol()
+    for old_idx in atom_indices:
+        atom = mol.GetAtomWithIdx(int(old_idx))
+        out.AddAtom(Chem.Atom(atom))
+
+    for bond in mol.GetBonds():
+        begin = bond.GetBeginAtomIdx()
+        end = bond.GetEndAtomIdx()
+        if begin in index_map and end in index_map:
+            out.AddBond(index_map[begin], index_map[end], bond.GetBondType())
+
+    subset = out.GetMol()
+    conf = Chem.Conformer(len(atom_indices))
+    source_conf = mol.GetConformer()
+    for new_idx, old_idx in enumerate(atom_indices):
+        pos = source_conf.GetAtomPosition(int(old_idx))
+        conf.SetAtomPosition(new_idx, pos)
+    subset.AddConformer(conf, assignId=True)
+    return Chem.Mol(subset)
 
 
 def get_best_heavy_atom_map(
@@ -461,6 +707,235 @@ def get_index_atom_map(
         ref_symbols,
         atom_scope=atom_scope,
     )
+
+
+def get_geometry_atom_map(
+    probe_symbols: Sequence[str],
+    probe_coords: np.ndarray,
+    ref_symbols: Sequence[str],
+    ref_coords: np.ndarray,
+    *,
+    atom_scope: str = "heavy",
+    max_refinements: int = 10,
+) -> list[tuple[int, int]]:
+    """Map atoms by element-specific 3D distance signatures.
+
+    Parameters
+    ----------
+    probe_symbols
+        Atomic symbols for the structure that will be aligned.
+    probe_coords
+        Probe Cartesian coordinates with shape ``(n_atoms, 3)``.
+    ref_symbols
+        Atomic symbols for the reference structure.
+    ref_coords
+        Reference Cartesian coordinates with shape ``(n_atoms, 3)``.
+    atom_scope
+        Atom scope used for the generated map. Currently only ``"heavy"`` is
+        supported, so hydrogens are skipped before matching.
+    max_refinements
+        Maximum number of align-and-rematch iterations after the initial
+        distance-signature assignment.
+
+    Returns
+    -------
+    list of tuple of int
+        Atom-index pairs as ``(probe_idx, ref_idx)`` in original input order.
+
+    Raises
+    ------
+    ValueError
+        If the structures do not have the same heavy-atom element counts.
+    """
+    if atom_scope != "heavy":
+        raise ValueError("Currently only atom_scope='heavy' is supported.")
+
+    probe_heavy = _heavy_atom_entries(probe_symbols)
+    ref_heavy = _heavy_atom_entries(ref_symbols)
+    _require_matching_heavy_formula(probe_heavy, ref_heavy)
+
+    initial_map = _distance_signature_atom_map(
+        probe_heavy,
+        np.asarray(probe_coords, dtype=float),
+        ref_heavy,
+        np.asarray(ref_coords, dtype=float),
+    )
+    refined_map = _refine_geometry_atom_map(
+        initial_map,
+        probe_symbols,
+        np.asarray(probe_coords, dtype=float),
+        ref_symbols,
+        np.asarray(ref_coords, dtype=float),
+        probe_heavy,
+        ref_heavy,
+        max_refinements=max_refinements,
+    )
+    return _validate_atom_map(
+        refined_map,
+        probe_symbols,
+        ref_symbols,
+        atom_scope=atom_scope,
+    )
+
+
+def _heavy_atom_entries(symbols: Sequence[str]) -> list[tuple[int, str]]:
+    """Return ``(original_idx, symbol)`` pairs for non-hydrogen atoms."""
+    return [
+        (idx, str(symbol))
+        for idx, symbol in enumerate(symbols)
+        if str(symbol).upper() != "H"
+    ]
+
+
+def _require_matching_heavy_formula(
+    probe_heavy: Sequence[tuple[int, str]],
+    ref_heavy: Sequence[tuple[int, str]],
+) -> None:
+    """Require matching heavy-atom element counts before geometry matching."""
+    probe_counts = _element_counts(probe_heavy)
+    ref_counts = _element_counts(ref_heavy)
+    if probe_counts != ref_counts:
+        raise ValueError(
+            "Cannot use mapping='geometry' because the structures have "
+            f"different heavy-atom formulas: probe has {dict(probe_counts)}, "
+            f"reference has {dict(ref_counts)}."
+        )
+
+
+def _element_counts(entries: Sequence[tuple[int, str]]) -> dict[str, int]:
+    """Count element symbols in heavy-atom entries."""
+    counts: dict[str, int] = {}
+    for _, symbol in entries:
+        counts[symbol] = counts.get(symbol, 0) + 1
+    return counts
+
+
+def _distance_signature_atom_map(
+    probe_heavy: Sequence[tuple[int, str]],
+    probe_coords: np.ndarray,
+    ref_heavy: Sequence[tuple[int, str]],
+    ref_coords: np.ndarray,
+) -> list[tuple[int, int]]:
+    """Initial atom map from sorted interatomic distance signatures."""
+    elements = sorted({symbol for _, symbol in probe_heavy})
+    probe_features = [
+        _distance_signature(idx, probe_heavy, probe_coords, elements)
+        for idx, _ in probe_heavy
+    ]
+    ref_features = [
+        _distance_signature(idx, ref_heavy, ref_coords, elements)
+        for idx, _ in ref_heavy
+    ]
+    costs = np.full((len(probe_heavy), len(ref_heavy)), 1e12, dtype=float)
+    for i, (_, probe_symbol) in enumerate(probe_heavy):
+        for j, (_, ref_symbol) in enumerate(ref_heavy):
+            if probe_symbol == ref_symbol:
+                diff = probe_features[i] - ref_features[j]
+                costs[i, j] = float(np.sqrt(np.mean(diff * diff)))
+    return _assignment_from_costs(costs, probe_heavy, ref_heavy)
+
+
+def _distance_signature(
+    atom_idx: int,
+    entries: Sequence[tuple[int, str]],
+    coords: np.ndarray,
+    elements: Sequence[str],
+) -> np.ndarray:
+    """Build a rotation-invariant distance signature for one atom."""
+    parts: list[float] = []
+    center = coords[int(atom_idx)]
+    for element in elements:
+        distances = [
+            float(np.linalg.norm(center - coords[int(other_idx)]))
+            for other_idx, other_symbol in entries
+            if other_symbol == element
+        ]
+        parts.extend(sorted(distances))
+    return np.asarray(parts, dtype=float)
+
+
+def _refine_geometry_atom_map(
+    atom_map: Sequence[tuple[int, int]],
+    probe_symbols: Sequence[str],
+    probe_coords: np.ndarray,
+    ref_symbols: Sequence[str],
+    ref_coords: np.ndarray,
+    probe_heavy: Sequence[tuple[int, str]],
+    ref_heavy: Sequence[tuple[int, str]],
+    *,
+    max_refinements: int,
+) -> list[tuple[int, int]]:
+    """Iteratively align and rematch nearest same-element heavy atoms."""
+    current = sorted((int(p), int(r)) for p, r in atom_map)
+    probe_mol = xyz_to_rdkit_mol(
+        [str(symbol) for symbol in probe_symbols],
+        probe_coords,
+        perceive_bonds=False,
+    )
+    ref_mol = xyz_to_rdkit_mol(
+        [str(symbol) for symbol in ref_symbols],
+        ref_coords,
+        perceive_bonds=False,
+    )
+
+    for _ in range(int(max_refinements)):
+        probe_aligned = Chem.Mol(probe_mol)
+        rdMolAlign.AlignMol(probe_aligned, ref_mol, atomMap=current)
+        costs = _aligned_distance_costs(
+            probe_aligned,
+            ref_mol,
+            probe_heavy,
+            ref_heavy,
+        )
+        updated = _assignment_from_costs(costs, probe_heavy, ref_heavy)
+        updated = sorted(updated)
+        if updated == current:
+            break
+        current = updated
+
+    return current
+
+
+def _aligned_distance_costs(
+    probe_mol: Chem.Mol,
+    ref_mol: Chem.Mol,
+    probe_heavy: Sequence[tuple[int, str]],
+    ref_heavy: Sequence[tuple[int, str]],
+) -> np.ndarray:
+    """Cost matrix from aligned Cartesian distances between same elements."""
+    probe_conf = probe_mol.GetConformer()
+    ref_conf = ref_mol.GetConformer()
+    costs = np.full((len(probe_heavy), len(ref_heavy)), 1e12, dtype=float)
+    for i, (probe_idx, probe_symbol) in enumerate(probe_heavy):
+        probe_pos = probe_conf.GetAtomPosition(int(probe_idx))
+        probe_vec = np.asarray([probe_pos.x, probe_pos.y, probe_pos.z])
+        for j, (ref_idx, ref_symbol) in enumerate(ref_heavy):
+            if probe_symbol == ref_symbol:
+                ref_pos = ref_conf.GetAtomPosition(int(ref_idx))
+                ref_vec = np.asarray([ref_pos.x, ref_pos.y, ref_pos.z])
+                costs[i, j] = float(np.linalg.norm(probe_vec - ref_vec))
+    return costs
+
+
+def _assignment_from_costs(
+    costs: np.ndarray,
+    probe_entries: Sequence[tuple[int, str]],
+    ref_entries: Sequence[tuple[int, str]],
+) -> list[tuple[int, int]]:
+    """Return original atom-index pairs from a linear-sum assignment."""
+    from scipy.optimize import linear_sum_assignment
+
+    probe_rows, ref_cols = linear_sum_assignment(costs)
+    atom_map = []
+    for row, col in zip(probe_rows, ref_cols):
+        if costs[row, col] >= 1e11:
+            raise ValueError(
+                "Could not assign all same-element heavy atoms during "
+                "geometry matching."
+            )
+        atom_map.append((probe_entries[row][0], ref_entries[col][0]))
+    atom_map.sort(key=lambda pair: pair[0])
+    return atom_map
 
 
 def _validate_atom_map(

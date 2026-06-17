@@ -393,6 +393,22 @@ class ScreenWorkflowTests(unittest.TestCase):
         self.assertIn("B_transfer_H", ts2["constraint_roles"])
         self.assertIn("N_transfer_H", ts2["constraint_roles"])
         self.assertTrue(ts2["smiles"])
+        for ts_type in ("TS3", "TS4"):
+            row = guesses[ts_type].iloc[0]
+            roles = row["constraint_roles"]
+            mol = _row_to_mol(row, row["atoms"], row["coords_embedded"])
+            cat_b = roles["cat_B"]
+            cat_h = roles["cat_H"]
+            transfer_h = roles["transfer_H"]
+            cat_b_hydrogens = {
+                neighbor.GetIdx()
+                for neighbor in mol.GetAtomWithIdx(cat_b).GetNeighbors()
+                if neighbor.GetAtomicNum() == 1
+            }
+
+            self.assertIn(cat_h, row["constraint_atoms"])
+            self.assertIn(cat_h, cat_b_hydrogens)
+            self.assertNotEqual(cat_h, transfer_h)
         self.assertEqual(guesses["TS2"].attrs["frust_tsguess2"]["backend"], "tsguess2")
 
     def test_multifragment_ts_guess_does_not_collapse_fragments(self):

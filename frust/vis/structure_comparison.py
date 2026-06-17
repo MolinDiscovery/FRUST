@@ -31,8 +31,8 @@ REFERENCE_STYLE: dict[str, Any] = {
     "sphere": {"radius": 0.28},
 }
 PROBE_STYLE: dict[str, Any] = {
-    "stick": {"radius": 0.08, "color": "orange"},
-    "sphere": {"radius": 0.18, "color": "orange"},
+    "stick": {"radius": 0.08, "colorscheme": "orangeCarbon"},
+    "sphere": {"radius": 0.18, "colorscheme": "orangeCarbon"},
 }
 VALID_SHOW_MODES = {"deviations", "overlay", "none"}
 DEVIATION_LABEL_OFFSET = {"x": 10, "y": 34}
@@ -45,6 +45,7 @@ class _StructureRecord:
     coords: Any
     label: str
     source_kind: str
+    bonds: Any | None = None
 
 
 def compare_rmsd(
@@ -129,12 +130,17 @@ def compare_rmsd(
     ``(atoms, coords)``
         Tooltoad-style pair where ``atoms`` is a sequence of atomic symbols and
         ``coords`` has shape ``(n_atoms, 3)``.
-    ``{"atoms": atoms, "coords": coords, "label": label}``
-        Explicit atoms/coordinates input.
+    ``{"atoms": atoms, "coords": coords, "label": label, "bonds": bonds}``
+        Explicit atoms/coordinates input. ``bonds`` is optional and should be a
+        sequence of ``(atom_i, atom_j)`` pairs. These bonds are used for display
+        only; they do not define the RMSD atom correspondence.
     ``{"df": df, "row_index": i, "coords_col": col, "atoms_col": "atoms"}``
         Coordinates from ``df.iloc[i][col]`` and atoms from
         ``df.iloc[i]["atoms"]``. ``row_index`` defaults to ``0`` and
-        ``atoms_col`` defaults to ``"atoms"``.
+        ``atoms_col`` defaults to ``"atoms"``. If the row contains a
+        ``connectivity_bonds`` column, those bonds are used for the viewer so
+        transition-state geometries can still render with sticks when RDKit
+        cannot infer bonds from the coordinates.
     ``{"row": row, "coords_col": col, "atoms_col": "atoms"}``
         Coordinates from a selected dataframe row or Series.
 
@@ -161,7 +167,13 @@ def compare_rmsd(
         the atom order is already meaningful; heavy atoms are paired in input
         order, and RDKit bond perception/topology matching is skipped. This is
         useful for transition-state guesses, constrained geometries, or other
-        structures where bond perception is unreliable.
+        structures where bond perception is unreliable. Use ``"geometry"``
+        when atom order differs and topology matching fails; FRUST matches
+        same-element heavy atoms by 3D distance signatures, refines the map
+        after alignment, and skips bond perception. Geometry mapping is a
+        diagnostic fallback for similar conformations, not a substitute for a
+        chemically curated atom map when the structures are very different or
+        highly symmetric.
     atom_map
         Optional explicit atom correspondence as ``(probe_idx, ref_idx)``
         pairs in the original atom ordering. When supplied, it takes precedence
@@ -210,8 +222,8 @@ def compare_rmsd(
         ``rmsd``
             RMSD after aligning the probe to the reference.
         ``mapping``
-            Mapping strategy actually used: ``"topology"``, ``"index"``, or
-            ``"explicit"``.
+            Mapping strategy actually used: ``"topology"``, ``"index"``,
+            ``"geometry"``, or ``"explicit"``.
         ``atom_map``
             Atom-index pairs as ``(probe_idx, ref_idx)`` in original input
             ordering.
@@ -243,6 +255,8 @@ def compare_rmsd(
         charge=charge,
         mapping=mapping,
         atom_map=atom_map,
+        probe_bonds=probe_record.bonds,
+        ref_bonds=ref_record.bonds,
     )
     result.update(
         {
@@ -403,6 +417,7 @@ def _resolve_structure_input(value: Any, *, role: str) -> _StructureRecord:
                 coords=value["coords"],
                 label=_optional_label(value) or role,
                 source_kind="atoms_coords",
+                bonds=value.get("bonds"),
             )
         if "df" in value:
             df = value["df"]
@@ -415,6 +430,8 @@ def _resolve_structure_input(value: Any, *, role: str) -> _StructureRecord:
                 coords_col=_required_spec_key(value, "coords_col"),
                 atoms_col=str(value.get("atoms_col", "atoms")),
                 label=_optional_label(value),
+                bonds=_optional_spec_bonds(value),
+                bonds_col=_optional_spec_bonds_col(value),
             )
         if "row" in value:
             row = value["row"]
@@ -425,6 +442,8 @@ def _resolve_structure_input(value: Any, *, role: str) -> _StructureRecord:
                 coords_col=_required_spec_key(value, "coords_col"),
                 atoms_col=str(value.get("atoms_col", "atoms")),
                 label=_optional_label(value),
+                bonds=_optional_spec_bonds(value),
+                bonds_col=_optional_spec_bonds_col(value),
             )
 
     raise ValueError(
@@ -451,13 +470,18 @@ def _structure_from_row(
     coords_col: str,
     atoms_col: str,
     label: str | None,
+    bonds: Any | None = None,
+    bonds_col: str | None = None,
 ) -> _StructureRecord:
     _require_row_columns(row, [atoms_col, coords_col])
+    if bonds is None:
+        bonds = _row_bonds(row, bonds_col=bonds_col)
     return _StructureRecord(
         atoms=list(row[atoms_col]),
         coords=row[coords_col],
         label=label or _row_structure_label(row, coords_col),
         source_kind="dataframe",
+        bonds=bonds,
     )
 
 
@@ -466,6 +490,32 @@ def _optional_label(spec: Mapping[str, Any]) -> str | None:
     if label is None:
         return None
     return str(label)
+
+
+def _optional_spec_bonds(spec: Mapping[str, Any]) -> Any | None:
+    return spec.get("bonds")
+
+
+def _optional_spec_bonds_col(spec: Mapping[str, Any]) -> str | None:
+    if "bonds" in spec:
+        return None
+    if "bonds_col" in spec:
+        return str(spec["bonds_col"])
+    return "connectivity_bonds"
+
+
+def _row_bonds(row: pd.Series, *, bonds_col: str | None) -> Any | None:
+    if bonds_col is None:
+        return None
+    if bonds_col not in row.index:
+        if bonds_col == "connectivity_bonds":
+            return None
+        available = ", ".join(map(str, row.index))
+        raise KeyError(
+            f"Missing required row field for display bonds: {bonds_col!r}. "
+            f"Available fields: [{available}]"
+        )
+    return row[bonds_col]
 
 
 def _required_spec_key(spec: Mapping[str, Any], key: str) -> str:

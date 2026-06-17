@@ -891,6 +891,21 @@ class StructureComparisonTests(unittest.TestCase):
         self.assertEqual(result["ref_label"], "reference")
         self.assertGreater(result["rmsd"], 0.0)
 
+    def test_compare_rmsd_accepts_object_array_coordinate_rows(self):
+        atoms, coords = self._embedded_structure()
+        object_coords = np.empty(len(coords), dtype=object)
+        for idx, row in enumerate(coords):
+            object_coords[idx] = np.asarray(row)
+
+        result = compare_rmsd(
+            {"atoms": atoms, "coords": object_coords},
+            {"atoms": atoms, "coords": coords},
+            render=False,
+            print_summary=False,
+        )
+
+        self.assertAlmostEqual(result["rmsd"], 0.0)
+
     def test_compare_rmsd_bare_xyz_block_string_is_rejected(self):
         atoms, coords = self._embedded_structure()
         xyz_block = "\n".join(
@@ -912,12 +927,15 @@ class StructureComparisonTests(unittest.TestCase):
                 print_summary=False,
             )
 
-    def test_compare_rmsd_index_mapping_skips_bond_perception(self):
+    def test_compare_rmsd_index_mapping_tolerates_display_bond_failure(self):
         atoms, ref_coords = self._embedded_structure()
         probe_coords = ref_coords.copy()
         probe_coords[1] += np.array([0.05, 0.00, 0.00])
 
-        with patch("frust.utils.RMSD.rdDetermineBonds.DetermineBonds") as mocked:
+        with patch(
+            "frust.utils.RMSD.rdDetermineBonds.DetermineBonds",
+            side_effect=RuntimeError("bond perception failed"),
+        ):
             result = compare_rmsd(
                 {"atoms": atoms, "coords": probe_coords},
                 {"atoms": atoms, "coords": ref_coords},
@@ -926,9 +944,86 @@ class StructureComparisonTests(unittest.TestCase):
                 print_summary=False,
             )
 
-        mocked.assert_not_called()
         self.assertEqual(result["mapping"], "index")
+        self.assertEqual(result["probe_display_bonds"], "none")
+        self.assertEqual(result["ref_display_bonds"], "none")
         self.assertGreater(result["rmsd"], 0.0)
+
+    def test_compare_rmsd_geometry_mapping_handles_shuffled_atom_order(self):
+        atoms, coords = self._embedded_structure()
+        permutation = [2, 0, 1, *range(3, len(atoms))]
+        probe_atoms = [atoms[idx] for idx in permutation]
+        probe_coords = coords[permutation]
+
+        result = compare_rmsd(
+            {"atoms": probe_atoms, "coords": probe_coords},
+            {"atoms": atoms, "coords": coords},
+            mapping="geometry",
+            render=False,
+            print_summary=False,
+        )
+
+        self.assertEqual(result["mapping"], "geometry")
+        self.assertAlmostEqual(result["rmsd"], 0.0)
+        self.assertIn((0, 2), result["atom_map"])
+        self.assertIn((1, 0), result["atom_map"])
+        self.assertIn((2, 1), result["atom_map"])
+
+    def test_compare_rmsd_geometry_mapping_preserves_display_bonds(self):
+        atoms, coords = self._embedded_structure()
+        permutation = [2, 0, 1, *range(3, len(atoms))]
+        probe_atoms = [atoms[idx] for idx in permutation]
+        probe_coords = coords[permutation]
+
+        result = compare_rmsd(
+            {"atoms": probe_atoms, "coords": probe_coords},
+            {"atoms": atoms, "coords": coords},
+            mapping="geometry",
+            render=False,
+            print_summary=False,
+        )
+
+        self.assertEqual(result["probe_display_bonds"], "perceived")
+        self.assertEqual(result["ref_display_bonds"], "perceived")
+        self.assertGreater(result["probe_mol_aligned"].GetNumBonds(), 0)
+        self.assertGreater(result["ref_mol"].GetNumBonds(), 0)
+
+    def test_compare_rmsd_geometry_mapping_uses_dataframe_connectivity_bonds(self):
+        atoms, coords = self._embedded_structure()
+        probe_coords = coords.copy()
+        probe_coords[1] += np.array([0.02, 0.00, 0.00])
+        bonds = np.array([[0, 1], [1, 2]], dtype=object)
+        df = pd.DataFrame(
+            {
+                "atoms": [atoms],
+                "probe-oc": [probe_coords],
+                "ref-oc": [coords],
+                "connectivity_bonds": [bonds],
+            }
+        )
+
+        with patch(
+            "frust.utils.RMSD.rdDetermineBonds.DetermineBonds",
+            side_effect=RuntimeError("bond perception failed"),
+        ):
+            result = compare_rmsd(
+                {"df": df, "coords_col": "probe-oc"},
+                {"df": df, "coords_col": "ref-oc"},
+                mapping="geometry",
+                render=False,
+                print_summary=False,
+            )
+
+        self.assertEqual(result["probe_display_bonds"], "input")
+        self.assertEqual(result["ref_display_bonds"], "input")
+        self.assertEqual(result["probe_mol_aligned"].GetNumBonds(), 2)
+        self.assertEqual(result["ref_mol"].GetNumBonds(), 2)
+
+    def test_probe_style_keeps_hetero_atom_colors(self):
+        self.assertEqual(PROBE_STYLE["stick"]["colorscheme"], "orangeCarbon")
+        self.assertEqual(PROBE_STYLE["sphere"]["colorscheme"], "orangeCarbon")
+        self.assertNotIn("color", PROBE_STYLE["stick"])
+        self.assertNotIn("color", PROBE_STYLE["sphere"])
 
     def test_structure_comparison_scene_accepts_molto3d_style_options(self):
         atoms, coords = self._embedded_structure()

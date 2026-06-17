@@ -257,9 +257,16 @@ def _role_mapping_from_mol(mol: Chem.Mol, spec: TSGuess2Spec) -> dict[str, int]:
             "B_transfer_H": int(b_hydrogens[0]),
         }
     if spec.name in {"TS3", "TS4"}:
+        cat_b = int(match[0])
+        transfer_h = int(match[1])
+        cat_hydrogens = _hydrogen_neighbors(mol, cat_b)
+        cat_h = next((idx for idx in cat_hydrogens if idx != transfer_h), None)
+        if cat_h is None:
+            raise ValueError(f"Could not find {spec.name} cat_H on catalyst boron")
         return {
-            "cat_B": int(match[0]),
-            "transfer_H": int(match[1]),
+            "cat_B": cat_b,
+            "cat_H": int(cat_h),
+            "transfer_H": transfer_h,
             "pin_B": int(match[2]),
             "substrate_C": int(match[3]),
         }

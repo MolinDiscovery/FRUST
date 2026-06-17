@@ -139,6 +139,7 @@ result = ft.vis.compare_rmsd(
 | --- | --- | --- |
 | `"topology"` | Infer bonds with RDKit, match the heavy-atom graph, and choose the lowest-RMSD match | Atom order may differ and RDKit can perceive the molecule |
 | `"index"` | Pair heavy atoms in input order and skip bond perception/topology matching | Atom order already matches, or bond perception fails for a TS-like geometry |
+| `"geometry"` | Match same-element heavy atoms by 3D distance signatures, refine after alignment, and skip bond perception | Atom order differs and topology matching fails, but the conformations are similar |
 
 The default is `mapping="topology"` because it is robust to atom-order changes:
 
@@ -155,6 +156,26 @@ result = ft.vis.compare_rmsd(
     mapping="index",
 )
 ```
+
+Use geometry mapping when atom order differs and the structures are close
+enough that their internal distance patterns identify corresponding atoms:
+
+```python
+result = ft.vis.compare_rmsd(
+    {"df": old_df, "row_index": 0, "coords_col": "OptTS-oc"},
+    {"df": new_df, "row_index": 0, "coords_col": "OptTS-oc"},
+    mapping="geometry",
+    show_labels=True,
+)
+```
+
+!!! warning "Inspect geometry-mapped results"
+
+    Geometry mapping is a fallback for diagnostics. It does not use chemical
+    bond information, so symmetric groups or strongly rearranged conformations
+    can still produce a plausible-looking but chemically wrong atom map. Check
+    `result["df_dev"].head()`, use `show_labels=True`, or pass an explicit
+    `atom_map` when the exact correspondence matters.
 
 If the atom correspondence is known but not index-identical, pass explicit atom
 pairs:
@@ -195,7 +216,7 @@ The returned dictionary contains both the scalar RMSD and the mapped atom table:
 | key | Meaning |
 | --- | --- |
 | `rmsd` | Heavy-atom RMSD after aligning the probe to the reference |
-| `mapping` | Mapping mode actually used: `topology`, `index`, or `explicit` |
+| `mapping` | Mapping mode actually used: `topology`, `index`, `geometry`, or `explicit` |
 | `atom_map` | Mapped atom-index pairs as `(probe_idx, ref_idx)` |
 | `df_dev` | Per-atom mapped deviations sorted from largest to smallest |
 | `scene` | Reusable `GridScene` object |
@@ -219,5 +240,5 @@ result = ft.vis.compare_rmsd(
 ```
 
 The reference structure keeps normal element-colored styling. The aligned probe
-is drawn as a thinner orange overlay, so the two geometries stay visually
-separable.
+is drawn thinner with orange carbons, while hetero atoms keep element colors, so
+the two geometries stay visually separable without hiding B, N, or O atoms.
