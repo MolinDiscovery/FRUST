@@ -22,6 +22,7 @@ from frust.stepper import Stepper
 from frust.tsguess.matching import parse_rpos_value
 from frust.tsguess.specs import BUILTIN_TS_SPECS
 from frust.tsguess2.specs import BUILTIN_TS_SPECS_V2
+from frust.tsguess3.specs import BUILTIN_TS_SPECS_V3
 from frust.utils.io import read_ts_type_from_xyz
 from frust.utils.mols import create_mol_per_rpos, create_ts_per_rpos
 from frust.workflows.core import BaseWorkflow, ExecutionOptions, StageDef, WorkflowTarget
@@ -36,9 +37,11 @@ def _screen_ts_specs_for_backend(backend: str) -> dict[str, Any]:
     backend_key = str(backend).strip().lower()
     if backend_key == "tsguess2":
         return BUILTIN_TS_SPECS_V2
+    if backend_key == "tsguess3":
+        return BUILTIN_TS_SPECS_V3
     if backend_key == "tsguess":
         return BUILTIN_TS_SPECS
-    raise ValueError("ts_backend must be one of 'tsguess2' or 'tsguess'")
+    raise ValueError("ts_backend must be one of 'tsguess2', 'tsguess3', or 'tsguess'")
 
 
 def _row_label(row: pd.Series, position: int, columns: tuple[str, ...]) -> str:
@@ -443,9 +446,11 @@ class ScreenTSWorkflow(BaseWorkflow):
     ts_types : tuple or list of str, optional
         Built-in TS types to generate. Supported values are ``"TS1"``,
         ``"TS2"``, ``"TS3"``, and ``"TS4"``.
-    ts_backend : {"tsguess2", "tsguess"}, optional
+    ts_backend : {"tsguess2", "tsguess3", "tsguess"}, optional
         Backend used to create initial TS guesses. ``"tsguess2"`` builds
         connected TS SMILES and embeds them with V2 role constraints.
+        ``"tsguess3"`` builds connected TS SMILES and embeds TS3/TS4 with
+        fragment-aware V3 role constraints.
         ``"tsguess"`` uses the original assembly backend.
     method : MethodPlan or str or None, optional
         Calculator plan for all workflow stages. Accepts ``None`` for the
@@ -916,9 +921,10 @@ def screen_ts(
     ts_types : tuple or list of str, optional
         Built-in TS types to generate, usually some subset of ``"TS1"``,
         ``"TS2"``, ``"TS3"``, and ``"TS4"``.
-    ts_backend : {"tsguess2", "tsguess"}, optional
+    ts_backend : {"tsguess2", "tsguess3", "tsguess"}, optional
         TS guess backend. ``"tsguess2"`` is the default SMILES-roundtrip
-        backend; ``"tsguess"`` preserves the original assembly backend.
+        backend; ``"tsguess3"`` adds fragment-aware TS3/TS4 embedding;
+        ``"tsguess"`` preserves the original assembly backend.
     method : MethodPlan or str or None, optional
         Calculator plan for all workflow stages. Accepts ``None`` for the
         default ``"wb97xd3-631g"`` preset, a preset string, or a custom

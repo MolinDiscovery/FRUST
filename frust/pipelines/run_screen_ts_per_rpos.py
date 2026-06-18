@@ -158,7 +158,7 @@ def run_init(
     ----------
     screen_target : pandas.DataFrame
         One-row expanded screen dataframe with fixed ``ts_type`` and ``rpos``.
-    ts_backend : {"tsguess2", "tsguess"}, optional
+    ts_backend : {"tsguess2", "tsguess3", "tsguess"}, optional
         TS guess backend used by :func:`frust.screen.create_ts_guesses`.
     n_confs : int or None, optional
         Number of TS guess conformers to generate. ``None`` selects the

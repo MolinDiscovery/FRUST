@@ -154,6 +154,27 @@ class WorkflowTargetTests(unittest.TestCase):
             ],
         )
 
+    def test_screen_ts_accepts_tsguess3_backend(self):
+        wf = ft.workflows.screen_ts(
+            dataframe=_screen_df(),
+            ts_types=["TS3"],
+            ts_backend="tsguess3",
+        )
+
+        targets = wf.targets()
+
+        self.assertEqual([target.metadata["ts_type"] for target in targets], ["TS3", "TS3"])
+
+    def test_screen_ts_backend_errors_list_tsguess3(self):
+        wf = ft.workflows.screen_ts(
+            dataframe=_screen_df(),
+            ts_types=["TS3"],
+            ts_backend="missing",
+        )
+
+        with self.assertRaisesRegex(ValueError, "tsguess3"):
+            wf.targets()
+
 
 class WorkflowExecutionTests(unittest.TestCase):
     def setUp(self):
