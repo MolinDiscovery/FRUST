@@ -28,8 +28,11 @@ _PUBLIC_API: dict[str, tuple[str, str]] = {
     "reaction_scene_cells": ("tooltoad.vis", "reaction_scene_cells"),
     "DrawUniqueChGrid": ("frust.vis.aromatic", "DrawUniqueChGrid"),
     "plot_energy_profile": ("frust.vis.energy_profile", "plot_energy_profile"),
+    "conformer_ensemble_grid_scene_from_dataframe": ("frust.vis.conformers", "conformer_ensemble_grid_scene_from_dataframe"),
+    "conformer_ensemble_scene_from_dataframe": ("frust.vis.conformers", "conformer_ensemble_scene_from_dataframe"),
     "plot_lig": ("frust.vis.molecules", "plot_lig"),
     "plot_mols": ("frust.vis.molecules", "plot_mols"),
+    "plot_conformers": ("frust.vis.conformers", "plot_conformers"),
     "plot_row": ("frust.vis.molecules", "plot_row"),
     "plot_rpos": ("frust.vis.molecules", "plot_rpos"),
     "plot_regression_outliers": ("frust.vis.regression", "plot_regression_outliers"),
@@ -39,6 +42,7 @@ _PUBLIC_API: dict[str, tuple[str, str]] = {
     "compare_rmsd": ("frust.vis.structure_comparison", "compare_rmsd"),
     "structure_comparison_scene": ("frust.vis.structure_comparison", "structure_comparison_scene"),
     "show_scene": ("frust.vis.scenes", "show_scene"),
+    "show_conformer_ensemble_scene": ("frust.vis.conformers", "show_conformer_ensemble_scene"),
     "molecule_scene_from_dataframe": ("frust.vis.scenes", "molecule_scene_from_dataframe"),
     "vibration_scene_from_dataframe": ("frust.vis.scenes", "vibration_scene_from_dataframe"),
     "ts_guess_scene_from_dataframe": ("frust.vis.scenes", "ts_guess_scene_from_dataframe"),
@@ -83,6 +87,12 @@ if TYPE_CHECKING:
     from tooltoad.vis import reaction_scene_cells
 
     from frust.vis.aromatic import DrawUniqueChGrid
+    from frust.vis.conformers import (
+        conformer_ensemble_grid_scene_from_dataframe,
+        conformer_ensemble_scene_from_dataframe,
+        plot_conformers,
+        show_conformer_ensemble_scene,
+    )
     from frust.vis.energy_profile import plot_energy_profile
     from frust.vis.molecules import MolTo3DGrid, plot_lig, plot_mols, plot_row, plot_rpos
     from frust.vis.regression import plot_regression_outliers

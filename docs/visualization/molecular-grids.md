@@ -68,6 +68,85 @@ Common options include:
 | `linked` | Rotate and zoom all cells together |
 | `export_HTML` | Write the interactive viewer to an HTML file |
 
+## Conformer Ensembles
+
+`plot_conformers` is for FRUST dataframes where several rows are conformers of
+one or more TS-like structures. It groups the dataframe by FRUST identity
+columns such as `system_name`, `structure_type`, and `rpos`, then shows one
+viewer cell per conformer family. Within each cell, FRUST aligns the selected
+conformers on the constrained core, shows that core once, and overlays only the
+mobile atoms from the selected conformers.
+
+For example, the input can be a compact conformer table like this:
+
+| `substrate_name` | `rpos` | `cid` | `constraint_roles` | `energy_uff` |
+| --- | ---: | ---: | --- | ---: |
+| `anisole` | 4 | 0 | `{"cat_B": 0, "cat_N": 1, "substrate_C": 2}` | 0.0 |
+| `anisole` | 4 | 1 | `{"cat_B": 0, "cat_N": 1, "substrate_C": 2}` | 0.9 |
+| `anisole` | 4 | 2 | `{"cat_B": 0, "cat_N": 1, "substrate_C": 2}` | 1.8 |
+
+```python
+import frust as ft
+
+# Shows every conformer family in df, for example one cell per rpos.
+ft.plot_conformers(
+    df,
+    mode="representatives+cloud",
+    top_n=25,
+    energy_window_kcal=5.0,
+    export_HTML="docs/assets/conformer-ensemble-example.html",
+)
+```
+
+Pass `row_index` when you want to debug one family instead of the whole grid:
+
+```python
+ft.plot_conformers(df, row_index=0, mode="single")
+```
+
+<iframe
+  src="../../assets/conformer-ensemble-example.html"
+  title="Core-aligned conformer ensemble example"
+  width="100%"
+  height="520"
+  loading="lazy"
+  style="border: 1px solid var(--md-default-fg-color--lightest); border-radius: 6px;"
+></iframe>
+
+The core atoms come from `constraint_roles` by default. If a dataframe only has
+legacy `constraint_atoms`, FRUST uses those instead. For custom structures, pass
+the anchor atoms directly:
+
+```python
+ft.plot_conformers(
+    df,
+    core_atoms=[0, 1, 2, 7],
+    mode="cloud",
+    color_by="uniform",
+    cloud_color="#4f6f7a",
+    cloud_opacity=0.55,
+    cloud_radius=0.075,
+)
+```
+
+!!! tip "Clutter control"
+
+    Start with `mode="representatives+cloud"` and an `energy_window_kcal`
+    cutoff. Use `mode="single"` for debugging one conformer at a time, or
+    `mode="cluster"` when you want one color per conformer family. On a white
+    background, raise `cloud_opacity` or `cloud_radius` if the cloud reads too
+    much like a watermark, or lower them when the ensemble becomes too dense.
+
+!!! note "Scene objects"
+
+    If you build the scene directly with
+    `ft.vis.conformer_ensemble_scene_from_dataframe(...)`, render it with
+    `ft.vis.show_conformer_ensemble_scene(scene)`. That helper reapplies the
+    per-model styles needed for transparent clouds and clear representatives.
+    Use `ft.vis.conformer_ensemble_grid_scene_from_dataframe(...)` when you
+    want the same all-families grid scene that `ft.plot_conformers(...)`
+    renders by default.
+
 ## DataFrame Scene Objects
 
 Most users should call `plot_mols(...)` directly:

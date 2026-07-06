@@ -21,6 +21,7 @@ class PublicApiTests(unittest.TestCase):
             pipes,
             screen,
             plot_vibs,
+            plot_conformers,
             inspect_ts_vibrations,
             summarize_ts_vibrations,
             utils,
@@ -46,6 +47,8 @@ class PublicApiTests(unittest.TestCase):
         from frust.utils.io import write_xyz as write_xyz_direct
         from frust.utils.mols import get_molecule_name
         from frust.vis import compare_rmsd as compare_rmsd_direct
+        from frust.vis import conformer_ensemble_grid_scene_from_dataframe as conformer_grid_direct
+        from frust.vis import plot_conformers as plot_conformers_direct
         from frust.vis import plot_mols as plot_mols_direct
         from frust.vis import plot_vibs as plot_vibs_direct
         from frust.vis import ArrowOverlay, ScreenLabelOverlay
@@ -71,6 +74,7 @@ class PublicApiTests(unittest.TestCase):
             "inspect_ts_vibrations",
             "summarize_ts_vibrations",
             "plot_vibs",
+            "plot_conformers",
             "write_xyz",
             "write_xyz_structures",
             "read_ts_type_from_xyz",
@@ -105,6 +109,8 @@ class PublicApiTests(unittest.TestCase):
         self.assertIs(summarize_ts_vibrations, summarize_direct)
         self.assertIs(ft.plot_vibs, plot_vibs_direct)
         self.assertIs(plot_vibs, plot_vibs_direct)
+        self.assertIs(ft.plot_conformers, plot_conformers_direct)
+        self.assertIs(plot_conformers, plot_conformers_direct)
         self.assertIs(ft.write_xyz, write_xyz_direct)
         self.assertIs(write_xyz, write_xyz_direct)
         self.assertIs(ft.ClusterConfig, ClusterConfig)
@@ -125,6 +131,8 @@ class PublicApiTests(unittest.TestCase):
         self.assertIs(vis, vis_direct)
         self.assertIs(ft.vis.plot_mols, plot_mols_direct)
         self.assertIs(ft.vis.plot_vibs, plot_vibs_direct)
+        self.assertIs(ft.vis.plot_conformers, plot_conformers_direct)
+        self.assertIs(ft.vis.conformer_ensemble_grid_scene_from_dataframe, conformer_grid_direct)
         self.assertIs(ft.vis.compare_rmsd, compare_rmsd_direct)
         self.assertFalse(hasattr(ft.vis, "compare_xyz_rmsd"))
         self.assertFalse(hasattr(ft.vis, "compare_structure_rmsd"))

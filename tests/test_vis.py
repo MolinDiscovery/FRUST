@@ -20,9 +20,18 @@ from scipy.stats import linregress
 from tooltoad.scene3d import Py3DmolGridRenderer as TooltoadPy3DmolGridRenderer
 
 import frust.vis as vis
+import frust.vis.conformers as conformers_module
 import frust.vis.molecules as molecules_module
 import frust.vis.structure_comparison as structure_comparison_module
-from frust.vis import MolTo3DGrid, RxnTo3DGrid, plot_energy_profile, plot_mols
+from frust.vis import (
+    MolTo3DGrid,
+    RxnTo3DGrid,
+    conformer_ensemble_grid_scene_from_dataframe,
+    conformer_ensemble_scene_from_dataframe,
+    plot_conformers,
+    plot_energy_profile,
+    plot_mols,
+)
 from frust.vis import (
     ArrowOverlay,
     GridScene,
@@ -124,13 +133,16 @@ class PlotEnergyProfileTests(unittest.TestCase):
     def test_public_vis_imports_remain_compatible(self):
         self.assertIs(vis.plot_energy_profile, plot_energy_profile)
         self.assertIs(vis.plot_mols, plot_mols)
+        self.assertIs(vis.plot_conformers, plot_conformers)
         self.assertIs(vis.MolTo3DGrid, MolTo3DGrid)
         self.assertIs(vis.RxnTo3DGrid, RxnTo3DGrid)
         self.assertTrue(callable(vis.reaction_scene_cells))
         self.assertIs(vis.ArrowOverlay, ArrowOverlay)
         self.assertIs(vis.ScreenLabelOverlay, ScreenLabelOverlay)
         self.assertTrue(callable(vis.show_scene))
+        self.assertTrue(callable(vis.show_conformer_ensemble_scene))
         self.assertTrue(callable(vis.molecule_scene_from_dataframe))
+        self.assertTrue(callable(vis.conformer_ensemble_scene_from_dataframe))
         self.assertTrue(callable(vis.vibration_scene_from_dataframe))
         self.assertTrue(callable(vis.ts_guess_scene))
 
@@ -662,6 +674,290 @@ class SceneAdapterTests(unittest.TestCase):
 
         overlay_types = {type(overlay).__name__ for overlay in scene.cells[0].overlays}
         self.assertEqual(overlay_types, {"AngleOverlay"})
+
+
+class ConformerEnsembleSceneTests(unittest.TestCase):
+    @staticmethod
+    def _transform(coords):
+        rot = np.array(
+            [
+                [0.0, -1.0, 0.0],
+                [1.0, 0.0, 0.0],
+                [0.0, 0.0, 1.0],
+            ]
+        )
+        shift = np.array([4.0, -2.0, 1.5])
+        return np.asarray(coords, dtype=float) @ rot.T + shift
+
+    def conformer_df(self):
+        base = np.array(
+            [
+                [0.0, 0.0, 0.0],
+                [1.0, 0.0, 0.0],
+                [0.0, 1.0, 0.0],
+                [1.0, 1.0, 0.0],
+                [1.0, 1.0, 1.0],
+            ],
+            dtype=float,
+        )
+        rows = []
+        energies = [0.0, 2.0, 6.0, 1.0]
+        for cid, energy in enumerate(energies):
+            coords = base.copy()
+            coords[3] += np.array([0.0, 0.15 * cid, 0.0])
+            coords[4] += np.array([0.0, 0.15 * cid, 0.2 * cid])
+            if cid == 1:
+                coords = self._transform(coords)
+            rows.append(
+                {
+                    "system_name": "sys",
+                    "substrate_name": "anisole",
+                    "catalyst_name": "cat",
+                    "structure_type": "TS1",
+                    "molecule_role": "ts",
+                    "rpos": 4,
+                    "cid": cid,
+                    "atoms": ["B", "N", "C", "H", "O"],
+                    "connectivity_bonds": [(0, 1), (1, 2), (2, 3), (3, 4)],
+                    "coords_embedded": coords.tolist(),
+                    "constraint_roles": {"cat_B": 0, "cat_N": 1, "substrate_C": 2},
+                    "energy_uff": energy,
+                }
+            )
+        return pd.DataFrame(rows)
+
+    def multi_rpos_conformer_df(self):
+        frames = []
+        for offset, rpos in enumerate([3, 4, 5]):
+            frame = self.conformer_df()
+            frame["rpos"] = rpos
+            frame["structure_id"] = f"TS1:sys:r{rpos}"
+            frame["custom_name"] = f"TS1(sys_rpos({rpos}))"
+            frame["coords_embedded"] = frame["coords_embedded"].map(
+                lambda coords, offset=offset: (np.asarray(coords, dtype=float) + offset).tolist()
+            )
+            frames.append(frame)
+        return pd.concat(frames, ignore_index=True)
+
+    def test_conformer_scene_filters_and_renders_core_once_with_mobile_cloud(self):
+        scene = conformer_ensemble_scene_from_dataframe(
+            self.conformer_df(),
+            row_index=0,
+            mode="representatives+cloud",
+            top_n=3,
+            energy_window_kcal=3.0,
+        )
+
+        self.assertEqual(len(scene.cells), 1)
+        models = scene.cells[0].models
+        self.assertEqual(models[0].atoms, ["B", "N", "C"])
+        self.assertEqual(models[0].bonds, [(0, 1), (1, 2)])
+        mobile_models = [model for model in models if model.atoms == ["H", "O"]]
+        connector_models = [model for model in models if model.atoms == ["C", "H"]]
+        self.assertEqual(len(mobile_models), 4)
+        self.assertEqual(len(connector_models), 4)
+        cloud_models = [
+            model
+            for model in mobile_models
+            if model.style["stick"].get("opacity") < 0.9
+        ]
+        representative_models = [
+            model
+            for model in mobile_models
+            if model.style["stick"].get("opacity") >= 0.9
+        ]
+        self.assertEqual(len(cloud_models), 3)
+        self.assertEqual(len(representative_models), 1)
+        for model in cloud_models:
+            self.assertEqual(model.bonds, [(0, 1)])
+            self.assertIn("sphere", model.style)
+            self.assertGreaterEqual(model.style["stick"]["opacity"], 0.5)
+            self.assertAlmostEqual(model.style["stick"]["radius"], 0.075)
+        for model in connector_models:
+            self.assertEqual(model.bonds, [(0, 1)])
+            self.assertNotIn("sphere", model.style)
+            self.assertLess(model.style["stick"]["radius"], models[-2].style["stick"]["radius"])
+        self.assertEqual(models[0].style["stick"]["color"], "black")
+        self.assertIn("3 conformers", scene.cells[0].title)
+
+    def test_conformer_grid_scene_uses_one_cell_per_rpos_by_default(self):
+        scene = conformer_ensemble_grid_scene_from_dataframe(
+            self.multi_rpos_conformer_df(),
+            mode="representatives+cloud",
+            top_n=2,
+        )
+
+        self.assertEqual(len(scene.cells), 3)
+        self.assertEqual(scene.columns, 3)
+        self.assertIn("anisole r3", scene.cells[0].title)
+        self.assertIn("anisole r4", scene.cells[1].title)
+        self.assertIn("anisole r5", scene.cells[2].title)
+        for cell in scene.cells:
+            self.assertIn("2 conformers", cell.title)
+
+    def test_conformer_grid_scene_can_select_families_by_row_indices(self):
+        scene = conformer_ensemble_grid_scene_from_dataframe(
+            self.multi_rpos_conformer_df(),
+            row_indices=[0, 8],
+            mode="single",
+        )
+
+        self.assertEqual(len(scene.cells), 2)
+        self.assertEqual(scene.columns, 2)
+        self.assertIn("anisole r3", scene.cells[0].title)
+        self.assertIn("anisole r5", scene.cells[1].title)
+
+    def test_conformer_grid_scene_accepts_parquet_object_array_coordinates(self):
+        df = self.multi_rpos_conformer_df()
+
+        def object_array(coords):
+            rows = np.empty(len(coords), dtype=object)
+            rows[:] = [np.asarray(row, dtype=float) for row in coords]
+            return rows
+
+        df["coords_embedded"] = df["coords_embedded"].map(object_array)
+
+        scene = conformer_ensemble_grid_scene_from_dataframe(df, mode="single")
+
+        self.assertEqual(len(scene.cells), 3)
+        self.assertIn("anisole r4", scene.cells[1].title)
+
+    def test_conformer_alignment_uses_core_atoms(self):
+        df = self.conformer_df()
+        ref = np.asarray(df.iloc[0]["coords_embedded"], dtype=float)
+        moved = np.asarray(df.iloc[1]["coords_embedded"], dtype=float)
+
+        aligned = conformers_module._align_coords_to_reference(moved, ref, [0, 1, 2])
+
+        np.testing.assert_allclose(aligned[[0, 1, 2]], ref[[0, 1, 2]], atol=1e-10)
+
+    def test_conformer_scene_supports_constraint_atoms_fallback_and_cluster_mode(self):
+        df = self.conformer_df().drop(columns=["constraint_roles"])
+        df["constraint_atoms"] = [[0, 1, 2]] * len(df)
+
+        scene = conformer_ensemble_scene_from_dataframe(
+            df,
+            row_index=0,
+            mode="cluster",
+            color_by="cluster",
+            n_clusters=2,
+            top_n=4,
+        )
+
+        models = scene.cells[0].models
+        self.assertGreaterEqual(len(models), 6)
+        cluster_colors = {
+            model.style["stick"]["color"]
+            for model in models[1:]
+            if model.style["stick"]["color"] != "black"
+        }
+        self.assertGreaterEqual(len(cluster_colors), 1)
+
+    def test_plot_conformers_applies_model_specific_styles_before_export(self):
+        class FakeViewer:
+            def __init__(self):
+                self.styles = []
+
+            def setStyle(self, selector, style, viewer=None):
+                self.styles.append((selector, style, viewer))
+
+        class FakeRenderer:
+            instances = []
+
+            def __init__(self, scene):
+                self.scene = scene
+                self.viewer = FakeViewer()
+                self.styles_at_export = None
+                self.export_path = None
+                FakeRenderer.instances.append(self)
+
+            def render(self):
+                return self.viewer
+
+            def write_html(self, path):
+                self.export_path = path
+                self.styles_at_export = list(self.viewer.styles)
+
+        with patch.object(conformers_module, "Py3DmolGridRenderer", FakeRenderer):
+            viewer = plot_conformers(
+                self.conformer_df(),
+                mode="representatives+cloud",
+                color_by="uniform",
+                top_n=2,
+                cloud_opacity=0.7,
+                cloud_radius=0.08,
+                cloud_color="#445566",
+                export_HTML="conformers.html",
+            )
+
+        renderer = FakeRenderer.instances[-1]
+        self.assertEqual(renderer.export_path, "conformers.html")
+        self.assertEqual(renderer.styles_at_export, viewer.styles)
+        self.assertEqual([style[0] for style in viewer.styles], [{"model": i} for i in range(7)])
+        self.assertEqual(viewer.styles[0][1]["stick"]["color"], "black")
+        self.assertEqual(viewer.styles[1][1]["stick"]["color"], "#445566")
+        self.assertEqual(viewer.styles[1][1]["stick"]["opacity"], 0.7)
+        self.assertEqual(viewer.styles[1][1]["stick"]["radius"], 0.08)
+        self.assertEqual(viewer.styles[-2][1]["stick"]["color"], "#445566")
+
+    def test_plot_conformers_defaults_to_all_conformer_families(self):
+        class FakeViewer:
+            def __init__(self):
+                self.styles = []
+
+            def setStyle(self, selector, style, viewer=None):
+                self.styles.append((selector, style, viewer))
+
+        class FakeRenderer:
+            instances = []
+
+            def __init__(self, scene):
+                self.scene = scene
+                self.viewer = FakeViewer()
+                FakeRenderer.instances.append(self)
+
+            def render(self):
+                return self.viewer
+
+            def write_html(self, path):
+                pass
+
+        with patch.object(conformers_module, "Py3DmolGridRenderer", FakeRenderer):
+            plot_conformers(self.multi_rpos_conformer_df(), mode="single")
+
+        renderer = FakeRenderer.instances[-1]
+        self.assertEqual(len(renderer.scene.cells), 3)
+        self.assertEqual(renderer.scene.columns, 3)
+        self.assertEqual(
+            {style[2] for style in renderer.viewer.styles},
+            {(0, 0), (0, 1), (0, 2)},
+        )
+
+    def test_plot_conformers_row_index_selects_one_conformer_family(self):
+        class FakeRenderer:
+            instances = []
+
+            def __init__(self, scene):
+                self.scene = scene
+                self.viewer = type(
+                    "FakeViewer",
+                    (),
+                    {"setStyle": lambda *args, **kwargs: None},
+                )()
+                FakeRenderer.instances.append(self)
+
+            def render(self):
+                return self.viewer
+
+            def write_html(self, path):
+                pass
+
+        with patch.object(conformers_module, "Py3DmolGridRenderer", FakeRenderer):
+            plot_conformers(self.multi_rpos_conformer_df(), row_index=4, mode="single")
+
+        renderer = FakeRenderer.instances[-1]
+        self.assertEqual(len(renderer.scene.cells), 1)
+        self.assertIn("anisole r4", renderer.scene.cells[0].title)
 
 
 class StructureComparisonTests(unittest.TestCase):

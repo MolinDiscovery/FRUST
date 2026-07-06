@@ -265,7 +265,7 @@ def _role_mapping_from_mol(mol: Chem.Mol, spec: TSGuess2Spec) -> dict[str, int]:
             raise ValueError(f"Could not find {spec.name} cat_H on catalyst boron")
         return {
             "cat_B": cat_b,
-            "cat_H": int(cat_h),
+            #"cat_H": int(cat_h),
             "transfer_H": transfer_h,
             "pin_B": int(match[2]),
             "substrate_C": int(match[3]),

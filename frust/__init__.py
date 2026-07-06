@@ -47,6 +47,7 @@ _PUBLIC_API: dict[str, tuple[str, str]] = {
     # Visualization
     "plot_vibs": ("frust.vis", "plot_vibs"),
     "plot_mols": ("frust.vis", "plot_mols"),
+    "plot_conformers": ("frust.vis", "plot_conformers"),
     "plot_row": ("frust.vis", "plot_row"),
     "plot_lig": ("frust.vis", "plot_lig"),
     "plot_rpos": ("frust.vis", "plot_rpos"),
@@ -117,6 +118,7 @@ if TYPE_CHECKING:
         MolTo3DGrid,
         RxnTo3DGrid,
         plot_energy_profile,
+        plot_conformers,
         plot_lig,
         plot_mols,
         plot_regression_outliers,
