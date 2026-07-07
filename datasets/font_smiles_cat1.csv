@@ -1,5 +1,5 @@
 compound_name,role,smiles
-methoxyfuran,substrate,COC1=CC=CO1
+methoxyfuran,substrate,CC1=CC=CC(N(C)C)=C1
 NMe,catalyst,BC1=C(N(C)C)C=CC=C1
 NEt,catalyst,BC1=C(N(CC)CC)C=CC=C1
 Pip,catalyst,BC1=C(N2CCCCC2)C=CC=C1

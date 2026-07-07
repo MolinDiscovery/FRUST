@@ -6,6 +6,8 @@ import pandas as pd
 from rdkit import Chem
 from rdkit.Chem import rdDetermineBonds, rdMolAlign
 
+VALID_MAPPING_MODES = {"topology", "index", "geometry", "connectivity"}
+
 
 def read_xyz(xyz_path: str) -> tuple[list[str], np.ndarray]:
     """Read symbols and coordinates from an XYZ file.
@@ -184,9 +186,13 @@ def compare_symbols_coords_rmsd(
         and choose the lowest-RMSD substructure match. Use ``"index"`` when
         atom order already defines correspondence; this maps heavy atoms by
         their order in the two inputs and does not require bond perception. Use
-        ``"geometry"`` when topology matching fails and atom order differs;
-        this maps same-element heavy atoms using interatomic distance
-        signatures and alignment refinement, without bond perception.
+        ``"connectivity"`` when atom order differs, RDKit bond perception is
+        unreliable, and both structures have supplied bonds such as
+        ``connectivity_bonds``. This maps the supplied heavy-atom graph without
+        perceiving bonds from the coordinates. Use ``"geometry"`` when no
+        chemically useful connectivity is available; this maps same-element
+        heavy atoms using interatomic distance signatures and alignment
+        refinement, without bond perception.
     atom_map
         Explicit atom-index pairs as ``(probe_idx, ref_idx)`` in the original
         input atom ordering. When supplied, this takes precedence over
@@ -194,11 +200,11 @@ def compare_symbols_coords_rmsd(
         ``atom_scope="heavy"``, every mapped pair must contain non-hydrogen
         atoms with matching element symbols.
     probe_bonds, ref_bonds
-        Optional display bonds for the probe and reference as ``(atom_i,
-        atom_j)`` pairs in each input's original atom order. These bonds are
-        only used to build the returned RDKit molecules for visualization when
-        topology mapping is not already using perceived bonds. They do not
-        define or constrain the RMSD atom map.
+        Optional bonds for the probe and reference as ``(atom_i, atom_j)`` pairs
+        in each input's original atom order. These bonds are used to build the
+        returned RDKit molecules for visualization when topology mapping is not
+        already using perceived bonds. They also define the atom correspondence
+        when ``mapping="connectivity"``.
 
     Returns
     -------
@@ -216,9 +222,10 @@ def compare_symbols_coords_rmsd(
         raise ValueError(
             "Currently only atom_scope='heavy' is supported."
         )
-    if mapping not in {"topology", "index", "geometry"}:
+    if mapping not in VALID_MAPPING_MODES:
+        valid = ", ".join(sorted(VALID_MAPPING_MODES))
         raise ValueError(
-            "mapping must be one of 'topology', 'index', or 'geometry'."
+            f"mapping must be one of {valid}."
         )
 
     probe_symbols_list = [str(symbol) for symbol in probe_symbols]
@@ -272,6 +279,17 @@ def compare_symbols_coords_rmsd(
             atom_scope=atom_scope,
         )
         mapping_used = "geometry"
+    elif mapping == "connectivity":
+        resolved_atom_map = get_connectivity_atom_map(
+            probe_symbols_list,
+            probe_coords_arr,
+            ref_symbols_list,
+            ref_coords_arr,
+            probe_bonds=probe_bonds,
+            ref_bonds=ref_bonds,
+            atom_scope=atom_scope,
+        )
+        mapping_used = "connectivity"
     else:
         resolved_atom_map = get_best_heavy_atom_map(
             probe_heavy_mol,
@@ -775,6 +793,145 @@ def get_geometry_atom_map(
         probe_symbols,
         ref_symbols,
         atom_scope=atom_scope,
+    )
+
+
+def get_connectivity_atom_map(
+    probe_symbols: Sequence[str],
+    probe_coords: np.ndarray,
+    ref_symbols: Sequence[str],
+    ref_coords: np.ndarray,
+    *,
+    probe_bonds: Any | None,
+    ref_bonds: Any | None,
+    atom_scope: str = "heavy",
+) -> list[tuple[int, int]]:
+    """Map atoms by supplied connectivity bonds.
+
+    Parameters
+    ----------
+    probe_symbols
+        Atomic symbols for the structure that will be aligned.
+    probe_coords
+        Probe Cartesian coordinates with shape ``(n_atoms, 3)``.
+    ref_symbols
+        Atomic symbols for the reference structure.
+    ref_coords
+        Reference Cartesian coordinates with shape ``(n_atoms, 3)``.
+    probe_bonds, ref_bonds
+        Bond pairs as ``(atom_i, atom_j)`` in each structure's original atom
+        order. These bonds are treated as the atom graph used for mapping.
+    atom_scope
+        Atom scope used for the generated map. Currently only ``"heavy"`` is
+        supported, so hydrogens are skipped in the returned atom map.
+
+    Returns
+    -------
+    list of tuple of int
+        Atom-index pairs as ``(probe_idx, ref_idx)`` in original input order.
+
+    Raises
+    ------
+    ValueError
+        If bonds are missing, malformed, incompatible with the atoms, or do not
+        support a complete same-element heavy-atom graph match.
+    """
+    if atom_scope != "heavy":
+        raise ValueError("Currently only atom_scope='heavy' is supported.")
+    if _is_missing_value(probe_bonds) or _is_missing_value(ref_bonds):
+        raise ValueError(
+            "mapping='connectivity' requires bonds for both structures. "
+            "For dataframe inputs, keep the connectivity_bonds column or pass "
+            "bonds=... explicitly."
+        )
+
+    probe_heavy = _heavy_atom_entries(probe_symbols)
+    ref_heavy = _heavy_atom_entries(ref_symbols)
+    _require_matching_heavy_formula(probe_heavy, ref_heavy)
+
+    probe_mol = _symbols_coords_bonds_to_rdkit_mol(
+        [str(symbol) for symbol in probe_symbols],
+        np.asarray(probe_coords, dtype=float),
+        probe_bonds,
+        label="probe",
+    )
+    ref_mol = _symbols_coords_bonds_to_rdkit_mol(
+        [str(symbol) for symbol in ref_symbols],
+        np.asarray(ref_coords, dtype=float),
+        ref_bonds,
+        label="reference",
+    )
+
+    candidates: list[tuple[float, list[tuple[int, int]]]] = []
+    errors: list[str] = []
+
+    try:
+        atom_map = _connectivity_atom_map_one_direction(probe_mol, ref_mol)
+        candidates.append(
+            (
+                _atom_map_alignment_rmsd(probe_mol, ref_mol, atom_map),
+                atom_map,
+            )
+        )
+    except ValueError as exc:
+        errors.append(f"probe subgraph in reference: {exc}")
+
+    try:
+        reverse_map = _connectivity_atom_map_one_direction(ref_mol, probe_mol)
+        atom_map = sorted((probe_idx, ref_idx) for ref_idx, probe_idx in reverse_map)
+        candidates.append(
+            (
+                _atom_map_alignment_rmsd(probe_mol, ref_mol, atom_map),
+                atom_map,
+            )
+        )
+    except ValueError as exc:
+        errors.append(f"reference subgraph in probe: {exc}")
+
+    if not candidates:
+        detail = "; ".join(errors)
+        raise ValueError(
+            "Could not map all heavy atoms from supplied connectivity bonds. "
+            f"{detail}"
+        )
+
+    _, best_map = min(candidates, key=lambda item: item[0])
+    return _validate_atom_map(
+        best_map,
+        probe_symbols,
+        ref_symbols,
+        atom_scope=atom_scope,
+    )
+
+
+def _connectivity_atom_map_one_direction(
+    probe_mol: Chem.Mol,
+    ref_mol: Chem.Mol,
+) -> list[tuple[int, int]]:
+    """Return the best heavy-atom map with ``probe_mol`` as the query graph."""
+    probe_heavy_mol, probe_parent_map = get_heavy_mol_with_parent_map(probe_mol)
+    ref_heavy_mol, ref_parent_map = get_heavy_mol_with_parent_map(ref_mol)
+    return get_best_heavy_atom_map(
+        probe_heavy_mol,
+        ref_heavy_mol,
+        probe_parent_map,
+        ref_parent_map,
+    )
+
+
+def _atom_map_alignment_rmsd(
+    probe_mol: Chem.Mol,
+    ref_mol: Chem.Mol,
+    atom_map: Sequence[tuple[int, int]],
+) -> float:
+    """Return alignment RMSD for a candidate original-index atom map."""
+    probe_copy = Chem.Mol(probe_mol)
+    return float(
+        rdMolAlign.AlignMol(
+            probe_copy,
+            ref_mol,
+            atomMap=[(int(probe_idx), int(ref_idx)) for probe_idx, ref_idx in atom_map],
+        )
     )
 
 

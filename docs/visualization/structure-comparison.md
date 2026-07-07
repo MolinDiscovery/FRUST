@@ -139,6 +139,7 @@ result = ft.vis.compare_rmsd(
 | --- | --- | --- |
 | `"topology"` | Infer bonds with RDKit, match the heavy-atom graph, and choose the lowest-RMSD match | Atom order may differ and RDKit can perceive the molecule |
 | `"index"` | Pair heavy atoms in input order and skip bond perception/topology matching | Atom order already matches, or bond perception fails for a TS-like geometry |
+| `"connectivity"` | Match the supplied heavy-atom graph from `bonds` or dataframe `connectivity_bonds` and choose the lowest-RMSD graph match | Atom order differs, RDKit bond perception fails, and both structures store useful connectivity |
 | `"geometry"` | Match same-element heavy atoms by 3D distance signatures, refine after alignment, and skip bond perception | Atom order differs and topology matching fails, but the conformations are similar |
 
 The default is `mapping="topology"` because it is robust to atom-order changes:
@@ -156,6 +157,46 @@ result = ft.vis.compare_rmsd(
     mapping="index",
 )
 ```
+
+Use connectivity mapping for FRUST transition-state rows when atom order differs
+but both rows still carry `connectivity_bonds`:
+
+| label | `atoms` order | `connectivity_bonds` | `OptTS-oc` |
+| --- | --- | --- | --- |
+| `old_ts4` | old generated order | stored TS graph | optimized coordinates |
+| `new_ts4` | new generated order | stored TS graph | optimized coordinates |
+
+```python
+result = ft.vis.compare_rmsd(
+    {
+        "df": old_ts4,
+        "row_index": 0,
+        "coords_col": "OptTS-oc",
+        "label": "old TS4",
+    },
+    {
+        "df": new_ts4,
+        "row_index": 0,
+        "coords_col": "OptTS-oc",
+        "label": "new TS4",
+    },
+    mapping="connectivity",
+    top_n=5,
+)
+
+result["df_dev"].head()
+```
+
+This uses the `connectivity_bonds` column from each dataframe row to find the
+heavy-atom correspondence. It does not ask RDKit to infer bonds from the TS
+coordinates.
+
+!!! note "Connectivity is still display connectivity"
+
+    `connectivity_bonds` is useful here because structure comparison needs a
+    chemically constrained atom map for visualization and RMSD diagnostics.
+    Reaction constraints and optimizers should still use role-based fields such
+    as `constraint_spec`.
 
 Use geometry mapping when atom order differs and the structures are close
 enough that their internal distance patterns identify corresponding atoms:
@@ -216,7 +257,7 @@ The returned dictionary contains both the scalar RMSD and the mapped atom table:
 | key | Meaning |
 | --- | --- |
 | `rmsd` | Heavy-atom RMSD after aligning the probe to the reference |
-| `mapping` | Mapping mode actually used: `topology`, `index`, `geometry`, or `explicit` |
+| `mapping` | Mapping mode actually used: `topology`, `index`, `connectivity`, `geometry`, or `explicit` |
 | `atom_map` | Mapped atom-index pairs as `(probe_idx, ref_idx)` |
 | `df_dev` | Per-atom mapped deviations sorted from largest to smallest |
 | `scene` | Reusable `GridScene` object |

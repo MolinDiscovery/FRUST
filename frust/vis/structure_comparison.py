@@ -133,14 +133,15 @@ def compare_rmsd(
     ``{"atoms": atoms, "coords": coords, "label": label, "bonds": bonds}``
         Explicit atoms/coordinates input. ``bonds`` is optional and should be a
         sequence of ``(atom_i, atom_j)`` pairs. These bonds are used for display
-        only; they do not define the RMSD atom correspondence.
+        and for atom correspondence when ``mapping="connectivity"``.
     ``{"df": df, "row_index": i, "coords_col": col, "atoms_col": "atoms"}``
         Coordinates from ``df.iloc[i][col]`` and atoms from
         ``df.iloc[i]["atoms"]``. ``row_index`` defaults to ``0`` and
         ``atoms_col`` defaults to ``"atoms"``. If the row contains a
-        ``connectivity_bonds`` column, those bonds are used for the viewer so
-        transition-state geometries can still render with sticks when RDKit
-        cannot infer bonds from the coordinates.
+        ``connectivity_bonds`` column, those bonds are used for the viewer and
+        for atom correspondence when ``mapping="connectivity"``. This lets
+        transition-state geometries render with sticks and be mapped by stored
+        connectivity when RDKit cannot infer bonds from the coordinates.
     ``{"row": row, "coords_col": col, "atoms_col": "atoms"}``
         Coordinates from a selected dataframe row or Series.
 
@@ -167,13 +168,16 @@ def compare_rmsd(
         the atom order is already meaningful; heavy atoms are paired in input
         order, and RDKit bond perception/topology matching is skipped. This is
         useful for transition-state guesses, constrained geometries, or other
-        structures where bond perception is unreliable. Use ``"geometry"``
-        when atom order differs and topology matching fails; FRUST matches
-        same-element heavy atoms by 3D distance signatures, refines the map
-        after alignment, and skips bond perception. Geometry mapping is a
-        diagnostic fallback for similar conformations, not a substitute for a
-        chemically curated atom map when the structures are very different or
-        highly symmetric.
+        structures where bond perception is unreliable. Use ``"connectivity"``
+        when atom order differs, RDKit bond perception fails, and both inputs
+        supply bonds such as dataframe ``connectivity_bonds``. FRUST maps the
+        supplied heavy-atom graph and scores graph matches by aligned RMSD. Use
+        ``"geometry"`` when atom order differs and no chemically useful
+        connectivity is available; FRUST matches same-element heavy atoms by 3D
+        distance signatures, refines the map after alignment, and skips bond
+        perception. Geometry mapping is a diagnostic fallback for similar
+        conformations, not a substitute for a chemically curated atom map when
+        the structures are very different or highly symmetric.
     atom_map
         Optional explicit atom correspondence as ``(probe_idx, ref_idx)``
         pairs in the original atom ordering. When supplied, it takes precedence
@@ -223,7 +227,7 @@ def compare_rmsd(
             RMSD after aligning the probe to the reference.
         ``mapping``
             Mapping strategy actually used: ``"topology"``, ``"index"``,
-            ``"geometry"``, or ``"explicit"``.
+            ``"connectivity"``, ``"geometry"``, or ``"explicit"``.
         ``atom_map``
             Atom-index pairs as ``(probe_idx, ref_idx)`` in original input
             ordering.

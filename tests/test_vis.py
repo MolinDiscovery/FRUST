@@ -1284,7 +1284,7 @@ class StructureComparisonTests(unittest.TestCase):
         self.assertGreater(result["probe_mol_aligned"].GetNumBonds(), 0)
         self.assertGreater(result["ref_mol"].GetNumBonds(), 0)
 
-    def test_compare_rmsd_geometry_mapping_uses_dataframe_connectivity_bonds(self):
+    def test_compare_rmsd_geometry_mapping_uses_dataframe_connectivity_bonds_for_display(self):
         atoms, coords = self._embedded_structure()
         probe_coords = coords.copy()
         probe_coords[1] += np.array([0.02, 0.00, 0.00])
@@ -1314,6 +1314,90 @@ class StructureComparisonTests(unittest.TestCase):
         self.assertEqual(result["ref_display_bonds"], "input")
         self.assertEqual(result["probe_mol_aligned"].GetNumBonds(), 2)
         self.assertEqual(result["ref_mol"].GetNumBonds(), 2)
+
+    def test_compare_rmsd_connectivity_mapping_uses_dataframe_bonds_for_reordered_atoms(self):
+        old_atoms = ["N", "C", "C", "C", "C", "C"]
+        old_coords = np.array(
+            [
+                [0.0, 0.0, 0.0],
+                [1.0, 0.0, 0.0],
+                [1.0, 1.0, 0.0],
+                [0.0, 1.0, 0.0],
+                [-1.0, 0.0, 0.0],
+                [0.0, -1.0, 0.0],
+            ],
+            dtype=float,
+        )
+        old_bonds = [(0, 1), (1, 2), (2, 3), (3, 4), (4, 0), (0, 5)]
+        new_atoms = ["N", "C", "C", "C", "C", "C"]
+        new_coords = np.array(
+            [
+                [0.0, 0.0, 0.0],
+                [3.0, 3.0, 0.0],
+                [1.0, 0.0, 0.0],
+                [0.0, -1.0, 0.0],
+                [-1.0, 0.0, 0.0],
+                [0.0, 1.0, 0.0],
+            ],
+            dtype=float,
+        )
+        new_bonds = [
+            (0, 2),
+            (2, 3),
+            (3, 4),
+            (4, 5),
+            (5, 0),
+            (0, 1),
+            (0, 3),
+        ]
+        old_df = pd.DataFrame(
+            {
+                "atoms": [old_atoms],
+                "OptTS-oc": [old_coords],
+                "connectivity_bonds": [old_bonds],
+            }
+        )
+        new_df = pd.DataFrame(
+            {
+                "atoms": [new_atoms],
+                "OptTS-oc": [new_coords],
+                "connectivity_bonds": [new_bonds],
+            }
+        )
+
+        result = compare_rmsd(
+            {"df": old_df, "coords_col": "OptTS-oc"},
+            {"df": new_df, "coords_col": "OptTS-oc"},
+            mapping="connectivity",
+            render=False,
+            print_summary=False,
+        )
+        reverse = compare_rmsd(
+            {"df": new_df, "coords_col": "OptTS-oc"},
+            {"df": old_df, "coords_col": "OptTS-oc"},
+            mapping="connectivity",
+            render=False,
+            print_summary=False,
+        )
+
+        self.assertEqual(result["mapping"], "connectivity")
+        self.assertIn((5, 1), result["atom_map"])
+        self.assertNotIn((5, 3), result["atom_map"])
+        self.assertIn((1, 5), reverse["atom_map"])
+        self.assertEqual(result["probe_display_bonds"], "input")
+        self.assertEqual(result["ref_display_bonds"], "input")
+
+    def test_compare_rmsd_connectivity_mapping_requires_bonds(self):
+        atoms, coords = self._embedded_structure()
+
+        with self.assertRaisesRegex(ValueError, "requires bonds for both structures"):
+            compare_rmsd(
+                {"atoms": atoms, "coords": coords},
+                {"atoms": atoms, "coords": coords},
+                mapping="connectivity",
+                render=False,
+                print_summary=False,
+            )
 
     def test_probe_style_keeps_hetero_atom_colors(self):
         self.assertEqual(PROBE_STYLE["stick"]["colorscheme"], "orangeCarbon")
