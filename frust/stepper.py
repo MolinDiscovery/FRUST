@@ -287,34 +287,40 @@ class Stepper:
         df : pandas.DataFrame
             FRUST dataframe with one conformer per row.
         name : str, optional
-            Step name recorded in ``df.attrs["frust_steps"]``.
+            Step name recorded in ``df.attrs["frust_steps"]``. Defaults to
+            ``"initial_prune"``.
         modes : sequence of str, optional
             PRISM modes to run in order. Supported values are ``"moi"``,
-            ``"rmsd"``, and opt-in ``"rot_corr_rmsd"``.
+            ``"rmsd"``, and opt-in ``"rot_corr_rmsd"``. Defaults to
+            ``("moi", "rmsd")``.
         coords_col : str or None, optional
-            Coordinate column to prune on. If ``None``, the latest coordinate
-            column is selected using the same convention as calculator stages.
+            Coordinate column to prune on. Defaults to ``None``, which selects
+            the latest coordinate column using the same convention as
+            calculator stages.
         atoms_col : str, optional
-            Atom-symbol column matching the coordinate order.
+            Atom-symbol column matching the coordinate order. Defaults to
+            ``"atoms"``.
         energy_col : str or None, optional
             Column used to sort rows within each structure group before
-            pruning. Energies are not passed to PRISM.
+            pruning. Defaults to ``None``. Energies are not passed to PRISM.
         group_cols : sequence of str or None, optional
-            Structure identity columns. If omitted, FRUST infers them from the
-            dataframe.
+            Structure identity columns. Defaults to ``None``, which lets FRUST
+            infer them from the dataframe.
         moi_max_deviation : float, optional
-            Relative moment-of-inertia deviation threshold.
+            Relative moment-of-inertia deviation threshold. Defaults to
+            ``0.01``.
         rmsd_max_rmsd : float, optional
-            RMSD threshold in Angstrom.
+            RMSD threshold in Angstrom. Defaults to ``0.25``.
         rmsd_max_dev : float or None, optional
-            Maximum single-atom deviation in Angstrom. ``None`` lets PRISM use
-            its default.
+            Maximum single-atom deviation in Angstrom. Defaults to ``None``,
+            which lets PRISM use ``2 * rmsd_max_rmsd``.
         timeout_s : int, optional
-            PRISM timeout in seconds.
+            PRISM timeout in seconds. Defaults to ``60``.
         heavy_atoms_only : bool, optional
-            Forwarded to PRISM RMSD modes.
+            Forwarded to PRISM RMSD modes. Defaults to ``True``.
         graph_source : {"connectivity_bonds", "graphize"}, optional
-            Connectivity source for ``"rot_corr_rmsd"``.
+            Connectivity source for ``"rot_corr_rmsd"``. Defaults to
+            ``"connectivity_bonds"``.
         debugfunction : callable or None, optional
             Optional callback for PRISM debug messages.
 

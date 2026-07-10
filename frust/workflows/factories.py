@@ -974,10 +974,13 @@ def screen_ts(
         ``OptTS``, frequency, and solvent stages. If ``False``, stop after the
         DFT pre-SP cutoff and keep the lowest-energy row.
     prune_initial : bool or dict, optional
-        If ``False``, leave the initial TS conformer ensemble unchanged. If
-        ``True``, insert PRISM pruning immediately after ``prepare`` using the
-        default modes ``("moi", "rmsd")``. Pass a dictionary to override the
-        pruning modes and thresholds, for example
+        Defaults to ``True``, which inserts PRISM pruning immediately after
+        ``prepare`` with ``modes=("moi", "rmsd")``,
+        ``moi_max_deviation=0.01``, ``rmsd_max_rmsd=1.25``,
+        ``heavy_atoms_only=True``, and
+        ``graph_source="connectivity_bonds"``. If ``False``, leave the initial
+        TS conformer ensemble unchanged. Pass a dictionary to override the
+        defaults, for example
         ``{"modes": ("moi", "rmsd"), "moi_max_deviation": 0.02,
         "rmsd_max_rmsd": 0.5, "rmsd_max_dev": 1.0}``. The two RMSD thresholds
         are in Angstrom. If ``rmsd_max_dev`` is omitted or ``None``, PRISM uses
