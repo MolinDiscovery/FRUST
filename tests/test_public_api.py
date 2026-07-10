@@ -17,6 +17,7 @@ class PublicApiTests(unittest.TestCase):
             show_timing,
             lowest_energy_rows,
             map_substrate_names,
+            prune_conformers,
             pipelines,
             pipes,
             screen,
@@ -46,6 +47,7 @@ class PublicApiTests(unittest.TestCase):
         from frust.utils.dataframes import map_substrate_names as map_names_direct
         from frust.utils.io import write_xyz as write_xyz_direct
         from frust.utils.mols import get_molecule_name
+        from frust.utils.pruning import prune_conformers as prune_conformers_direct
         from frust.vis import compare_rmsd as compare_rmsd_direct
         from frust.vis import conformer_ensemble_grid_scene_from_dataframe as conformer_grid_direct
         from frust.vis import plot_conformers as plot_conformers_direct
@@ -71,6 +73,7 @@ class PublicApiTests(unittest.TestCase):
             "show_timing",
             "lowest_energy_rows",
             "map_substrate_names",
+            "prune_conformers",
             "inspect_ts_vibrations",
             "summarize_ts_vibrations",
             "plot_vibs",
@@ -103,6 +106,8 @@ class PublicApiTests(unittest.TestCase):
         self.assertIs(lowest_energy_rows, lowest_direct)
         self.assertIs(ft.map_substrate_names, map_names_direct)
         self.assertIs(map_substrate_names, map_names_direct)
+        self.assertIs(ft.prune_conformers, prune_conformers_direct)
+        self.assertIs(prune_conformers, prune_conformers_direct)
         self.assertIs(ft.inspect_ts_vibrations, inspect_vibs_direct)
         self.assertIs(inspect_ts_vibrations, inspect_vibs_direct)
         self.assertIs(ft.summarize_ts_vibrations, summarize_direct)

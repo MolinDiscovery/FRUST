@@ -25,6 +25,7 @@ from frust.tsguess2.specs import BUILTIN_TS_SPECS_V2
 from frust.tsguess3.specs import BUILTIN_TS_SPECS_V3
 from frust.utils.io import read_ts_type_from_xyz
 from frust.utils.mols import create_mol_per_rpos, create_ts_per_rpos
+from frust.utils.pruning import normalize_pruning_options
 from frust.workflows.core import BaseWorkflow, ExecutionOptions, StageDef, WorkflowTarget
 from frust.workflows.methods import MethodPlan
 
@@ -76,7 +77,32 @@ def _unique_sanitized_tags(labels: list[str]) -> list[str]:
     return tags
 
 
-def _molecule_stage_defs(*, top_n: int, dft: bool) -> list[StageDef]:
+def _with_initial_prune(
+    stages: list[StageDef],
+    prune_initial: bool | dict[str, Any] | None,
+) -> list[StageDef]:
+    """Insert an optional initial pruning stage after preparation."""
+    pruning_options = normalize_pruning_options(prune_initial)
+    if pruning_options is None:
+        return stages
+    return [
+        stages[0],
+        StageDef(
+            "initial_prune",
+            "initial_prune",
+            kind="prune",
+            prune_options=pruning_options,
+        ),
+        *stages[1:],
+    ]
+
+
+def _molecule_stage_defs(
+    *,
+    top_n: int,
+    dft: bool,
+    prune_initial: bool | dict[str, Any] | None = False,
+) -> list[StageDef]:
     """Return the shared molecule stage graph."""
     stages = [
         StageDef("prepare", "prepare", kind="prepare"),
@@ -95,7 +121,7 @@ def _molecule_stage_defs(*, top_n: int, dft: bool) -> list[StageDef]:
         )
     else:
         stages.append(StageDef("filter", "filter", kind="filter"))
-    return stages
+    return _with_initial_prune(stages, prune_initial)
 
 
 class MolsWorkflow(BaseWorkflow):
@@ -134,6 +160,12 @@ class MolsWorkflow(BaseWorkflow):
     dft : bool, optional
         If ``True``, add DFT optimization, frequency, and solvent stages. If
         ``False``, end with a lowest-energy filter after xTB stages.
+    prune_initial : bool or dict, optional
+        If ``False``, leave the initial conformer ensemble unchanged. If
+        ``True``, insert PRISM pruning immediately after ``prepare`` using the
+        default modes ``("moi", "rmsd")``. A dictionary enables pruning and
+        overrides default pruning options, for example
+        ``{"modes": ("moi",), "moi_max_deviation": 0.03}``.
 
     Notes
     -----
@@ -156,6 +188,7 @@ class MolsWorkflow(BaseWorkflow):
         n_confs: int | None = None,
         top_n: int = 10,
         dft: bool = False,
+        prune_initial: bool | dict[str, Any] = False,
     ) -> None:
         super().__init__(method=method, n_confs=n_confs, top_n=top_n, dft=dft)
         self.csv_path = csv_path
@@ -163,6 +196,7 @@ class MolsWorkflow(BaseWorkflow):
         self.smiles = smiles
         self.split = split
         self.select_mols = select_mols
+        self.prune_initial = prune_initial
 
     def _input_df(self) -> pd.DataFrame:
         """Return the molecule workflow input table.
@@ -278,7 +312,11 @@ class MolsWorkflow(BaseWorkflow):
 
     def _stage_defs(self) -> list[StageDef]:
         """Return molecule workflow stages."""
-        return _molecule_stage_defs(top_n=self.top_n, dft=self.dft)
+        return _molecule_stage_defs(
+            top_n=self.top_n,
+            dft=self.dft,
+            prune_initial=self.prune_initial,
+        )
 
 
 class RawMolsWorkflow(BaseWorkflow):
@@ -308,6 +346,12 @@ class RawMolsWorkflow(BaseWorkflow):
     dft : bool, optional
         If ``True``, add DFT optimization, frequency, and solvent stages. If
         ``False``, end with a lowest-energy filter after xTB stages.
+    prune_initial : bool or dict, optional
+        If ``False``, leave the initial conformer ensemble unchanged. If
+        ``True``, insert PRISM pruning immediately after ``prepare`` using the
+        default modes ``("moi", "rmsd")``. A dictionary enables pruning and
+        overrides default pruning options, for example
+        ``{"modes": ("moi",), "moi_max_deviation": 0.03}``.
 
     Notes
     -----
@@ -330,11 +374,13 @@ class RawMolsWorkflow(BaseWorkflow):
         n_confs: int | None = None,
         top_n: int = 10,
         dft: bool = False,
+        prune_initial: bool | dict[str, Any] = False,
     ) -> None:
         super().__init__(method=method, n_confs=n_confs, top_n=top_n, dft=dft)
         self.csv_path = csv_path
         self.dataframe = dataframe
         self.smiles = smiles
+        self.prune_initial = prune_initial
 
     def _input_df(self) -> pd.DataFrame:
         """Return the raw molecule workflow input table."""
@@ -427,55 +473,18 @@ class RawMolsWorkflow(BaseWorkflow):
 
     def _stage_defs(self) -> list[StageDef]:
         """Return raw molecule workflow stages."""
-        return _molecule_stage_defs(top_n=self.top_n, dft=self.dft)
+        return _molecule_stage_defs(
+            top_n=self.top_n,
+            dft=self.dft,
+            prune_initial=self.prune_initial,
+        )
 
 
 class ScreenTSWorkflow(BaseWorkflow):
-    """Workflow for substrate/catalyst transition-state screens.
+    """Implementation object returned by :func:`screen_ts`.
 
-    Parameters
-    ----------
-    csv_path : str or pathlib.Path or None, optional
-        Component CSV accepted by :func:`frust.screen.read`. The table normally
-        contains substrate and catalyst rows with ``role``, ``smiles``, optional
-        ``compound_name``, and optional substrate ``rpos``.
-    dataframe : pandas.DataFrame or None, optional
-        Component dataframe accepted by ``frust.screen.read`` or an already
-        expanded systems dataframe containing ``system_name``,
-        ``substrate_smiles``, ``catalyst_smiles``, and ``rpos``.
-    ts_types : tuple or list of str, optional
-        Built-in TS types to generate. Supported values are ``"TS1"``,
-        ``"TS2"``, ``"TS3"``, and ``"TS4"``.
-    ts_backend : {"tsguess2", "tsguess3", "tsguess"}, optional
-        Backend used to create initial TS guesses. ``"tsguess2"`` builds
-        connected TS SMILES and embeds them with V2 role constraints.
-        ``"tsguess3"`` builds connected TS SMILES and embeds TS3/TS4 with
-        fragment-aware V3 role constraints.
-        ``"tsguess"`` uses the original assembly backend.
-    method : MethodPlan or str or None, optional
-        Calculator plan for all workflow stages. Accepts ``None`` for the
-        default ``"wb97xd3-631g"`` preset, a preset string, or a custom
-        :class:`frust.workflows.methods.MethodPlan`. Built-in preset strings
-        are ``"r2scan-3c"`` (ORCA r2SCAN-3c composite DFT stages),
-        ``"wb97xd3-631g"`` (default ORCA wB97X-D3/6-31G** workflow), and
-        ``"r2scan-def2svp"`` (ORCA R2SCAN/def2-SVP DFT stages). A preset may
-        contain molecule-specific calculator keys this TS workflow does not use;
-        call ``wf.show_stages()`` to inspect the active stages.
-    n_confs : int or None, optional
-        Number of TS guess conformers generated per target. ``None`` uses the
-        screen TS conformer heuristic.
-    top_n : int, optional
-        Number of rows kept after constrained xTB optimization.
-    dft : bool, optional
-        If ``True``, add Hessian, ``OptTS``, frequency, and solvent DFT stages.
-        If ``False``, stop after xTB ranking/filtering.
-
-    Notes
-    -----
-    Targets are the Cartesian product of expanded systems, requested TS types,
-    and reactive positions. Each target prepares TS guesses through
-    :func:`frust.screen.create_ts_guesses`, writes ``ts_guess.parquet`` when an
-    output directory is available, and then runs the shared TS stage graph.
+    Construct screen workflows through :func:`screen_ts`, which owns the
+    user-facing parameter documentation.
     """
 
     workflow_name = "screen_ts"
@@ -491,12 +500,14 @@ class ScreenTSWorkflow(BaseWorkflow):
         n_confs: int | None = None,
         top_n: int = 10,
         dft: bool = True,
+        prune_initial: bool | dict[str, Any] = False,
     ) -> None:
         super().__init__(method=method, n_confs=n_confs, top_n=top_n, dft=dft)
         self.csv_path = csv_path
         self.dataframe = dataframe
         self.ts_types = tuple(str(ts_type).upper() for ts_type in ts_types)
         self.ts_backend = str(ts_backend).strip().lower()
+        self.prune_initial = prune_initial
 
     def _systems(self) -> pd.DataFrame:
         """Return expanded substrate/catalyst systems.
@@ -598,9 +609,10 @@ class ScreenTSWorkflow(BaseWorkflow):
 
     def _stage_defs(self) -> list[StageDef]:
         """Return screen TS workflow stages."""
-        stages = _ts_init_stages(self.top_n)
+        stages = _ts_screening_stages(self.top_n, prune_initial=self.prune_initial)
+        stages.append(_ts_dft_pre_sp_stage())
         if self.dft:
-            stages.extend(_ts_dft_stages())
+            stages.extend(_ts_dft_refinement_stages())
         else:
             stages.append(StageDef("filter", "filter", kind="filter"))
         return stages
@@ -630,10 +642,16 @@ class LegacyTSWorkflow(BaseWorkflow):
     n_confs : int or None, optional
         Conformer count passed to ``Stepper.build_initial_df``.
     top_n : int, optional
-        Number of rows kept after constrained xTB optimization.
+        Number of rows kept after constrained low-cost optimization.
     dft : bool, optional
         If ``True``, add TS or INT3 DFT continuation stages. If ``False``, stop
-        after xTB ranking/filtering.
+        after the DFT pre-SP cutoff and keep the lowest-energy row.
+    prune_initial : bool or dict, optional
+        If ``False``, leave the initial conformer ensemble unchanged. If
+        ``True``, insert PRISM pruning immediately after ``prepare`` using the
+        default modes ``("moi", "rmsd")``. A dictionary enables pruning and
+        overrides default pruning options, for example
+        ``{"modes": ("moi", "rmsd", "rot_corr_rmsd")}``.
 
     Notes
     -----
@@ -654,11 +672,13 @@ class LegacyTSWorkflow(BaseWorkflow):
         n_confs: int | None = None,
         top_n: int = 10,
         dft: bool = True,
+        prune_initial: bool | dict[str, Any] = False,
     ) -> None:
         super().__init__(method=method, n_confs=n_confs, top_n=top_n, dft=dft)
         self.csv_path = csv_path
         self.ts_xyz = ts_xyz
         self.int3 = int3
+        self.prune_initial = prune_initial
 
     def _build_targets(self) -> list[WorkflowTarget]:
         """Build legacy transformer targets from the input CSV and template."""
@@ -740,20 +760,15 @@ class LegacyTSWorkflow(BaseWorkflow):
 
     def _stage_defs(self) -> list[StageDef]:
         """Return legacy TS or INT3 workflow stages."""
-        stages = _ts_init_stages(self.top_n)
+        stages = _ts_screening_stages(self.top_n, prune_initial=self.prune_initial)
+        stages.append(_ts_dft_pre_sp_stage())
         if not self.dft:
             stages.append(StageDef("filter", "filter", kind="filter"))
             return stages
         if self.int3:
-            stages.extend(
-                [
-                    StageDef("dft_opt", "OptTS", lowest=1),
-                    StageDef("freq", "Freq"),
-                    StageDef("solv", "DFT-solv"),
-                ]
-            )
+            stages.extend(_int3_dft_refinement_stages())
         else:
-            stages.extend(_ts_dft_stages())
+            stages.extend(_ts_dft_refinement_stages())
         return stages
 
 
@@ -768,6 +783,7 @@ def mols(
     n_confs: int | None = None,
     top_n: int = 10,
     dft: bool = False,
+    prune_initial: bool | dict[str, Any] = False,
 ) -> MolsWorkflow:
     """Create a molecule-state workflow.
 
@@ -801,6 +817,12 @@ def mols(
         Number of rows retained by ranking/filtering stages.
     dft : bool, optional
         Include DFT optimization, frequency, and solvent stages when ``True``.
+    prune_initial : bool or dict, optional
+        If ``False``, leave the initial conformer ensemble unchanged. If
+        ``True``, insert PRISM pruning immediately after ``prepare`` using the
+        default modes ``("moi", "rmsd")``. A dictionary enables pruning and
+        overrides default pruning options, for example
+        ``{"modes": ("moi",), "moi_max_deviation": 0.03}``.
 
     Returns
     -------
@@ -830,6 +852,7 @@ def mols(
         n_confs=n_confs,
         top_n=top_n,
         dft=dft,
+        prune_initial=prune_initial,
     )
 
 
@@ -842,6 +865,7 @@ def raw_mols(
     n_confs: int | None = None,
     top_n: int = 10,
     dft: bool = False,
+    prune_initial: bool | dict[str, Any] = False,
 ) -> RawMolsWorkflow:
     """Create a raw molecule workflow.
 
@@ -868,6 +892,12 @@ def raw_mols(
         Number of rows retained by ranking/filtering stages.
     dft : bool, optional
         Include DFT optimization, frequency, and solvent stages when ``True``.
+    prune_initial : bool or dict, optional
+        If ``False``, leave the initial conformer ensemble unchanged. If
+        ``True``, insert PRISM pruning immediately after ``prepare`` using the
+        default modes ``("moi", "rmsd")``. A dictionary enables pruning and
+        overrides default pruning options, for example
+        ``{"modes": ("moi",), "moi_max_deviation": 0.03}``.
 
     Returns
     -------
@@ -895,6 +925,7 @@ def raw_mols(
         n_confs=n_confs,
         top_n=top_n,
         dft=dft,
+        prune_initial=prune_initial,
     )
 
 
@@ -908,6 +939,7 @@ def screen_ts(
     n_confs: int | None = None,
     top_n: int = 10,
     dft: bool = True,
+    prune_initial: bool | dict[str, Any] = True,
 ) -> ScreenTSWorkflow:
     """Create a substrate/catalyst transition-state screen workflow.
 
@@ -935,9 +967,21 @@ def screen_ts(
     n_confs : int or None, optional
         Number of TS guess conformers generated per target.
     top_n : int, optional
-        Number of xTB-ranked TS guesses kept before DFT stages.
+        Number of low-cost optimized TS guesses kept before the DFT pre-SP
+        cutoff.
     dft : bool, optional
-        Include Hessian, ``OptTS``, frequency, and solvent stages when ``True``.
+        If ``True``, include constrained DFT preoptimization, Hessian,
+        ``OptTS``, frequency, and solvent stages. If ``False``, stop after the
+        DFT pre-SP cutoff and keep the lowest-energy row.
+    prune_initial : bool or dict, optional
+        If ``False``, leave the initial TS conformer ensemble unchanged. If
+        ``True``, insert PRISM pruning immediately after ``prepare`` using the
+        default modes ``("moi", "rmsd")``. Pass a dictionary to override the
+        pruning modes and thresholds, for example
+        ``{"modes": ("moi", "rmsd"), "moi_max_deviation": 0.02,
+        "rmsd_max_rmsd": 0.5, "rmsd_max_dev": 1.0}``. The two RMSD thresholds
+        are in Angstrom. If ``rmsd_max_dev`` is omitted or ``None``, PRISM uses
+        ``2 * rmsd_max_rmsd``.
 
     Returns
     -------
@@ -965,6 +1009,7 @@ def screen_ts(
         n_confs=n_confs,
         top_n=top_n,
         dft=dft,
+        prune_initial=prune_initial,
     )
 
 
@@ -976,6 +1021,7 @@ def legacy_ts(
     n_confs: int | None = None,
     top_n: int = 10,
     dft: bool = True,
+    prune_initial: bool | dict[str, Any] = False,
 ) -> LegacyTSWorkflow:
     """Create a legacy template-based TS workflow.
 
@@ -997,9 +1043,18 @@ def legacy_ts(
     n_confs : int or None, optional
         Conformer count for initial TS embedding.
     top_n : int, optional
-        Number of constrained xTB structures kept before DFT stages.
+        Number of low-cost optimized TS structures kept before the DFT pre-SP
+        cutoff.
     dft : bool, optional
-        Include Hessian, ``OptTS``, frequency, and solvent stages when ``True``.
+        If ``True``, include constrained DFT preoptimization, Hessian,
+        ``OptTS``, frequency, and solvent stages. If ``False``, stop after the
+        DFT pre-SP cutoff and keep the lowest-energy row.
+    prune_initial : bool or dict, optional
+        If ``False``, leave the initial TS conformer ensemble unchanged. If
+        ``True``, insert PRISM pruning immediately after ``prepare`` using the
+        default modes ``("moi", "rmsd")``. A dictionary enables pruning and
+        overrides default pruning options, for example
+        ``{"modes": ("moi", "rmsd", "rot_corr_rmsd")}``.
 
     Returns
     -------
@@ -1023,6 +1078,7 @@ def legacy_ts(
         n_confs=n_confs,
         top_n=top_n,
         dft=dft,
+        prune_initial=prune_initial,
     )
 
 
@@ -1034,6 +1090,7 @@ def int3(
     n_confs: int | None = None,
     top_n: int = 10,
     dft: bool = True,
+    prune_initial: bool | dict[str, Any] = False,
 ) -> LegacyTSWorkflow:
     """Create a legacy template-based INT3 workflow.
 
@@ -1054,10 +1111,18 @@ def int3(
     n_confs : int or None, optional
         Conformer count for initial INT3 embedding.
     top_n : int, optional
-        Number of xTB-ranked structures kept before DFT stages.
+        Number of low-cost optimized structures kept before the DFT pre-SP
+        cutoff.
     dft : bool, optional
-        Include INT3 DFT optimization, frequency, and solvent stages when
-        ``True``.
+        If ``True``, include constrained DFT preoptimization, INT3 DFT
+        optimization, frequency, and solvent stages. If ``False``, stop after
+        the DFT pre-SP cutoff and keep the lowest-energy row.
+    prune_initial : bool or dict, optional
+        If ``False``, leave the initial INT3 conformer ensemble unchanged. If
+        ``True``, insert PRISM pruning immediately after ``prepare`` using the
+        default modes ``("moi", "rmsd")``. A dictionary enables pruning and
+        overrides default pruning options, for example
+        ``{"modes": ("moi", "rmsd", "rot_corr_rmsd")}``.
 
     Returns
     -------
@@ -1082,47 +1147,73 @@ def int3(
         n_confs=n_confs,
         top_n=top_n,
         dft=dft,
+        prune_initial=prune_initial,
     )
     workflow.workflow_name = "int3"
     return workflow
 
 
-def _ts_init_stages(top_n: int) -> list[StageDef]:
-    """Return common constrained TS initialization stages.
+def _ts_screening_stages(
+    top_n: int,
+    *,
+    prune_initial: bool | dict[str, Any] | None = False,
+) -> list[StageDef]:
+    """Return common constrained TS screening stages.
 
     Parameters
     ----------
     top_n : int
-        Number of constrained xTB-optimized rows to keep before DFT
-        pre-optimization.
+        Number of constrained low-cost optimized rows to keep before the DFT
+        single-point cutoff.
 
     Returns
     -------
     list of StageDef
-        ``prepare``, constrained GFNFF preoptimization, xTB ranking,
-        constrained xTB optimization, DFT pre-SP, and constrained DFT pre-opt.
+        ``prepare``, constrained GFNFF preoptimization, low-cost ranking, and
+        constrained low-cost optimization.
     """
-    return [
+    stages = [
         StageDef("prepare", "prepare", kind="prepare"),
         StageDef("xtb_preopt", "xtb_preopt", constraint=True, n_cores=2),
         StageDef("xtb_sp", "xtb_sp", n_cores=2),
         StageDef("xtb_opt", "xtb_opt", constraint=True, lowest=top_n, n_cores=2),
-        StageDef("dft_pre_sp", "DFT-pre-SP"),
-        StageDef("dft_pre_opt", "DFT-pre-Opt", constraint=True, lowest=1),
     ]
+    return _with_initial_prune(stages, prune_initial)
 
 
-def _ts_dft_stages() -> list[StageDef]:
-    """Return common TS DFT continuation stages.
+def _ts_dft_pre_sp_stage() -> StageDef:
+    """Return the DFT single-point cutoff stage shared by TS workflows."""
+    return StageDef("dft_pre_sp", "DFT-pre-SP")
+
+
+def _ts_dft_pre_opt_stage() -> StageDef:
+    """Return the constrained DFT preoptimization stage."""
+    return StageDef("dft_pre_opt", "DFT-pre-Opt", constraint=True, lowest=1)
+
+
+def _ts_dft_refinement_stages() -> list[StageDef]:
+    """Return common TS DFT refinement stages.
 
     Returns
     -------
     list of StageDef
-        Hessian, ``OptTS``, final frequency, and solvent single-point stages.
+        Constrained DFT preoptimization, Hessian, ``OptTS``, final frequency,
+        and solvent single-point stages.
     """
     return [
+        _ts_dft_pre_opt_stage(),
         StageDef("hess", "Hess", read_files=["input.hess"]),
         StageDef("optts", "OptTS", use_last_hess=True),
+        StageDef("freq", "Freq"),
+        StageDef("solv", "DFT-solv"),
+    ]
+
+
+def _int3_dft_refinement_stages() -> list[StageDef]:
+    """Return INT3 DFT refinement stages after the DFT single-point cutoff."""
+    return [
+        _ts_dft_pre_opt_stage(),
+        StageDef("dft_opt", "OptTS", lowest=1),
         StageDef("freq", "Freq"),
         StageDef("solv", "DFT-solv"),
     ]

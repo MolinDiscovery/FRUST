@@ -2,6 +2,8 @@
 
 Use `conda activate UMA` to test things in this project. It should have most packages / software.
 
+When making new git branches, don't use something like codex/new-feature, instead use something like feature/new-feature.
+
 # Documentation Style
 
 When writing documentation, prefer "show, then explain" over abstract description. The goal is that a reader can understand the workflow by looking at the examples, tables, structures, and outputs before reading much prose.
@@ -9,6 +11,7 @@ When writing documentation, prefer "show, then explain" over abstract descriptio
 ## User-Facing Docs
 
 For docs pages, tutorials, guides, README-style pages, and other prose documentation:
+
 * Start with the practical mental model or concrete artifact the user should understand.
 * Show realistic FRUST inputs and outputs. For dataframe workflows, prefer compact tables that show the relevant columns and values.
 * Keep code examples focused on the action being taught. Avoid long setup or dataframe-construction blocks unless constructing the dataframe is the lesson.
@@ -22,6 +25,7 @@ For docs pages, tutorials, guides, README-style pages, and other prose documenta
 ## Code Documentation And Docstrings
 
 For code docstrings and comments:
+
 * Use NumPy docstrings for public functions, classes, and methods.
 * Treat public API docstrings as user-facing documentation. The reader is often discovering behavior in an editor or notebook, not in the rendered docs.
 * When a parameter, return column, dataframe value, status, filter, mode, or enum accepts or emits named values, define what each value means near the list in the docstring.
@@ -43,6 +47,7 @@ imports remain valid when documenting a specific module, but the top-level
 namespace is the preferred notebook/user-facing style.
 
 The top-level namespace is deliberately two-tiered:
+
 * Use direct `ft.<helper>` aliases for the curated, common notebook/toolbox API,
   such as `ft.Stepper`, `ft.show_steps`, `ft.lowest_energy_rows`,
   `ft.write_xyz`, `ft.plot_mols`, `ft.plot_vibs`,
@@ -95,6 +100,10 @@ ts_guesses = ft.screen.create_ts_guesses(systems, ts_types=["TS1", "TS2", "TS3",
 `smiles`, optional `compound_name`, and substrate-only `rpos`, then expands
 substrates and catalysts into explicit systems.
 
+Use `tsguess2` as the active/default screen TS guess backend in examples and
+workflow guidance unless a task explicitly asks to inspect or test another
+backend. `tsguess3` is not the current production path for this project.
+
 `frust.tsguess` owns TS construction. Built-in `TSSpec` objects define role
 coordinates, distance/angle constraints, legacy `constraint_atoms` order, and
 optional fragments such as H, H2, or HBpin. Assembly assigns atom roles
@@ -143,14 +152,15 @@ the documented API.
 
 Choose the representation that matches the concept being taught:
 
-| Representation | Use when the point is |
-| --- | --- |
-| SMILES | molecular identity, input format, substrate lists, or pipeline starting points |
-| 2D drawings | connectivity, atom labels, reactive positions, symmetry-unique sites, or functional groups |
-| 3D views | geometry, conformers, transition states, atom distances/angles, vibrations, or exported XYZ structures |
-| dataframe tables | how FRUST stores or moves molecular data between workflow stages |
+| Representation   | Use when the point is                                                                                |
+| ---------------- | ---------------------------------------------------------------------------------------------------- |
+| SMILES           | molecular identity, input format, substrate lists, or pipeline starting points                       |
+| 2D drawings      | connectivity, atom labels, reactive positions, symmetry-unique sites, or functional groups           |
+| 3D views         | geometry, conformers, transition states, atom distances/angles, vibrations, or exported XYZ structures |
+| dataframe tables | how FRUST stores or moves molecular data between workflow stages                                     |
 
 For molecular and structural docs:
+
 * When a structure is generated from SMILES, make the transformation explicit if it matters: `SMILES -> embedded molecule -> atoms + coords_embedded -> optimized *-oc -> XYZ or 3D view`.
 * Prefer FRUST’s own visualization utilities for figures and interactive views: `DrawMolSvg`, `DrawUniqueChGrid`, `MolTo3DGrid`, `RxnTo3DGrid`, `plot_mols`, `plot_row`, or `plot_vibs` as appropriate.
 * Use external chemistry tools such as RDKit or py3Dmol only when FRUST does not already provide the needed capability, or when they are only the backend used to create a FRUST-compatible example.
@@ -164,12 +174,13 @@ FRUST can create analytical figures such as energy profiles and regression plots
 
 Choose the plotting tool that matches the concept being taught:
 
-| Figure type | Use when the point is |
-| --- | --- |
-| Energy profile | relative energies, barriers, reaction stages, competing pathways, or side reactions |
+| Figure type     | Use when the point is                                                                       |
+| --------------- | ------------------------------------------------------------------------------------------- |
+| Energy profile  | relative energies, barriers, reaction stages, competing pathways, or side reactions         |
 | Regression plot | agreement between two methods, scaled vs reference energies, outliers, or benchmark quality |
 
 For energy-profile docs:
+
 * Prefer FRUST's own `plot_energy_profile` for reaction coordinate diagrams.
 * Show the compact input first, usually as a table with state labels and relative energies.
 * Make the figure correspond exactly to the shown states and energies.
@@ -178,6 +189,7 @@ For energy-profile docs:
 * Avoid decorative profiles. Add an energy profile when the barrier ordering, pathway comparison, or reaction progression is part of what the user needs to understand.
 
 For regression-plot docs:
+
 * Prefer FRUST's own `plot_regression_outliers` for benchmark and scaling figures.
 * Show the dataframe columns being compared before showing the plot.
 * Be explicit about what each axis represents, including whether values are scaled, DFT, xTB, free energies, or electronic energies.
@@ -188,6 +200,7 @@ For regression-plot docs:
 ## Generated Documentation Assets
 
 For generated documentation assets:
+
 * Prefer reproducible asset-generation scripts over one-off notebook/manual exports when a doc page embeds images, SVGs, HTML viewers, XYZ files, or analytical plots.
 * Put asset-generation scripts in `scripts/` with names like `build_<topic>_assets.py`.
 * The script should build the same molecules, dataframes, structures, or plots used in the documentation examples.
@@ -197,3 +210,29 @@ For generated documentation assets:
 * Generated assets should be committed when the docs need to render without running code, but the docs should not explain asset-generation internals unless the reader needs them.
 * Keep asset viewers compact and focused. For 3D grids, set `cell_size`, `columns`, and `linked` deliberately; avoid linked viewers unless synchronized rotation is part of the lesson.
 * After generating assets, run `mkdocs build --strict` to verify links and embedded outputs.
+
+## Testing
+
+Run tests in the UMA environment:
+
+```bash
+conda run -n UMA python -m pytest
+```
+
+The default suite excludes tests marked `slow`. These tests perform expensive
+geometry embedding or launch installed external services and can take several
+minutes without being stuck. Run them explicitly when changing those paths:
+
+```bash
+conda run -n UMA python -m pytest -m slow
+```
+
+Run both the fast and slow tests before a release or after broad changes:
+
+```bash
+conda run -n UMA python -m pytest -m "slow or not slow"
+```
+
+Prefer focused test files while iterating. Add `@pytest.mark.slow` only to tests
+that are intrinsically expensive integration or geometry regressions; do not
+use it to hide ordinary unit-test performance regressions.

@@ -24,7 +24,8 @@ calculation, the dataframe might look conceptually like this:
 | anisole | MOL | 2 | 0 | `["C", "H", ...]` | `[(x, y, z), ...]` |
 | anisole | MOL | 2 | 1 | `["C", "H", ...]` | `[(x, y, z), ...]` |
 
-After an xTB optimization called `xtb_opt`, FRUST adds stage-prefixed columns:
+After an optimization stage called `xtb_opt`, FRUST adds stage-prefixed
+columns:
 
 | substrate_name | cid | xtb_opt-NT | xtb_opt-EE | xtb_opt-oc |
 | --- | --- | --- | --- | --- |
@@ -140,10 +141,11 @@ ft.show_steps(df)
 
 Example output from a merged workflow:
 
-| step | engine | calc_name | mode | options | n_columns | n_cores | memory_gb | xtra_inp_str |
-| --- | --- | --- | --- | --- | ---: | ---: | ---: | --- |
-| `gxtb_opt` | `gxtb` | `gxtb` | `direct_gxtb` | `opt` | 3 | 8 |  |  |
-| `DFT-SP-solvent` | `orca` | `orca` | `direct` | `wB97X-D3 6-31+G** TightSCF SP NoSym` | 3 | 8 | 20.0 | `%CPCM ...` |
+| step | engine | mode | options | input_rows | output_rows | dropped_rows |
+| --- | --- | --- | --- | ---: | ---: | ---: |
+| `initial_prune` | `prism_pruner` | `geometry_pruning` | `modes=moi,rmsd coords_col=coords_embedded moi_max_deviation=0.01 rmsd_max_rmsd=0.25 heavy_atoms_only=True graph_source=connectivity_bonds` | 50 | 18 | 32 |
+| `gxtb_opt` | `gxtb` | `direct_gxtb` | `opt` | 18 | 18 |  |
+| `DFT-SP-solvent` | `orca` | `direct` | `wB97X-D3 6-31+G** TightSCF SP NoSym` | 18 | 18 |  |
 
 For merged workflow outputs, the default summary collapses stored variants such
 as `xtb_opt__variant_001` into one logical `xtb_opt` row. The compact columns
@@ -167,6 +169,29 @@ compatibility aliases such as `gxtb_exe`, or the backend callable name.
     Provenance is best effort. If an executable is not discoverable, FRUST keeps
     the configured value and records `resolved=False` instead of turning
     metadata collection into a new failure mode.
+
+### Geometry Pruning Metadata
+
+When initial conformer pruning runs, FRUST records it as a normal step in
+`df.attrs["frust_steps"]`:
+
+```python
+df.attrs["frust_steps"]["initial_prune"]
+```
+
+The metadata includes:
+
+| Key | Meaning |
+| --- | --- |
+| `engine` | `prism_pruner` |
+| `options` | PRISM modes, thresholds, coordinate column, and grouping columns |
+| `row_counts` | total input, output, and dropped rows |
+| `filtering.groups` | per-group input, output, dropped rows, and selected `cid` values |
+| `timing` | elapsed time and row counts for `ft.show_timing(...)` |
+
+The grouping columns are inferred from the dataframe by default. This prevents
+FRUST from pruning across different TS types, substrates, catalysts, molecule
+roles, or reactive positions.
 
 ## Timing Metadata
 
@@ -232,7 +257,7 @@ orca_opt-oc
 
 When you run the next calculation stage, `Stepper` automatically uses the most
 recent coordinate column. This lets a workflow move naturally from embedded
-coordinates to xTB optimization, then ORCA refinement.
+coordinates to low-cost optimization, then ORCA refinement.
 
 ## Stage Names And Suffixes
 

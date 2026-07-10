@@ -24,22 +24,32 @@ class WorkflowMethodTests(unittest.TestCase):
         self.assertEqual(spec.engine, "gxtb")
         self.assertEqual(spec.options, {})
 
+    def test_builtin_presets_use_gxtb_for_low_cost_init_stages(self):
+        for name in ("r2scan-3c", "wb97xd3-631g", "r2scan-def2svp"):
+            with self.subTest(name=name):
+                method = methods.preset(name)
+
+                self.assertEqual(method.for_stage("xtb_sp").engine, "gxtb")
+                self.assertEqual(method.for_stage("xtb_sp").options, {})
+                self.assertEqual(method.for_stage("xtb_opt").engine, "gxtb")
+                self.assertEqual(method.for_stage("xtb_opt").options, {"opt": None})
+
     def test_method_replace_updates_only_named_stage(self):
         base = methods.preset("r2scan-3c")
-        updated = base.replace(xtb_sp=methods.gxtb(job="sp"))
+        updated = base.replace(xtb_sp=methods.xtb(gfn=2))
 
-        self.assertEqual(updated.for_stage("xtb_sp").engine, "gxtb")
-        self.assertEqual(updated.for_stage("xtb_opt").engine, "xtb")
-        self.assertEqual(base.for_stage("xtb_sp").engine, "xtb")
+        self.assertEqual(updated.for_stage("xtb_sp").engine, "xtb")
+        self.assertEqual(updated.for_stage("xtb_opt").engine, "gxtb")
+        self.assertEqual(base.for_stage("xtb_sp").engine, "gxtb")
+        self.assertEqual(base.for_stage("xtb_opt").engine, "gxtb")
 
     def test_register_user_preset(self):
         method = methods.preset("r2scan-3c").replace(
-            xtb_sp=methods.gxtb(job="sp"),
-            xtb_opt=methods.gxtb(job="opt"),
+            xtb_opt=methods.xtb(gfn=2, opt=True),
         )
-        methods.register_preset("unit-test-gxtb", method)
+        methods.register_preset("unit-test-xtb-opt", method)
 
-        self.assertIs(methods.preset("unit-test-gxtb"), method)
+        self.assertIs(methods.preset("unit-test-xtb-opt"), method)
 
     def test_register_user_preset_does_not_hide_builtins(self):
         fresh_methods = importlib.reload(methods)

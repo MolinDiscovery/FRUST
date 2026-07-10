@@ -6,6 +6,8 @@ import unittest
 from pathlib import Path
 from unittest.mock import patch
 
+import pytest
+
 from frust.config import get_oet_tools
 from frust.utils.uma import (
     DEFAULT_UMA_MODEL,
@@ -189,6 +191,7 @@ class UmaOetTests(unittest.TestCase):
             block,
         )
 
+    @pytest.mark.slow
     def test_installed_oet_smoke(self):
         root_value = os.environ.get("OET_TOOLS")
         if not root_value:
@@ -210,6 +213,7 @@ class UmaOetTests(unittest.TestCase):
             with uma_server(log_dir=td, server_cores=1, memory_per_thread_mib=500):
                 pass
 
+    @pytest.mark.slow
     def test_uma_server_removes_success_log_with_on_failure_policy(self):
         root_value = os.environ.get("OET_TOOLS")
         if not root_value:
@@ -224,6 +228,7 @@ class UmaOetTests(unittest.TestCase):
 
             self.assertFalse(log_path.exists())
 
+    @pytest.mark.slow
     def test_uma_server_preserves_failure_log_with_default_policy(self):
         root_value = os.environ.get("OET_TOOLS")
         if not root_value:

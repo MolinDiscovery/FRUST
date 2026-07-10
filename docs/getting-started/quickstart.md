@@ -97,6 +97,10 @@ wf = ft.workflows.screen_ts(
 wf.targets()[:3]
 ```
 
+`screen_ts(...)` prunes redundant initial conformers by default with PRISM
+before the first xTB stage. If you are running without PRISM installed, pass
+`prune_initial=False`.
+
 Run one target locally before submitting the full screen:
 
 ```python

@@ -53,9 +53,9 @@ flowchart TD
     C["wf.targets()"]
     D["WorkflowTarget list<br/>tag + payload + metadata"]
     E["workflow._stage_defs()"]
-    F["StageDef list<br/>prepare + calc + filter"]
+    F["StageDef list<br/>prepare + prune + calc + filter"]
     G["wf.run(...) or wf.submit(...)"]
-    H["Stepper stage call<br/>xtb, gxtb, orca"]
+    H["Stepper stage call<br/>prune_conformers, xtb, gxtb, orca"]
     I["FRUST dataframe<br/>stage-prefixed columns + attrs"]
 
     A --> B --> C --> D
@@ -135,23 +135,27 @@ options.
     `StageDef` lists. A stage-order change should affect local and cluster
     execution in the same way.
 
-## Calculator Dispatch
+## Stage Dispatch
 
 ```mermaid
 flowchart TD
     A["StageDef.id<br/>for example xtb_opt"]
-    B["MethodPlan.for_stage(stage.method_stage or stage.id)"]
-    C["CalculatorSpec<br/>engine + options + extra input"]
-    D{"CalculatorSpec.engine"}
-    E["Stepper.xtb(...)"]
-    F["Stepper.gxtb(...)"]
-    G["Stepper.orca(...)"]
-    H["Dataframe with new stage columns"]
+    B{"StageDef.kind"}
+    C["Stepper.prune_conformers(...)"]
+    D["MethodPlan.for_stage(stage.method_stage or stage.id)"]
+    E["CalculatorSpec<br/>engine + options + extra input"]
+    F{"CalculatorSpec.engine"}
+    G["Stepper.xtb(...)"]
+    H["Stepper.gxtb(...)"]
+    I["Stepper.orca(...)"]
+    J["Dataframe<br/>columns and attrs"]
 
-    A --> B --> C --> D
-    D -->|"xtb"| E --> H
-    D -->|"gxtb"| F --> H
-    D -->|"orca"| G --> H
+    A --> B
+    B -->|"prune"| C --> J
+    B -->|"calc"| D --> E --> F
+    F -->|"xtb"| G --> J
+    F -->|"gxtb"| H --> J
+    F -->|"orca"| I --> J
 ```
 
 `StageDef.id` is the stable method-plan key. `StageDef.name` is the calculation
@@ -161,6 +165,11 @@ as `OptTS-EE`, `OptTS-NT`, and `OptTS-oc`.
 
 Use `StageDef.method_stage` only when the stage should reuse a different
 method-plan key. Otherwise the method key is `StageDef.id`.
+
+Pruning stages are different: `StageDef(kind="prune")` calls
+`Stepper.prune_conformers(...)` directly and does not look up a
+`CalculatorSpec`. This keeps `MethodPlan` calculator-only while still making
+pruning a normal local/cluster workflow stage.
 
 ## Execution Modes
 
@@ -208,8 +217,7 @@ Use `MethodPlan.replace(...)` for user-facing examples and tests:
 method = (
     methods.preset("r2scan-3c")
     .replace(
-        xtb_sp=methods.gxtb(job="sp"),
-        xtb_opt=methods.gxtb(job="opt"),
+        xtb_opt=methods.xtb(gfn=2, opt=True),
     )
 )
 ```
@@ -242,7 +250,9 @@ Add tests for:
 ### Add A New Stage
 
 Use a stable `StageDef.id`. Ensure the active `MethodPlan` has a matching stage
-key, or set `method_stage` explicitly.
+key, or set `method_stage` explicitly. For non-calculator stages such as
+`kind="prune"`, store the stage-specific configuration on the `StageDef`
+instead of extending `MethodPlan`.
 
 When changing stage order or parquet names, update tests that assert:
 
@@ -256,6 +266,7 @@ When changing stage order or parquet names, update tests that assert:
 - `targets()` must not run expensive embedding or calculators.
 - `run(...)` and `submit(...)` must use the same target and stage definitions.
 - `MethodPlan` changes calculators, not chemistry or target expansion.
+- Conformer pruning is workflow configuration, not a calculator method plan.
 - `StageDef.id` is the stable internal key; `StageDef.name` is the dataframe
   output/calculation name.
 - Dataframe provenance belongs in `df.attrs`, not sparse stage-specific

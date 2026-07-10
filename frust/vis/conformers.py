@@ -466,7 +466,7 @@ def plot_conformers(
     energy_col: str | None = None,
     group_cols: Sequence[str] | None = None,
     core_atoms: Sequence[int] | str = "auto",
-    mode: str = "representatives+cloud",
+    mode: str = "cluster",
     color_by: str | None = None,
     top_n: int | None = 25,
     energy_window_kcal: float | None = None,

@@ -122,6 +122,10 @@ result = wf.submit(
 )
 ```
 
+`screen_ts(...)` includes the default `initial_prune` stage, so the submitted
+`init` job needs PRISM available in the Python environment. Set
+`prune_initial=False` if the cluster environment should skip pruning.
+
 The workflow object prepares one submitted chain per scientific target. For a
 screen TS workflow, a target is one `TS type + substrate/catalyst system +
 rpos`. `wf.submit(...)` also submits one final collector job by default. The
@@ -165,7 +169,7 @@ result = wf.submit(
 
 | `dft_staged` stage-resource key | Submitted work |
 | --- | --- |
-| `init` | TS guess generation, constrained GFNFF, xTB ranking/optimization, DFT pre-SP, and DFT pre-opt |
+| `init` | TS guess generation, initial pruning, constrained GFNFF, g-xTB ranking/optimization, DFT pre-SP, and DFT pre-opt |
 | `hess` | ORCA Hessian/frequency input Hessian stage |
 | `optts` | ORCA `OptTS` stage |
 | `freq` | final frequency check |

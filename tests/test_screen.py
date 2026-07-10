@@ -4,6 +4,7 @@ from unittest.mock import patch
 
 import numpy as np
 import pandas as pd
+import pytest
 from tooltoad.chemutils import ac2mol
 
 import frust as ft
@@ -328,6 +329,7 @@ class ScreenWorkflowTests(unittest.TestCase):
         with self.assertRaisesRegex(ValueError, "B-aryl-N"):
             match_catalyst_roles(bad, catalyst_name="benzene")
 
+    @pytest.mark.slow
     def test_create_ts_guesses_returns_grouped_dataframes(self):
         systems = ft.screen.expand(
             ft.screen.read(
@@ -398,7 +400,6 @@ class ScreenWorkflowTests(unittest.TestCase):
             roles = row["constraint_roles"]
             mol = _row_to_mol(row, row["atoms"], row["coords_embedded"])
             cat_b = roles["cat_B"]
-            cat_h = roles["cat_H"]
             transfer_h = roles["transfer_H"]
             cat_b_hydrogens = {
                 neighbor.GetIdx()
@@ -406,11 +407,16 @@ class ScreenWorkflowTests(unittest.TestCase):
                 if neighbor.GetAtomicNum() == 1
             }
 
-            self.assertIn(cat_h, row["constraint_atoms"])
-            self.assertIn(cat_h, cat_b_hydrogens)
-            self.assertNotEqual(cat_h, transfer_h)
+            self.assertNotIn("cat_H", roles)
+            self.assertEqual(
+                set(roles),
+                {"cat_B", "pin_B", "transfer_H", "substrate_C"},
+            )
+            self.assertIn(transfer_h, row["constraint_atoms"])
+            self.assertIn(transfer_h, cat_b_hydrogens)
         self.assertEqual(guesses["TS2"].attrs["frust_tsguess2"]["backend"], "tsguess2")
 
+    @pytest.mark.slow
     def test_tsguess3_backend_uses_v3_provenance(self):
         systems = ft.screen.expand(
             ft.screen.read(
@@ -453,6 +459,7 @@ class ScreenWorkflowTests(unittest.TestCase):
                 self.assertEqual(embedding["mode"], "connected")
                 self.assertEqual(embedding["pruneRmsThresh"], 0.1)
 
+    @pytest.mark.slow
     def test_tsguess3_ts3_ts4_fragment_embedding_keeps_connected_support_bonds(self):
         systems = ft.screen.expand(
             ft.screen.read(
@@ -507,6 +514,7 @@ class ScreenWorkflowTests(unittest.TestCase):
         with self.assertRaisesRegex(ValueError, "tsguess3"):
             ft.screen.create_ts_guesses(systems, backend="missing")
 
+    @pytest.mark.slow
     def test_multifragment_ts_guess_does_not_collapse_fragments(self):
         systems = ft.screen.expand(
             ft.screen.read(
@@ -536,6 +544,7 @@ class ScreenWorkflowTests(unittest.TestCase):
         self.assertLess(mol.GetNumBonds(), 120)
         self.assertLess(max(distance_deltas), 0.16)
 
+    @pytest.mark.slow
     def test_ts_guesses_are_dehydrogenated_and_store_plot_connectivity(self):
         systems = ft.screen.expand(
             ft.screen.read(
@@ -619,6 +628,7 @@ class ScreenWorkflowTests(unittest.TestCase):
         )["TS2"].iloc[0]
         self.assert_sane_ts2_row(row)
 
+    @pytest.mark.slow
     def test_ts2_screen_panel_has_sane_core_graphs(self):
         components = ft.screen.read(
             pd.DataFrame(
@@ -639,6 +649,7 @@ class ScreenWorkflowTests(unittest.TestCase):
         for _, row in rows.iterrows():
             self.assert_sane_ts2_row(row)
 
+    @pytest.mark.slow
     def test_ts3_uses_tmp_hydride_topology_and_final_connectivity(self):
         components = ft.screen.read(
             pd.DataFrame(
@@ -659,6 +670,7 @@ class ScreenWorkflowTests(unittest.TestCase):
         for _, row in rows.iterrows():
             self.assert_sane_ts3_row(row)
 
+    @pytest.mark.slow
     def test_ts4_uses_tmp_hydride_topology_and_final_connectivity(self):
         components = ft.screen.read(
             pd.DataFrame(
@@ -679,6 +691,7 @@ class ScreenWorkflowTests(unittest.TestCase):
         for _, row in rows.iterrows():
             self.assert_sane_ts4_row(row)
 
+    @pytest.mark.slow
     def test_furan_substrate_orientation_varies_across_ts_conformers(self):
         systems = _single_system("C1=CC=CO1", rpos="2", substrate_name="furan")
         guesses = ft.screen.create_ts_guesses(
@@ -695,6 +708,7 @@ class ScreenWorkflowTests(unittest.TestCase):
             self.assertLess(min(dihedrals), -30.0, ts_type)
             self.assertGreater(max(dihedrals), 30.0, ts_type)
 
+    @pytest.mark.slow
     def test_ts3_ts4_hard_core_excludes_catalyst_n_and_h(self):
         systems = _single_system("C1=CC=CO1", rpos="2", substrate_name="furan")
         guesses = ft.screen.create_ts_guesses(

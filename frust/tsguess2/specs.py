@@ -89,7 +89,6 @@ BUILTIN_TS_SPECS_V2: dict[str, TSGuess2Spec] = {
         core_smarts="[#5]~[#1]~[#5]~[#6]",
         role_coordinates={
             "cat_B": (1.201563, 0.080366, 0.660199),
-            # "cat_H": (1.583281, 0.889608, -0.137320),
             "transfer_H": (1.676962, -1.004507, -0.052686),
             "pin_B": (2.532308, -1.428336, 0.777578),
             "substrate_C": (1.976672, 0.248906, 2.068494),
@@ -104,7 +103,7 @@ BUILTIN_TS_SPECS_V2: dict[str, TSGuess2Spec] = {
             ConstraintEntry("angle", ("cat_B", "transfer_H", "pin_B"), 98.89),
             ConstraintEntry("angle", ("cat_B", "substrate_C", "pin_B"), 61.75),
         ),
-        constraint_order=("cat_B", "pin_B", "transfer_H", "substrate_C"), # "cat_H",
+        constraint_order=("cat_B", "pin_B", "transfer_H", "substrate_C"),
     ),
     "TS4": TSGuess2Spec(
         name="TS4",
@@ -113,7 +112,6 @@ BUILTIN_TS_SPECS_V2: dict[str, TSGuess2Spec] = {
         core_smarts="[#5]~[#1]~[#5]~[#6]",
         role_coordinates={
             "cat_B": (-0.930038, 0.590384, 1.929793),
-            # "cat_H": (-1.848264, 1.263084, 2.280216),
             "transfer_H": (-0.087884, 1.262005, 1.344826),
             "pin_B": (0.999483, 1.217369, 2.683538),
             "substrate_C": (0.013065, 0.446161, 3.676874),
@@ -128,6 +126,6 @@ BUILTIN_TS_SPECS_V2: dict[str, TSGuess2Spec] = {
             ConstraintEntry("angle", ("cat_B", "transfer_H", "pin_B"), 89.48),
             ConstraintEntry("angle", ("cat_B", "substrate_C", "pin_B"), 77.13),
         ),
-        constraint_order=("cat_B", "transfer_H", "pin_B", "substrate_C"), # "cat_H",
+        constraint_order=("cat_B", "transfer_H", "pin_B", "substrate_C"),
     ),
 }

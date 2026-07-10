@@ -5,6 +5,7 @@
       members:
         - __init__
         - build_initial_df
+        - prune_conformers
         - xtb
         - gxtb
         - orca

@@ -19,6 +19,10 @@ wf = ft.workflows.screen_ts(
 )
 ```
 
+By default, `screen_ts(...)` prunes geometrically redundant initial conformers
+after TS guess generation and before the first xTB stage. Pass
+`prune_initial=False` only when you want to keep every generated conformer.
+
 ## Inspect Targets
 
 Targets are lightweight. Calling `wf.targets()` expands the screen into
@@ -51,9 +55,10 @@ Typical `screen_ts(..., method="r2scan-3c", dft=True)` stages:
 | group | stage | engine | options | constraint | lowest |
 | --- | --- | --- | --- | --- | ---: |
 | `init` | `prepare` | `prepare` |  |  |  |
+| `init` | `initial_prune` | `prism_pruner` | `modes=moi,rmsd moi_max_deviation=0.01 rmsd_max_rmsd=0.25` | false |  |
 | `init` | `xtb_preopt` | `xtb` | `gfnff opt` | true |  |
-| `init` | `xtb_sp` | `xtb` | `gfn=2` | false |  |
-| `init` | `xtb_opt` | `xtb` | `gfn=2 opt` | true | 10 |
+| `init` | `xtb_sp` | `gxtb` |  | false |  |
+| `init` | `xtb_opt` | `gxtb` | `opt` | true | 10 |
 | `init` | `dft_pre_sp` | `orca` | `r2SCAN-3c TightSCF SP NoSym` | false |  |
 | `init` | `dft_pre_opt` | `orca` | `r2SCAN-3c TightSCF SlowConv Opt NoSym` | true | 1 |
 | `hess` | `hess` | `orca` | `r2SCAN-3c TightSCF SlowConv Freq NoSym` | false |  |
@@ -64,6 +69,45 @@ Typical `screen_ts(..., method="r2scan-3c", dft=True)` stages:
 `constraint=True` stages render row-level constraints from `constraint_roles`
 and `constraint_spec`. This is why a screen-generated dataframe does not need
 fixed TS atom indices.
+
+## Initial Conformer Pruning
+
+The default pruning stage compares conformers within each independent TS
+family. Rows are grouped by available identity columns such as `system_name`,
+`substrate_name`, `catalyst_name`, `structure_type`, `molecule_role`, and
+`rpos`, so `TS1` is not pruned against `TS2`, and one substrate/catalyst pair is
+not pruned against another.
+
+```python
+wf = ft.workflows.screen_ts(
+    csv_path="screen.csv",
+    ts_types=["TS1", "TS2", "TS3", "TS4"],
+    method="r2scan-3c",
+    prune_initial={
+        "modes": ("moi", "rmsd"),
+        "moi_max_deviation": 0.01,
+        "rmsd_max_rmsd": 0.25,
+    },
+)
+```
+
+To include rotamer-corrected RMSD pruning, opt in explicitly:
+
+```python
+wf = ft.workflows.screen_ts(
+    csv_path="screen.csv",
+    method="r2scan-3c",
+    prune_initial={
+        "modes": ("moi", "rmsd", "rot_corr_rmsd"),
+    },
+)
+```
+
+!!! note "PRISM is an optional dependency"
+
+    The pruning stage lazy-loads PRISM only when it runs. Install
+    `prism-pruner` in the workflow environment, or set `prune_initial=False` to
+    skip pruning.
 
 ## Run One Local Smoke Test
 
@@ -91,14 +135,19 @@ wf = ft.workflows.screen_ts(
     n_confs=1,
     top_n=3,
     dft=False,
+    prune_initial=False,
 )
 ```
+
+With `dft=False`, `screen_ts(...)` still runs through `DFT-pre-SP` and then
+keeps the lowest DFT single-point row. It skips `DFT-pre-Opt`, `Hess`, `OptTS`,
+`Freq`, and `DFT-solv`.
 
 Then inspect the generated and optimized structures:
 
 ```python
 ft.plot_mols(df, range(0, min(6, len(df))))
-df[["custom_name", "rpos", "xtb_opt-EE", "xtb_opt-NT"]].head()
+df[["custom_name", "rpos", "DFT-pre-SP-EE", "DFT-pre-SP-NT"]].head()
 ```
 
 ## Submit A Staged Cluster Run
@@ -176,8 +225,13 @@ ts_guesses = ft.screen.create_ts_guesses(systems, ts_types=["TS4"], n_confs=5)
 
 step = ft.Stepper(n_cores=8, save_output_dir=False)
 
-ts4_preopt = step.xtb(
+ts4_pruned = step.prune_conformers(
     ts_guesses["TS4"],
+    modes=("moi", "rmsd"),
+)
+
+ts4_preopt = step.xtb(
+    ts4_pruned,
     name="xtb_preopt",
     options={"gfnff": None, "opt": None},
     constraint=True,
@@ -216,6 +270,7 @@ Before submitting a large screen:
 | Inspect `rpos` labels | `ft.DrawUniqueChGrid([...])` |
 | Generate one-conformer guesses | `ft.screen.create_ts_guesses(systems.head(1), n_confs=1)` |
 | Plot one row per TS family | `ft.plot_row(ts_guesses["TS3"], 0)` |
+| Confirm pruning stage | `wf.show_stages(execution="dft_staged")` |
 | Run a local smoke target | `wf.run(targets=[0], out_dir="debug/screen_ts", execution="dft_staged")` |
 | Inspect workflow provenance | `ft.show_steps(df)` |
 | Confirm resources match stage groups | `wf.show_stages(execution="dft_staged")` |

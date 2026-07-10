@@ -49,6 +49,11 @@ wf = ft.workflows.screen_ts(
 df = wf.run(targets=[0], out_dir="debug/screen_ts", execution="dft_staged")
 ```
 
+The workflow prunes redundant initial conformers by default before the first
+xTB stage. Direct `ft.screen.create_ts_guesses(...)` calls only generate the TS
+guess dataframes; prune those manually with `ft.prune_conformers(...)` or
+`Stepper.prune_conformers(...)` when needed.
+
 ## What This Workflow Can Do
 
 | Capability | Public entry point | Output |
@@ -57,6 +62,7 @@ df = wf.run(targets=[0], out_dir="debug/screen_ts", execution="dft_staged")
 | Cross substrates and catalysts | `ft.screen.expand(...)` | One system row per substrate-catalyst pair |
 | Auto-select substrate positions | blank substrate `rpos` | Symmetry-unique aromatic C-H positions |
 | Generate built-in TS motifs | `ft.screen.create_ts_guesses(...)` | Separate dataframes for `TS1`, `TS2`, `TS3`, and `TS4` |
+| Prune redundant initial conformers | default `ft.workflows.screen_ts(...)` stage or `ft.prune_conformers(...)` | Fewer geometrically similar rows before xTB/DFT stages |
 | Carry optimizer constraints per row | generated `constraint_roles` and `constraint_spec` | `Stepper(..., constraint=True)` can render constraints without fixed atom indices |
 | Inspect generated cores | `ts_core_metrics`, `ft.plot_row(...)`, `ft.plot_mols(...)` | Template distances/angles and visual geometry checks |
 | Run local smoke tests | `wf.run(targets=[0], ...)` | Same target and method graph used for cluster submission |

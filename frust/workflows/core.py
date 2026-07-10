@@ -26,7 +26,7 @@ from frust.cluster.executor import (
 )
 from frust.cluster.naming import sanitize_tag
 from frust.schema import normal_termination_columns, normalize_dataframe
-from frust.stepper import Stepper
+from frust.stepper import Stepper, make_stepper_logger
 from frust.utils.dataframes import lowest_energy_rows, merge_dataframe_attrs
 from frust.utils.timing import (
     append_workflow_timing,
@@ -36,6 +36,7 @@ from frust.utils.timing import (
     utc_timestamp,
     write_timing_sidecar,
 )
+from frust.utils.stage_summaries import conformer_generation_summary, filter_summary
 from frust.workflows.diagnostics import _collection_failure_summary
 from frust.workflows.methods import CalculatorSpec, MethodPlan, preset as method_preset
 
@@ -87,9 +88,10 @@ class StageDef:
         Calculation name passed to :class:`frust.stepper.Stepper`. Stepper uses
         this as the dataframe column prefix, for example ``"OptTS"`` produces
         columns such as ``"OptTS-EE"`` and ``"OptTS-NT"``.
-    kind : {"prepare", "calc", "filter"}, optional
+    kind : {"prepare", "calc", "filter", "prune"}, optional
         Stage kind. ``"prepare"`` creates the initial dataframe, ``"calc"``
-        dispatches to a calculator, and ``"filter"`` keeps lowest-energy rows.
+        dispatches to a calculator, ``"filter"`` keeps lowest-energy rows, and
+        ``"prune"`` removes geometrically redundant conformers.
     method_stage : str, optional
         Alternate method-plan key. Use this only when a stage should reuse the
         calculator settings from another stage id.
@@ -108,11 +110,14 @@ class StageDef:
         Whether ORCA should reuse the previous Hessian when supported.
     save_files : list of str, optional
         Extra files to preserve from the stage output directory.
+    prune_options : dict, optional
+        Options forwarded to :meth:`frust.stepper.Stepper.prune_conformers`
+        when ``kind="prune"``.
     """
 
     id: str
     name: str
-    kind: Literal["prepare", "calc", "filter"] = "calc"
+    kind: Literal["prepare", "calc", "filter", "prune"] = "calc"
     method_stage: str | None = None
     constraint: bool = False
     lowest: int | None = None
@@ -120,6 +125,7 @@ class StageDef:
     read_files: list[str] | None = None
     use_last_hess: bool = False
     save_files: list[str] | None = None
+    prune_options: dict[str, Any] | None = None
 
 
 @dataclass(frozen=True)
@@ -255,6 +261,11 @@ class BaseWorkflow:
                 spec: CalculatorSpec | None = None
                 if stage.kind == "calc":
                     spec = self.method.for_stage(method_key)
+                options_text = (
+                    _format_pruning_stage_options(stage.prune_options)
+                    if stage.kind == "prune"
+                    else _format_stage_options(spec.options if spec is not None else None)
+                )
 
                 rows.append(
                     {
@@ -264,7 +275,7 @@ class BaseWorkflow:
                         "kind": stage.kind,
                         "method_key": method_key if stage.kind == "calc" else None,
                         "engine": _stage_engine(stage, spec),
-                        "options": _format_stage_options(spec.options if spec is not None else None),
+                        "options": options_text,
                         "lowest": stage.lowest,
                         "constraint": stage.constraint,
                         "n_cores": stage.n_cores,
@@ -923,6 +934,14 @@ class BaseWorkflow:
                     options=options,
                 )
             df = _attach_workflow_attrs(df, workflow=self, target=target)
+            _log_workflow_stage_summary(
+                workflow=self,
+                target=target,
+                stage=stage,
+                df=df,
+                input_rows=input_rows,
+                options=options,
+            )
             append_workflow_timing(
                 df.attrs,
                 build_workflow_timing_record(
@@ -1477,6 +1496,8 @@ def _stage_engine(stage: StageDef, spec: CalculatorSpec | None) -> str | None:
         return "prepare"
     if stage.kind == "filter":
         return "filter"
+    if stage.kind == "prune":
+        return "prism_pruner"
     if spec is None:
         return None
     return spec.engine
@@ -1493,6 +1514,27 @@ def _format_stage_options(options: Mapping[str, Any] | None) -> str | None:
         else:
             parts.append(f"{key}={value}")
     return " ".join(parts)
+
+
+def _format_pruning_stage_options(options: Mapping[str, Any] | None) -> str | None:
+    """Format pruning options for ``BaseWorkflow.show_stages``."""
+    if not options:
+        return None
+    modes = tuple(options.get("modes") or ())
+    parts = ["modes=" + ",".join(map(str, modes))] if modes else []
+    if "moi" in modes:
+        parts.append(f"moi_max_deviation={options.get('moi_max_deviation')}")
+    if "rmsd" in modes or "rot_corr_rmsd" in modes:
+        parts.append(f"rmsd_max_rmsd={options.get('rmsd_max_rmsd')}")
+        if options.get("rmsd_max_dev") is not None:
+            parts.append(f"rmsd_max_dev={options.get('rmsd_max_dev')}")
+    if "rot_corr_rmsd" in modes:
+        parts.append(f"graph_source={options.get('graph_source')}")
+    if options.get("coords_col") is not None:
+        parts.append(f"coords_col={options.get('coords_col')}")
+    if options.get("energy_col") is not None:
+        parts.append(f"energy_col={options.get('energy_col')}")
+    return " ".join(parts) if parts else _format_stage_options(options)
 
 
 def _coerce_method(method: MethodPlan | str | None) -> MethodPlan:
@@ -1648,6 +1690,52 @@ def _current_job_id() -> str | None:
         return None
 
 
+def _log_workflow_stage_summary(
+    *,
+    workflow: BaseWorkflow,
+    target: WorkflowTarget,
+    stage: StageDef,
+    df: pd.DataFrame,
+    input_rows: int | None,
+    options: ExecutionOptions,
+) -> None:
+    """Log compact workflow-stage summaries for non-calculator stages."""
+    if stage.kind not in {"prepare", "filter"}:
+        return
+
+    message = _workflow_stage_summary_message(stage, df, input_rows=input_rows)
+    if not message:
+        return
+
+    logger = make_stepper_logger(
+        workflow._step_type_for_target(target),
+        debug=options.debug,
+        job_id=_current_job_id(),
+    )
+    logger.info(message)
+
+
+def _workflow_stage_summary_message(
+    stage: StageDef,
+    df: pd.DataFrame,
+    *,
+    input_rows: int | None,
+) -> str | None:
+    """Return a compact log message for a workflow-level stage."""
+    if stage.kind == "prepare":
+        conformers = df.attrs.get("frust_conformers")
+        if isinstance(conformers, Mapping) and conformers.get("source") == "Stepper.build_initial_df":
+            return None
+        return conformer_generation_summary(df, label=stage.name)
+    if stage.kind == "filter":
+        return filter_summary(
+            name=stage.name,
+            input_rows=input_rows,
+            output_rows=int(len(df)),
+        )
+    return None
+
+
 def _apply_calculator(
     step: Stepper,
     df: pd.DataFrame,
@@ -1749,6 +1837,13 @@ def _run_stage_calculation(
         save_output_dir=options.save_output_dir,
         work_dir=options.work_dir,
     )
+    if stage.kind == "prune":
+        return step.prune_conformers(
+            df,
+            name=stage.name,
+            **(stage.prune_options or {}),
+        )
+
     spec = workflow.method.for_stage(stage.method_stage or stage.id)
     return _apply_calculator(step, df, stage, spec)
 

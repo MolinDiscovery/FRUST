@@ -18,6 +18,17 @@
       filters:
         - "!^_"
 
+## Pruning
+
+::: frust.utils.pruning
+    options:
+      show_root_heading: true
+      show_root_full_path: false
+      members:
+        - prune_conformers
+      filters:
+        - "!^_"
+
 ## IO
 
 ::: frust.utils.io

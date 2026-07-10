@@ -29,6 +29,7 @@ _PUBLIC_API: dict[str, tuple[str, str]] = {
     "show_timing": ("frust.utils.dataframes", "show_timing"),
     "lowest_energy_rows": ("frust.utils.dataframes", "lowest_energy_rows"),
     "map_substrate_names": ("frust.utils.dataframes", "map_substrate_names"),
+    "prune_conformers": ("frust.utils.pruning", "prune_conformers"),
     "inspect_ts_vibrations": ("frust.utils.analytics", "inspect_ts_vibrations"),
     "summarize_ts_vibrations": ("frust.utils.analytics", "summarize_ts_vibrations"),
     # Structure preparation
@@ -112,6 +113,7 @@ if TYPE_CHECKING:
     from frust.utils.dataframes import show_steps, show_timing, lowest_energy_rows, map_substrate_names
     from frust.utils.io import read_ts_type_from_xyz, write_xyz, write_xyz_structures
     from frust.utils.mols import create_mol_per_rpos, create_ts_per_rpos
+    from frust.utils.pruning import prune_conformers
     from frust.vis import (
         DrawMolSvg,
         DrawUniqueChGrid,

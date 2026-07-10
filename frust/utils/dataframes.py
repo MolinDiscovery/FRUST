@@ -246,7 +246,7 @@ def show_steps(df: pd.DataFrame, *, detail: str = "summary") -> pd.DataFrame:
                 "core_hours": _core_hours(elapsed_s, n_cores),
                 "processed_rows": timing.get("processed_rows"),
                 "skipped_rows": timing.get("skipped_rows"),
-                "options": _format_keys(step.get("options")),
+                "options": _format_step_options(step),
                 "columns": _format_list(columns),
                 "n_columns": len(columns) if isinstance(columns, list) else 0,
                 "lowest": filtering.get("lowest"),
@@ -1471,6 +1471,33 @@ def _format_keys(value: Any) -> str | None:
     if not isinstance(value, Mapping) or not value:
         return None
     return " ".join(map(str, value))
+
+
+def _format_step_options(step: Mapping[str, Any]) -> str | None:
+    """Format step options, preserving existing calculator summaries."""
+    options = step.get("options")
+    if step.get("engine") != "prism_pruner":
+        return _format_keys(options)
+    if not isinstance(options, Mapping) or not options:
+        return None
+
+    parts: list[str] = []
+    modes = options.get("modes")
+    if isinstance(modes, (list, tuple)):
+        parts.append("modes=" + ",".join(map(str, modes)))
+    for key in (
+        "coords_col",
+        "energy_col",
+        "moi_max_deviation",
+        "rmsd_max_rmsd",
+        "rmsd_max_dev",
+        "heavy_atoms_only",
+        "graph_source",
+    ):
+        value = options.get(key)
+        if value is not None:
+            parts.append(f"{key}={value}")
+    return " ".join(parts) if parts else _format_keys(options)
 
 
 def _format_list(value: Any) -> str | None:

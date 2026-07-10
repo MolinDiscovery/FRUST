@@ -68,6 +68,10 @@ wf = ft.workflows.screen_ts(
 df = wf.run(targets=[0], out_dir="debug/screen_ts", execution="dft_staged")
 ```
 
+In `screen_ts(...)`, PRISM pruning runs by default after TS guess generation and
+before the first xTB stage. Pass `prune_initial=False` to preserve every
+generated conformer.
+
 The same object can then be submitted:
 
 ```python
@@ -129,8 +133,8 @@ wf.show_stages()[["group", "stage", "engine", "options"]]
 | --- | --- | --- | --- |
 | `init` | `prepare` | `prepare` |  |
 | `init` | `xtb_preopt` | `xtb` | `gfnff opt` |
-| `init` | `xtb_sp` | `xtb` | `gfn=2` |
-| `init` | `xtb_opt` | `xtb` | `gfn=2 opt` |
+| `init` | `xtb_sp` | `gxtb` |  |
+| `init` | `xtb_opt` | `gxtb` | `opt` |
 | `init` | `dft_pre_sp` | `orca` | `r2SCAN-3c TightSCF SP NoSym` |
 | `dft_opt` | `dft_opt` | `orca` | `r2SCAN-3c TightSCF SlowConv Opt NoSym` |
 | `freq` | `freq` | `orca` | `r2SCAN-3c TightSCF SlowConv Freq NoSym` |

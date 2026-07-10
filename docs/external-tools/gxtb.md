@@ -277,8 +277,10 @@ df_low = step.gxtb(
 
 ## Workflow Method Plans
 
-For new local-to-cluster workflows, put g-xTB into the method plan instead of
-editing every calculation script by hand.
+Built-in workflow method presets already use direct g-xTB for both the
+`xtb_sp` single-point ranking stage and the constrained `xtb_opt` optimization
+stage. You only need a method-plan override when you want to change that
+default.
 
 ```python
 import frust as ft
@@ -286,8 +288,8 @@ import frust as ft
 method = (
     ft.workflows.methods.preset("r2scan-3c")
     .replace(
-        xtb_sp=ft.workflows.methods.gxtb(job="sp"),
-        xtb_opt=ft.workflows.methods.gxtb(job="opt"),
+        xtb_sp=ft.workflows.methods.xtb(gfn=2),
+        xtb_opt=ft.workflows.methods.xtb(gfn=2, opt=True),
     )
 )
 
@@ -301,14 +303,17 @@ wf = ft.workflows.screen_ts(
 )
 ```
 
-This changes only the selected xTB-like filtering stages. The ORCA DFT stages
-still come from the `r2scan-3c` preset.
+This restores the older GFN2-xTB initialization behavior while leaving the
+ORCA DFT stages from the `r2scan-3c` preset and the default `screen_ts(...)`
+initial pruning stage unchanged.
 
 !!! note "g-xTB stages are not GFN2 stages"
 
-    Use `ft.workflows.methods.gxtb(job="sp")` or `gxtb(job="opt")`. Do not
-    write `engine="gxtb", options={"gfn": 2}`; `gfn=2` is a normal xTB option,
-    not a g-xTB method selection.
+    Use `ft.workflows.methods.gxtb(job="sp")` or `gxtb(job="opt")`. A
+    `gxtb(job="sp")` stage has no method options, so `show_stages()` displays
+    a blank options cell for it; `gxtb(job="opt")` displays `opt`. Do not
+    combine `engine="gxtb"` with `options={"gfn": 2}`; `gfn=2` is a normal xTB
+    option, not a g-xTB method selection.
 
 ## ORCA-Driven TS Optimization
 

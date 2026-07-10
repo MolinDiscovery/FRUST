@@ -142,8 +142,7 @@ class MethodPlan:
         Examples
         --------
         >>> method = preset("r2scan-3c").replace(
-        ...     xtb_sp=gxtb(job="sp"),
-        ...     xtb_opt=gxtb(job="opt"),
+        ...     xtb_opt=xtb(gfn=2, opt=True),
         ... )
         """
         updated = dict(self.stages)
@@ -258,12 +257,10 @@ def gxtb(
 
     Examples
     --------
-    Replace the xTB ranking and optimization stages with g-xTB:
+    Built-in method presets use direct g-xTB for both the ``xtb_sp`` ranking
+    stage and the constrained ``xtb_opt`` optimization stage:
 
-    >>> method = preset("r2scan-3c").replace(
-    ...     xtb_sp=gxtb(job="sp"),
-    ...     xtb_opt=gxtb(job="opt"),
-    ... )
+    >>> gxtb(job="opt")
     """
     opts = dict(options or {})
     job_name = job.lower()
@@ -435,9 +432,9 @@ def register_preset(name: str, method: MethodPlan) -> MethodPlan:
 
     Examples
     --------
-    >>> custom = preset("r2scan-3c").replace(xtb_sp=gxtb(job="sp"))
-    >>> register_preset("my-r2scan-gxtb", custom)
-    >>> preset("my-r2scan-gxtb") is custom
+    >>> custom = preset("r2scan-3c").replace(xtb_opt=xtb(gfn=2, opt=True))
+    >>> register_preset("my-r2scan-xtb-opt", custom)
+    >>> preset("my-r2scan-xtb-opt") is custom
     True
     """
     if not isinstance(method, MethodPlan):
@@ -488,8 +485,8 @@ def _base_stages(
     Parameters
     ----------
     dft_pre_sp, dft_pre_opt, dft_opt, hess, optts, freq, solv : CalculatorSpec
-        DFT-stage calculator specs. xTB initialization specs are added by this
-        helper.
+        DFT-stage calculator specs. Shared initialization specs are added by
+        this helper.
 
     Returns
     -------
@@ -498,8 +495,8 @@ def _base_stages(
     """
     return {
         "xtb_preopt": xtb(gfnff=True, opt=True),
-        "xtb_sp": xtb(gfn=2),
-        "xtb_opt": xtb(gfn=2, opt=True),
+        "xtb_sp": gxtb(job="sp"),
+        "xtb_opt": gxtb(job="opt"),
         "dft_pre_sp": dft_pre_sp,
         "dft_pre_opt": dft_pre_opt,
         "dft_opt": dft_opt,

@@ -52,6 +52,28 @@ def _initial_df() -> pd.DataFrame:
     )
 
 
+def _initial_df_with_conformer_attrs() -> pd.DataFrame:
+    df = _initial_df()
+    df.attrs["frust_conformers"] = {
+        "schema_version": 1,
+        "source": "screen.create_ts_guesses",
+        "backend": "tsguess2",
+        "requested_n_confs": 2,
+        "n_cores": 2,
+        "n_structures": 1,
+        "total_generated_confs": 2,
+        "structures": [
+            {
+                "structure_id": "TS1:pyrrole:cat:r2",
+                "requested_n_confs": 2,
+                "resolved_n_confs": 2,
+                "generated_n_confs": 2,
+            }
+        ],
+    }
+    return df
+
+
 class FakeStepper:
     calls = []
 
@@ -94,6 +116,22 @@ class FakeStepper:
         out[f"{name}-EE"] = [float(value) for value in range(len(out), 0, -1)]
         if "Opt" in options or "OptTS" in options:
             out[f"{name}-oc"] = out["coords_embedded"]
+        return out
+
+    def prune_conformers(self, df, name="initial_prune", **kwargs):
+        FakeStepper.calls.append(("prune_conformers", name, kwargs))
+        out = df.sort_values("cid").head(1).copy()
+        out.attrs.update(getattr(df, "attrs", {}))
+        out.attrs.setdefault("frust_steps", {})[name] = {
+            "engine": "prism_pruner",
+            "columns": [],
+            "options": kwargs,
+            "row_counts": {
+                "input_rows": len(df),
+                "output_rows": len(out),
+                "dropped_rows": len(df) - len(out),
+            },
+        }
         return out
 
 
@@ -205,7 +243,12 @@ class WorkflowExecutionTests(unittest.TestCase):
         )
         self.assertNotIn("hess", stages["stage"].tolist())
         self.assertNotIn("optts", stages["stage"].tolist())
-        self.assertEqual(stages.loc[stages["stage"].eq("xtb_sp"), "options"].item(), "gfn=2")
+        xtb_sp = stages.loc[stages["stage"].eq("xtb_sp")].iloc[0]
+        self.assertEqual(xtb_sp["engine"], "gxtb")
+        self.assertIsNone(xtb_sp["options"])
+        xtb_opt = stages.loc[stages["stage"].eq("xtb_opt")].iloc[0]
+        self.assertEqual(xtb_opt["engine"], "gxtb")
+        self.assertEqual(xtb_opt["options"], "opt")
 
     def test_screen_ts_show_stages_lists_ts_dft_stages(self):
         wf = ft.workflows.screen_ts(
@@ -221,6 +264,7 @@ class WorkflowExecutionTests(unittest.TestCase):
             list(stages["stage"]),
             [
                 "prepare",
+                "initial_prune",
                 "xtb_preopt",
                 "xtb_sp",
                 "xtb_opt",
@@ -234,11 +278,37 @@ class WorkflowExecutionTests(unittest.TestCase):
         )
         self.assertEqual(
             list(stages["group"]),
-            ["init", "init", "init", "init", "init", "init", "hess", "optts", "freq", "solv"],
+            ["init", "init", "init", "init", "init", "init", "init", "hess", "optts", "freq", "solv"],
         )
         optts = stages.loc[stages["stage"].eq("optts")].iloc[0]
         self.assertEqual(optts["calculation"], "OptTS")
         self.assertEqual(optts["method_key"], "optts")
+
+    def test_screen_ts_dft_false_stops_after_dft_pre_sp_filter(self):
+        wf = ft.workflows.screen_ts(
+            dataframe=_screen_df(),
+            ts_types=["TS1"],
+            method="r2scan-3c",
+            dft=False,
+        )
+
+        stages = wf.show_stages()
+
+        self.assertEqual(
+            list(stages["stage"]),
+            [
+                "prepare",
+                "initial_prune",
+                "xtb_preopt",
+                "xtb_sp",
+                "xtb_opt",
+                "dft_pre_sp",
+                "filter",
+            ],
+        )
+        self.assertNotIn("dft_pre_opt", stages["stage"].tolist())
+        self.assertNotIn("hess", stages["stage"].tolist())
+        self.assertEqual(stages.loc[stages["stage"].eq("filter"), "kind"].item(), "filter")
 
     def test_show_stages_execution_grouping_modes(self):
         df = pd.DataFrame({"compound_name": ["raw"], "smiles": ["CCO"]})
@@ -259,12 +329,49 @@ class WorkflowExecutionTests(unittest.TestCase):
 
     def test_show_stages_reflects_replaced_method_stage(self):
         df = pd.DataFrame({"compound_name": ["raw"], "smiles": ["CCO"]})
-        method = methods.preset("r2scan-3c").replace(xtb_sp=methods.gxtb(job="sp"))
+        method = methods.preset("r2scan-3c").replace(xtb_sp=methods.xtb(gfn=1))
         wf = ft.workflows.raw_mols(dataframe=df, method=method, dft=False)
 
         stages = wf.show_stages()
 
-        self.assertEqual(stages.loc[stages["stage"].eq("xtb_sp"), "engine"].item(), "gxtb")
+        xtb_sp = stages.loc[stages["stage"].eq("xtb_sp")].iloc[0]
+        self.assertEqual(xtb_sp["engine"], "xtb")
+        self.assertEqual(xtb_sp["options"], "gfn=1")
+
+    def test_prune_initial_adds_pruning_stage_after_prepare(self):
+        df = pd.DataFrame({"compound_name": ["raw"], "smiles": ["CCO"]})
+        wf = ft.workflows.raw_mols(dataframe=df, dft=True, prune_initial=True)
+
+        stages = wf.show_stages()
+
+        self.assertEqual(list(stages["stage"])[:3], ["prepare", "initial_prune", "xtb_preopt"])
+        self.assertEqual(stages.loc[stages["stage"].eq("initial_prune"), "group"].item(), "init")
+        self.assertEqual(
+            stages.loc[stages["stage"].eq("initial_prune"), "engine"].item(),
+            "prism_pruner",
+        )
+        self.assertIn("modes", stages.loc[stages["stage"].eq("initial_prune"), "options"].item())
+
+    def test_prune_initial_false_preserves_stage_graph(self):
+        df = pd.DataFrame({"compound_name": ["raw"], "smiles": ["CCO"]})
+        wf = ft.workflows.raw_mols(dataframe=df, dft=True, prune_initial=False)
+
+        stages = wf.show_stages()
+
+        self.assertNotIn("initial_prune", stages["stage"].tolist())
+
+    def test_prune_initial_dict_overrides_defaults(self):
+        df = pd.DataFrame({"compound_name": ["raw"], "smiles": ["CCO"]})
+        wf = ft.workflows.raw_mols(
+            dataframe=df,
+            dft=True,
+            prune_initial={"modes": ("moi",), "moi_max_deviation": 0.03},
+        )
+
+        stage = wf.show_stages().loc[lambda table: table["stage"].eq("initial_prune")].iloc[0]
+
+        self.assertIn("moi_max_deviation=0.03", stage["options"])
+        self.assertNotIn("rmsd_max_rmsd=0.25", stage["options"])
 
     def test_show_stages_does_not_build_targets(self):
         df = pd.DataFrame({"compound_name": ["raw"], "smiles": ["CCO"]})
@@ -286,12 +393,76 @@ class WorkflowExecutionTests(unittest.TestCase):
         with self.assertRaisesRegex(KeyError, "xtb_sp"):
             wf.show_stages()
 
+    def test_local_run_prune_initial_calls_stepper_pruning(self):
+        df = pd.DataFrame({"compound_name": ["raw"], "smiles": ["CCO"]})
+        with (
+            patch("frust.workflows.factories.Stepper", FakeStepper),
+            patch("frust.workflows.core.Stepper", FakeStepper),
+        ):
+            wf = ft.workflows.raw_mols(
+                dataframe=df,
+                dft=False,
+                prune_initial={"modes": ("moi",), "moi_max_deviation": 0.03},
+            )
+            out = wf.run(targets=[0], n_cores=2, mem_gb=4)
+
+        prune_calls = [call for call in FakeStepper.calls if call[0] == "prune_conformers"]
+        self.assertEqual(len(prune_calls), 1)
+        self.assertEqual(prune_calls[0][1], "initial_prune")
+        self.assertEqual(prune_calls[0][2]["moi_max_deviation"], 0.03)
+        self.assertEqual(len(out), 1)
+
+    def test_screen_ts_dft_false_run_calls_only_dft_pre_sp_before_filter(self):
+        with (
+            patch("frust.workflows.factories.create_ts_guesses", return_value={"TS1": _initial_df()}),
+            patch("frust.workflows.factories.Stepper", FakeStepper),
+            patch("frust.workflows.core.Stepper", FakeStepper),
+        ):
+            wf = ft.workflows.screen_ts(
+                dataframe=_screen_df(),
+                ts_types=["TS1"],
+                method="r2scan-3c",
+                dft=False,
+                prune_initial=False,
+            )
+            out = wf.run(targets=[0], n_cores=2, mem_gb=4)
+
+        orca_calls = [call for call in FakeStepper.calls if call[0] == "orca"]
+        self.assertEqual([call[1] for call in orca_calls], ["DFT-pre-SP"])
+        self.assertEqual(len(out), 1)
+
+    def test_workflow_logs_prepare_and_filter_summaries_without_duplicate_prune(self):
+        messages = []
+        logger = SimpleNamespace(info=messages.append)
+        with (
+            patch(
+                "frust.workflows.factories.create_ts_guesses",
+                return_value={"TS1": _initial_df_with_conformer_attrs()},
+            ),
+            patch("frust.workflows.factories.Stepper", FakeStepper),
+            patch("frust.workflows.core.Stepper", FakeStepper),
+            patch("frust.workflows.core.make_stepper_logger", return_value=logger),
+        ):
+            wf = ft.workflows.screen_ts(
+                dataframe=_screen_df(),
+                ts_types=["TS1"],
+                method="r2scan-3c",
+                dft=False,
+                prune_initial=True,
+            )
+            wf.run(targets=[0], n_cores=2, mem_gb=4)
+
+        self.assertIn(
+            "[prepare] generated 2 conformer row(s) from 1 structure(s); "
+            "requested=2; resolved=2; missing=0; backend=tsguess2",
+            messages,
+        )
+        self.assertIn("[filter] kept 1/1 row(s); dropped=0", messages)
+        self.assertFalse(any(message.startswith("[initial_prune]") for message in messages))
+
     def test_local_run_dispatches_gxtb_stage_and_compacts_successful_target(self):
         df = pd.DataFrame({"smiles": ["CN1C=CC=C1"], "rpos": ["2"]})
-        method = methods.preset("r2scan-3c").replace(
-            xtb_sp=methods.gxtb(job="sp"),
-            xtb_opt=methods.gxtb(job="opt"),
-        )
+        method = methods.preset("r2scan-3c")
         with tempfile.TemporaryDirectory() as tmp:
             with (
                 patch("frust.workflows.factories.create_mol_per_rpos", return_value=[_mol_jobs()[0]]),
@@ -331,13 +502,11 @@ class WorkflowExecutionTests(unittest.TestCase):
         self.assertIn("gxtb", engines)
         gxtb_calls = [call for call in FakeStepper.calls if call[0] == "gxtb"]
         self.assertEqual(gxtb_calls[0][2], {})
+        self.assertEqual(gxtb_calls[1][2], {"opt": None})
 
     def test_raw_mols_local_run_can_keep_all_staged_parquets(self):
         df = pd.DataFrame({"compound_name": ["raw dimer"], "smiles": ["CCO"]})
-        method = methods.preset("r2scan-3c").replace(
-            xtb_sp=methods.gxtb(job="sp"),
-            xtb_opt=methods.gxtb(job="opt"),
-        )
+        method = methods.preset("r2scan-3c")
         with tempfile.TemporaryDirectory() as tmp:
             with (
                 patch("frust.workflows.factories.create_mol_per_rpos") as create,

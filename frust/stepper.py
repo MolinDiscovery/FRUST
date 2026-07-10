@@ -30,6 +30,7 @@ from frust.utils.timing import (
     monotonic_seconds,
     utc_timestamp,
 )
+from frust.utils.stage_summaries import conformer_generation_summary, pruning_summary
 from frust.schema import (
     energy_columns,
     infer_group_columns,
@@ -78,11 +79,37 @@ def _make_logger(name: str, debug: bool) -> logging.Logger:
     return inst_logger
 
 
-def _logger_name(step_type: str | None, job_id: int | None) -> str:
+def _logger_name(step_type: str | None, job_id: int | str | None) -> str:
     """Build a readable, stable logger name for one Stepper instance."""
     step_label = (step_type or "generic").upper()
     job_label = f"job{job_id}" if job_id is not None else "local"
     return f"{__name__}.{step_label}.{job_label}"
+
+
+def make_stepper_logger(
+    step_type: str | None,
+    *,
+    debug: bool = False,
+    job_id: int | str | None = None,
+) -> logging.Logger:
+    """Return a Stepper-style logger for workflow-level messages.
+
+    Parameters
+    ----------
+    step_type : str or None
+        Workflow target type used in the logger name, such as ``"TS1"``.
+    debug : bool, optional
+        If ``True``, configure the logger for debug output.
+    job_id : int, str, or None, optional
+        Scheduler job id used in the logger suffix. ``None`` uses ``"local"``.
+
+    Returns
+    -------
+    logging.Logger
+        Logger with the same formatting as :class:`Stepper` instances.
+    """
+    return _make_logger(_logger_name(step_type, job_id), debug)
+
 
 class Stepper:
     """Chain xTB and ORCA calculations over dataframe-based conformer tables.
@@ -234,6 +261,91 @@ class Stepper:
                 "DataFrame must contain coordinates in 'coords_embedded' or a '*-oc'/'*-opt_coords' column"
             )
         return cols[-1]
+
+    def prune_conformers(
+        self,
+        df: pd.DataFrame,
+        *,
+        name: str = "initial_prune",
+        modes=("moi", "rmsd"),
+        coords_col: str | None = None,
+        atoms_col: str = "atoms",
+        energy_col: str | None = None,
+        group_cols=None,
+        moi_max_deviation: float = 0.01,
+        rmsd_max_rmsd: float = 0.25,
+        rmsd_max_dev: float | None = None,
+        timeout_s: int = 60,
+        heavy_atoms_only: bool = True,
+        graph_source: str = "connectivity_bonds",
+        debugfunction=None,
+    ) -> pd.DataFrame:
+        """Prune geometrically redundant conformers with optional PRISM modes.
+
+        Parameters
+        ----------
+        df : pandas.DataFrame
+            FRUST dataframe with one conformer per row.
+        name : str, optional
+            Step name recorded in ``df.attrs["frust_steps"]``.
+        modes : sequence of str, optional
+            PRISM modes to run in order. Supported values are ``"moi"``,
+            ``"rmsd"``, and opt-in ``"rot_corr_rmsd"``.
+        coords_col : str or None, optional
+            Coordinate column to prune on. If ``None``, the latest coordinate
+            column is selected using the same convention as calculator stages.
+        atoms_col : str, optional
+            Atom-symbol column matching the coordinate order.
+        energy_col : str or None, optional
+            Column used to sort rows within each structure group before
+            pruning. Energies are not passed to PRISM.
+        group_cols : sequence of str or None, optional
+            Structure identity columns. If omitted, FRUST infers them from the
+            dataframe.
+        moi_max_deviation : float, optional
+            Relative moment-of-inertia deviation threshold.
+        rmsd_max_rmsd : float, optional
+            RMSD threshold in Angstrom.
+        rmsd_max_dev : float or None, optional
+            Maximum single-atom deviation in Angstrom. ``None`` lets PRISM use
+            its default.
+        timeout_s : int, optional
+            PRISM timeout in seconds.
+        heavy_atoms_only : bool, optional
+            Forwarded to PRISM RMSD modes.
+        graph_source : {"connectivity_bonds", "graphize"}, optional
+            Connectivity source for ``"rot_corr_rmsd"``.
+        debugfunction : callable or None, optional
+            Optional callback for PRISM debug messages.
+
+        Returns
+        -------
+        pandas.DataFrame
+            Pruned dataframe with pruning provenance in ``df.attrs``.
+        """
+        from frust.utils.pruning import prune_conformers
+
+        resolved_coords_col = coords_col or self._last_coord_col(df)
+        out = prune_conformers(
+            df,
+            name=name,
+            modes=modes,
+            coords_col=resolved_coords_col,
+            atoms_col=atoms_col,
+            energy_col=energy_col,
+            group_cols=group_cols,
+            moi_max_deviation=moi_max_deviation,
+            rmsd_max_rmsd=rmsd_max_rmsd,
+            rmsd_max_dev=rmsd_max_dev,
+            timeout_s=timeout_s,
+            heavy_atoms_only=heavy_atoms_only,
+            graph_source=graph_source,
+            debugfunction=debugfunction,
+        )
+        message = pruning_summary(out, name=name, input_rows=int(len(df)))
+        if message:
+            self.logger.info(message)
+        return out
 
     def _step_type_upper(self) -> str:
         """Normalize step_type for callers that only need TS dispatch."""
@@ -1312,6 +1424,9 @@ class Stepper:
                 ),
                 "structures": conformer_records,
             }
+        message = conformer_generation_summary(df)
+        if message:
+            self.logger.info(message)
         return df
 
     @staticmethod

@@ -44,3 +44,9 @@ include = ["frust*"]
 
 [project.scripts]
 merge_parquet = "frust.utils.analytics:main_merge_parquet"
+
+[tool.pytest.ini_options]
+addopts = ["-m", "not slow"]
+markers = [
+    "slow: expensive integration or geometry regression tests skipped by default",
+]

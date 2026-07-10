@@ -19,6 +19,11 @@ wf = ft.workflows.screen_ts(
 )
 ```
 
+For `screen_ts(...)`, initial conformer pruning is on by default. The workflow
+generates TS guesses, prunes geometrically redundant conformers with PRISM, and
+then starts the xTB/DFT stage graph. Pass `prune_initial=False` only when you
+want to keep every generated conformer.
+
 The mental model is:
 
 ```text
@@ -129,9 +134,9 @@ they move with the dataframe and are what later constrained stages use.
 
 ## Inspect The Method Plan
 
-The built-in `r2scan-3c` method plan uses normal xTB for the inexpensive
-filtering stages and ORCA's built-in `r2SCAN-3c` composite method for the DFT
-stages.
+The built-in `r2scan-3c` method plan uses direct g-xTB for the initial
+single-point ranking and constrained low-cost optimization stages, and ORCA's
+built-in `r2SCAN-3c` composite method for the DFT stages.
 
 ```python
 method = ft.workflows.methods.preset("r2scan-3c")
@@ -142,8 +147,8 @@ Compactly, the important stage choices are:
 | stage | engine | options |
 | --- | --- | --- |
 | `xtb_preopt` | `xtb` | `gfnff opt` |
-| `xtb_sp` | `xtb` | `gfn=2` |
-| `xtb_opt` | `xtb` | `gfn=2 opt` |
+| `xtb_sp` | `gxtb` |  |
+| `xtb_opt` | `gxtb` | `opt` |
 | `dft_pre_sp` | `orca` | `r2SCAN-3c TightSCF SP NoSym` |
 | `dft_pre_opt` | `orca` | `r2SCAN-3c TightSCF SlowConv Opt NoSym` |
 | `hess` | `orca` | `r2SCAN-3c TightSCF SlowConv Freq NoSym` |
@@ -155,7 +160,8 @@ Compactly, the important stage choices are:
 
     `MethodPlan` changes calculator engines and options. It does not change
     which TS targets exist, which reactive positions are expanded, or how the
-    TS guess roles are assigned.
+    TS guess roles are assigned. It also does not control initial conformer
+    pruning; that is workflow configuration through `prune_initial`.
 
 To see the stages this workflow will actually run, inspect the workflow instead
 of reading the full preset map:
@@ -169,9 +175,10 @@ For the `screen_ts` workflow above, `dft_staged` uses TS-stage resource groups:
 | group | stage | method_key | engine | options |
 | --- | --- | --- | --- | --- |
 | `init` | `prepare` |  | `prepare` |  |
+| `init` | `initial_prune` |  | `prism_pruner` | `modes=moi,rmsd moi_max_deviation=0.01 rmsd_max_rmsd=0.25` |
 | `init` | `xtb_preopt` | `xtb_preopt` | `xtb` | `gfnff opt` |
-| `init` | `xtb_sp` | `xtb_sp` | `xtb` | `gfn=2` |
-| `init` | `xtb_opt` | `xtb_opt` | `xtb` | `gfn=2 opt` |
+| `init` | `xtb_sp` | `xtb_sp` | `gxtb` |  |
+| `init` | `xtb_opt` | `xtb_opt` | `gxtb` | `opt` |
 | `init` | `dft_pre_sp` | `dft_pre_sp` | `orca` | `r2SCAN-3c TightSCF SP NoSym` |
 | `init` | `dft_pre_opt` | `dft_pre_opt` | `orca` | `r2SCAN-3c TightSCF SlowConv Opt NoSym` |
 | `hess` | `hess` | `hess` | `orca` | `r2SCAN-3c TightSCF SlowConv Freq NoSym` |
@@ -185,33 +192,67 @@ run the TS-only `hess` or `optts` stages. They do run `freq` after `dft_opt` so
 thermochemistry, including Gibbs energies, is available for the optimized
 molecule.
 
-### Replace xTB Stages With g-xTB
+### Configure Initial Pruning
 
-If you want g-xTB for the xTB-like filtering stages, replace just those stage
-specs:
+Use the default pruning stage for normal screen TS runs:
+
+```python
+wf = ft.workflows.screen_ts(
+    csv_path="screen.csv",
+    method="r2scan-3c",
+    prune_initial=True,
+)
+```
+
+Use a dictionary when you want to change PRISM modes or thresholds:
+
+```python
+wf = ft.workflows.screen_ts(
+    csv_path="screen.csv",
+    method="r2scan-3c",
+    prune_initial={
+        "modes": ("moi", "rmsd"),
+        "moi_max_deviation": 0.01,
+        "rmsd_max_rmsd": 0.25,
+    },
+)
+```
+
+!!! note "Install PRISM on the machine that runs the init stage"
+
+    The pruning stage lazy-loads `prism-pruner`. If PRISM is unavailable in a
+    local or cluster environment, either install it there or set
+    `prune_initial=False`.
+
+### Restore GFN2-xTB Initialization
+
+The built-in presets use direct g-xTB for both `xtb_sp` and `xtb_opt`. If you
+need the older GFN2-xTB initialization behavior for a comparison, replace those
+stage specs:
 
 ```python
 method = (
     ft.workflows.methods.preset("r2scan-3c")
     .replace(
-        xtb_sp=ft.workflows.methods.gxtb(job="sp"),
-        xtb_opt=ft.workflows.methods.gxtb(job="opt"),
+        xtb_sp=ft.workflows.methods.xtb(gfn=2),
+        xtb_opt=ft.workflows.methods.xtb(gfn=2, opt=True),
     )
 )
 ```
 
-This is deliberately explicit. g-xTB does not take xTB keywords such as
-`{"gfn": 2}`, so the stage says `gxtb(job="sp")` rather than pretending it is a
-GFN2 calculation.
+This is deliberately explicit. Direct g-xTB single points have no method
+options, so `show_stages()` leaves the `xtb_sp` options cell blank; direct
+g-xTB optimizations show `opt`. g-xTB does not take xTB keywords such as
+`{"gfn": 2}`.
 
 You can register a notebook/session preset when you reuse the same method plan:
 
 ```python
-ft.workflows.methods.register_preset("my-r2scan-gxtb", method)
+ft.workflows.methods.register_preset("my-r2scan-gfn2-init", method)
 
 wf = ft.workflows.screen_ts(
     csv_path="screen.csv",
-    method="my-r2scan-gxtb",
+    method="my-r2scan-gfn2-init",
 )
 ```
 
@@ -236,9 +277,10 @@ Typical `ft.show_steps(df)` output is compact:
 | step | engine | options | columns | n_cores | memory_gb |
 | --- | --- | --- | --- | ---: | ---: |
 | `initial_conformers` | `embedder` | `requested=None; resolved=50; generated=50` |  |  |  |
+| `initial_prune` | `prism_pruner` | `modes=moi,rmsd coords_col=coords_embedded moi_max_deviation=0.01 rmsd_max_rmsd=0.25 heavy_atoms_only=True graph_source=connectivity_bonds` |  |  |  |
 | `xtb_preopt` | `xtb` | `gfnff opt` | `xtb_preopt-EE, xtb_preopt-NT, xtb_preopt-oc` | 2 |  |
-| `xtb_sp` | `xtb` | `gfn=2` | `xtb_sp-EE, xtb_sp-NT` | 2 |  |
-| `xtb_opt` | `xtb` | `gfn=2 opt; lowest=10` | `xtb_opt-EE, xtb_opt-NT, xtb_opt-oc` | 2 |  |
+| `xtb_sp` | `gxtb` |  | `xtb_sp-EE, xtb_sp-NT` | 2 |  |
+| `xtb_opt` | `gxtb` | `opt; lowest=10` | `xtb_opt-EE, xtb_opt-NT, xtb_opt-oc` | 2 |  |
 | `DFT-pre-SP` | `orca` | `r2SCAN-3c TightSCF SP NoSym` | `DFT-pre-SP-EE, DFT-pre-SP-NT` | 4 | 20 |
 
 The exact rows depend on how far the local run went. The important part is that
@@ -279,8 +321,8 @@ grouped into jobs.
 !!! info "`dft_staged` is the production default"
 
     For DFT workflows, `dft_staged` usually gives the right balance: cheap
-    conformer generation and filtering happen together, while long DFT stages
-    get separate scheduler jobs and resources.
+    conformer generation, initial pruning, and filtering happen together, while
+    long DFT stages get separate scheduler jobs and resources.
 
 ## Submit The Same Workflow To Slurm
 
@@ -358,7 +400,7 @@ keys are:
 
 | key | Contains |
 | --- | --- |
-| `init` | TS guess generation, constrained GFNFF, xTB SP, xTB opt, DFT pre-SP, DFT pre-opt |
+| `init` | TS guess generation, initial pruning, constrained GFNFF, g-xTB SP, g-xTB opt, DFT pre-SP, DFT pre-opt |
 | `hess` | ORCA Hessian/frequency input Hessian stage |
 | `optts` | ORCA `OptTS` using the previous Hessian |
 | `freq` | final frequency check |

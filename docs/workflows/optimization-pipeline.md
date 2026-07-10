@@ -8,8 +8,8 @@ stage-prefixed output columns such as `xtb_opt-NT`, `xtb_opt-EE`, and
 ```mermaid
 flowchart TD
     A["Embedded structures<br/>coords_embedded"] --> B["xtb_preopt<br/>GFN-FF constrained opt"]
-    B --> C["xtb_sp<br/>GFN2-xTB single point"]
-    C --> D["xtb_opt<br/>GFN2-xTB constrained opt<br/>lowest=top_n"]
+    B --> C["xtb_sp<br/>g-xTB single point"]
+    C --> D["xtb_opt<br/>g-xTB constrained opt<br/>lowest=top_n"]
     D --> E["DFT-pre-SP<br/>ORCA single point"]
     E --> F["DFT-pre-Opt<br/>ORCA constrained opt<br/>lowest=1"]
     F --> G["Hess<br/>ORCA frequency job"]
@@ -21,6 +21,10 @@ flowchart TD
 This diagram matches the staged `ts_per_rpos` chain in
 `frust.pipelines.run_ts_per_rpos`. The high-level pipeline functions use the
 same idea, but hide more of the orchestration.
+
+For `ft.workflows.screen_ts(...)`, an `initial_prune` stage runs by default
+between embedded TS guesses and `xtb_preopt`. It removes geometrically
+redundant conformers before the first calculator stage.
 
 !!! tip "Cheap broad, expensive narrow"
 

@@ -1,6 +1,7 @@
 import unittest
 from pathlib import Path
 from tempfile import TemporaryDirectory
+from types import SimpleNamespace
 from unittest.mock import patch
 
 import pandas as pd
@@ -129,6 +130,20 @@ class StepperBuildInitialDfTests(unittest.TestCase):
         self.assertEqual(conformers["structures"][0]["resolved_n_confs"], 1)
         self.assertEqual(conformers["structures"][0]["generated_n_confs"], 1)
         self.assertEqual(conformers["structures"][0]["cids"], [0])
+
+    def test_build_initial_df_logs_conformer_generation_summary(self):
+        step = Stepper(debug=True, save_output_dir=False)
+        messages = []
+        step.logger = SimpleNamespace(info=messages.append)
+        raw = {"ethanol": (Chem.MolFromSmiles("CCO"), _metadata("ethanol"))}
+
+        step.build_initial_df(raw, n_confs=1)
+
+        self.assertIn(
+            "[initial_conformers] generated 1 conformer row(s) from 1 structure(s); "
+            "requested=1; resolved=1; missing=0",
+            messages,
+        )
 
     def test_xyz_file_path_preserves_atoms_and_coordinates(self):
         step = Stepper(debug=True, save_output_dir=False)
