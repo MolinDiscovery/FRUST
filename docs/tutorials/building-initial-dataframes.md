@@ -56,7 +56,7 @@ df.attrs["frust_initial_df"]
 
 Output:
 
-```python
+```text
 {
     "input_kind": "smiles",
     "workflow": None,

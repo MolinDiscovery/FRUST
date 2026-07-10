@@ -2,8 +2,9 @@
 
 FRUST is a Python workflow package for building and screening frustrated Lewis
 pair substrate structures. It connects substrate inputs to calculation outputs:
-template-based structure generation, conformer handling, staged xTB and ORCA
-runs, UMA and g-xTB integrations, and parquet-backed result tables.
+connected-graph and legacy template-based structure generation, conformer
+handling, staged xTB and ORCA runs, UMA and g-xTB integrations, and
+parquet-backed result tables.
 
 FRUST is active research software. The workflows are useful now, but APIs and
 defaults may still change as the project evolves.
@@ -21,8 +22,11 @@ defaults may still change as the project evolves.
 - [Catalyst screen workflow](catalyst-screens/overview.md) documents the
   substrate/catalyst screen module, TS1-TS4 guess generation, local smoke
   tests, cluster runs, and output inspection.
-- [TS guess generation](workflows/ts-guess-generation.md) explains how
-  templates, reactive positions, and conformers become TS inputs.
+- [TS guess dataframes](catalyst-screens/ts-guesses.md) explains how the
+  production `tsguess2` backend turns systems and reactive positions into
+  constrained TS inputs.
+- [Legacy template TS generation](workflows/ts-guess-generation.md) documents
+  the older fixed-XYZ workflow for existing scripts.
 - [Inspecting results](workflows/inspecting-results.md) gives the practical
   checks to run before using a barrier or scope prediction.
 - [DataFrames and results](workflows/dataframes.md) documents the main input and
@@ -46,6 +50,7 @@ using UMA or ORCA-driven g-xTB. Then use the [UMA](external-tools/uma.md) and
 ## API Reference
 
 The [API reference](api/stepper.md) focuses on the public surface most users
-touch directly: `Stepper`, `frust.screen`, `frust.tsguess`, `frust.pipes`,
+touch directly: the curated `ft` namespace, `Stepper`, `frust.screen`,
+`frust.tsguess2`, `frust.pipes`,
 workflow objects, cluster submission helpers, dataframe schema helpers, and
 selected external-tool utilities.

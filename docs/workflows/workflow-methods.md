@@ -26,7 +26,7 @@ import frust as ft
 method = ft.workflows.methods.preset("r2scan-3c")
 
 wf = ft.workflows.screen_ts(
-    csv_path="screen.csv",
+    csv_path="docs/examples/screen.csv",
     ts_types=["TS1", "TS2", "TS3", "TS4"],
     method=method,
     n_confs=None,
@@ -217,7 +217,7 @@ screening followed by RMSD pruning:
 
 ```python
 wf = ft.workflows.screen_ts(
-    csv_path="screen.csv",
+    csv_path="docs/examples/screen.csv",
     method="r2scan-3c",
     prune_initial=True,
 )
@@ -227,7 +227,7 @@ Use a dictionary to change the thresholds or modes:
 
 ```python
 wf = ft.workflows.screen_ts(
-    csv_path="screen.csv",
+    csv_path="docs/examples/screen.csv",
     method="r2scan-3c",
     prune_initial={
         "modes": ("moi", "rmsd"),

@@ -103,7 +103,7 @@ from frust.cluster import ClusterConfig
 method = ft.workflows.methods.preset("r2scan-3c")
 
 wf = ft.workflows.screen_ts(
-    csv_path="datasets/screen.csv",
+    csv_path="docs/examples/screen.csv",
     ts_types=["TS1", "TS2", "TS3", "TS4"],
     method=method,
     n_confs=None,
@@ -222,7 +222,7 @@ This is the simplest entry point. `run_mols` takes a CSV with a `smiles` column 
 from frust.cluster import submit_jobs, ClusterConfig, Resources
 
 result = submit_jobs(
-    csv_path="datasets/example.csv",
+    csv_path="docs/examples/substrates.csv",
     pipeline="run_mols",
     out_dir="runs/mols_example",
     cluster=ClusterConfig(
@@ -263,7 +263,7 @@ Use `run_mols_per_rpos` for that finer split:
 from frust.cluster import submit_jobs, ClusterConfig, Resources
 
 result = submit_jobs(
-    csv_path="datasets/example.csv",
+    csv_path="docs/examples/substrates.csv",
     pipeline="run_mols_per_rpos",
     out_dir="runs/mols_per_rpos",
     cluster=ClusterConfig(
@@ -313,7 +313,7 @@ Some pipelines need a TS template. In that case you must provide `ts_xyz`.
 from frust.cluster import submit_jobs, ClusterConfig, Resources
 
 result = submit_jobs(
-    csv_path="datasets/example.csv",
+    csv_path="docs/examples/substrates.csv",
     pipeline="run_ts_per_lig",
     ts_xyz="structures/ts1.xyz",
     out_dir="runs/ts_per_lig_example",
@@ -336,7 +336,7 @@ For `run_ts_per_rpos`, FRUST first expands the CSV into multiple `ts_struct` job
 from frust.cluster import submit_jobs, ClusterConfig, Resources
 
 result = submit_jobs(
-    csv_path="datasets/example.csv",
+    csv_path="docs/examples/substrates.csv",
     pipeline="run_ts_per_rpos",
     ts_xyz="structures/ts2.xyz",
     out_dir="runs/ts_per_rpos_example",
@@ -363,7 +363,7 @@ The simplest way is to use a built-in preset:
 from frust.cluster import submit_chain, ClusterConfig, Resources
 
 result = submit_chain(
-    csv_path="datasets/example.csv",
+    csv_path="docs/examples/substrates.csv",
     preset="ts_per_rpos",
     ts_xyz="structures/ts2.xyz",
     out_dir="runs/ts_chain_example",
@@ -406,7 +406,7 @@ FRUST also includes a built-in preset for the `int3` stage module.
 from frust.cluster import submit_chain, ClusterConfig, Resources
 
 result = submit_chain(
-    csv_path="datasets/example.csv",
+    csv_path="docs/examples/substrates.csv",
     preset="int3_per_rpos",
     ts_xyz="structures/int3.xyz",
     out_dir="runs/int3_chain_example",
@@ -432,7 +432,7 @@ theory, pass it directly into `submit_chain(...)`:
 from frust.cluster import submit_chain, ClusterConfig
 
 result = submit_chain(
-    csv_path="datasets/example.csv",
+    csv_path="docs/examples/substrates.csv",
     preset="int3_per_rpos",
     ts_xyz="structures/int3.xyz",
     out_dir="runs/int3_chain_b3lyp",
@@ -470,7 +470,7 @@ from frust.cluster import ClusterConfig, Resources, submit_screen_chain
 location = "runs/screen_ts"
 
 result = submit_screen_chain(
-    csv_path="datasets/screen.csv",
+    csv_path="docs/examples/screen.csv",
     ts_types=["TS1", "TS2", "TS3", "TS4"],
     out_dir=location,
     cluster=ClusterConfig(
@@ -496,7 +496,7 @@ the composite method keyword directly:
 
 ```python
 result = submit_screen_chain(
-    csv_path="datasets/screen.csv",
+    csv_path="docs/examples/screen.csv",
     ts_types=["TS1", "TS2", "TS3", "TS4"],
     out_dir="runs/screen_ts_r2scan3c",
     cluster=ClusterConfig(
@@ -577,7 +577,7 @@ If you do not want to use a preset, you can specify the stage module and stage o
 from frust.cluster import submit_chain, ClusterConfig, Resources
 
 result = submit_chain(
-    csv_path="datasets/example.csv",
+    csv_path="docs/examples/substrates.csv",
     module_path="frust.pipelines.run_ts_per_rpos",
     stage_order=[
         "run_init",
@@ -615,7 +615,7 @@ You can test the submission logic locally before using Slurm:
 from frust.cluster import submit_jobs, ClusterConfig, Resources
 
 result = submit_jobs(
-    csv_path="datasets/example.csv",
+    csv_path="docs/examples/substrates.csv",
     pipeline="run_mols",
     out_dir="runs/local_test",
     cluster=ClusterConfig(

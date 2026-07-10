@@ -67,7 +67,7 @@ nav:
       - Workflows:
           - Overview: workflows/overview.md
           - Workflow Method Plans: workflows/workflow-methods.md
-          - TS Guess Generation: workflows/ts-guess-generation.md
+          - Legacy Template TS Generation: workflows/ts-guess-generation.md
           - Optimization Pipeline: workflows/optimization-pipeline.md
           - Inspecting Results: workflows/inspecting-results.md
           - Directory And Outputs: workflows/directory-outputs.md
@@ -97,6 +97,7 @@ nav:
           - Transition States: troubleshooting/transition-states.md
           - Cluster Runs: troubleshooting/cluster-runs.md
       - API Reference:
+          - Top-Level API: api/top-level.md
           - Screen: api/screen.md
           - TS Guess: api/tsguess.md
           - Visualization: api/vis.md
@@ -108,6 +109,6 @@ nav:
           - Utility Modules: api/utils.md
   - Tutorials:
       - Building Initial DataFrames: tutorials/building-initial-dataframes.md
-      - Templates: tutorials/templates.md
+      - Legacy XYZ Templates: tutorials/templates.md
       - Catalyst And Substrate Screens: tutorials/catalyst-substrate-screens.md
       - Workflow Method Plans: tutorials/workflow-method-plans.md

@@ -1,17 +1,23 @@
-# TS Guess Generation
+# Legacy Template TS Generation
 
-FRUST transition-state workflows start from two pieces of information:
+This page documents the supported legacy XYZ-template path. For new
+substrate/catalyst screens, use
+[TS Guess DataFrames](../catalyst-screens/ts-guesses.md), which documents the
+default `tsguess2` backend.
+
+Legacy template workflows start from two pieces of information:
 
 - a ligand or substrate table, usually with a `smiles` column;
 - a transition-state template geometry such as `structures/ts1.xyz` or
   `structures/ts2.xyz`.
 
-!!! info "For the new catalyst/substrate screen workflow"
+!!! info "Use `tsguess2` for new catalyst/substrate screens"
 
     Use [Catalyst Screen Workflow](../catalyst-screens/overview.md) when the
     input is a mixed substrate/catalyst table and FRUST should generate
-    built-in `TS1`-`TS4` guesses from `frust.screen` and `frust.tsguess`.
-    This page describes the older template-XYZ TS path.
+    built-in `TS1`-`TS4` guesses from `frust.screen` and the default
+    `tsguess2` backend. Continue here only when an existing workflow depends on
+    a fixed `.xyz` template.
 
 The template tells FRUST what kind of TS-like structure to build. The ligand
 table tells FRUST which substrates and reactive positions should be expanded.

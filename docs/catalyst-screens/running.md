@@ -10,7 +10,7 @@ import frust as ft
 method = ft.workflows.methods.preset("r2scan-3c")
 
 wf = ft.workflows.screen_ts(
-    csv_path="screen.csv",
+    csv_path="docs/examples/screen.csv",
     ts_types=["TS1", "TS2", "TS3", "TS4"],
     method=method,
     n_confs=None,
@@ -55,14 +55,14 @@ Typical `screen_ts(..., method="r2scan-3c", dft=True)` stages:
 | group | stage | engine | options | constraint | lowest |
 | --- | --- | --- | --- | --- | ---: |
 | `init` | `prepare` | `prepare` |  |  |  |
-| `init` | `initial_prune` | `prism_pruner` | `modes=moi,rmsd moi_max_deviation=0.01 rmsd_max_rmsd=0.25` | false |  |
+| `init` | `initial_prune` | `prism_pruner` | `modes=moi,rmsd moi_max_deviation=0.01 rmsd_max_rmsd=1.25` | false |  |
 | `init` | `xtb_preopt` | `xtb` | `gfnff opt` | true |  |
 | `init` | `xtb_sp` | `gxtb` |  | false |  |
 | `init` | `xtb_opt` | `gxtb` | `opt` | true | 10 |
 | `init` | `dft_pre_sp` | `orca` | `r2SCAN-3c TightSCF SP NoSym` | false |  |
 | `init` | `dft_pre_opt` | `orca` | `r2SCAN-3c TightSCF SlowConv Opt NoSym` | true | 1 |
 | `hess` | `hess` | `orca` | `r2SCAN-3c TightSCF SlowConv Freq NoSym` | false |  |
-| `optts` | `optts` | `orca` | `r2SCAN-3c TightSCF SlowConv OptTS NoSym` | false | 1 |
+| `optts` | `optts` | `orca` | `r2SCAN-3c TightSCF SlowConv OptTS NoSym` | false |  |
 | `freq` | `freq` | `orca` | `r2SCAN-3c TightSCF SlowConv Freq NoSym` | false |  |
 | `solv` | `solv` | `orca` | `r2SCAN-3c TightSCF SP NoSym` | false |  |
 
@@ -80,7 +80,7 @@ not pruned against another.
 
 ```python
 wf = ft.workflows.screen_ts(
-    csv_path="screen.csv",
+    csv_path="docs/examples/screen.csv",
     ts_types=["TS1", "TS2", "TS3", "TS4"],
     method="r2scan-3c",
     prune_initial={
@@ -95,7 +95,7 @@ To include rotamer-corrected RMSD pruning, opt in explicitly:
 
 ```python
 wf = ft.workflows.screen_ts(
-    csv_path="screen.csv",
+    csv_path="docs/examples/screen.csv",
     method="r2scan-3c",
     prune_initial={
         "modes": ("moi", "rmsd", "rot_corr_rmsd"),
@@ -129,7 +129,7 @@ For early wiring checks, reduce cost:
 
 ```python
 wf = ft.workflows.screen_ts(
-    csv_path="screen.csv",
+    csv_path="docs/examples/screen.csv",
     ts_types=["TS1"],
     method="r2scan-3c",
     n_confs=1,
@@ -219,7 +219,7 @@ Use `ft.screen.create_ts_guesses(...)` directly when you want to inspect or
 customize a dataframe-by-dataframe workflow.
 
 ```python
-components = ft.screen.read("screen.csv")
+components = ft.screen.read("docs/examples/screen.csv")
 systems = ft.screen.expand(components)
 ts_guesses = ft.screen.create_ts_guesses(systems, ts_types=["TS4"], n_confs=5)
 
@@ -255,9 +255,10 @@ With screen-generated rows, `constraint=True` works row-first:
 | `ft.cluster.submit_screen_chain(...)` | Supported staged helper | You are maintaining older scripts that call the screen chain directly |
 | `ft.workflows.screen_ts(...)` | Recommended | You want method presets, target inspection, local smoke tests, cluster submission, and collection in one object |
 
-The old APIs use the same `frust.screen` and `frust.tsguess` generation
-machinery. Prefer the workflow object for new screens because it makes local
-and cluster behavior easier to compare.
+The older APIs use `frust.screen` and its selected TS backend; unless explicitly
+overridden, that is the same `tsguess2` generation used by the workflow object.
+Prefer the workflow object for new screens because it makes local and cluster
+behavior easier to compare.
 
 ## Production Checklist
 
@@ -265,7 +266,7 @@ Before submitting a large screen:
 
 | Check | Example |
 | --- | --- |
-| Normalize the input | `components = ft.screen.read("screen.csv", strict=True)` |
+| Normalize the input | `components = ft.screen.read("docs/examples/screen.csv", strict=True)` |
 | Confirm systems and target count | `systems = ft.screen.expand(components)` and `len(wf.targets())` |
 | Inspect `rpos` labels | `ft.DrawUniqueChGrid([...])` |
 | Generate one-conformer guesses | `ft.screen.create_ts_guesses(systems.head(1), n_confs=1)` |

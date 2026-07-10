@@ -1,8 +1,19 @@
 # Workflow Method Plans
 
-The new workflow API lets you describe the chemistry once, choose the
-calculator method once, and then run the same object locally or submit it to a
-cluster.
+A workflow defines the chemistry and target graph. A method plan defines which
+calculator runs at each calculation stage. The execution mode decides whether
+those stages run in one process or as dependent jobs.
+
+```text
+Workflow   = chemistry, targets, and ordered stages
+MethodPlan = calculator engine and options for each calculation stage
+execution  = local/cluster grouping of those stages
+```
+
+This tutorial creates one screen workflow, inspects it, changes selected
+calculator choices, runs one target, and submits the same object.
+
+## Create The Workflow
 
 ```python
 import frust as ft
@@ -10,7 +21,7 @@ import frust as ft
 method = ft.workflows.methods.preset("r2scan-3c")
 
 wf = ft.workflows.screen_ts(
-    csv_path="screen.csv",
+    csv_path="docs/examples/screen.csv",
     ts_types=["TS1", "TS2", "TS3", "TS4"],
     method=method,
     n_confs=None,
@@ -19,196 +30,72 @@ wf = ft.workflows.screen_ts(
 )
 ```
 
-For `screen_ts(...)`, initial conformer pruning is on by default. The workflow
-generates TS guesses, prunes geometrically redundant conformers with PRISM, and
-then starts the xTB/DFT stage graph. Pass `prune_initial=False` only when you
-want to keep every generated conformer.
-
-The mental model is:
-
-```text
-Workflow = chemistry, targets, and stage graph
-MethodPlan = calculator engines and options for those stages
-execution mode = how stages become local calls or cluster jobs
-```
-
-That separation is the point. A workflow decides *what chemical targets exist*.
-A method plan decides *how each stage is calculated*. The same workflow can be
-used for a one-target local smoke test and then submitted to Slurm.
-
-```text
-same Workflow + same MethodPlan
-    -> local smoke test with wf.run(...)
-    -> cluster production with wf.submit(...)
-```
-
-## Start With A Screen CSV
-
-Use the normal catalyst-screen format:
-
-```csv
-role,smiles,compound_name,rpos
-substrate,C1=CC=CO1,furan,
-catalyst,CC1(C)CCCC(C)(C)N1C2=CC=CC=C2B,TMP,
-```
-
-Create a workflow object:
-
-```python
-import frust as ft
-
-method = ft.workflows.methods.preset("r2scan-3c")
-
-wf = ft.workflows.screen_ts(
-    csv_path="screen.csv",
-    ts_types=["TS1", "TS2", "TS3", "TS4"],
-    method=method,
-    n_confs=None,
-    top_n=10,
-    dft=True,
-)
-```
-
-The workflow has not run any calculators yet. You can inspect the target list
-first:
+No conformers or calculators have run yet. Inspect the targets first:
 
 ```python
 targets = wf.targets()
-targets[:4]
+
+targets[0].tag
+targets[0].metadata
 ```
 
-For this one-substrate, one-catalyst screen, representative targets look like:
+Representative target:
 
-| target index | tag | ts_type | system_name | rpos |
-| ---: | --- | --- | --- | ---: |
-| 0 | `TS1__furan__TMP__r0` | `TS1` | `furan__TMP` | 0 |
-| 1 | `TS1__furan__TMP__r1` | `TS1` | `furan__TMP` | 1 |
-| 2 | `TS2__furan__TMP__r0` | `TS2` | `furan__TMP` | 0 |
-| 3 | `TS2__furan__TMP__r1` | `TS2` | `furan__TMP` | 1 |
+| tag | ts_type | system_name | rpos |
+| --- | --- | --- | ---: |
+| `TS1__n_methyl_pyrrole__tmp_bcat__r2` | `TS1` | `n_methyl_pyrrole__tmp_bcat` | 2 |
 
-Each target is one independent scientific unit: one TS type, one
-substrate-catalyst system, and one reactive position. Conformers are generated
-inside that target when the workflow runs.
+Each target is one TS family, substrate-catalyst system, and reactive position.
+The expensive `tsguess2` conformer generation runs later, inside `wf.run(...)`
+or the submitted `init` job.
 
-!!! note "`n_confs=None`"
+## Inspect The Active Method
 
-    `n_confs=None` means FRUST resolves the conformer count from molecule
-    complexity. Use an integer such as `n_confs=20` when you want exactly that
-    many conformers per target.
-
-## See What The Workflow Prepares
-
-The first stage of a screen TS workflow creates TS guesses. This is the same
-structure-generation machinery used by `ft.screen.create_ts_guesses(...)`, but
-the workflow keeps it attached to a target and a later calculation graph.
+Ask the workflow which preset entries it actually uses:
 
 ```python
-ts_guesses = ft.screen.create_ts_guesses(
-    ft.screen.expand(ft.screen.read("screen.csv")),
-    ts_types=["TS1", "TS4"],
-    n_confs=1,
-)
-
-ft.vis.ts_guess_scene(
-    ts_guesses["TS4"],
-    row_indices=[0, 1],
-    show_roles=True,
-    show_constraint_distances=True,
-    show_constraint_angles=True,
-)
+wf.show_stages(execution="dft_staged")[[
+    "group",
+    "stage",
+    "method_key",
+    "engine",
+    "options",
+    "constraint",
+    "lowest",
+]]
 ```
 
-<iframe
-  src="../../assets/workflow-method-ts-guesses.html"
-  title="Workflow method tutorial TS guesses"
-  width="100%"
-  height="430"
-  loading="lazy"
-  style="border: 1px solid var(--md-default-fg-color--lightest); border-radius: 6px;"
-></iframe>
+The default `r2scan-3c` screen is:
 
-The viewer shows the kind of structure the workflow prepares before any xTB or
-DFT calculation runs. Role labels, constraint distances, and constraint angles
-are row-level data:
-they move with the dataframe and are what later constrained stages use.
+| group | stage | engine | options | constraint | lowest |
+| --- | --- | --- | --- | --- | ---: |
+| `init` | `prepare` | `prepare` |  | false |  |
+| `init` | `initial_prune` | `prism_pruner` | `modes=moi,rmsd moi_max_deviation=0.01 rmsd_max_rmsd=1.25` | false |  |
+| `init` | `xtb_preopt` | `xtb` | `gfnff opt` | true |  |
+| `init` | `xtb_sp` | `gxtb` |  | false |  |
+| `init` | `xtb_opt` | `gxtb` | `opt` | true | 10 |
+| `init` | `dft_pre_sp` | `orca` | `r2SCAN-3c TightSCF SP NoSym` | false |  |
+| `init` | `dft_pre_opt` | `orca` | `r2SCAN-3c TightSCF SlowConv Opt NoSym` | true | 1 |
+| `hess` | `hess` | `orca` | `r2SCAN-3c TightSCF SlowConv Freq NoSym` | false |  |
+| `optts` | `optts` | `orca` | `r2SCAN-3c TightSCF SlowConv OptTS NoSym` | false |  |
+| `freq` | `freq` | `orca` | `r2SCAN-3c TightSCF SlowConv Freq NoSym` | false |  |
+| `solv` | `solv` | `orca` | `r2SCAN-3c TightSCF SP NoSym` | false |  |
 
-## Inspect The Method Plan
+!!! note "The table is workflow-specific"
 
-The built-in `r2scan-3c` method plan uses direct g-xTB for the initial
-single-point ranking and constrained low-cost optimization stages, and ORCA's
-built-in `r2SCAN-3c` composite method for the DFT stages.
+    A method preset can contain keys a particular workflow does not use. For
+    example, `raw_mols(..., dft=True)` uses `dft_opt`, `freq`, and `solv` but
+    does not use the TS-only `hess` and `optts` stages. Prefer
+    `wf.show_stages()` over reading the full preset mapping.
 
-```python
-method = ft.workflows.methods.preset("r2scan-3c")
-```
+## Configure Initial Pruning
 
-Compactly, the important stage choices are:
-
-| stage | engine | options |
-| --- | --- | --- |
-| `xtb_preopt` | `xtb` | `gfnff opt` |
-| `xtb_sp` | `gxtb` |  |
-| `xtb_opt` | `gxtb` | `opt` |
-| `dft_pre_sp` | `orca` | `r2SCAN-3c TightSCF SP NoSym` |
-| `dft_pre_opt` | `orca` | `r2SCAN-3c TightSCF SlowConv Opt NoSym` |
-| `hess` | `orca` | `r2SCAN-3c TightSCF SlowConv Freq NoSym` |
-| `optts` | `orca` | `r2SCAN-3c TightSCF SlowConv OptTS NoSym` |
-| `freq` | `orca` | `r2SCAN-3c TightSCF SlowConv Freq NoSym` |
-| `solv` | `orca` | `r2SCAN-3c TightSCF SP NoSym` |
-
-!!! warning "A method plan does not change the chemistry"
-
-    `MethodPlan` changes calculator engines and options. It does not change
-    which TS targets exist, which reactive positions are expanded, or how the
-    TS guess roles are assigned. It also does not control initial conformer
-    pruning; that is workflow configuration through `prune_initial`.
-
-To see the stages this workflow will actually run, inspect the workflow instead
-of reading the full preset map:
-
-```python
-wf.show_stages()[["group", "stage", "method_key", "engine", "options"]]
-```
-
-For the `screen_ts` workflow above, `dft_staged` uses TS-stage resource groups:
-
-| group | stage | method_key | engine | options |
-| --- | --- | --- | --- | --- |
-| `init` | `prepare` |  | `prepare` |  |
-| `init` | `initial_prune` |  | `prism_pruner` | `modes=moi,rmsd moi_max_deviation=0.01 rmsd_max_rmsd=0.25` |
-| `init` | `xtb_preopt` | `xtb_preopt` | `xtb` | `gfnff opt` |
-| `init` | `xtb_sp` | `xtb_sp` | `gxtb` |  |
-| `init` | `xtb_opt` | `xtb_opt` | `gxtb` | `opt` |
-| `init` | `dft_pre_sp` | `dft_pre_sp` | `orca` | `r2SCAN-3c TightSCF SP NoSym` |
-| `init` | `dft_pre_opt` | `dft_pre_opt` | `orca` | `r2SCAN-3c TightSCF SlowConv Opt NoSym` |
-| `hess` | `hess` | `hess` | `orca` | `r2SCAN-3c TightSCF SlowConv Freq NoSym` |
-| `optts` | `optts` | `optts` | `orca` | `r2SCAN-3c TightSCF SlowConv OptTS NoSym` |
-| `freq` | `freq` | `freq` | `orca` | `r2SCAN-3c TightSCF SlowConv Freq NoSym` |
-| `solv` | `solv` | `solv` | `orca` | `r2SCAN-3c TightSCF SP NoSym` |
-
-For `ft.workflows.raw_mols(..., dft=True)`, the same method preset would show
-`init -> dft_opt -> freq -> solv` groups instead. Raw molecule workflows do not
-run the TS-only `hess` or `optts` stages. They do run `freq` after `dft_opt` so
-thermochemistry, including Gibbs energies, is available for the optimized
-molecule.
-
-### Configure Initial Pruning
-
-Use the default pruning stage for normal screen TS runs:
+`screen_ts(...)` enables the PRISM stage by default. A dictionary replaces
+individual defaults:
 
 ```python
 wf = ft.workflows.screen_ts(
-    csv_path="screen.csv",
-    method="r2scan-3c",
-    prune_initial=True,
-)
-```
-
-Use a dictionary when you want to change PRISM modes or thresholds:
-
-```python
-wf = ft.workflows.screen_ts(
-    csv_path="screen.csv",
+    csv_path="docs/examples/screen.csv",
     method="r2scan-3c",
     prune_initial={
         "modes": ("moi", "rmsd"),
@@ -218,17 +105,14 @@ wf = ft.workflows.screen_ts(
 )
 ```
 
-!!! note "Install PRISM on the machine that runs the init stage"
+Here `0.25` is an explicit override; the workflow default is `1.25`. Install
+`prism-pruner` in the environment that runs the `init` stage, or pass
+`prune_initial=False` when pruning should be skipped.
 
-    The pruning stage lazy-loads `prism-pruner`. If PRISM is unavailable in a
-    local or cluster environment, either install it there or set
-    `prune_initial=False`.
+## Replace Calculator Stages
 
-### Restore GFN2-xTB Initialization
-
-The built-in presets use direct g-xTB for both `xtb_sp` and `xtb_opt`. If you
-need the older GFN2-xTB initialization behavior for a comparison, replace those
-stage specs:
+Built-in presets use direct g-xTB for `xtb_sp` and `xtb_opt`. To compare with a
+GFN2-xTB initialization, create a new immutable plan:
 
 ```python
 method = (
@@ -238,27 +122,23 @@ method = (
         xtb_opt=ft.workflows.methods.xtb(gfn=2, opt=True),
     )
 )
-```
 
-This is deliberately explicit. Direct g-xTB single points have no method
-options, so `show_stages()` leaves the `xtb_sp` options cell blank; direct
-g-xTB optimizations show `opt`. g-xTB does not take xTB keywords such as
-`{"gfn": 2}`.
-
-You can register a notebook/session preset when you reuse the same method plan:
-
-```python
-ft.workflows.methods.register_preset("my-r2scan-gfn2-init", method)
-
-wf = ft.workflows.screen_ts(
-    csv_path="screen.csv",
-    method="my-r2scan-gfn2-init",
+comparison = ft.workflows.screen_ts(
+    csv_path="docs/examples/screen.csv",
+    method=method,
 )
 ```
 
-## Run One Target Locally
+`MethodPlan` changes calculator settings only. It does not change systems,
+reactive positions, `tsguess2` role assignment, or initial pruning.
 
-Before submitting hundreds of cluster jobs, run one target locally:
+Register a reusable plan name for the current Python session if needed:
+
+```python
+ft.workflows.methods.register_preset("my-r2scan-gfn2-init", method)
+```
+
+## Run One Target Locally
 
 ```python
 df = wf.run(
@@ -270,113 +150,42 @@ df = wf.run(
 )
 
 ft.show_steps(df)
+ft.show_timing(df)
 ```
 
-Typical `ft.show_steps(df)` output is compact:
-
-| step | engine | options | columns | n_cores | memory_gb |
-| --- | --- | --- | --- | ---: | ---: |
-| `initial_conformers` | `embedder` | `requested=None; resolved=50; generated=50` |  |  |  |
-| `initial_prune` | `prism_pruner` | `modes=moi,rmsd coords_col=coords_embedded moi_max_deviation=0.01 rmsd_max_rmsd=0.25 heavy_atoms_only=True graph_source=connectivity_bonds` |  |  |  |
-| `xtb_preopt` | `xtb` | `gfnff opt` | `xtb_preopt-EE, xtb_preopt-NT, xtb_preopt-oc` | 2 |  |
-| `xtb_sp` | `gxtb` |  | `xtb_sp-EE, xtb_sp-NT` | 2 |  |
-| `xtb_opt` | `gxtb` | `opt; lowest=10` | `xtb_opt-EE, xtb_opt-NT, xtb_opt-oc` | 2 |  |
-| `DFT-pre-SP` | `orca` | `r2SCAN-3c TightSCF SP NoSym` | `DFT-pre-SP-EE, DFT-pre-SP-NT` | 4 | 20 |
-
-The exact rows depend on how far the local run went. The important part is that
-the dataframe records both the calculator stages and compact provenance such as
-initial conformer generation and `lowest=...` filtering without widening the
-main calculation table.
-
-The staged local output mirrors the cluster shape:
+After a successful run, the default `target_retention="compact_success"` keeps:
 
 ```text
 debug/screen_ts/
-└── TS1__furan__TMP__r0/
-    ├── ts_guess.parquet
-    ├── init.parquet
-    ├── init.hess.parquet
-    ├── init.hess.optts.parquet
-    ├── init.hess.optts.freq.parquet
-    └── init.hess.optts.freq.solv.parquet
+└── TS1__n_methyl_pyrrole__tmp_bcat__r2/
+    ├── init.hess.optts.freq.solv.parquet
+    └── timing.json
 ```
 
-!!! tip "Use local runs as smoke tests"
-
-    A one-target local run is the fastest way to catch input CSV problems,
-    missing executables, bad catalyst scaffolds, and unexpected method-plan
-    options before submitting a production screen.
+Use `target_retention="all"` when you deliberately want `ts_guess.parquet`,
+`init.parquet`, and every staged checkpoint.
 
 ## Choose An Execution Mode
 
-The workflow controls chemistry. The execution mode controls how the stages are
-grouped into jobs.
-
-| execution | What happens | Use when |
+| execution | Local behavior | Cluster behavior |
 | --- | --- | --- |
-| `single_job` | all stages for a target run in one job/process | small tests or non-DFT workflows |
-| `dft_staged` | cheap initialization stays together; DFT stages become dependent jobs | normal production DFT screens |
-| `fully_staged` | every stage is its own dependent job | debugging or unusual resource tuning |
+| `single_job` | Run all stages for each target in one call | Submit one job per target |
+| `dft_staged` | Run staged checkpoint groups | Submit `init`, then dependent DFT groups |
+| `fully_staged` | Run one checkpoint per stage | Submit one dependent job per stage |
 
-!!! info "`dft_staged` is the production default"
+DFT workflows default to `dft_staged` for submission. Non-DFT workflows default
+to `single_job`.
 
-    For DFT workflows, `dft_staged` usually gives the right balance: cheap
-    conformer generation, initial pruning, and filtering happen together, while
-    long DFT stages get separate scheduler jobs and resources.
-
-## Submit The Same Workflow To Slurm
-
-After the one-target smoke test, submit the same workflow object. This submits
-all targets in the workflow:
+## Submit The Same Object
 
 ```python
-from frust.cluster import ClusterConfig
+from frust.cluster import ClusterConfig, Resources
 
 cluster = ClusterConfig(
     backend="slurm",
     partition="kemi1",
     log_dir="logs/screen_ts",
 )
-
-result = wf.submit(
-    out_dir="runs/screen_ts",
-    cluster=cluster,
-    execution="dft_staged",
-)
-
-result
-```
-
-With this exact call, FRUST uses these defaults:
-
-| Setting | Default behavior |
-| --- | --- |
-| `targets` omitted | submit every target from `wf.targets()` |
-| `stage_resources` omitted | use `Resources(cpus=4, mem_gb=20, timeout_min=720)` for every submitted job group |
-| `execution="dft_staged"` | submit one `init` job, then dependent DFT jobs for each target |
-| `collect` omitted | submit a final collector job that writes `runs/screen_ts/merged.parquet` and `runs/screen_ts/collection_report.json` |
-| `out_dir="runs/screen_ts"` | write one subdirectory per target under `runs/screen_ts/` |
-
-Representative result:
-
-```python
-JobSubmissionResult(
-    job_ids=[...],
-    tags=["TS1__furan__TMP__r0", "TS1__furan__TMP__r1", "..."],
-    save_dirs=["runs/screen_ts/TS1__furan__TMP__r0", "..."],
-    mode="screen_ts:dft_staged",
-    backend="slurm",
-    collection_job_id="...",
-    collection_output="runs/screen_ts/merged.parquet",
-    collection_report="runs/screen_ts/collection_report.json",
-)
-```
-
-For production DFT work, override the stage resources that need more time,
-memory, or cores:
-
-```python
-from frust.cluster import Resources
 
 result = wf.submit(
     out_dir="runs/screen_ts",
@@ -392,29 +201,20 @@ result = wf.submit(
 )
 ```
 
-The `stage_resources` keys are workflow stage-group names. Missing keys still
-fall back to `Resources(cpus=4, mem_gb=20, timeout_min=720)`. Use
-`wf.show_stages(execution="dft_staged")` and read the `group` column before
-choosing overrides. For a screen TS workflow in `dft_staged` mode, the common
-keys are:
+The keys in `stage_resources` come from the `group` column returned by
+`wf.show_stages(execution="dft_staged")`. Omitted groups use the workflow
+resource default.
 
-| key | Contains |
-| --- | --- |
-| `init` | TS guess generation, initial pruning, constrained GFNFF, g-xTB SP, g-xTB opt, DFT pre-SP, DFT pre-opt |
-| `hess` | ORCA Hessian/frequency input Hessian stage |
-| `optts` | ORCA `OptTS` using the previous Hessian |
-| `freq` | final frequency check |
-| `solv` | final solvent single point |
+The automatic collector writes:
 
-!!! info "When `execution` is omitted"
-
-    DFT workflows default to `execution="dft_staged"`. Non-DFT workflows default
-    to `execution="single_job"`.
-
-## Read Finished Outputs
-
-When the target jobs are done, the final collector job writes the merged parquet
-and a collection report:
+```text
+runs/screen_ts/
+├── <target>/
+│   ├── <final-stage>.parquet
+│   └── timing.json
+├── merged.parquet
+└── collection_report.json
+```
 
 ```python
 import pandas as pd
@@ -423,52 +223,18 @@ merged = pd.read_parquet(result.collection_output)
 ft.show_steps(merged)
 ```
 
-`collection_report.json` lists collected, skipped, missing, and errored target
-outputs. By default the collector skips targets whose final normal-termination
-columns are present and not all true.
+Use `wf.collect(...)` manually for recovery or a custom merge path.
 
-Use manual `wf.collect(...)` for recovery or custom merges:
+## Other Workflow Layers
 
-```python
-merged = wf.collect("runs/screen_ts", output="custom_merged.parquet")
-```
-
-## The Same Pattern For Molecules
-
-The same method-plan and execution ideas also work for molecular-state
-workflows:
-
-```python
-wf = ft.workflows.mols(
-    csv_path="molecules.csv",
-    split="per_rpos",
-    select_mols=["ligand", "int2", "mol2"],
-    method="r2scan-3c",
-    n_confs=None,
-    top_n=10,
-    dft=True,
-)
-
-wf.targets()[:5]
-```
-
-`split="per_rpos"` gives one target per generated molecular state and reactive
-position. That is useful when DFT is expensive and you want those targets to
-land as separate cluster chains.
-
-## Where The Older APIs Fit
-
-`ft.workflows` is the recommended high-level API for new local-to-cluster work.
-The older layers are still useful:
-
-| API | Best use |
+| API | Use |
 | --- | --- |
-| `ft.workflows` | one object that can run locally, submit to Slurm, and collect results |
-| `ft.pipes` | quick local helper functions and legacy-style scripts |
-| `ft.Stepper` | explicit dataframe-by-dataframe calculator control |
-| `ft.cluster.submit_chain(...)` | legacy transformer/template chain submissions |
-| `ft.cluster.submit_screen_chain(...)` | existing screen-chain helper; use `ft.workflows.screen_ts(...)` for new method-plan work |
+| `ft.workflows` | Recommended local-to-cluster workflow objects |
+| `ft.pipes` | Compact supported helpers and existing scripts |
+| `ft.Stepper` | Explicit dataframe-by-dataframe calculator control |
+| `ft.cluster.submit_chain(...)` | Legacy XYZ-template stage chains |
+| `ft.cluster.submit_screen_chain(...)` | Existing lower-level screen chain submission |
 
-Use the smallest layer that gives you the control you need. For new production
-screens where local testing and cluster submission should share the same code,
-start with `ft.workflows`.
+See [Workflow Method Plans](../workflows/workflow-methods.md) for the complete
+preset reference and [Cluster Submission](../cluster/submission.md) for
+lower-level submission APIs.

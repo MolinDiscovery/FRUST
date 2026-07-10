@@ -7,7 +7,7 @@
       filters:
         - "!^_"
 
-## Energy Profile Internals
+## Energy Profiles
 
 ::: frust.vis.energy_profile
     options:

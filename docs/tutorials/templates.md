@@ -1,4 +1,11 @@
-# Templates
+# Legacy XYZ Templates
+
+!!! info "Current production path"
+
+    This tutorial covers the supported transformer/template `.xyz` workflow.
+    New catalyst/substrate screens should use
+    [`ft.workflows.screen_ts(...)`](../catalyst-screens/running.md) and the
+    default [`tsguess2` backend](../catalyst-screens/ts-guesses.md).
 
 This tutorial explains the FRUST templating protocol from the point of view of
 someone reading or modifying the code. A template workflow starts with a
@@ -284,7 +291,7 @@ flowchart LR
     A["Transformer returns<br/>keep_idxs"]
     B["embed_ts freezes<br/>coordMap atoms"]
     C["build_initial_df stores<br/>constraint_atoms"]
-    D["Stepper._constraint_atoms(row)<br/>validates sequence"]
+    D["Stepper validates<br/>legacy constraint_atoms"]
     E["xtb constraint=True<br/>$constrain block"]
     F["orca constraint=True<br/>%geom Constraints block"]
 

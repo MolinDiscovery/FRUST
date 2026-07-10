@@ -21,7 +21,7 @@ that instead.
 Clone the repository and install it in editable mode:
 
 ```bash
-git clone <repository-url>
+git clone https://github.com/MolinDiscovery/FRUST.git
 cd FRUST
 python -m pip install -e .
 ```

@@ -3,7 +3,7 @@
 FRUST workflows are easiest to understand as a pipeline from a small input
 table to a results dataframe.
 
-!!!info "Naming"
+!!! info "Naming"
 
     **Ligand** and **substrate** are used interchangeably for historical reasons.
 
@@ -57,7 +57,7 @@ import frust as ft
 method = ft.workflows.methods.preset("r2scan-3c")
 
 wf = ft.workflows.screen_ts(
-    csv_path="screen.csv",
+    csv_path="docs/examples/screen.csv",
     ts_types=["TS1", "TS2", "TS3", "TS4"],
     method=method,
     n_confs=None,
@@ -115,7 +115,7 @@ cluster = ClusterConfig(
 )
 
 wf = ft.workflows.raw_mols(
-    csv_path="raw_dimers.csv",
+    csv_path="docs/examples/raw-dimers.csv",
     method="r2scan-3c",
     n_confs=None,
     top_n=10,
@@ -255,7 +255,7 @@ Example:
 from frust.cluster import ClusterConfig, Resources, submit_jobs
 
 submit_jobs(
-    csv_path="datasets/example.csv",
+    csv_path="docs/examples/substrates.csv",
     pipeline="run_mols",
     out_dir="runs/example",
     cluster=ClusterConfig(backend="slurm", partition="kemi1"),

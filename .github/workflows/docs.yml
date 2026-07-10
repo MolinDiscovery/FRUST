@@ -38,6 +38,9 @@ jobs:
       - name: Install documentation dependencies
         run: python -m pip install -e ".[docs]"
 
+      - name: Check documentation contracts
+        run: python scripts/check_docs_contracts.py
+
       - name: Build documentation
         run: mkdocs build --strict
 

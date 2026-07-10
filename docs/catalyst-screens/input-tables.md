@@ -13,7 +13,7 @@ catalyst,CC1(C)CCCC(C)(C)N1C2=CC=CC=C2B,tmp_bcat,,baseline
 ```python
 import frust as ft
 
-components = ft.screen.read("screen.csv")
+components = ft.screen.read("docs/examples/screen.csv")
 components
 ```
 
@@ -38,14 +38,16 @@ Output:
 !!! note "Catalyst rows do not use `rpos`"
 
     In non-strict mode, `ft.screen.read(...)` warns and clears catalyst `rpos`
-    values. Use `ft.screen.read("screen.csv", strict=True)` when an accidental
+    values. Use `ft.screen.read("docs/examples/screen.csv", strict=True)` when an accidental
     catalyst `rpos` should fail immediately.
 
 ## Reactive Positions
 
 `rpos` is the RDKit atom index of an aromatic substrate C-H atom. It can be
 blank, one integer, a comma-separated string, a semicolon-separated string, or
-an in-memory sequence of integers.
+an in-memory sequence of integers. Integer-valued floats such as `3.0`, which
+pandas may infer for a CSV column containing blank cells, are normalized to
+integers.
 
 | `rpos` value | Meaning |
 | --- | --- |

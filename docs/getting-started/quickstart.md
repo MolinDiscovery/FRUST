@@ -1,105 +1,80 @@
 # Quickstart
 
-FRUST has three main entry styles:
-
-- workflow objects in `ft.workflows` for local-to-cluster production runs;
-- high-level functions in `frust.pipes` for compact local helper runs;
-- `Stepper` for explicit dataframe-by-dataframe calculation chains.
-
-For notebooks and quick scripts, the recommended import style is:
+Use workflow objects for new production work. A workflow keeps the chemistry,
+calculator plan, local smoke test, cluster submission, and result collection in
+one object.
 
 ```python
 import frust as ft
 ```
 
-Daily calculation, dataframe-inspection, molecule-building, file IO, and
-visualization helpers are available directly from this namespace. Larger
-workflow domains stay grouped as lazy modules such as `ft.workflows`,
-`ft.pipes`, and `ft.cluster`. Everything is loaded lazily, so
-`import frust as ft` stays quick while heavier tools are imported only when you
-first use them.
+The top-level namespace exposes common notebook helpers such as `ft.Stepper`,
+`ft.show_steps`, `ft.plot_mols`, and `ft.write_xyz`. Larger domains remain
+grouped under `ft.workflows`, `ft.screen`, `ft.cluster`, `ft.vis`, and
+`ft.utils`.
 
-## Quick Molecule Calculation
+## Inspect A Catalyst Screen
 
-Start with a `Stepper`, turn a SMILES string into a FRUST dataframe, then add
-calculation stages as new columns.
+Start with the included example component table:
 
-```python
-import frust as ft
-
-step = ft.Stepper(save_output_dir=False)
-
-df = step.build_initial_df("CCO", name="ethanol")
-df = step.gxtb(df, name="gxtb_opt", options={"opt": None})
-
-ft.show_steps(df)
+```csv
+role,smiles,compound_name,rpos,series
+substrate,CN1C=CC=C1,n_methyl_pyrrole,,pyrrole
+substrate,COC1=CC=CO1,methoxyfuran,"3,5",furan
+catalyst,CC1(C)CCCC(C)(C)N1C2=CC=CC=C2B,tmp_bcat,,baseline
 ```
 
-The first dataframe contains one embedded conformer for ethanol:
-
-| substrate_name | structure_type | molecule_role | cid | smiles |
-| --- | --- | --- | --- | --- |
-| ethanol | MOL | structure | 0 | CCO |
-
-After the g-xTB optimization, FRUST appends stage-prefixed result columns such
-as `gxtb_opt-NT`, `gxtb_opt-EE`, and `gxtb_opt-oc`.
-
-!!! note
-    `step.build_initial_df("CCO")` means the plain ethanol molecule. It does
-    not generate FRUST catalytic-cycle structures unless you explicitly request
-    a workflow expansion.
-
-For small batches, pass a list, a named dictionary, or a dataframe with a
-`smiles` column:
+Create a workflow object without running any calculations:
 
 ```python
-df = step.build_initial_df(
-    ["CCO", "CCN"],
-    names=["ethanol", "ethylamine"],
-    n_confs=2,
-)
-```
-
-If you already have coordinates, pass an XYZ file or XYZ block. FRUST preserves
-that geometry instead of embedding a new conformer:
-
-```python
-df = step.build_initial_df("ethanol.xyz")
-
-xyz = """3
-water
-O 0.0 0.0 0.0
-H 0.0 0.0 0.96
-H 0.0 0.75 -0.24
-"""
-df = step.build_initial_df(xyz, name="water")
-```
-
-## Recommended Workflow Object
-
-Use `ft.workflows` when the same setup should work for a local smoke test and a
-cluster production run.
-
-```python
-import frust as ft
-
-method = ft.workflows.methods.preset("r2scan-3c")
-
 wf = ft.workflows.screen_ts(
-    csv_path="screen.csv",
+    csv_path="docs/examples/screen.csv",
     ts_types=["TS1", "TS2", "TS3", "TS4"],
-    method=method,
+    method="r2scan-3c",
     n_confs=None,
     top_n=10,
     dft=True,
 )
-
-wf.targets()[:3]
 ```
 
-`screen_ts(...)` prunes redundant initial conformers by default with PRISM
-before the first xTB stage. If you are running without PRISM installed, pass
-`prune_initial=False`.
+Inspect the scientific targets first:
+
+```python
+targets = wf.targets()
+
+len(targets)
+targets[0].tag
+targets[0].metadata
+```
+
+`wf.targets()` expands systems, TS families, and reactive positions. It does
+not embed conformers or run calculators.
+
+Inspect the active stage and scheduler groups:
+
+```python
+wf.show_stages(execution="dft_staged")[
+    ["group", "stage", "engine", "options", "constraint", "lowest"]
+]
+```
+
+The default TS backend is `tsguess2`. It builds connected TS-like graphs and
+stores v2 role-based constraints in every generated row. See
+[TS Guess DataFrames](../catalyst-screens/ts-guesses.md) before extending the
+chemistry or interpreting role names.
+
+!!! info "Default initial pruning"
+
+    `screen_ts(...)` prunes redundant initial conformers with PRISM before the
+    first xTB stage. Install `prism-pruner` in the environment that runs the
+    workflow, customize the stage with `prune_initial={...}`, or pass
+    `prune_initial=False` when every conformer must be retained.
+
+## Run One Smoke Target
+
+Configure the required external programs before starting calculations. The
+[External Tool Setup](external-tool-setup.md) page covers xTB, g-xTB, ORCA, and
+ORCA-External-Tools.
 
 Run one target locally before submitting the full screen:
 
@@ -113,80 +88,74 @@ df = wf.run(
 )
 
 ft.show_steps(df)
+ft.show_timing(df)
 ```
 
-See [Workflow Method Plans](../workflows/workflow-methods.md) for method
-presets, g-xTB replacements, execution modes, and cluster submission.
+Successful targets keep only their final parquet and `timing.json` by default.
+Pass `target_retention="all"` when you want every intermediate checkpoint for
+debugging.
 
-## High-Level Pipeline Function
+## Submit The Same Workflow
 
-Use high-level pipeline functions when you want FRUST to generate structures,
-embed conformers, run the standard staged calculations, and return one results
-dataframe.
+Once the local target behaves as expected, submit the same object:
 
 ```python
-import pandas as pd
-import frust as ft
+cluster = ft.ClusterConfig(
+    backend="slurm",
+    partition="kemi1",
+    log_dir="logs/screen_ts",
+)
 
-ligands = pd.DataFrame({"smiles": ["C1=CC=CN1", "c1ccccc1"]})
-
-df = ft.pipes.run_ts_per_lig(
-    ligands,
-    ts_guess_xyz="structures/ts1.xyz",
-    n_confs=2,
-    DFT=False,
-    save_output_dir=False,
+result = wf.submit(
+    out_dir="runs/screen_ts",
+    cluster=cluster,
+    execution="dft_staged",
 )
 ```
 
-## Stepper Workflow
+By default, a final collector writes `merged.parquet` and
+`collection_report.json`. Use `wf.show_stages(execution="dft_staged")` before
+adding stage-specific resource overrides.
 
-Use `Stepper` when you want direct control over each xTB, g-xTB, or ORCA stage.
-You can build the starting FRUST dataframe from SMILES, or from raw structures
-generated by FRUST workflow helpers.
+## Build A Plain Molecule DataFrame
 
-```python
-import pandas as pd
-import frust as ft
-
-ligands = pd.DataFrame({"smiles": ["COc1cccc(OC)c1", "Cc1cccc(N(C)C)c1"]})
-mols = ft.create_mol_per_rpos(ligands)
-
-step = ft.Stepper(step_type="MOLS", save_output_dir=False)
-df = step.build_initial_df(mols, n_confs=2)
-df = step.xtb(df, name="xtb_sp", options={"gfn": 2})
-df = step.orca(df, name="hf_sp", options={"HF": None, "STO-3G": None, "SP": None})
-```
-
-Here `create_mol_per_rpos` is the explicit FRUST structure-generation step.
-`build_initial_df` embeds those structures and returns the dataframe that the
-calculation methods consume.
-
-## Cluster Submission
-
-Use `frust.cluster` when you want FRUST to submit workflows through `submitit`
-instead of running them directly in the current Python process.
+Use `Stepper` when you want direct dataframe-by-dataframe calculator control:
 
 ```python
-import frust as ft
+step = ft.Stepper(save_output_dir=False)
 
-ft.cluster.submit_jobs(
-    csv_path="datasets/example.csv",
-    pipeline="run_mols",
-    out_dir="runs/example",
-    cluster=ft.cluster.ClusterConfig(backend="slurm", partition="kemi1", log_dir="logs/example"),
-    resources=ft.cluster.Resources(cpus=16, mem_gb=50, timeout_min=14400),
-)
+df = step.build_initial_df("CCO", name="ethanol", n_confs=1)
+df[["substrate_name", "structure_type", "molecule_role", "cid", "smiles"]]
 ```
 
-For new local-to-cluster workflows, prefer `wf.submit(...)` from
-`ft.workflows`. See [cluster submission](../cluster/submission.md) for workflow
-objects, independent jobs, dependent chains, local testing, presets, and common
-errors.
+| substrate_name | structure_type | molecule_role | cid | smiles |
+| --- | --- | --- | ---: | --- |
+| ethanol | `MOL` | `structure` | 0 | `CCO` |
 
-!!! note
-    Explicit imports such as `from frust.stepper import Stepper` and
-    `from frust.vis import plot_vibs` remain supported. The `import frust as ft`
-    namespace is the compact user-facing style for common interactive work,
-    with larger subsystems available as `ft.workflows`, `ft.pipes`, and
-    `ft.cluster`.
+Add calculation stages explicitly when the matching backend is configured:
+
+```python
+df = step.gxtb(df, name="gxtb_opt", options={"opt": None})
+ft.show_steps(df)
+```
+
+After optimization, FRUST appends columns such as `gxtb_opt-NT`,
+`gxtb_opt-EE`, and `gxtb_opt-oc` and records calculator provenance in
+`df.attrs`.
+
+## Choose The Right Layer
+
+| Need | Public entry point |
+| --- | --- |
+| One object for local testing, cluster production, and collection | `ft.workflows` |
+| Normalize and inspect catalyst-screen systems or generated guesses | `ft.screen` |
+| Direct control over dataframe calculation stages | `ft.Stepper` |
+| Compact supported helper functions for existing scripts | `ft.pipes` |
+| Lower-level cluster submission and legacy stage chains | `ft.cluster` |
+
+For new local-to-cluster workflows, start with `ft.workflows`. The lower layers
+remain useful when you deliberately need their additional control.
+
+Continue with [Workflow Overview](../workflows/overview.md),
+[Workflow Method Plans](../workflows/workflow-methods.md), or
+[Running Catalyst Screens](../catalyst-screens/running.md).

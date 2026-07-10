@@ -13,7 +13,7 @@ catalyst,CC1(C)CCCC(C)(C)N1C2=CC=CC=C2B,tmp_bcat,,baseline
 ```python
 import frust as ft
 
-components = ft.screen.read("screen.csv")
+components = ft.screen.read("docs/examples/screen.csv")
 systems = ft.screen.expand(components)
 ts_guesses = ft.screen.create_ts_guesses(
     systems,
@@ -38,7 +38,7 @@ The production path uses the same chemistry through a workflow object:
 method = ft.workflows.methods.preset("r2scan-3c")
 
 wf = ft.workflows.screen_ts(
-    csv_path="screen.csv",
+    csv_path="docs/examples/screen.csv",
     ts_types=["TS1", "TS2", "TS3", "TS4"],
     method=method,
     n_confs=None,
@@ -94,9 +94,11 @@ flowchart TD
     F --> H --> I
 ```
 
-`frust.screen` owns the user-facing component table. `frust.tsguess` owns TS
-construction. `ft.workflows.screen_ts(...)` combines both with method plans,
-local execution, cluster submission, and collection.
+`frust.screen` owns the user-facing component table and selects the configured
+TS backend. The production default is `tsguess2`, which builds connected
+TS-like graphs and v2 role-coordinate maps. `ft.workflows.screen_ts(...)`
+combines that chemistry with method plans, local execution, cluster submission,
+and collection.
 
 ## Choosing An Entry Point
 
@@ -117,9 +119,9 @@ Supported now:
 
 | Area | Supported behavior |
 | --- | --- |
-| Catalysts | Neutral B-aryl-N catalysts with exactly one recognizable scaffold |
+| Catalysts | Catalysts with a supported boron center; TS1/TS2 additionally require the current tertiary-amine motif |
 | Substrates | Aromatic C-H reactive positions selected by `rpos` or symmetry-unique detection |
-| TS families | Built-in `TS1`, `TS2`, `TS3`, and `TS4` methylpyrrole/TMP-derived motifs |
+| TS families | Built-in `tsguess2` TS1-TS4 connected-graph specifications with versioned v2 role coordinates |
 | Constraints | Row-level distance and angle constraints rendered from `constraint_spec` |
 | Execution | xTB/ORCA stages through `Stepper`, workflow objects, and cluster submission |
 
@@ -127,7 +129,7 @@ Not automatic yet:
 
 | Area | Current limitation |
 | --- | --- |
-| Catalyst topology | Arbitrary catalyst scaffolds are not matched |
+| Catalyst topology | Arbitrary boron/amine topologies are not generated; unsupported graphs fail during building or role matching |
 | Reactive site class | Non-aromatic C-H activation sites are not generated |
 | Template calibration | Optimized TS structures are not yet used to recalibrate templates automatically |
 | Mechanism search | FRUST does not choose a mechanism from SMILES alone |
@@ -135,5 +137,5 @@ Not automatic yet:
 ## Read Next
 
 - [Input Tables](input-tables.md): CSV format, `rpos`, metadata, and system expansion.
-- [TS Guess Dataframes](ts-guesses.md): TS1-TS4 roles, constraints, core metrics, and geometry checks.
+- [TS Guess DataFrames](ts-guesses.md): the default `tsguess2` graph, roles, constraints, core metrics, and geometry checks.
 - [Running Screens](running.md): local smoke tests, cluster submission, outputs, and inspection.

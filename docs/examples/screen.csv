@@ -1,0 +1,4 @@
+role,smiles,compound_name,rpos,series
+substrate,CN1C=CC=C1,n_methyl_pyrrole,,pyrrole
+substrate,COC1=CC=CO1,methoxyfuran,"3,5",furan
+catalyst,CC1(C)CCCC(C)(C)N1C2=CC=CC=C2B,tmp_bcat,,baseline

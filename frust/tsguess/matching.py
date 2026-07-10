@@ -65,7 +65,9 @@ def parse_rpos_value(value: Any, smiles: str) -> tuple[int, ...]:
     Parameters
     ----------
     value : object
-        Missing value, integer, sequence, or comma/semicolon-separated string.
+        Missing value, integer, integer-valued float, sequence, or
+        comma/semicolon-separated string. Integer-valued floats support pandas
+        CSV columns whose blank cells caused numeric type inference.
     smiles : str
         Substrate SMILES used for validation.
 
@@ -82,7 +84,7 @@ def parse_rpos_value(value: Any, smiles: str) -> tuple[int, ...]:
         text = str(value).strip()
         parts = [part for part in re.split(r"[;,]", text) if part.strip()]
         try:
-            requested = tuple(int(part.strip()) for part in parts)
+            requested = tuple(_parse_integer_token(part) for part in parts)
         except ValueError as exc:
             raise ValueError("rpos must contain integers separated by ';' or ','") from exc
 
@@ -94,6 +96,18 @@ def parse_rpos_value(value: Any, smiles: str) -> tuple[int, ...]:
             f"Valid aromatic C-H positions: {valid}"
         )
     return requested
+
+
+def _parse_integer_token(value: object) -> int:
+    """Return an integer token, accepting pandas integer-valued floats."""
+    token = str(value).strip()
+    try:
+        return int(token)
+    except ValueError:
+        numeric = float(token)
+        if not numeric.is_integer():
+            raise ValueError(f"Not an integer value: {value!r}")
+        return int(numeric)
 
 
 def substrate_hydrogen_for_rpos(mol: Chem.Mol, rpos: int, *, substrate_name: str) -> int:

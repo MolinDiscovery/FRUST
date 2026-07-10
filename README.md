@@ -21,7 +21,7 @@ defaults should not be treated as fixed.
 FRUST requires Python 3.10 or newer.
 
 ```bash
-git clone <repository-url>
+git clone https://github.com/MolinDiscovery/FRUST.git
 cd FRUST
 pip install -e .
 ```
@@ -67,21 +67,27 @@ H 0.0 0.75 -0.24
 df = step.build_initial_df(xyz, name="water")
 ```
 
-For workflow-scale FRUST structure generation, use the namespaced pipeline API:
+For workflow-scale work, create one object that can be inspected, run locally,
+or submitted to a cluster:
 
 ```python
-import pandas as pd
 import frust as ft
 
-substrates = pd.DataFrame(
-    {
-        "substrate_name": ["anisole"],
-        "smiles": ["COc1ccccc1"],
-    }
+wf = ft.workflows.screen_ts(
+    csv_path="docs/examples/screen.csv",
+    ts_types=["TS1", "TS2", "TS3", "TS4"],
+    method="r2scan-3c",
+    n_confs=None,
+    dft=True,
 )
 
-df = ft.pipes.run_mols(substrates, n_confs=2, DFT=False)
+wf.targets()[:3]
+wf.show_stages(execution="dft_staged")
 ```
+
+The production screen backend is `tsguess2`. See the
+[quickstart](https://molindiscovery.github.io/FRUST/getting-started/quickstart/)
+for a local smoke test, external-tool requirements, and cluster submission.
 
 ## Documentation
 
@@ -114,7 +120,9 @@ mkdocs serve
 ## Repository Layout
 
 - `frust/` contains the Python package.
-- `frust/pipes.py` and `frust/pipelines/` contain workflow entry points.
+- `frust/workflows/` contains the recommended local-to-cluster workflow objects.
+- `frust/pipes.py` and `frust/pipelines/` contain supported lower-level and
+  legacy workflow entry points.
 - `frust/stepper.py` contains the dataframe calculation layer.
 - `tests/` contains unit tests.
 - `docs/` contains the MkDocs documentation source.

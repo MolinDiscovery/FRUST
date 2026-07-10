@@ -11,7 +11,7 @@ Before using Slurm, test the submission wiring locally:
 from frust.cluster import submit_jobs, ClusterConfig, Resources
 
 result = submit_jobs(
-    csv_path="datasets/example.csv",
+    csv_path="docs/examples/substrates.csv",
     pipeline="run_mols",
     out_dir="runs/local_test",
     cluster=ClusterConfig(backend="local", log_dir="logs/local_test"),
@@ -66,7 +66,7 @@ a scheduler job id and did not invent a fake one.
 
     ```python
     submit_jobs(
-        csv_path="datasets/example.csv",
+        csv_path="docs/examples/substrates.csv",
         pipeline="run_ts_per_rpos",
         ts_xyz="structures/ts2.xyz",
         out_dir="runs/ts_example",

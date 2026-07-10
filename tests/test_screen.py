@@ -319,6 +319,43 @@ class ScreenWorkflowTests(unittest.TestCase):
         self.assertEqual(systems.iloc[0]["substrate_tag"], "s1")
         self.assertEqual(systems.iloc[0]["catalyst_tag"], "c1")
 
+    def test_numeric_csv_rpos_survives_pandas_float_inference(self):
+        components = ft.screen.read(
+            pd.DataFrame(
+                {
+                    "role": ["substrate", "catalyst"],
+                    "smiles": ["C1=CC=CO1", CATALYST],
+                    "compound_name": ["furan", "cat"],
+                    "rpos": [0.0, np.nan],
+                }
+            )
+        )
+
+        systems = ft.screen.expand(components)
+        targets = ft.workflows.screen_ts(
+            dataframe=systems,
+            ts_types=["TS1"],
+        ).targets()
+
+        self.assertEqual(len(targets), 1)
+        self.assertEqual(targets[0].metadata["rpos"], 0)
+
+    def test_non_integral_numeric_rpos_is_rejected(self):
+        with self.assertRaisesRegex(ValueError, "rpos must contain integers"):
+            ft.workflows.screen_ts(
+                dataframe=pd.DataFrame(
+                    {
+                        "system_name": ["bad"],
+                        "substrate_name": ["furan"],
+                        "catalyst_name": ["cat"],
+                        "substrate_smiles": ["C1=CC=CO1"],
+                        "catalyst_smiles": [CATALYST],
+                        "rpos": [0.5],
+                    }
+                ),
+                ts_types=["TS1"],
+            ).targets()
+
     def test_strict_catalyst_match(self):
         catalyst = mol_from_smiles(CATALYST, label="cat")
         roles = match_catalyst_roles(catalyst, catalyst_name="cat")

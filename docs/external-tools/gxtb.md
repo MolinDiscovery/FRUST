@@ -294,7 +294,7 @@ method = (
 )
 
 wf = ft.workflows.screen_ts(
-    csv_path="screen.csv",
+    csv_path="docs/examples/screen.csv",
     ts_types=["TS1", "TS2", "TS3", "TS4"],
     method=method,
     n_confs=None,
@@ -475,28 +475,10 @@ xtbtopo.mol
 
 The exact file set depends on the options used and what the g-xTB binary writes.
 
-## Direct Tooltoad Use
-
-FRUST uses Tooltoad internally, but the calculator can also be called directly:
-
-```python
-from tooltoad.gxtb import gxtb_calculate
-
-result = gxtb_calculate(
-    atoms=["H", "H"],
-    coords=[[0.0, 0.0, 0.0], [0.0, 0.0, 0.74]],
-    options={"grad": None},
-    n_cores=1,
-)
-
-print(result["normal_termination"])
-print(result["electronic_energy"])
-print(result["grad"].shape)
-```
-
 ## Notes And Limitations
 
-- `GXTB_EXE` is required only when `gxtb_calculate(...)` is called.
+- `GXTB_EXE` is required for direct `Stepper.gxtb(...)` calculations and by
+  the OET wrapper used for ORCA-driven g-xTB.
 - FRUST does not automatically reuse `XTB_EXE`; the normal local xTB binary may
   not support `--gxtb`.
 - Tooltoad always adds `--gxtb`, so do not include `"gxtb": None` yourself.
@@ -517,12 +499,12 @@ print(result["grad"].shape)
 
 ## Troubleshooting
 
-Check that Tooltoad sees the executable:
+Check that FRUST resolves the executable:
 
 ```bash
 python - <<'PY'
-from tooltoad.gxtb import _resolve_gxtb_cmd
-print(_resolve_gxtb_cmd())
+from frust.utils.gxtb import get_gxtb_exe
+print(get_gxtb_exe())
 PY
 ```
 
