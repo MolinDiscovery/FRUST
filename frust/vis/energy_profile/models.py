@@ -31,6 +31,9 @@ class ParsedProfile:
     side_anchor_label: str | None
     side_connector_rise_frac: float | None
     side_legend_label: str | None
+    main_to_product_anchor_idx: int | None
+    main_to_product_drop_frac: float | None
+    no_product: bool
 
 
 @dataclass(frozen=True)

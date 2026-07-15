@@ -4,7 +4,7 @@
 diagram.
 
 ```python
-from frust.vis import plot_energy_profile
+import frust as ft
 ```
 
 The mental model is:
@@ -14,6 +14,8 @@ The mental model is:
 | `("TS1", 25.5)` | State label and relative energy |
 | `("TS1", 25.5, "l")` | Same state, with the label nudged left |
 | `"side-rxn@int2@0.8#Bisarylation"` | Start a side pathway from `int2` |
+| `"main-to-product@0.8"` | End the solid path and connect to Product after an 80% flat segment |
+| `"no-product"` | End this profile without a Product state or connector |
 | `{"DFT": states1, "xTB": states2}` | Overlay multiple profiles |
 
 Energies are usually relative free energies in kcal/mol, but the plotting
@@ -38,7 +40,7 @@ choosing the rows or columns that represent the reaction coordinate.
 ```python
 states = list(df_profile[["state", "dG"]].itertuples(index=False, name=None))
 
-fig, ax = plot_energy_profile(states)
+fig, ax = ft.plot_energy_profile(states)
 ```
 
 If a few labels need manual placement, add a placement column and keep only the
@@ -82,7 +84,7 @@ states = [
     ("Product", -0.2, "tr"),
 ]
 
-fig, ax = plot_energy_profile(
+fig, ax = ft.plot_energy_profile(
     states,
     figsize=(8, 3.3),
     state_label_rotation=35,
@@ -148,7 +150,7 @@ profiles = {
     ],
 }
 
-fig, ax = plot_energy_profile(
+fig, ax = ft.plot_energy_profile(
     profiles,
     figsize=(10, 3.5),
     overlay_alpha=1.0,
@@ -207,7 +209,7 @@ profiles = {
         ("TS5", 45.4),
         ("int4", 20.3),
         ("TS6", 39.4),
-        ("Product", 2.8, "b"),
+        ("Product", 2.8, "r"),
         ("Product + int2", -9.4),
     ],
     "Constrained-xTB/SP": [
@@ -224,12 +226,12 @@ profiles = {
         ("TS5", 45.4),
         ("int4", 20.3),
         ("TS6", 39.4),
-        ("Product", 2.8, "b"),
+        ("Product", 2.8, "r"),
         ("Product + int2", -9.4),
     ],
 }
 
-fig, ax = plot_energy_profile(
+fig, ax = ft.plot_energy_profile(
     profiles,
     figsize=(12, 5),
     main_to_product_drop_frac=0.7,
@@ -238,6 +240,7 @@ fig, ax = plot_energy_profile(
     state_label_rotation=45,
     overlay_alpha=1.0,
     overlay_colors={"Constrained-xTB/SP": "tab:green"},
+    product_reference=("Cat", "connector"),
 )
 ```
 
@@ -248,6 +251,72 @@ fig, ax = plot_energy_profile(
     Entries after a `side-rxn` marker belong to the side pathway, except for
     product-like states that FRUST pulls back into the main pathway. Keep labels
     unique enough that the branch point and product states are unambiguous.
+
+## Connect Directly To Product Without A Side Path
+
+Insert `main-to-product@0.8` after the final continuous-path state when one
+profile should use the dotted Product connector without showing a side
+reaction:
+
+```python
+reference_states = [
+    ("Dimer", 0.0),
+    ("Cat", 5.59),
+    ("TS1", 21.0),
+    ("int1", 2.91),
+    ("TS4", 14.83, "b"),
+    "main-to-product@0.8",
+    ("Product", 3.29, "llll"),
+]
+```
+
+This produces:
+
+```text
+TS4 ─────────··· Product
+     80% flat    smooth drop
+```
+
+The marker stops the solid curve at `TS4`; the following Product remains a
+normal plotted and annotated state. Its `@0.8` value overrides
+`main_to_product_drop_frac` for this profile. If the suffix is omitted,
+`"main-to-product"` uses the function-level value instead.
+
+!!! note "Final Product marker"
+
+    The marker must be followed directly by the profile's final Product state.
+    It does not create a side pathway or legend entry and should not be combined
+    with `side-rxn` in the same profile.
+
+## End A Profile Without Product
+
+End a profile with `"no-product"` when only its intermediates and barriers are
+known:
+
+```python
+reference_states = [
+    ("Dimer", 0.0),
+    ("Cat", 5.59),
+    ("TS1", 21.0),
+    ("int1", 2.91),
+    ("TS4", 14.83, "b"),
+    "no-product",
+]
+```
+
+The solid curve ends at `TS4`. FRUST draws no Product point or connector and
+skips `product_reference` for this profile, even when the other overlays use a
+setting such as:
+
+```python
+product_reference=("Cat", "compact")
+```
+
+!!! note "Intentional missing Product"
+
+    `"no-product"` must be the final entry and the profile must not contain a
+    Product state. It cannot be combined with `side-rxn` or
+    `main-to-product` in the same profile.
 
 ## Product Labels
 
@@ -271,6 +340,58 @@ states = [
 profile. Increase `product_x_offset` when the labels or energy annotations
 overlap.
 
+### Reference The Product To The Catalyst Too
+
+Keep the Product point on the dimer-referenced curve and add its
+catalyst-referenced energy with one option:
+
+| State | Dimer-referenced energy |
+| --- | ---: |
+| Dimer | 0.0 |
+| Cat | 5.6 |
+| Product | 3.3 |
+
+```python
+states = [
+    ("Dimer", 0.0),
+    ("Cat", 5.6),
+    ("Product", 3.3),
+]
+
+fig, ax = ft.plot_energy_profile(
+    states,
+    product_reference=("Cat", "connector"),
+)
+```
+
+The Product point stays at 3.3. A vertical dotted line ends at -2.3, its energy
+relative to Cat:
+
+```text
+ 3.3  relative to Dimer
+(-2.3) relative to Cat (3.3 - 5.6)
+```
+
+Use compact mode when both values should stay in one annotation:
+
+```python
+fig, ax = ft.plot_energy_profile(
+    states,
+    product_reference=("Cat", "compact"),
+)
+```
+
+Passing only `product_reference="Cat"` is a backward-compatible shorthand for
+compact mode. Only the first Product endpoint gets the additional value; a
+later state such as `Product + int2` keeps its original annotation.
+
+!!! note "Overlay profiles"
+
+    FRUST calculates `Product - Cat` independently for every profile. With
+    `same_energy_mode="hide"`, an overlay label is hidden only when both the
+    original and catalyst-referenced Product energies match the reference
+    profile.
+
 ## Common Options
 
 | Option | Use when you want to |
@@ -282,6 +403,8 @@ overlap.
 | `same_energy_mode="hide"` | hide duplicate energy annotations in overlays |
 | `same_energy_mode="show"` | show overlay energy annotations even when they match the reference profile |
 | `product_x_offset=0.5` | separate multiple product-like states |
+| `product_reference=("Cat", "connector")` | connect Product to its Cat-relative energy with a dotted line |
+| `product_reference=("Cat", "compact")` | stack the original and Cat-relative Product annotations |
 | `font_size=14` | scale labels, energies, and legend together |
 | `hide_y_ticks=False` | show the numeric y-axis |
 | `grid=True` | add a background grid |
@@ -292,7 +415,7 @@ overlap.
 For example, a two-color overlay entry sets the main-path and side-path colors:
 
 ```python
-plot_energy_profile(
+ft.plot_energy_profile(
     profiles,
     overlay_colors={"Constrained-xTB/SP": ("tab:green", "tab:olive")},
 )
@@ -302,7 +425,7 @@ Because `plot_energy_profile` returns Matplotlib objects, save or customize the
 figure in the usual way:
 
 ```python
-fig, ax = plot_energy_profile(
+fig, ax = ft.plot_energy_profile(
     profiles,
     figsize=(12, 5),
     hide_y_ticks=False,

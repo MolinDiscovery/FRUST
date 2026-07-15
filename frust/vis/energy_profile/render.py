@@ -11,6 +11,7 @@ def _annotate_energy_only(
     label_offset_down: int,
     dummy_alpha: float,
     energy_fontsize: float,
+    additional_energy: float | None = None,
 ):
     top_n = placement_counts["top"]
     bottom_n = placement_counts["bottom"]
@@ -38,7 +39,10 @@ def _annotate_energy_only(
 
     add_arrow = max(top_n, bottom_n, left_n, right_n) > 1
 
-    text = f"{Ei:.{decimals}f}"
+    energy_lines = [f"{Ei:.{decimals}f}"]
+    if additional_energy is not None:
+        energy_lines.append(f"({additional_energy:.{decimals}f})")
+    text = "\n".join(energy_lines)
 
     a = (dummy_alpha if is_dummy else 1.0) * alpha
 

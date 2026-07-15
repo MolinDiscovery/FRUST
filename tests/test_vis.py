@@ -287,6 +287,286 @@ class PlotEnergyProfileTests(unittest.TestCase):
         self.assertEqual(len(matching_labels), 1)
         self.assertTrue(same_color(matching_labels[0].get_color(), "C0"))
 
+    def test_product_reference_adds_catalyst_relative_product_energy(self):
+        profiles = {
+            "DFT": [
+                ("Dimer", 0.0),
+                ("Cat", 5.6),
+                ("Product", 3.3, "b"),
+                ("Product + int2", -10.3),
+            ],
+            "Constrained-xTB/SP": [
+                ("Dimer", 0.0),
+                ("Cat", 5.6),
+                ("Product", 3.3, "b"),
+                ("Product + int2", -10.3),
+            ],
+        }
+
+        fig, ax = plot_energy_profile(
+            profiles,
+            product_reference="Cat",
+            same_energy_mode="hide",
+            overlay_alpha=1.0,
+        )
+        self.addCleanup(lambda: plt.close(fig))
+
+        labels = [text.get_text() for text in ax.texts]
+
+        self.assertEqual(labels.count("3.3\n(-2.3)"), 1)
+        self.assertEqual(labels.count("-10.3"), 1)
+
+    def test_product_reference_works_for_single_profile(self):
+        states = [
+            ("Dimer", 0.0),
+            ("Cat", 5.6),
+            ("Product", 3.3),
+        ]
+
+        fig, ax = plot_energy_profile(states, product_reference="Cat")
+        self.addCleanup(lambda: plt.close(fig))
+
+        product_annotation = next(
+            text
+            for text in ax.texts
+            if text.get_text() == "Product\n3.3\n(-2.3)"
+        )
+
+        self.assertEqual(product_annotation.xy[1], 3.3)
+
+    def test_product_reference_connector_draws_dotted_line(self):
+        states = [
+            ("Dimer", 0.0),
+            ("Cat", 5.6),
+            ("Product", 3.3),
+        ]
+
+        fig, ax = plot_energy_profile(
+            states,
+            product_reference=("Cat", "connector"),
+        )
+        self.addCleanup(lambda: plt.close(fig))
+
+        connector = next(line for line in ax.lines if line.get_linestyle() == ":")
+        relative_annotation = next(
+            text
+            for text in ax.texts
+            if text.get_text() == "(-2.3)" and text.xy[1] == -2.3
+        )
+
+        self.assertEqual(connector.get_xdata().tolist(), [2.0, 2.0])
+        self.assertEqual(connector.get_ydata().tolist(), [3.3, -2.3])
+        self.assertEqual(relative_annotation.xy, (2.0, -2.3))
+        self.assertIn("Product\n3.3", [text.get_text() for text in ax.texts])
+
+    def test_product_reference_connector_hides_matching_overlay_line(self):
+        profiles = {
+            "first": [
+                ("Dimer", 0.0),
+                ("Cat", 5.6),
+                ("Product", 3.3),
+            ],
+            "second": [
+                ("Dimer", 0.0),
+                ("Cat", 5.6),
+                ("Product", 3.3),
+            ],
+        }
+
+        fig, ax = plot_energy_profile(
+            profiles,
+            product_reference=("Cat", "connector"),
+            same_energy_mode="hide",
+            overlay_alpha=1.0,
+        )
+        self.addCleanup(lambda: plt.close(fig))
+
+        connectors = [line for line in ax.lines if line.get_linestyle() == ":"]
+        relative_labels = [text for text in ax.texts if text.get_text() == "(-2.3)"]
+
+        self.assertEqual(len(connectors), 1)
+        self.assertEqual(len(relative_labels), 1)
+
+    def test_product_reference_rejects_other_display_names(self):
+        states = [("Dimer", 0.0), ("Cat", 5.6), ("Product", 3.3)]
+
+        for display in ("Show", "Compact", "Expanded"):
+            with self.subTest(display=display), self.assertRaisesRegex(
+                ValueError,
+                "display must be 'compact' or 'connector'",
+            ):
+                plot_energy_profile(
+                    states,
+                    product_reference=("Cat", display),
+                )
+
+    def test_product_reference_keeps_distinct_overlay_reference_values(self):
+        profiles = {
+            "first": [
+                ("Dimer", 0.0),
+                ("Cat", 5.0),
+                ("Product", 3.0),
+            ],
+            "second": [
+                ("Dimer", 0.0),
+                ("Cat", 6.0),
+                ("Product", 3.0),
+            ],
+        }
+
+        fig, ax = plot_energy_profile(
+            profiles,
+            product_reference="Cat",
+            same_energy_mode="hide",
+            overlay_alpha=1.0,
+        )
+        self.addCleanup(lambda: plt.close(fig))
+
+        labels = [text.get_text() for text in ax.texts]
+
+        self.assertIn("3.0\n(-2.0)", labels)
+        self.assertIn("3.0\n(-3.0)", labels)
+
+    def test_product_reference_requires_named_state_in_each_profile(self):
+        with self.assertRaisesRegex(
+            ValueError,
+            "product_reference='Cat' was not found",
+        ):
+            plot_energy_profile(
+                [("Dimer", 0.0), ("Product", -1.0)],
+                product_reference="Cat",
+            )
+
+    def test_main_to_product_marker_draws_local_fraction_connector(self):
+        states = [
+            ("Dimer", 0.0),
+            ("Cat", 5.6),
+            ("TS4", 14.8),
+            "main-to-product@0.8",
+            ("Product", 3.3),
+        ]
+
+        fig, ax = plot_energy_profile(
+            states,
+            main_to_product_drop_frac=0.2,
+            show_state_labels=True,
+        )
+        self.addCleanup(lambda: plt.close(fig))
+
+        solid_line = next(line for line in ax.lines if line.get_linestyle() == "-")
+        connector = next(line for line in ax.lines if line.get_linestyle() == ":")
+        connector_x = np.asarray(connector.get_xdata(), dtype=float)
+        connector_y = np.asarray(connector.get_ydata(), dtype=float)
+
+        self.assertEqual(float(np.max(solid_line.get_xdata())), 2.0)
+        self.assertTrue(np.allclose(connector_y[connector_x <= 2.79], 14.8))
+        self.assertEqual(connector_x[-1], 3.0)
+        self.assertAlmostEqual(connector_y[-1], 3.3)
+        self.assertEqual(
+            [label.get_text() for label in ax.get_xticklabels()],
+            ["Dimer", "Cat", "TS4", "Product"],
+        )
+        self.assertIsNone(ax.get_legend())
+
+    def test_main_to_product_marker_supports_overlay_without_side_path(self):
+        profiles = {
+            "DFT": [
+                ("Dimer", 0.0),
+                ("Cat", 5.6),
+                ("TS4", 20.8),
+                "side-rxn@Cat@0.8#Bisarylation",
+                ("TS5", 47.6),
+                ("Product", 3.3),
+                ("Product + int2", -10.3),
+            ],
+            "Reference": [
+                ("Dimer", 0.0),
+                ("Cat", 5.6),
+                ("TS4", 14.8),
+                "main-to-product@0.8",
+                ("Product", 3.3),
+            ],
+        }
+
+        fig, ax = plot_energy_profile(
+            profiles,
+            overlay_alpha=1.0,
+            overlay_colors={"Reference": "#C6C5C5"},
+        )
+        self.addCleanup(lambda: plt.close(fig))
+
+        grey_connectors = [
+            line
+            for line in ax.lines
+            if line.get_linestyle() == ":"
+            and same_color(line.get_color(), "#C6C5C5")
+        ]
+        legend_labels = [text.get_text() for text in ax.get_legend().get_texts()]
+
+        self.assertEqual(len(grey_connectors), 1)
+        self.assertEqual(legend_labels.count("Bisarylation"), 1)
+
+    def test_main_to_product_marker_requires_final_product(self):
+        with self.assertRaisesRegex(ValueError, "followed directly by a product"):
+            plot_energy_profile(
+                [
+                    ("Dimer", 0.0),
+                    ("TS4", 14.8),
+                    "main-to-product@0.8",
+                    ("int4", 3.3),
+                ]
+            )
+
+    def test_no_product_marker_ends_overlay_without_product_connector(self):
+        profiles = {
+            "DFT": [
+                ("Dimer", 0.0),
+                ("Cat", 5.6),
+                ("TS4", 20.8),
+                ("Product", 3.3),
+            ],
+            "Reference": [
+                ("Dimer", 0.0),
+                ("Cat", 5.6),
+                ("TS4", 14.8),
+                "no-product",
+            ],
+        }
+
+        fig, ax = plot_energy_profile(
+            profiles,
+            overlay_alpha=1.0,
+            overlay_colors={"Reference": "#C6C5C5"},
+            product_reference=("Cat", "compact"),
+        )
+        self.addCleanup(lambda: plt.close(fig))
+
+        grey_lines = [
+            line for line in ax.lines if same_color(line.get_color(), "#C6C5C5")
+        ]
+        grey_text = [
+            text.get_text()
+            for text in ax.texts
+            if same_color(text.get_color(), "#C6C5C5")
+        ]
+
+        self.assertEqual(len(grey_lines), 1)
+        self.assertEqual(grey_lines[0].get_linestyle(), "-")
+        self.assertEqual(float(np.max(grey_lines[0].get_xdata())), 2.0)
+        self.assertFalse(any(text.startswith("3.3") for text in grey_text))
+        self.assertFalse(any("(" in text for text in grey_text))
+
+    def test_no_product_marker_must_be_final_and_have_no_product(self):
+        with self.assertRaisesRegex(ValueError, "must be the final entry"):
+            plot_energy_profile(
+                [("Dimer", 0.0), "no-product", ("TS4", 14.8)]
+            )
+
+        with self.assertRaisesRegex(ValueError, "already contains a product"):
+            plot_energy_profile(
+                [("Dimer", 0.0), ("Product", 3.3), "no-product"]
+            )
+
     def test_main_product_label_keeps_main_color_after_side_reaction(self):
         profiles = {
             "main": [

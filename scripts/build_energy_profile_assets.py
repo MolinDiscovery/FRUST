@@ -103,7 +103,7 @@ def build_assets() -> list[Path]:
             ("TS5", 45.4),
             ("int4", 20.3),
             ("TS6", 39.4),
-            ("Product", 2.8, "b"),
+            ("Product", 2.8, "r"),
             ("Product + int2", -9.4),
         ],
         "Constrained-xTB/SP": [
@@ -120,7 +120,7 @@ def build_assets() -> list[Path]:
             ("TS5", 45.4),
             ("int4", 20.3),
             ("TS6", 39.4),
-            ("Product", 2.8, "b"),
+            ("Product", 2.8, "r"),
             ("Product + int2", -9.4),
         ],
     }
@@ -133,6 +133,7 @@ def build_assets() -> list[Path]:
         state_label_rotation=45,
         overlay_alpha=1.0,
         overlay_colors={"Constrained-xTB/SP": "tab:green"},
+        product_reference=("Cat", "connector"),
         font_size=11,
     )
     paths.append(_save(fig, "energy-profile-side-reaction.png"))
