@@ -43,6 +43,15 @@ class WorkflowMethodTests(unittest.TestCase):
         self.assertEqual(base.for_stage("xtb_sp").engine, "gxtb")
         self.assertEqual(base.for_stage("xtb_opt").engine, "gxtb")
 
+    def test_legacy_stage_alias_updates_canonical_stage(self):
+        base = methods.preset("r2scan-3c")
+        replacement = methods.orca(method="PBE0", basis="def2-SVP")
+
+        updated = base.replace(dft_pre_sp=replacement)
+
+        self.assertIs(updated.for_stage("dft_rank_sp"), replacement)
+        self.assertIs(updated.for_stage("dft_pre_sp"), replacement)
+
     def test_register_user_preset(self):
         method = methods.preset("r2scan-3c").replace(
             xtb_opt=methods.xtb(gfn=2, opt=True),

@@ -11,6 +11,11 @@ frust/workflows/
   methods.py    -> calculator plans
   factories.py  -> concrete chemistry workflows
   core.py       -> local/cluster execution engine
+frust/structures/
+  api.py        -> calculation-free multi-target generation
+  planner.py    -> lightweight chemical-state targets
+  builders.py   -> shared deferred structure construction
+  specs.py      -> canonical state and scope registry
 ```
 
 The important design choice is separation of responsibility:
@@ -31,14 +36,16 @@ silently affecting each other.
 | `CalculatorSpec` | `methods.py` | one engine/options block |
 | `MethodPlan` | `methods.py` | stage-id to calculator mapping |
 | `WorkflowTarget` | `core.py` | one scientific unit of work |
+| `StructureTarget` | `structures/models.py` | one typed, serializable chemical-state plan |
 | `StageDef` | `core.py` | one workflow stage |
 | `BaseWorkflow` | `core.py` | shared target/run/submit/collect behavior |
-| `MolsWorkflow`, `ScreenTSWorkflow`, `LegacyTSWorkflow` | `factories.py` | chemistry-specific target building and preparation |
+| `MolsWorkflow`, `ScreenTSWorkflow`, `Int3Workflow`, `LegacyTSWorkflow` | `factories.py` | separate chemistry-specific stage graphs and result profiles |
 
 The key mental model is:
 
 ```text
 WorkflowTarget = what chemical target should be processed
+StructureTarget = which canonical state the shared builder should construct
 StageDef       = what stage should happen next
 MethodPlan     = which calculator settings are used for that stage
 BaseWorkflow   = how targets and stages become local calls or cluster jobs
@@ -51,24 +58,45 @@ flowchart TD
     A["User calls workflow factory<br/>ft.workflows.screen_ts(...)"]
     B["Concrete workflow object<br/>ScreenTSWorkflow"]
     C["wf.targets()"]
-    D["WorkflowTarget list<br/>tag + payload + metadata"]
+    D["StructureTarget list<br/>system + state + builder spec"]
     E["workflow._stage_defs()"]
     F["StageDef list<br/>prepare + prune + calc + filter"]
+    P["wf.preview(...) or ft.structures.create_*(...)"]
+    Q["Canonical embedded dataframe<br/>no xTB or DFT columns"]
     G["wf.run(...) or wf.submit(...)"]
     H["Stepper stage call<br/>prune_conformers, xtb, gxtb, orca"]
     I["FRUST dataframe<br/>stage-prefixed columns + attrs"]
 
     A --> B --> C --> D
     B --> E --> F
+    D --> P --> Q
     D --> G
     F --> G
     G --> H --> I
 ```
 
 `targets()` is inspection and scheduling preparation. It must not run
-calculators and should avoid expensive embedding. The first expensive chemistry
-construction step belongs in `_prepare_initial_df(...)`, which runs inside
-`wf.run(...)` or inside the submitted cluster job.
+calculators and should avoid expensive embedding. `wf.preview(...)` and the
+public helpers in `structures/api.py` may run structure generation and
+embedding, but never calculator stages. Production structure construction
+belongs in `_prepare_initial_df(...)`, which calls the same typed builder before
+`wf.run(...)` continues to calculations or a submitted cluster job does so.
+
+## Shared Chemistry, Separate Workflows
+
+`mols`, `screen_ts`, and `int3` share typed systems, target planning, deferred
+builders, identity columns, and the canonical result schema. They deliberately
+do **not** share one umbrella workflow or one mixed stage graph:
+
+| Factory | Result profile | Optimization stage |
+| --- | --- | --- |
+| `ft.workflows.mols(...)` | `minimum` | `dft_opt` |
+| `ft.workflows.screen_ts(...)` | `transition_state` | `dft_ts_opt` |
+| `ft.workflows.int3(...)` | `constrained_minimum` | `dft_opt` |
+
+This boundary keeps `wf.show_stages()` readable. A target describes chemistry;
+the concrete workflow owns all calculation stages, so a target cannot inject a
+different profile's stages into the table.
 
 ## Local Execution Flow
 
@@ -93,12 +121,12 @@ checkpoints are written as each group finishes:
 
 ```text
 TS1__furan__TMP__r0/
-  ts_guess.parquet
+  structure_guess.parquet
   init.parquet
-  init.hess.parquet
-  init.hess.optts.parquet
-  init.hess.optts.freq.parquet
-  init.hess.optts.freq.solv.parquet
+  init.dft_hessian.parquet
+  init.dft_hessian.dft_ts_opt.parquet
+  init.dft_hessian.dft_ts_opt.dft_freq.parquet
+  init.dft_hessian.dft_ts_opt.dft_freq.dft_solv_sp.parquet
 ```
 
 After a successful target finishes, workflow objects compact the directory by
@@ -158,10 +186,14 @@ flowchart TD
     F -->|"orca"| I --> J
 ```
 
-`StageDef.id` is the stable method-plan key. `StageDef.name` is the calculation
-name used by `Stepper`, so it becomes the dataframe column prefix. For example,
-stage id `optts` can run with calculation name `OptTS`, producing columns such
-as `OptTS-EE`, `OptTS-NT`, and `OptTS-oc`.
+`StageDef.id` is both the stable method-plan key and canonical dataframe column
+prefix. `StageDef.name` is only a readable label for `show_stages()`. For
+example, stage id `dft_ts_opt` produces `dft_ts_opt-EE`, `dft_ts_opt-NT`, and
+`dft_ts_opt-oc`, regardless of the ORCA `OptTS` keyword shown in its options.
+
+Selection is explicit too. `StageDef.rank_by` records the stage whose energy
+controls `lowest=...` or a filter, so workflow behavior never depends on which
+energy column happens to be last.
 
 Use `StageDef.method_stage` only when the stage should reuse a different
 method-plan key. Otherwise the method key is `StageDef.id`.
@@ -195,13 +227,13 @@ def _my_method() -> MethodPlan:
     return MethodPlan(
         name="my-method",
         stages=_base_stages(
-            dft_pre_sp=orca(method="...", basis="...", job="sp"),
-            dft_pre_opt=orca(method="...", basis="...", job="opt"),
+            dft_rank_sp=orca(method="...", basis="...", job="sp"),
+            dft_preopt=orca(method="...", basis="...", job="opt"),
             dft_opt=orca(method="...", basis="...", job="opt"),
-            hess=orca(method="...", basis="...", job="freq"),
-            optts=orca(method="...", basis="...", job="optts"),
-            freq=orca(method="...", basis="...", job="freq"),
-            solv=orca(method="...", basis="...", job="sp", solvent="chloroform"),
+            dft_hessian=orca(method="...", basis="...", job="freq"),
+            dft_ts_opt=orca(method="...", basis="...", job="optts"),
+            dft_freq=orca(method="...", basis="...", job="freq"),
+            dft_solv_sp=orca(method="...", basis="...", job="sp", solvent="chloroform"),
         ),
     )
 ```

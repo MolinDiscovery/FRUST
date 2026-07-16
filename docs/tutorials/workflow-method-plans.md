@@ -74,18 +74,18 @@ The default `r2scan-3c` screen is:
 | `init` | `xtb_preopt` | `xtb` | `gfnff opt` | true |  |
 | `init` | `xtb_sp` | `gxtb` |  | false |  |
 | `init` | `xtb_opt` | `gxtb` | `opt` | true | 10 |
-| `init` | `dft_pre_sp` | `orca` | `r2SCAN-3c TightSCF SP NoSym` | false |  |
-| `init` | `dft_pre_opt` | `orca` | `r2SCAN-3c TightSCF SlowConv Opt NoSym` | true | 1 |
-| `hess` | `hess` | `orca` | `r2SCAN-3c TightSCF SlowConv Freq NoSym` | false |  |
-| `optts` | `optts` | `orca` | `r2SCAN-3c TightSCF SlowConv OptTS NoSym` | false |  |
-| `freq` | `freq` | `orca` | `r2SCAN-3c TightSCF SlowConv Freq NoSym` | false |  |
-| `solv` | `solv` | `orca` | `r2SCAN-3c TightSCF SP NoSym` | false |  |
+| `init` | `dft_rank_sp` | `orca` | `r2SCAN-3c TightSCF SP NoSym` | false |  |
+| `init` | `dft_preopt` | `orca` | `r2SCAN-3c TightSCF SlowConv Opt NoSym` | true | 1 |
+| `dft_hessian` | `dft_hessian` | `orca` | `r2SCAN-3c TightSCF SlowConv Freq NoSym` | false |  |
+| `dft_ts_opt` | `dft_ts_opt` | `orca` | `r2SCAN-3c TightSCF SlowConv OptTS NoSym` | false |  |
+| `dft_freq` | `dft_freq` | `orca` | `r2SCAN-3c TightSCF SlowConv Freq NoSym` | false |  |
+| `dft_solv_sp` | `dft_solv_sp` | `orca` | `r2SCAN-3c TightSCF SP NoSym` | false |  |
 
 !!! note "The table is workflow-specific"
 
     A method preset can contain keys a particular workflow does not use. For
-    example, `raw_mols(..., dft=True)` uses `dft_opt`, `freq`, and `solv` but
-    does not use the TS-only `hess` and `optts` stages. Prefer
+    example, `raw_mols(..., dft=True)` uses `dft_opt`, `dft_freq`, and `dft_solv_sp` but
+    does not use the TS-only `dft_hessian` and `dft_ts_opt` stages. Prefer
     `wf.show_stages()` over reading the full preset mapping.
 
 ## Configure Initial Pruning
@@ -193,10 +193,10 @@ result = wf.submit(
     execution="dft_staged",
     stage_resources={
         "init": Resources(cpus=24, mem_gb=20, timeout_min=7200),
-        "hess": Resources(cpus=8, mem_gb=64, timeout_min=7200),
-        "optts": Resources(cpus=24, mem_gb=20, timeout_min=7200),
-        "freq": Resources(cpus=8, mem_gb=64, timeout_min=7200),
-        "solv": Resources(cpus=24, mem_gb=20, timeout_min=7200),
+        "dft_hessian": Resources(cpus=8, mem_gb=64, timeout_min=7200),
+        "dft_ts_opt": Resources(cpus=24, mem_gb=20, timeout_min=7200),
+        "dft_freq": Resources(cpus=8, mem_gb=64, timeout_min=7200),
+        "dft_solv_sp": Resources(cpus=24, mem_gb=20, timeout_min=7200),
     },
 )
 ```

@@ -14,6 +14,7 @@ _PUBLIC_MODULES: dict[str, str] = {
     "pipelines": "frust.pipelines",
     "pipes": "frust.pipes",
     "screen": "frust.screen",
+    "structures": "frust.structures",
     "tsguess2": "frust.tsguess2",
     "tsguess3": "frust.tsguess3",
     "utils": "frust.utils",
@@ -45,6 +46,9 @@ _PUBLIC_API: dict[str, tuple[str, str]] = {
     "normalize_dataframe": ("frust.schema", "normalize_dataframe"),
     "energy_columns": ("frust.schema", "energy_columns"),
     "normal_termination_columns": ("frust.schema", "normal_termination_columns"),
+    "upgrade_dataframe": ("frust.schema", "upgrade_dataframe"),
+    "result_column": ("frust.results", "result_column"),
+    "get_result": ("frust.results", "get_result"),
     # Visualization
     "plot_vibs": ("frust.vis", "plot_vibs"),
     "plot_mols": ("frust.vis", "plot_mols"),
@@ -96,6 +100,7 @@ if TYPE_CHECKING:
     import frust.pipelines as pipelines
     import frust.pipes as pipes
     import frust.screen as screen
+    import frust.structures as structures
     import frust.tsguess2 as tsguess2
     import frust.tsguess3 as tsguess3
     import frust.utils as utils
@@ -107,7 +112,9 @@ if TYPE_CHECKING:
         energy_columns,
         normal_termination_columns,
         normalize_dataframe,
+        upgrade_dataframe,
     )
+    from frust.results import get_result, result_column
     from frust.stepper import Stepper
     from frust.utils.analytics import inspect_ts_vibrations, summarize_ts_vibrations
     from frust.utils.dataframes import show_steps, show_timing, lowest_energy_rows, map_substrate_names

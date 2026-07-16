@@ -94,13 +94,13 @@ are identical across presets; the ORCA options differ by preset.
 | `xtb_preopt` | `xtb` | constrained GFNFF preoptimization |
 | `xtb_sp` | `gxtb` | direct g-xTB single point ranking |
 | `xtb_opt` | `gxtb` | constrained direct g-xTB optimization and conformer filtering |
-| `dft_pre_sp` | `orca` | DFT single point before DFT optimization |
-| `dft_pre_opt` | `orca` | constrained DFT preoptimization |
+| `dft_rank_sp` | `orca` | DFT single point before DFT optimization |
+| `dft_preopt` | `orca` | constrained DFT preoptimization |
 | `dft_opt` | `orca` | DFT optimization for molecule workflows |
-| `hess` | `orca` | Hessian/frequency stage for TS optimization |
-| `optts` | `orca` | ORCA `OptTS` |
-| `freq` | `orca` | final frequency check |
-| `solv` | `orca` | final solvent single point |
+| `dft_hessian` | `orca` | Hessian/frequency stage for TS optimization |
+| `dft_ts_opt` | `orca` | ORCA `OptTS` |
+| `dft_freq` | `orca` | final frequency check |
+| `dft_solv_sp` | `orca` | final solvent single point |
 
 `method.stages` is the reusable calculator map. To see which parts of that map
 a specific workflow will actually run, inspect the workflow:
@@ -112,9 +112,9 @@ wf.show_stages()[["group", "stage", "method_key", "engine", "options"]]
 !!! note "Presets are larger than any one workflow"
 
     A preset contains both molecule-stage keys such as `dft_opt` and TS-stage
-    keys such as `hess` and `optts`. The workflow decides which keys are active.
-    For example, `raw_mols(..., dft=True)` uses `dft_opt`, `freq`, and `solv`;
-    `screen_ts(..., dft=True)` uses `hess`, `optts`, `freq`, and `solv`.
+    keys such as `dft_hessian` and `dft_ts_opt`. The workflow decides which keys are active.
+    For example, `raw_mols(..., dft=True)` uses `dft_opt`, `dft_freq`, and `dft_solv_sp`;
+    `screen_ts(..., dft=True)` uses `dft_hessian`, `dft_ts_opt`, `dft_freq`, and `dft_solv_sp`.
 
 !!! note "Pruning is not a method-plan setting"
 
@@ -125,7 +125,7 @@ wf.show_stages()[["group", "stage", "method_key", "engine", "options"]]
 ### Exact Built-In Stage Maps
 
 Use these tables when you need to know what a preset means before running a
-large cluster job. The `solv` stage also includes this ORCA extra input block:
+large cluster job. The `dft_solv_sp` stage also includes this ORCA extra input block:
 
 ```text
 %CPCM
@@ -145,13 +145,13 @@ method = ft.workflows.methods.preset("r2scan-3c")
 | `xtb_preopt` | `xtb` | `gfnff opt` |
 | `xtb_sp` | `gxtb` |  |
 | `xtb_opt` | `gxtb` | `opt` |
-| `dft_pre_sp` | `orca` | `r2SCAN-3c TightSCF SP NoSym` |
-| `dft_pre_opt` | `orca` | `r2SCAN-3c TightSCF SlowConv Opt NoSym` |
+| `dft_rank_sp` | `orca` | `r2SCAN-3c TightSCF SP NoSym` |
+| `dft_preopt` | `orca` | `r2SCAN-3c TightSCF SlowConv Opt NoSym` |
 | `dft_opt` | `orca` | `r2SCAN-3c TightSCF SlowConv Opt NoSym` |
-| `hess` | `orca` | `r2SCAN-3c TightSCF SlowConv Freq NoSym` |
-| `optts` | `orca` | `r2SCAN-3c TightSCF SlowConv OptTS NoSym` |
-| `freq` | `orca` | `r2SCAN-3c TightSCF SlowConv Freq NoSym` |
-| `solv` | `orca` | `r2SCAN-3c TightSCF SP NoSym` plus SMD chloroform block |
+| `dft_hessian` | `orca` | `r2SCAN-3c TightSCF SlowConv Freq NoSym` |
+| `dft_ts_opt` | `orca` | `r2SCAN-3c TightSCF SlowConv OptTS NoSym` |
+| `dft_freq` | `orca` | `r2SCAN-3c TightSCF SlowConv Freq NoSym` |
+| `dft_solv_sp` | `orca` | `r2SCAN-3c TightSCF SP NoSym` plus SMD chloroform block |
 
 #### `wb97xd3-631g`
 
@@ -164,13 +164,13 @@ method = ft.workflows.methods.preset("wb97xd3-631g")
 | `xtb_preopt` | `xtb` | `gfnff opt` |
 | `xtb_sp` | `gxtb` |  |
 | `xtb_opt` | `gxtb` | `opt` |
-| `dft_pre_sp` | `orca` | `wB97X-D3 6-31G** TightSCF SP NoSym` |
-| `dft_pre_opt` | `orca` | `wB97X-D3 6-31G** TightSCF SlowConv Opt NoSym` |
+| `dft_rank_sp` | `orca` | `wB97X-D3 6-31G** TightSCF SP NoSym` |
+| `dft_preopt` | `orca` | `wB97X-D3 6-31G** TightSCF SlowConv Opt NoSym` |
 | `dft_opt` | `orca` | `wB97X-D3 6-31G** TightSCF SlowConv Opt NoSym` |
-| `hess` | `orca` | `wB97X-D3 6-31G** TightSCF SlowConv Freq NoSym` |
-| `optts` | `orca` | `wB97X-D3 6-31G** TightSCF SlowConv OptTS NoSym` |
-| `freq` | `orca` | `wB97X-D3 6-31G** TightSCF SlowConv Freq NoSym` |
-| `solv` | `orca` | `wB97X-D3 6-31+G** TightSCF SP NoSym` plus SMD chloroform block |
+| `dft_hessian` | `orca` | `wB97X-D3 6-31G** TightSCF SlowConv Freq NoSym` |
+| `dft_ts_opt` | `orca` | `wB97X-D3 6-31G** TightSCF SlowConv OptTS NoSym` |
+| `dft_freq` | `orca` | `wB97X-D3 6-31G** TightSCF SlowConv Freq NoSym` |
+| `dft_solv_sp` | `orca` | `wB97X-D3 6-31+G** TightSCF SP NoSym` plus SMD chloroform block |
 
 #### `r2scan-def2svp`
 
@@ -183,13 +183,13 @@ method = ft.workflows.methods.preset("r2scan-def2svp")
 | `xtb_preopt` | `xtb` | `gfnff opt` |
 | `xtb_sp` | `gxtb` |  |
 | `xtb_opt` | `gxtb` | `opt` |
-| `dft_pre_sp` | `orca` | `R2SCAN def2-SVP TightSCF SP NoSym` |
-| `dft_pre_opt` | `orca` | `R2SCAN def2-SVP TightSCF SlowConv Opt NoSym` |
+| `dft_rank_sp` | `orca` | `R2SCAN def2-SVP TightSCF SP NoSym` |
+| `dft_preopt` | `orca` | `R2SCAN def2-SVP TightSCF SlowConv Opt NoSym` |
 | `dft_opt` | `orca` | `R2SCAN def2-SVP TightSCF SlowConv Opt NoSym` |
-| `hess` | `orca` | `R2SCAN def2-SVP TightSCF SlowConv Freq NoSym` |
-| `optts` | `orca` | `R2SCAN def2-SVP TightSCF SlowConv OptTS NoSym` |
-| `freq` | `orca` | `R2SCAN def2-SVP TightSCF SlowConv Freq NoSym` |
-| `solv` | `orca` | `R2SCAN def2-SVPD TightSCF SP NoSym` plus SMD chloroform block |
+| `dft_hessian` | `orca` | `R2SCAN def2-SVP TightSCF SlowConv Freq NoSym` |
+| `dft_ts_opt` | `orca` | `R2SCAN def2-SVP TightSCF SlowConv OptTS NoSym` |
+| `dft_freq` | `orca` | `R2SCAN def2-SVP TightSCF SlowConv Freq NoSym` |
+| `dft_solv_sp` | `orca` | `R2SCAN def2-SVPD TightSCF SP NoSym` plus SMD chloroform block |
 
 For `ft.workflows.raw_mols(..., method="r2scan-3c", dft=True)`, the active
 stages are molecule stages:
@@ -200,13 +200,13 @@ stages are molecule stages:
 | `init` | `xtb_preopt` | `xtb_preopt` | `xtb` | `gfnff opt` |
 | `init` | `xtb_sp` | `xtb_sp` | `gxtb` |  |
 | `init` | `xtb_opt` | `xtb_opt` | `gxtb` | `opt` |
-| `init` | `dft_pre_sp` | `dft_pre_sp` | `orca` | `r2SCAN-3c TightSCF SP NoSym` |
+| `init` | `dft_rank_sp` | `dft_rank_sp` | `orca` | `r2SCAN-3c TightSCF SP NoSym` |
 | `dft_opt` | `dft_opt` | `dft_opt` | `orca` | `r2SCAN-3c TightSCF SlowConv Opt NoSym` |
-| `freq` | `freq` | `freq` | `orca` | `r2SCAN-3c TightSCF SlowConv Freq NoSym` |
-| `solv` | `solv` | `solv` | `orca` | `r2SCAN-3c TightSCF SP NoSym` |
+| `dft_freq` | `dft_freq` | `dft_freq` | `orca` | `r2SCAN-3c TightSCF SlowConv Freq NoSym` |
+| `dft_solv_sp` | `dft_solv_sp` | `dft_solv_sp` | `orca` | `r2SCAN-3c TightSCF SP NoSym` |
 
-The same preset also contains `hess` and `optts`, but raw molecule workflows do
-not run those TS-only stages. The `freq` row is a normal minimum-frequency
+The same preset also contains `dft_hessian` and `dft_ts_opt`, but raw molecule workflows do
+not run those TS-only stages. The `dft_freq` row is a normal minimum-frequency
 calculation after `dft_opt`, so Gibbs-energy columns can be parsed from the
 optimized molecule.
 
@@ -320,18 +320,18 @@ result = wf.submit(
     execution="dft_staged",
     stage_resources={
         "init": Resources(cpus=24, mem_gb=20, timeout_min=7200),
-        "hess": Resources(cpus=8, mem_gb=64, timeout_min=7200),
-        "optts": Resources(cpus=24, mem_gb=20, timeout_min=7200),
-        "freq": Resources(cpus=8, mem_gb=64, timeout_min=7200),
-        "solv": Resources(cpus=24, mem_gb=20, timeout_min=7200),
+        "dft_hessian": Resources(cpus=8, mem_gb=64, timeout_min=7200),
+        "dft_ts_opt": Resources(cpus=24, mem_gb=20, timeout_min=7200),
+        "dft_freq": Resources(cpus=8, mem_gb=64, timeout_min=7200),
+        "dft_solv_sp": Resources(cpus=24, mem_gb=20, timeout_min=7200),
     },
 )
 ```
 
 Use `wf.show_stages(execution="dft_staged")` and read the `group` column to see
 the resource keys for a specific workflow. A raw molecule DFT workflow uses
-`init`, `dft_opt`, `freq`, and `solv`; a screen TS DFT workflow uses `init`,
-`hess`, `optts`, `freq`, and `solv`. In the default screen TS workflow,
+`init`, `dft_opt`, `dft_freq`, and `dft_solv_sp`; a screen TS DFT workflow uses `init`,
+`dft_hessian`, `dft_ts_opt`, `dft_freq`, and `dft_solv_sp`. In the default screen TS workflow,
 `initial_prune` belongs to the `init` group.
 
 !!! tip "Recommended production mode"

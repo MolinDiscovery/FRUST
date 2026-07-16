@@ -1042,7 +1042,11 @@ class Stepper:
             ``"mols"`` is supported; bare SMILES always means a plain molecule.
         select_mols : str or list[str], optional
             Selection forwarded to ``create_mol_per_rpos`` when
-            ``workflow="mols"``.
+            ``workflow="mols"``. Accepted states are ``"dimer"``, ``"HH"``,
+            ``"ligand"``, ``"catalyst"``, ``"int1"``, ``"int2"``,
+            ``"HBpin-ligand"``, and ``"HBpin-mol"``. The shortcuts are
+            ``"all"``, ``"uniques"`` (ligand, int1, int2, HBpin-ligand), and
+            ``"generics"`` (dimer, HH, catalyst, HBpin-mol).
         ts_type : str or None, optional
             Explicit TS/INT embedding type for raw TS dictionaries when it
             cannot be inferred from structure names.
@@ -1339,7 +1343,7 @@ class Stepper:
               - custom_name         (the original display/file key)
               - substrate_name      (parsed substrate identity)
               - structure_type      (MOL, TS1, TS2, TS3, TS4, INT3)
-              - molecule_role       (ts, ligand, int2, mol2, ...)
+              - molecule_role       (ts, ligand, int1, int2, ...)
               - rpos                (int or None)
               - constraint_atoms    (list[int] or NA)
               - cid                 (conformer ID)

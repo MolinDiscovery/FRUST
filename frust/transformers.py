@@ -974,26 +974,59 @@ def transformer_mols(
     rpos_list: tuple[int, ...] | list[int] | None = None,
     return_metadata: bool = False,
 ):
-    """
-    Build the standard set of cycle molecules:
-      dimer, HH, ligand, catalyst, int2_rpos(#), mol2_rpos(#), HBpin-ligand_rpos(#), HBpin-mol
+    """Build the standard catalytic-cycle molecules.
 
-    Flags:
-      - only_uniques   : drop any _rpos variants
-      - only_generics  : keep only the bare names (and select int2/mol2/HBpin-ligand variants)
-      - select         : a name or list from
-                         ['dimer','HH','ligand','catalyst','int2','mol2','HBpin-ligand','HBpin-mol']
-                         to return only those entries (including their _rpos(...) variants).
+    Parameters
+    ----------
+    ligand_smiles, catalyst_smiles : str, optional
+        Substrate and catalyst SMILES used to construct the states.
+    only_uniques, only_generics : bool, optional
+        Legacy selection flags. Prefer ``select`` in new code.
+    show_IUPAC : bool, optional
+        Resolve an IUPAC substrate name for generated keys when ``True``.
+    select : str or list of str or None, optional
+        State or states to return. Accepted values are ``"dimer"``, ``"HH"``,
+        ``"ligand"``, ``"catalyst"``, ``"int1"``, ``"int2"``,
+        ``"HBpin-ligand"``, and ``"HBpin-mol"``. The former ``"int2"`` state
+        is now ``"int1"``; the former ``"mol2"`` state is now ``"int2"``.
+    key_prefix : str or None, optional
+        Stable prefix for generated structure names.
+    rpos_list : tuple of int, list of int, or None, optional
+        Reactive positions to construct. If omitted, symmetry-unique aromatic
+        C-H positions are detected.
+    return_metadata : bool, optional
+        Return each molecule together with its structured metadata.
+
+    Returns
+    -------
+    dict
+        Generated names mapped to RDKit molecules, or to ``(molecule,
+        metadata)`` tuples when ``return_metadata=True``.
     """
 
     # --- normalize select to a list if given ---
-    base_names = ['dimer','HH','ligand','catalyst','int2','mol2','HBpin-ligand','HBpin-mol']
+    base_names = (
+        "dimer",
+        "HH",
+        "ligand",
+        "catalyst",
+        "int1",
+        "int2",
+        "HBpin-ligand",
+        "HBpin-mol",
+    )
     if select is not None:
         if isinstance(select, str):
             select = [select]
         bad = set(select) - set(base_names)
         if bad:
-            raise ValueError(f"select must be from {base_names}, got {bad}")
+            migration = (
+                " 'mol2' was renamed to 'int2', and the former 'int2' was "
+                "renamed to 'int1'."
+                if "mol2" in bad
+                else ""
+            )
+            raise ValueError(f"select must be from {base_names}, got {bad}.{migration}")
 
     # --- prepare input molecules ---
     catalyst_mol = Chem.MolFromSmiles(catalyst_smiles)
@@ -1067,7 +1100,7 @@ def transformer_mols(
         unique_cH = tuple(rpos_list)
 
     ############################################
-    ### Create intermediate 2 and molecule 2 ###
+    ### Create intermediates 1 and 2 ###
     ############################################
     b_pattern = Chem.MolFromSmarts("[B]")
 
@@ -1077,8 +1110,15 @@ def transformer_mols(
         raise ValueError("No [B] atom found in the catalyst.")
 
     catalyst_b_idx = catalyst_matches[0][0]
+    from frust.tsguess.matching import match_catalyst_roles
 
-    mol2s = []
+    catalyst_roles = match_catalyst_roles(
+        catalyst_mol,
+        catalyst_name=catalyst_smiles,
+    )
+    catalyst_n_idx = catalyst_roles["cat_N"]
+
+    int1s = []
     int2s = []
     for cH in unique_cH:
 
@@ -1091,22 +1131,20 @@ def transformer_mols(
 
         combined_rw.AddBond(b_idx_combined, ch_idx_combined, Chem.BondType.SINGLE)
 
-        mol2 = combined_rw.GetMol()
+        int2 = combined_rw.GetMol()
 
         boron = combined_rw.GetAtomWithIdx(catalyst_b_idx)
         boron.SetFormalCharge(-1)
 
-        TMP = Chem.MolFromSmarts('CC1(C)CCCC(C)(C)N1')
-        TMP_match = combined_rw.GetSubstructMatches(TMP)
-        nitrogen = combined_rw.GetAtomWithIdx(TMP_match[0][9])
+        nitrogen = combined_rw.GetAtomWithIdx(catalyst_n_idx)
         nitrogen.SetFormalCharge(+1)
 
-        int2 = combined_rw.GetMol()
-        Chem.SanitizeMol(mol2)
+        int1 = combined_rw.GetMol()
         Chem.SanitizeMol(int2)
+        Chem.SanitizeMol(int1)
 
-        mol2s.append((mol2, ch_idx_combined))
-        int2s.append((int2, ch_idx_combined))        
+        int1s.append((int1, ch_idx_combined))
+        int2s.append((int2, ch_idx_combined))
 
     ###########################
     ### Add HBpin to ligand ###
@@ -1126,7 +1164,7 @@ def transformer_mols(
     #######################
     ### Finalize output ###
     #######################
-    names = ['dimer','HH','ligand','catalyst','int2','mol2','HBpin-ligand','HBpin-mol']
+    names = ['dimer','HH','ligand','catalyst','int1','int2','HBpin-ligand','HBpin-mol']
     if show_IUPAC:
         names[2] = get_molecule_name(ligand_smiles)
     mols = [
@@ -1134,8 +1172,8 @@ def transformer_mols(
         HH_mol,
         ligand_mol,
         catalyst_mol,
+        int1s,
         int2s,
-        mol2s,
         HBpin_ligands,
         HBpin_mol
     ]
@@ -1143,6 +1181,8 @@ def transformer_mols(
     mols_dict: dict[str, Chem.Mol] = {}
     metadata_dict: dict[str, dict] = {}
     iupac_substrate_name = names[2]
+    unique_names = {names[2], "int1", "int2", "HBpin-ligand"}
+    generic_names = {"dimer", "HH", "catalyst", "HBpin-mol"}
 
     def _add_entry(key: str, mol: Chem.Mol, role: str, rpos: int | None = None) -> None:
         mols_dict[key] = mol
@@ -1162,16 +1202,16 @@ def transformer_mols(
         }
 
     for name, mol in zip(names, mols):
-        if only_generics:
-            if name not in [names[2], 'int2', 'mol2', 'HBpin-ligand']:
-                _add_entry(name, mol, name)
+        if only_uniques and name not in unique_names:
+            continue
+        if only_generics and name not in generic_names:
+            continue
+        if isinstance(mol, list):
+            for m, i in mol:
+                _add_entry(f"{name}_rpos({i})", m, name, i)
         else:
-            if isinstance(mol, list):
-                for m, i in mol:
-                    _add_entry(f"{name}_rpos({i})", m, name, i)
-            elif not only_uniques or name == names[2]:
-                role = "ligand" if name == names[2] else name
-                _add_entry(name, mol, role)
+            role = "ligand" if name == names[2] else name
+            _add_entry(name, mol, role)
 
     # --- apply select filter if requested ---
     if select is not None:

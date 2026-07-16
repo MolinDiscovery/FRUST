@@ -899,10 +899,15 @@ def lowest_energy_rows(
     out.attrs.update(getattr(df, "attrs", {}))
 
     if energy_col is None:
-        e_cols = energy_columns(out)
-        if not e_cols:
-            raise ValueError("cannot select lowest rows: no energy column found")
-        energy_col = e_cols[-1]
+        if "frust_results" in out.attrs:
+            from frust.results import result_column
+
+            energy_col = result_column(out, purpose="analysis")
+        else:
+            e_cols = energy_columns(out)
+            if not e_cols:
+                raise ValueError("cannot select lowest rows: no energy column found")
+            energy_col = e_cols[-1]
     else:
         energy_col = _normalized_column_name(energy_col)
 

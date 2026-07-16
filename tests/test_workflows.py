@@ -149,15 +149,22 @@ class FakeExecutor:
 
 
 class WorkflowTargetTests(unittest.TestCase):
-    def test_mols_per_rpos_targets_use_prepared_molecule_payloads(self):
+    def test_mols_per_rpos_targets_are_lightweight_structure_plans(self):
         df = pd.DataFrame({"smiles": ["CN1C=CC=C1"], "rpos": ["2,3"]})
         with patch("frust.workflows.factories.create_mol_per_rpos", return_value=_mol_jobs()) as create:
             wf = ft.workflows.mols(dataframe=df, split="per_rpos", select_mols="int2")
             targets = wf.targets()
 
-        create.assert_called_once()
-        self.assertEqual([target.tag for target in targets], ["int2_rpos_2", "int2_rpos_3"])
-        self.assertEqual(targets[0].payload, _mol_jobs()[0])
+        create.assert_not_called()
+        self.assertEqual(
+            [target.tag for target in targets],
+            [
+                "int2__substrate_000__frust_catalyst__r2",
+                "int2__substrate_000__frust_catalyst__r3",
+            ],
+        )
+        self.assertEqual([target.state_id for target in targets], ["int2", "int2"])
+        self.assertEqual([target.rpos for target in targets], [2, 3])
 
     def test_raw_mols_targets_use_exact_smiles_payloads(self):
         df = pd.DataFrame(
@@ -231,18 +238,18 @@ class WorkflowExecutionTests(unittest.TestCase):
                 "xtb_preopt",
                 "xtb_sp",
                 "xtb_opt",
-                "dft_pre_sp",
+                "dft_rank_sp",
                 "dft_opt",
-                "freq",
-                "solv",
+                "dft_freq",
+                "dft_solv_sp",
             ],
         )
         self.assertEqual(
             list(stages["group"]),
-            ["init", "init", "init", "init", "init", "dft_opt", "freq", "solv"],
+            ["init", "init", "init", "init", "init", "dft_opt", "dft_freq", "dft_solv_sp"],
         )
-        self.assertNotIn("hess", stages["stage"].tolist())
-        self.assertNotIn("optts", stages["stage"].tolist())
+        self.assertNotIn("dft_hessian", stages["stage"].tolist())
+        self.assertNotIn("dft_ts_opt", stages["stage"].tolist())
         xtb_sp = stages.loc[stages["stage"].eq("xtb_sp")].iloc[0]
         self.assertEqual(xtb_sp["engine"], "gxtb")
         self.assertIsNone(xtb_sp["options"])
@@ -268,21 +275,21 @@ class WorkflowExecutionTests(unittest.TestCase):
                 "xtb_preopt",
                 "xtb_sp",
                 "xtb_opt",
-                "dft_pre_sp",
-                "dft_pre_opt",
-                "hess",
-                "optts",
-                "freq",
-                "solv",
+                "dft_rank_sp",
+                "dft_preopt",
+                "dft_hessian",
+                "dft_ts_opt",
+                "dft_freq",
+                "dft_solv_sp",
             ],
         )
         self.assertEqual(
             list(stages["group"]),
-            ["init", "init", "init", "init", "init", "init", "init", "hess", "optts", "freq", "solv"],
+            ["init", "init", "init", "init", "init", "init", "init", "dft_hessian", "dft_ts_opt", "dft_freq", "dft_solv_sp"],
         )
-        optts = stages.loc[stages["stage"].eq("optts")].iloc[0]
-        self.assertEqual(optts["calculation"], "OptTS")
-        self.assertEqual(optts["method_key"], "optts")
+        optts = stages.loc[stages["stage"].eq("dft_ts_opt")].iloc[0]
+        self.assertEqual(optts["calculation"], "DFT transition-state optimization")
+        self.assertEqual(optts["method_key"], "dft_ts_opt")
 
     def test_screen_ts_dft_false_stops_after_dft_pre_sp_filter(self):
         wf = ft.workflows.screen_ts(
@@ -302,12 +309,13 @@ class WorkflowExecutionTests(unittest.TestCase):
                 "xtb_preopt",
                 "xtb_sp",
                 "xtb_opt",
-                "dft_pre_sp",
+                "dft_rank_sp",
                 "filter",
             ],
         )
-        self.assertNotIn("dft_pre_opt", stages["stage"].tolist())
-        self.assertNotIn("hess", stages["stage"].tolist())
+        self.assertNotIn("dft_preopt", stages["stage"].tolist())
+        self.assertNotIn("dft_hessian", stages["stage"].tolist())
+        self.assertEqual(stages.loc[stages["stage"].eq("filter"), "rank_by"].item(), "dft_rank_sp")
         self.assertEqual(stages.loc[stages["stage"].eq("filter"), "kind"].item(), "filter")
 
     def test_show_stages_execution_grouping_modes(self):
@@ -322,7 +330,7 @@ class WorkflowExecutionTests(unittest.TestCase):
         self.assertEqual(single_job["group"].unique().tolist(), ["single_job"])
         self.assertEqual(
             list(fully_staged["group"]),
-            ["init", "xtb_preopt", "xtb_sp", "xtb_opt", "dft_pre_sp", "dft_opt", "freq", "solv"],
+            ["init", "xtb_preopt", "xtb_sp", "xtb_opt", "dft_rank_sp", "dft_opt", "dft_freq", "dft_solv_sp"],
         )
         self.assertEqual(non_dft_default["group"].unique().tolist(), ["single_job"])
         self.assertIn("filter", non_dft_default["stage"].tolist())
@@ -428,8 +436,11 @@ class WorkflowExecutionTests(unittest.TestCase):
             out = wf.run(targets=[0], n_cores=2, mem_gb=4)
 
         orca_calls = [call for call in FakeStepper.calls if call[0] == "orca"]
-        self.assertEqual([call[1] for call in orca_calls], ["DFT-pre-SP"])
+        self.assertEqual([call[1] for call in orca_calls], ["dft_rank_sp"])
         self.assertEqual(len(out), 1)
+        self.assertEqual(set(out["state_id"]), {"TS1"})
+        self.assertEqual(set(out["state_kind"]), {"transition_state"})
+        self.assertEqual(ft.result_column(out), "dft_rank_sp-EE")
 
     def test_workflow_logs_prepare_and_filter_summaries_without_duplicate_prune(self):
         messages = []
@@ -469,7 +480,9 @@ class WorkflowExecutionTests(unittest.TestCase):
                 patch("frust.workflows.factories.Stepper", FakeStepper),
                 patch("frust.workflows.core.Stepper", FakeStepper),
             ):
-                wf = ft.workflows.mols(dataframe=df, split="per_rpos", method=method, dft=True)
+                wf = ft.workflows.mols(
+                    dataframe=df, split="per_rpos", select_mols="int2", method=method, dft=True
+                )
                 out = wf.run(
                     targets=[0],
                     out_dir=tmp,
@@ -478,23 +491,30 @@ class WorkflowExecutionTests(unittest.TestCase):
                     mem_gb=9,
                 )
 
-            target_dir = Path(tmp) / "int2_rpos_2"
+            target_dir = Path(tmp) / "int2__substrate_000__frust_catalyst__r2"
             self.assertFalse((target_dir / "init.parquet").exists())
             self.assertFalse((target_dir / "init.dft_opt.parquet").exists())
-            self.assertTrue((target_dir / "init.dft_opt.freq.solv.parquet").exists())
+            self.assertTrue(
+                (target_dir / "init.dft_opt.dft_freq.dft_solv_sp.parquet").exists()
+            )
             self.assertTrue((target_dir / "timing.json").exists())
             self.assertFalse((target_dir / "init.timing.json").exists())
             timing_payload = json.loads((target_dir / "timing.json").read_text())
-            self.assertEqual(timing_payload["target"], "int2_rpos_2")
+            self.assertEqual(
+                timing_payload["target"], "int2__substrate_000__frust_catalyst__r2"
+            )
             self.assertEqual(
                 [record["group"] for record in timing_payload["groups"]],
-                ["init", "dft_opt", "freq", "solv"],
+                ["init", "dft_opt", "dft_freq", "dft_solv_sp"],
             )
             self.assertIn("prepare", [record["stage"] for record in timing_payload["stages"]])
             collected = wf.collect(tmp)
 
         self.assertEqual(len(out), 1)
         self.assertEqual(len(collected), 1)
+        self.assertEqual(ft.result_column(out), "dft_solv_sp-EE")
+        self.assertIn("dft_solv_sp-EE", out.columns)
+        self.assertEqual(out.attrs["frust_results"]["profile"], "minimum")
         workflow_timing = ft.show_timing(out, detail="workflow")
         self.assertIn("group", workflow_timing["kind"].tolist())
         self.assertIn("prepare", workflow_timing["kind"].tolist())
@@ -527,7 +547,9 @@ class WorkflowExecutionTests(unittest.TestCase):
             target_dir = Path(tmp) / "raw_dimer"
             self.assertTrue((target_dir / "init.parquet").exists())
             self.assertTrue((target_dir / "init.dft_opt.parquet").exists())
-            self.assertTrue((target_dir / "init.dft_opt.freq.solv.parquet").exists())
+            self.assertTrue(
+                (target_dir / "init.dft_opt.dft_freq.dft_solv_sp.parquet").exists()
+            )
             self.assertTrue((target_dir / "timing.json").exists())
 
         self.assertEqual(len(out), 1)
@@ -542,7 +564,7 @@ class WorkflowExecutionTests(unittest.TestCase):
 
         class FailingStepper(FakeStepper):
             def orca(self, df, name, options, lowest=None, **kwargs):
-                if name == "DFT-Opt":
+                if name == "dft_opt":
                     raise RuntimeError("DFT failed")
                 return super().orca(df, name, options, lowest=lowest, **kwargs)
 
@@ -558,7 +580,9 @@ class WorkflowExecutionTests(unittest.TestCase):
             target_dir = Path(tmp) / "raw"
             self.assertTrue((target_dir / "init.parquet").exists())
             self.assertTrue((target_dir / "timing.json").exists())
-            self.assertFalse((target_dir / "init.dft_opt.freq.solv.parquet").exists())
+            self.assertFalse(
+                (target_dir / "init.dft_opt.dft_freq.dft_solv_sp.parquet").exists()
+            )
 
     def test_submit_dft_staged_submits_dependent_groups(self):
         df = pd.DataFrame({"smiles": ["CN1C=CC=C1"], "rpos": ["2"]})
@@ -570,7 +594,9 @@ class WorkflowExecutionTests(unittest.TestCase):
             patch("frust.workflows.factories.create_mol_per_rpos", return_value=[_mol_jobs()[0]]),
             patch("frust.workflows.core.create_executor", return_value=fake),
         ):
-            wf = ft.workflows.mols(dataframe=df, split="per_rpos", dft=True)
+            wf = ft.workflows.mols(
+                dataframe=df, split="per_rpos", select_mols="int2", dft=True
+            )
             result = wf.submit(
                 out_dir=tmp,
                 cluster=cluster,
@@ -579,13 +605,15 @@ class WorkflowExecutionTests(unittest.TestCase):
                 stage_resources={
                     "init": Resources(cpus=5, mem_gb=11, timeout_min=120),
                     "dft_opt": Resources(cpus=7, mem_gb=13, timeout_min=240),
-                    "freq": Resources(cpus=3, mem_gb=8, timeout_min=180),
-                    "solv": Resources(cpus=3, mem_gb=6, timeout_min=60),
+                    "dft_freq": Resources(cpus=3, mem_gb=8, timeout_min=180),
+                    "dft_solv_sp": Resources(cpus=3, mem_gb=6, timeout_min=60),
                 },
             )
 
         self.assertEqual(result.mode, "mols:dft_staged")
-        self.assertEqual(result.tags, ["int2_rpos_2"])
+        self.assertEqual(
+            result.tags, ["int2__substrate_000__frust_catalyst__r2"]
+        )
         self.assertEqual(len(fake.submissions), 4)
         dependencies = [
             params.get("slurm_additional_parameters", {}).get("dependency")
@@ -615,8 +643,8 @@ class WorkflowExecutionTests(unittest.TestCase):
                 stage_resources={
                     "init": Resources(cpus=5, mem_gb=11, timeout_min=120),
                     "dft_opt": Resources(cpus=7, mem_gb=13, timeout_min=240),
-                    "freq": Resources(cpus=3, mem_gb=8, timeout_min=180),
-                    "solv": Resources(cpus=3, mem_gb=6, timeout_min=60),
+                    "dft_freq": Resources(cpus=3, mem_gb=8, timeout_min=180),
+                    "dft_solv_sp": Resources(cpus=3, mem_gb=6, timeout_min=60),
                 },
             )
 
@@ -643,7 +671,9 @@ class WorkflowExecutionTests(unittest.TestCase):
             patch("frust.workflows.factories.create_mol_per_rpos", return_value=_mol_jobs()),
             patch("frust.workflows.core.create_executor", return_value=fake),
         ):
-            wf = ft.workflows.mols(dataframe=df, split="per_rpos", dft=True)
+            wf = ft.workflows.mols(
+                dataframe=df, split="per_rpos", select_mols="int2", dft=True
+            )
             result = wf.submit(out_dir=tmp, cluster=cluster, execution="dft_staged")
 
         self.assertEqual(len(fake.submissions), 9)
@@ -661,8 +691,8 @@ class WorkflowExecutionTests(unittest.TestCase):
         self.assertEqual(
             collector_args[3],
             {
-                "int2_rpos_2": "init.dft_opt.freq.solv.parquet",
-                "int2_rpos_3": "init.dft_opt.freq.solv.parquet",
+                "int2__substrate_000__frust_catalyst__r2": "init.dft_opt.dft_freq.dft_solv_sp.parquet",
+                "int2__substrate_000__frust_catalyst__r3": "init.dft_opt.dft_freq.dft_solv_sp.parquet",
             },
         )
 
@@ -676,7 +706,9 @@ class WorkflowExecutionTests(unittest.TestCase):
             patch("frust.workflows.factories.create_mol_per_rpos", return_value=[_mol_jobs()[0]]),
             patch("frust.workflows.core.create_executor", return_value=fake),
         ):
-            wf = ft.workflows.mols(dataframe=df, split="per_rpos", dft=True)
+            wf = ft.workflows.mols(
+                dataframe=df, split="per_rpos", select_mols="int2", dft=True
+            )
             result = wf.submit(out_dir=tmp, cluster=cluster, execution="dft_staged", collect=False)
 
         self.assertEqual(result.mode, "mols:dft_staged")
@@ -723,7 +755,9 @@ class WorkflowExecutionTests(unittest.TestCase):
             patch("frust.workflows.factories.create_mol_per_rpos", return_value=_mol_jobs()),
             patch("frust.workflows.core.create_executor", return_value=fake),
         ):
-            wf = ft.workflows.mols(dataframe=df, split="per_rpos", dft=True)
+            wf = ft.workflows.mols(
+                dataframe=df, split="per_rpos", select_mols="int2", dft=True
+            )
             result = wf.submit(out_dir=tmp, cluster=cluster, execution="single_job", collect=False)
 
         self.assertEqual(result.mode, "mols:single_job")

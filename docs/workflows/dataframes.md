@@ -46,6 +46,9 @@ stages. FRUST keeps those possibilities visible as rows and columns.
 
 Common identity columns include:
 
+- `structure_id`: stable identity used for grouping conformers;
+- `state_id`: canonical chemical state, for example `int2`, `TS3`, or `INT3`;
+- `state_kind`: `minimum`, `transition_state`, or `constrained_minimum`;
 - `substrate_name`: the ligand or substrate identity;
 - `structure_type`: for example `MOL`, `TS1`, `TS2`, or `INT3`;
 - `molecule_role`: for example ligand, transition state, or intermediate role;
@@ -54,6 +57,11 @@ Common identity columns include:
 
 These columns are not just labels. FRUST uses them for grouping, especially
 when keeping only the lowest-energy conformers.
+
+The canonical columns are the interpretation layer. Historical
+`structure_type` and `molecule_role` columns remain available for compatibility
+and display, but analysis code should prefer `structure_id`, `state_id`, and
+`state_kind`.
 
 ## DataFrame Attributes
 
@@ -120,6 +128,20 @@ calculation stages, result columns, and calculator provenance. The nested
 and external executables were used. FRUST does not store raw molecule objects
 or full input dictionaries in dataframe attributes; row-level identity stays in
 columns such as `substrate_name`, `smiles`, `structure_type`, `rpos`, and `cid`.
+
+Workflow outputs also carry a compact `frust_results` contract. Resolve a
+column by meaning instead of spelling a workflow-specific prefix:
+
+```python
+energy_col = ft.result_column(df, purpose="analysis")
+energies = ft.get_result(df, purpose="analysis")
+coords_col = ft.result_column(df, key="coords", purpose="optimized")
+```
+
+For a completed DFT workflow, `purpose="analysis"` resolves to
+`dft_solv_sp-EE` for MOLS, screen TS, and INT3 results. Their optimization
+columns stay chemically distinct: `dft_opt-oc` for minima/INT3 and
+`dft_ts_opt-oc` for transition states.
 
 Common executable sources:
 
@@ -384,8 +406,10 @@ df_ligs = pd.read_parquet("ligs.parquet")
 df_low = ft.lowest_energy_rows(df_ligs)
 ```
 
-By default, FRUST uses the latest energy column and keeps one row per inferred
-structure group. To keep more rows, or to rank by a specific stage:
+For canonical workflow outputs, FRUST uses the semantic analysis-energy
+contract and groups by `structure_id`. Legacy dataframes without a contract
+fall back to the latest energy column. To keep more rows, or to rank by a
+specific stage:
 
 ```python
 df_low = ft.lowest_energy_rows(
@@ -398,6 +422,19 @@ df_low = ft.lowest_energy_rows(
 The helper normalizes legacy `ligand_name` columns to `substrate_name` before
 grouping, so older parquet files follow the same identity rules as current
 `Stepper(lowest=...)` runs.
+
+To migrate an older completed result once, use:
+
+```python
+legacy = pd.read_parquet("old-int3.parquet")
+current = ft.upgrade_dataframe(legacy)
+energy_col = ft.result_column(current, purpose="analysis")
+```
+
+The migration maps unambiguous prefixes such as `DFT-solv` to
+`dft_solv_sp`. Ambiguous historical names such as `DFT-SP` require workflow
+provenance; strict migration raises instead of silently choosing the wrong
+meaning.
 
 ## Failed Rows
 

@@ -94,6 +94,145 @@ This layer keeps three decisions separate:
 | calculator choices | `ft.workflows.methods.preset("r2scan-3c")` |
 | local or cluster execution | `wf.run(...)` or `wf.submit(...)` |
 
+Molecule-state workflows accept the same component-table shape as TS screens,
+including variable substrates and catalysts:
+
+```csv
+compound_name,role,smiles
+furan,substrate,C1=CC=CO1
+NMe,catalyst,BC1=C(N(C)C)C=CC=C1
+```
+
+```python
+wf_mols = ft.workflows.mols(
+    csv_path="components.csv",
+    select_mols=["catalyst", "int1", "int2"],
+    dft=True,
+)
+
+wf_int3 = ft.workflows.int3(csv_path="components.csv", dft=True)
+```
+
+The component expansion and builders are shared, but the workflows remain
+separate. Inspect each calculation graph independently:
+
+```python
+print(wf_mols.show_stages(execution="dft_staged").to_markdown())
+print(wf_int3.show_stages(execution="dft_staged").to_markdown())
+```
+
+Catalyst-dependent molecule states (`dimer`, `catalyst`, `int1`, and `int2`)
+use the catalyst SMILES in the input. Substrate-only and global states are
+deduplicated rather than recalculated for every substrate/catalyst pairing.
+
+The accepted individual `select_mols` values are `dimer`, `HH`, `ligand`,
+`catalyst`, `int1`, `int2`, `HBpin-ligand`, and `HBpin-mol`. `all` selects all
+eight; `uniques` selects `ligand`, `int1`, `int2`, and `HBpin-ligand`;
+`generics` selects `dimer`, `HH`, `catalyst`, and `HBpin-mol`.
+
+!!! warning "State-name migration"
+
+    `int1` is the charge-separated adduct formerly called `int2`, and `int2`
+    is the neutral adduct formerly called `mol2`. Upgrade an older result
+    dataframe with `ft.upgrade_dataframe(df)` so state metadata, generated
+    names, and structure IDs move together.
+
+### Plan, Preview, Then Run
+
+Use the same expanded systems to inspect MOLS and INT3 geometries without
+starting any xTB or DFT calculations:
+
+```python
+import frust as ft
+
+systems = ft.screen.expand(ft.screen.read("screen.csv"))
+
+mols = ft.structures.create_mols(
+    systems,
+    states=["HH", "int1", "int2"],
+    n_confs=1,
+)
+
+int3 = ft.structures.create_int3_guesses(
+    systems,
+    n_confs=1,
+)
+```
+
+The outputs stay separate and use the same canonical identity columns:
+
+| dataframe | `state_id` values | `state_kind` |
+| --- | --- | --- |
+| `mols` | `HH`, `int1`, `int2` | `minimum` |
+| `int3` | `INT3` | `constrained_minimum` |
+
+Both dataframes contain `system_name`, `state_id`, `state_kind`, `rpos`,
+`atoms`, and `coords_embedded`. They may contain embedding metadata such as
+`cid` or `energy_uff`, but never xTB/DFT stage-result columns.
+
+#### Preview a molecule workflow
+
+The workflow convenience method uses its already planned targets. This example
+uses the one-substrate, one-catalyst screen in `datasets/1m1c.csv`:
+
+```python
+import frust as ft
+
+method = ft.workflows.methods.preset("r2scan-3c")
+
+wf = ft.workflows.mols(
+    csv_path="datasets/1m1c.csv",
+    select_mols=["int1", "int2"],
+    method=method,
+    n_confs=None,
+    dft=False,
+)
+
+preview = wf.preview()
+preview[["system_name", "state_id", "state_kind", "rpos", "cid"]]
+```
+
+| system_name | state_id | state_kind | rpos | cid |
+| --- | --- | --- | ---: | ---: |
+| `furan__NMe` | `int1` | `minimum` | 0 | 0 |
+| `furan__NMe` | `int1` | `minimum` | 1 | 0 |
+| `furan__NMe` | `int2` | `minimum` | 0 | 0 |
+| `furan__NMe` | `int2` | `minimum` | 1 | 0 |
+
+Plot the preview dataframe directly:
+
+```python
+ft.plot_mols(preview, columns=2)
+```
+
+<iframe
+  src="../../assets/workflow-mols-preview.html"
+  title="Interactive 3D preview of the int1 and int2 structures generated from datasets/1m1c.csv"
+  width="100%"
+  height="620"
+  loading="lazy"
+  style="border: 1px solid var(--md-default-fg-color--lightest); border-radius: 6px;"
+></iframe>
+
+!!! important "Use at most two columns for 3D previews"
+
+    Keep `columns=2` (or `columns=1`) when rendering interactive py3Dmol
+    previews in the documentation. Wider grids do not render reliably.
+
+`preview()` does not use the selected calculator method and does not run any
+stage from `show_stages()`. The method plan is retained on `wf` for the later
+`run()` or `submit()` call:
+
+```python
+targets = wf.targets()            # lightweight planning only
+results = wf.run(targets=[0, 1])  # calculation stages
+```
+
+`create_mols(...)`, `create_int3_guesses(...)`, `preview(...)`, and `run(...)`
+all use the same typed targets and builders. This keeps the inspected geometry
+path aligned with the production workflow while leaving the MOLS and INT3
+calculation graphs separate.
+
 For an input where each SMILES is already the exact molecule to calculate, use
 `raw_mols`:
 
@@ -135,10 +274,10 @@ wf.show_stages()[["group", "stage", "engine", "options"]]
 | `init` | `xtb_preopt` | `xtb` | `gfnff opt` |
 | `init` | `xtb_sp` | `gxtb` |  |
 | `init` | `xtb_opt` | `gxtb` | `opt` |
-| `init` | `dft_pre_sp` | `orca` | `r2SCAN-3c TightSCF SP NoSym` |
+| `init` | `dft_rank_sp` | `orca` | `r2SCAN-3c TightSCF SP NoSym` |
 | `dft_opt` | `dft_opt` | `orca` | `r2SCAN-3c TightSCF SlowConv Opt NoSym` |
-| `freq` | `freq` | `orca` | `r2SCAN-3c TightSCF SlowConv Freq NoSym` |
-| `solv` | `solv` | `orca` | `r2SCAN-3c TightSCF SP NoSym` |
+| `dft_freq` | `dft_freq` | `orca` | `r2SCAN-3c TightSCF SlowConv Freq NoSym` |
+| `dft_solv_sp` | `dft_solv_sp` | `orca` | `r2SCAN-3c TightSCF SP NoSym` |
 
 ```python
 result = wf.submit(
@@ -148,8 +287,8 @@ result = wf.submit(
     stage_resources={
         "init": Resources(cpus=24, mem_gb=20, timeout_min=7200),
         "dft_opt": Resources(cpus=24, mem_gb=20, timeout_min=7200),
-        "freq": Resources(cpus=8, mem_gb=64, timeout_min=7200),
-        "solv": Resources(cpus=24, mem_gb=20, timeout_min=3600),
+        "dft_freq": Resources(cpus=8, mem_gb=64, timeout_min=7200),
+        "dft_solv_sp": Resources(cpus=24, mem_gb=20, timeout_min=3600),
     },
 )
 ```
@@ -162,9 +301,10 @@ in `runs/raw_dimers_r2scan3c/collection_report.json`.
 
     Use `ft.workflows.raw_mols(...)` when the `smiles` value is the molecule to
     calculate. Use `ft.workflows.mols(..., select_mols=...)` when FRUST should
-    generate catalytic-cycle structures such as `dimer`, `int2`, or `mol2`.
-    A raw molecule DFT workflow uses `init`, `dft_opt`, `freq`, and `solv`
-    resource groups; it does not run TS-only `hess` or `optts` stages.
+    generate catalytic-cycle structures such as `dimer`, `int1`, or `int2`.
+    A raw molecule DFT workflow uses `init`, `dft_opt`, `dft_freq`, and
+    `dft_solv_sp` resource groups; it does not run TS-only `dft_hessian` or
+    `dft_ts_opt` stages.
 
 See [Workflow Method Plans](workflow-methods.md) for the full pattern.
 

@@ -153,10 +153,10 @@ result = wf.submit(
     execution="dft_staged",
     stage_resources={
         "init": Resources(cpus=24, mem_gb=20, timeout_min=7200),
-        "hess": Resources(cpus=8, mem_gb=64, timeout_min=7200),
-        "optts": Resources(cpus=24, mem_gb=20, timeout_min=7200),
-        "freq": Resources(cpus=8, mem_gb=64, timeout_min=7200),
-        "solv": Resources(cpus=24, mem_gb=20, timeout_min=7200),
+        "dft_hessian": Resources(cpus=8, mem_gb=64, timeout_min=7200),
+        "dft_ts_opt": Resources(cpus=24, mem_gb=20, timeout_min=7200),
+        "dft_freq": Resources(cpus=8, mem_gb=64, timeout_min=7200),
+        "dft_solv_sp": Resources(cpus=24, mem_gb=20, timeout_min=7200),
     },
 )
 ```
@@ -170,10 +170,10 @@ result = wf.submit(
 | `dft_staged` stage-resource key | Submitted work |
 | --- | --- |
 | `init` | TS guess generation, initial pruning, constrained GFNFF, g-xTB ranking/optimization, DFT pre-SP, and DFT pre-opt |
-| `hess` | ORCA Hessian/frequency input Hessian stage |
-| `optts` | ORCA `OptTS` stage |
-| `freq` | final frequency check |
-| `solv` | final solvent single point |
+| `dft_hessian` | ORCA Hessian/frequency input Hessian stage |
+| `dft_ts_opt` | ORCA `OptTS` stage |
+| `dft_freq` | final frequency check |
+| `dft_solv_sp` | final solvent single point |
 
 !!! tip "Use `dft_staged` for production DFT"
 
@@ -275,7 +275,7 @@ result = submit_jobs(
     production=True,
     n_confs=None,
     dft=True,
-    select_mols=["ligand", "int2", "mol2", "HBpin-ligand"],
+    select_mols=["ligand", "int1", "int2", "HBpin-ligand"],
 )
 ```
 
@@ -292,10 +292,10 @@ independent jobs:
 | Generated target | Submitted as |
 | --- | --- |
 | `ligand` | one job |
+| `int1_rpos(2)` | one job |
+| `int1_rpos(3)` | one job |
 | `int2_rpos(2)` | one job |
 | `int2_rpos(3)` | one job |
-| `mol2_rpos(2)` | one job |
-| `mol2_rpos(3)` | one job |
 | `HBpin-ligand_rpos(2)` | one job |
 | `HBpin-ligand_rpos(3)` | one job |
 

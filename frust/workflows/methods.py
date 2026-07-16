@@ -1,6 +1,6 @@
 """Calculator method plans for FRUST workflows.
 
-Workflow classes define stage ids such as ``"xtb_opt"`` or ``"optts"``.
+Workflow classes define stage ids such as ``"xtb_opt"`` or ``"dft_ts_opt"``.
 ``MethodPlan`` maps those ids to ``CalculatorSpec`` objects, which are then
 dispatched by :mod:`frust.workflows.core` to ``Stepper.xtb``, ``Stepper.gxtb``,
 or ``Stepper.orca``. Changing a method plan changes calculator settings only; it
@@ -16,6 +16,16 @@ from typing import Any
 
 _PRESETS: dict[str, "MethodPlan"] = {}
 _BUILTINS_REGISTERED = False
+
+_STAGE_ALIASES = {
+    "dft_rank_sp": "dft_pre_sp",
+    "dft_preopt": "dft_pre_opt",
+    "dft_hessian": "hess",
+    "dft_ts_opt": "optts",
+    "dft_freq": "freq",
+    "dft_solv_sp": "solv",
+}
+_LEGACY_STAGE_ALIASES = {legacy: canonical for canonical, legacy in _STAGE_ALIASES.items()}
 
 
 @dataclass(frozen=True)
@@ -75,15 +85,15 @@ class MethodPlan:
     -----
     Stage ids must match the ``StageDef.id`` values used by a workflow, unless a
     stage explicitly sets ``StageDef.method_stage``. For example, the screen TS
-    workflow asks for keys such as ``"xtb_preopt"``, ``"hess"``, ``"optts"``,
-    ``"freq"``, and ``"solv"``.
+    workflow asks for keys such as ``"xtb_preopt"``, ``"dft_hessian"``,
+    ``"dft_ts_opt"``, ``"dft_freq"``, and ``"dft_solv_sp"``.
 
     A method plan can contain more stages than a specific workflow will run.
     For example, the built-in ``"r2scan-3c"`` preset contains TS-specific keys
-    such as ``"hess"``, ``"optts"``, and ``"freq"``, but
+    such as ``"dft_hessian"``, ``"dft_ts_opt"``, and ``"dft_freq"``, but
     ``ft.workflows.raw_mols(..., dft=True)`` uses the molecule stages
-    ``prepare -> xtb_preopt -> xtb_sp -> xtb_opt -> dft_pre_sp -> dft_opt ->
-    freq -> solv``. Use ``wf.show_stages()`` on a workflow object to see the
+    ``prepare -> xtb_preopt -> xtb_sp -> xtb_opt -> dft_rank_sp -> dft_opt ->
+    dft_freq -> dft_solv_sp``. Use ``wf.show_stages()`` on a workflow object to see the
     active stages and resource-group names before running or submitting.
     """
 
@@ -104,7 +114,7 @@ class MethodPlan:
         Parameters
         ----------
         stage_id : str
-            Workflow stage id, such as ``"xtb_opt"`` or ``"optts"``.
+            Workflow stage id, such as ``"xtb_opt"`` or ``"dft_ts_opt"``.
 
         Returns
         -------
@@ -119,6 +129,9 @@ class MethodPlan:
         try:
             return self.stages[stage_id]
         except KeyError as exc:
+            alias = _STAGE_ALIASES.get(stage_id) or _LEGACY_STAGE_ALIASES.get(stage_id)
+            if alias in self.stages:
+                return self.stages[alias]
             available = ", ".join(sorted(self.stages))
             raise KeyError(
                 f"Method plan {self.name!r} has no stage {stage_id!r}. "
@@ -149,7 +162,15 @@ class MethodPlan:
         for stage_id, spec in stages.items():
             if not isinstance(spec, CalculatorSpec):
                 raise TypeError(f"Replacement for {stage_id!r} must be a CalculatorSpec")
-            updated[stage_id] = spec
+            canonical = _LEGACY_STAGE_ALIASES.get(stage_id)
+            legacy = _STAGE_ALIASES.get(stage_id)
+            if canonical in updated:
+                resolved_stage = canonical
+            elif legacy in updated:
+                resolved_stage = legacy
+            else:
+                resolved_stage = stage_id
+            updated[resolved_stage] = spec
         return dataclass_replace(self, stages=updated)
 
     def with_stage(self, stage_id: str, spec: CalculatorSpec) -> "MethodPlan":
@@ -395,8 +416,9 @@ def preset(name: str) -> MethodPlan:
 
         The returned plan is a reusable stage-to-calculator map. A workflow may
         use only some of its keys depending on the chemistry and ``dft`` value.
-        For example, raw molecule DFT workflows use ``dft_opt``, ``freq``, and
-        ``solv`` but do not use TS-only ``hess`` or ``optts`` stages. Call
+        For example, raw molecule DFT workflows use ``dft_opt``, ``dft_freq``,
+        and ``dft_solv_sp`` but do not use TS-only ``dft_hessian`` or
+        ``dft_ts_opt`` stages. Call
         ``wf.show_stages()`` after constructing a workflow to inspect the active
         subset.
 
@@ -472,19 +494,20 @@ def _ensure_builtin_presets() -> None:
 
 def _base_stages(
     *,
-    dft_pre_sp: CalculatorSpec,
-    dft_pre_opt: CalculatorSpec,
+    dft_rank_sp: CalculatorSpec,
+    dft_preopt: CalculatorSpec,
     dft_opt: CalculatorSpec,
-    hess: CalculatorSpec,
-    optts: CalculatorSpec,
-    freq: CalculatorSpec,
-    solv: CalculatorSpec,
+    dft_hessian: CalculatorSpec,
+    dft_ts_opt: CalculatorSpec,
+    dft_freq: CalculatorSpec,
+    dft_solv_sp: CalculatorSpec,
 ) -> dict[str, CalculatorSpec]:
     """Return common stage specs for built-in workflow presets.
 
     Parameters
     ----------
-    dft_pre_sp, dft_pre_opt, dft_opt, hess, optts, freq, solv : CalculatorSpec
+    dft_rank_sp, dft_preopt, dft_opt, dft_hessian, dft_ts_opt, dft_freq,
+    dft_solv_sp : CalculatorSpec
         DFT-stage calculator specs. Shared initialization specs are added by
         this helper.
 
@@ -493,18 +516,19 @@ def _base_stages(
     dict of str to CalculatorSpec
         Stage-id mapping shared by built-in workflow method plans.
     """
-    return {
+    canonical = {
         "xtb_preopt": xtb(gfnff=True, opt=True),
         "xtb_sp": gxtb(job="sp"),
         "xtb_opt": gxtb(job="opt"),
-        "dft_pre_sp": dft_pre_sp,
-        "dft_pre_opt": dft_pre_opt,
+        "dft_rank_sp": dft_rank_sp,
+        "dft_preopt": dft_preopt,
         "dft_opt": dft_opt,
-        "hess": hess,
-        "optts": optts,
-        "freq": freq,
-        "solv": solv,
+        "dft_hessian": dft_hessian,
+        "dft_ts_opt": dft_ts_opt,
+        "dft_freq": dft_freq,
+        "dft_solv_sp": dft_solv_sp,
     }
+    return canonical
 
 
 def _r2scan_3c() -> MethodPlan:
@@ -513,13 +537,13 @@ def _r2scan_3c() -> MethodPlan:
     return MethodPlan(
         name="r2scan-3c",
         stages=_base_stages(
-            dft_pre_sp=orca_composite(method, job="sp"),
-            dft_pre_opt=orca_composite(method, job="opt"),
+            dft_rank_sp=orca_composite(method, job="sp"),
+            dft_preopt=orca_composite(method, job="opt"),
             dft_opt=orca_composite(method, job="opt"),
-            hess=orca_composite(method, job="freq"),
-            optts=orca_composite(method, job="optts"),
-            freq=orca_composite(method, job="freq"),
-            solv=orca_composite(method, job="sp", solvent="chloroform"),
+            dft_hessian=orca_composite(method, job="freq"),
+            dft_ts_opt=orca_composite(method, job="optts"),
+            dft_freq=orca_composite(method, job="freq"),
+            dft_solv_sp=orca_composite(method, job="sp", solvent="chloroform"),
         ),
     )
 
@@ -530,13 +554,15 @@ def _wb97xd3_631g() -> MethodPlan:
     return MethodPlan(
         name="wb97xd3-631g",
         stages=_base_stages(
-            dft_pre_sp=orca(method=method, basis="6-31G**", job="sp"),
-            dft_pre_opt=orca(method=method, basis="6-31G**", job="opt"),
+            dft_rank_sp=orca(method=method, basis="6-31G**", job="sp"),
+            dft_preopt=orca(method=method, basis="6-31G**", job="opt"),
             dft_opt=orca(method=method, basis="6-31G**", job="opt"),
-            hess=orca(method=method, basis="6-31G**", job="freq"),
-            optts=orca(method=method, basis="6-31G**", job="optts"),
-            freq=orca(method=method, basis="6-31G**", job="freq"),
-            solv=orca(method=method, basis="6-31+G**", job="sp", solvent="chloroform"),
+            dft_hessian=orca(method=method, basis="6-31G**", job="freq"),
+            dft_ts_opt=orca(method=method, basis="6-31G**", job="optts"),
+            dft_freq=orca(method=method, basis="6-31G**", job="freq"),
+            dft_solv_sp=orca(
+                method=method, basis="6-31+G**", job="sp", solvent="chloroform"
+            ),
         ),
     )
 
@@ -547,13 +573,15 @@ def _r2scan_def2svp() -> MethodPlan:
     return MethodPlan(
         name="r2scan-def2svp",
         stages=_base_stages(
-            dft_pre_sp=orca(method=method, basis="def2-SVP", job="sp"),
-            dft_pre_opt=orca(method=method, basis="def2-SVP", job="opt"),
+            dft_rank_sp=orca(method=method, basis="def2-SVP", job="sp"),
+            dft_preopt=orca(method=method, basis="def2-SVP", job="opt"),
             dft_opt=orca(method=method, basis="def2-SVP", job="opt"),
-            hess=orca(method=method, basis="def2-SVP", job="freq"),
-            optts=orca(method=method, basis="def2-SVP", job="optts"),
-            freq=orca(method=method, basis="def2-SVP", job="freq"),
-            solv=orca(method=method, basis="def2-SVPD", job="sp", solvent="chloroform"),
+            dft_hessian=orca(method=method, basis="def2-SVP", job="freq"),
+            dft_ts_opt=orca(method=method, basis="def2-SVP", job="optts"),
+            dft_freq=orca(method=method, basis="def2-SVP", job="freq"),
+            dft_solv_sp=orca(
+                method=method, basis="def2-SVPD", job="sp", solvent="chloroform"
+            ),
         ),
     )
 
