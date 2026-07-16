@@ -8,6 +8,7 @@ prepares structures and executes the stage graph.
 
 from __future__ import annotations
 
+import warnings
 from pathlib import Path
 from typing import Any, Literal
 
@@ -23,6 +24,13 @@ from frust.tsguess.matching import parse_rpos_value
 from frust.tsguess.specs import BUILTIN_TS_SPECS
 from frust.tsguess2.specs import BUILTIN_TS_SPECS_V2
 from frust.tsguess3.specs import BUILTIN_TS_SPECS_V3
+from frust.structures import (
+    StructureTarget,
+    build as build_structure,
+    molecule_states,
+    normalize_systems,
+    plan_targets,
+)
 from frust.utils.io import read_ts_type_from_xyz
 from frust.utils.mols import create_mol_per_rpos, create_ts_per_rpos
 from frust.utils.pruning import normalize_pruning_options
@@ -108,19 +116,19 @@ def _molecule_stage_defs(
         StageDef("prepare", "prepare", kind="prepare"),
         StageDef("xtb_preopt", "xtb_preopt", n_cores=2),
         StageDef("xtb_sp", "xtb_sp", n_cores=2),
-        StageDef("xtb_opt", "xtb_opt", lowest=top_n, n_cores=2),
+        StageDef("xtb_opt", "xTB optimization", lowest=top_n, rank_by="xtb_opt", n_cores=2),
     ]
     if dft:
         stages.extend(
             [
-                StageDef("dft_pre_sp", "DFT-pre-SP"),
-                StageDef("dft_opt", "DFT-Opt", lowest=1),
-                StageDef("freq", "Freq"),
-                StageDef("solv", "DFT-SP"),
+                StageDef("dft_rank_sp", "DFT ranking single point"),
+                StageDef("dft_opt", "DFT minimum optimization", lowest=1, rank_by="dft_opt"),
+                StageDef("dft_freq", "DFT frequencies"),
+                StageDef("dft_solv_sp", "DFT solvent single point"),
             ]
         )
     else:
-        stages.append(StageDef("filter", "filter", kind="filter"))
+        stages.append(StageDef("filter", "filter", kind="filter", lowest=1, rank_by="xtb_opt"))
     return _with_initial_prune(stages, prune_initial)
 
 
@@ -130,9 +138,9 @@ class MolsWorkflow(BaseWorkflow):
     Parameters
     ----------
     csv_path : str or pathlib.Path or None, optional
-        CSV file containing at least a ``smiles`` column. Optional columns such
-        as ``compound_name``, ``substrate_name``, and ``rpos`` are used to label
-        and expand targets.
+        Component CSV with ``compound_name``, ``role``, and ``smiles`` columns,
+        an expanded screen table, or a substrate-only table with ``smiles``.
+        Component input may vary both substrates and catalysts.
     dataframe : pandas.DataFrame or None, optional
         In-memory input table with the same columns as ``csv_path``.
     smiles : list of str or None, optional
@@ -142,8 +150,14 @@ class MolsWorkflow(BaseWorkflow):
         ``"per_rpos"`` expands catalytic-cycle molecule structures per reactive
         position using :func:`frust.utils.mols.create_mol_per_rpos`.
     select_mols : str or list of str, optional
-        Molecule subset forwarded to ``create_mol_per_rpos``. Common values are
-        ``"all"``, ``"uniques"``, and ``"generics"``.
+        Molecules to generate. Accepted individual states are ``"dimer"``,
+        ``"HH"``, ``"ligand"``, ``"catalyst"``, ``"int1"``, ``"int2"``,
+        ``"HBpin-ligand"``, and ``"HBpin-mol"``. ``"int1"`` is the
+        charge-separated catalyst/substrate adduct formerly called ``"int2"``;
+        ``"int2"`` is the neutral adduct formerly called ``"mol2"``.
+        ``"all"`` selects every state; ``"uniques"`` selects ``"ligand"``,
+        ``"int1"``, ``"int2"``, and ``"HBpin-ligand"``; ``"generics"``
+        selects ``"dimer"``, ``"HH"``, ``"catalyst"``, and ``"HBpin-mol"``.
     method : MethodPlan or str or None, optional
         Calculator plan for all workflow stages. Accepts ``None`` for the
         default ``"wb97xd3-631g"`` preset, a preset string, or a custom
@@ -170,11 +184,12 @@ class MolsWorkflow(BaseWorkflow):
     Notes
     -----
     The default stage graph is ``prepare -> xtb_preopt -> xtb_sp -> xtb_opt``.
-    DFT workflows then run ``dft_pre_sp -> dft_opt -> freq -> solv``;
+    DFT workflows then run ``dft_rank_sp -> dft_opt -> dft_freq -> dft_solv_sp``;
     non-DFT workflows run a final ``filter`` stage.
     """
 
     workflow_name = "mols"
+    result_profile = "minimum"
 
     def __init__(
         self,
@@ -247,19 +262,12 @@ class MolsWorkflow(BaseWorkflow):
         if self.split != "per_rpos":
             raise ValueError("split must be 'per_input' or 'per_rpos'")
 
-        jobs = create_mol_per_rpos(
-            df,
-            return_format="list",
-            select_mols=self.select_mols,
+        systems = normalize_systems(df)
+        return plan_targets(
+            systems,
+            states=molecule_states(self.select_mols),
+            builder_options={"select_mols": self.select_mols},
         )
-        return [
-            WorkflowTarget(
-                tag=sanitize_tag(list(job.keys())[0]),
-                payload=job,
-                metadata={"kind": "molecule"},
-            )
-            for job in jobs
-        ]
 
     def _prepare_initial_df(
         self,
@@ -285,6 +293,17 @@ class MolsWorkflow(BaseWorkflow):
             Initial molecule dataframe with atoms and ``coords_embedded``.
         """
         del save_dir
+        if isinstance(target, StructureTarget):
+            return build_structure(
+                target,
+                n_confs=self.n_confs,
+                n_cores=options.n_cores,
+                memory_gb=options.mem_gb,
+                debug=options.debug,
+                stepper_cls=Stepper,
+                ts_guess_factory=create_ts_guesses,
+                mol_factory=create_mol_per_rpos,
+            )
         payload = target.payload
         if isinstance(payload, pd.DataFrame):
             payload = create_mol_per_rpos(
@@ -357,12 +376,14 @@ class RawMolsWorkflow(BaseWorkflow):
     -----
     This workflow treats each input SMILES as the structure to calculate. It
     does not call ``create_mol_per_rpos`` and does not support ``select_mols``.
-    With ``dft=True``, the active DFT stages are ``dft_pre_sp -> dft_opt ->
-    freq -> solv``. The ``freq`` stage is a normal minimum-frequency check used
-    for thermochemistry; TS-specific ``hess`` and ``optts`` stages are not run.
+    With ``dft=True``, the active DFT stages are ``dft_rank_sp -> dft_opt ->
+    dft_freq -> dft_solv_sp``. The ``dft_freq`` stage is a normal
+    minimum-frequency check used for thermochemistry; TS-specific
+    ``dft_hessian`` and ``dft_ts_opt`` stages are not run.
     """
 
     workflow_name = "raw_mols"
+    result_profile = "minimum"
 
     def __init__(
         self,
@@ -488,6 +509,7 @@ class ScreenTSWorkflow(BaseWorkflow):
     """
 
     workflow_name = "screen_ts"
+    result_profile = "transition_state"
 
     def __init__(
         self,
@@ -536,12 +558,18 @@ class ScreenTSWorkflow(BaseWorkflow):
             Targets whose payload is a one-row systems dataframe with resolved
             ``ts_type`` and integer ``rpos``.
         """
-        supported_specs = _screen_ts_specs_for_backend(self.ts_backend)
+        supported_specs = {
+            key: value
+            for key, value in _screen_ts_specs_for_backend(self.ts_backend).items()
+            if key.startswith("TS")
+        }
         unknown = sorted(set(self.ts_types) - set(supported_specs))
         if unknown:
             supported = ", ".join(sorted(supported_specs))
             raise ValueError(f"Unsupported screen TS types {unknown}. Supported: {supported}")
         systems = self._systems()
+        if self.ts_backend == "tsguess2":
+            return plan_targets(systems, states=self.ts_types)
         targets: list[WorkflowTarget] = []
         for _, system in systems.iterrows():
             rpos_values = parse_rpos_value(system.get("rpos"), str(system["substrate_smiles"]))
@@ -579,7 +607,9 @@ class ScreenTSWorkflow(BaseWorkflow):
             One system, TS type, and reactive position.
         save_dir : pathlib.Path or None
             Target output directory. When provided, the raw TS guesses are also
-            written as ``ts_guess.parquet`` before calculator stages start.
+            written as ``structure_guess.parquet`` by the modern backend (or
+            ``ts_guess.parquet`` by compatibility backends) before calculator
+            stages start.
         options : ExecutionOptions
             Runtime options controlling TS guess conformer generation.
 
@@ -588,6 +618,17 @@ class ScreenTSWorkflow(BaseWorkflow):
         pandas.DataFrame
             TS guess dataframe for the target's TS type.
         """
+        if isinstance(target, StructureTarget):
+            return build_structure(
+                target,
+                n_confs=self.n_confs,
+                n_cores=options.n_cores,
+                memory_gb=options.mem_gb,
+                debug=options.debug,
+                save_dir=save_dir,
+                stepper_cls=Stepper,
+                ts_guess_factory=create_ts_guesses,
+            )
         screen_target = target.payload
         ts_type = str(screen_target["ts_type"].iloc[0]).upper()
         guesses = create_ts_guesses(
@@ -605,16 +646,104 @@ class ScreenTSWorkflow(BaseWorkflow):
     def _step_type_for_target(self, target: WorkflowTarget) -> str | None:
         """Return the target TS type for Stepper dispatch."""
         metadata = target.metadata or {}
-        return metadata.get("ts_type")
+        return metadata.get("ts_type") or metadata.get("state_id")
 
     def _stage_defs(self) -> list[StageDef]:
         """Return screen TS workflow stages."""
         stages = _ts_screening_stages(self.top_n, prune_initial=self.prune_initial)
-        stages.append(_ts_dft_pre_sp_stage())
+        stages.append(_dft_rank_sp_stage())
         if self.dft:
             stages.extend(_ts_dft_refinement_stages())
         else:
-            stages.append(StageDef("filter", "filter", kind="filter"))
+            stages.append(
+                StageDef(
+                    "filter", "filter", kind="filter",
+                    lowest=1, rank_by="dft_rank_sp",
+                )
+            )
+        return stages
+
+
+class Int3Workflow(BaseWorkflow):
+    """Modern constrained-minimum workflow for the INT3 state.
+
+    This workflow uses the same typed system planner and connected-graph
+    structure builder as ``screen_ts`` while retaining its own minimum-specific
+    stage graph and result profile.
+    """
+
+    workflow_name = "int3"
+    result_profile = "constrained_minimum"
+
+    def __init__(
+        self,
+        *,
+        csv_path: str | Path | None = None,
+        dataframe: pd.DataFrame | None = None,
+        method: MethodPlan | str | None = None,
+        n_confs: int | None = None,
+        top_n: int = 10,
+        dft: bool = True,
+        prune_initial: bool | dict[str, Any] = False,
+    ) -> None:
+        super().__init__(method=method, n_confs=n_confs, top_n=top_n, dft=dft)
+        self.csv_path = csv_path
+        self.dataframe = dataframe
+        self.prune_initial = prune_initial
+
+    def _systems(self) -> pd.DataFrame:
+        """Return normalized explicit systems for INT3 construction."""
+        source = self.dataframe if self.dataframe is not None else self.csv_path
+        if source is None:
+            raise ValueError("int3 workflow requires csv_path or dataframe")
+        return normalize_systems(source)
+
+    def _build_targets(self) -> list[StructureTarget]:
+        """Plan one lightweight INT3 target per system and reactive position."""
+        return plan_targets(self._systems(), states=["INT3"])
+
+    def _prepare_initial_df(
+        self,
+        target: WorkflowTarget,
+        *,
+        save_dir: Path | None,
+        options: ExecutionOptions,
+    ) -> pd.DataFrame:
+        """Construct one INT3 guess with the shared connected-graph builder."""
+        if not isinstance(target, StructureTarget):
+            raise TypeError("Int3Workflow requires typed StructureTarget objects")
+        return build_structure(
+            target,
+            n_confs=self.n_confs,
+            n_cores=options.n_cores,
+            memory_gb=options.mem_gb,
+            debug=options.debug,
+            save_dir=save_dir,
+            stepper_cls=Stepper,
+            ts_guess_factory=create_ts_guesses,
+        )
+
+    def _step_type_for_target(self, target: WorkflowTarget) -> str | None:
+        """Return the constrained-minimum Stepper type."""
+        del target
+        return "INT3"
+
+    def _stage_defs(self) -> list[StageDef]:
+        """Return the dedicated INT3 screening and refinement graph."""
+        stages = _ts_screening_stages(self.top_n, prune_initial=self.prune_initial)
+        stages.append(_dft_rank_sp_stage())
+        if self.dft:
+            stages.extend(_int3_dft_refinement_stages())
+        else:
+            stages.append(
+                StageDef(
+                    "filter",
+                    "filter",
+                    kind="filter",
+                    lowest=1,
+                    rank_by="dft_rank_sp",
+                )
+            )
         return stages
 
 
@@ -661,6 +790,7 @@ class LegacyTSWorkflow(BaseWorkflow):
     """
 
     workflow_name = "legacy_ts"
+    result_profile = "transition_state"
 
     def __init__(
         self,
@@ -678,6 +808,7 @@ class LegacyTSWorkflow(BaseWorkflow):
         self.csv_path = csv_path
         self.ts_xyz = ts_xyz
         self.int3 = int3
+        self.result_profile = "constrained_minimum" if int3 else "transition_state"
         self.prune_initial = prune_initial
 
     def _build_targets(self) -> list[WorkflowTarget]:
@@ -761,9 +892,14 @@ class LegacyTSWorkflow(BaseWorkflow):
     def _stage_defs(self) -> list[StageDef]:
         """Return legacy TS or INT3 workflow stages."""
         stages = _ts_screening_stages(self.top_n, prune_initial=self.prune_initial)
-        stages.append(_ts_dft_pre_sp_stage())
+        stages.append(_dft_rank_sp_stage())
         if not self.dft:
-            stages.append(StageDef("filter", "filter", kind="filter"))
+            stages.append(
+                StageDef(
+                    "filter", "filter", kind="filter",
+                    lowest=1, rank_by="dft_rank_sp",
+                )
+            )
             return stages
         if self.int3:
             stages.extend(_int3_dft_refinement_stages())
@@ -781,17 +917,18 @@ def mols(
     select_mols: str | list[str] = "all",
     method: MethodPlan | str | None = None,
     n_confs: int | None = None,
-    top_n: int = 10,
+    top_n: int = 20,
     dft: bool = False,
-    prune_initial: bool | dict[str, Any] = False,
+    prune_initial: bool | dict[str, Any] = True,
 ) -> MolsWorkflow:
     """Create a molecule-state workflow.
 
     Parameters
     ----------
     csv_path : str or pathlib.Path or None, optional
-        CSV file with a ``smiles`` column. Optional ``rpos`` values control
-        reactive-position expansion when ``split="per_rpos"``.
+        Component CSV with ``compound_name``, ``role``, and ``smiles`` columns,
+        or a substrate-only CSV with ``smiles``. Component tables use the same
+        substrate/catalyst expansion as ``screen_ts``.
     dataframe : pandas.DataFrame or None, optional
         In-memory input table with the same columns as ``csv_path``.
     smiles : list of str or None, optional
@@ -800,8 +937,15 @@ def mols(
         ``"per_input"`` submits/runs one target per input row. ``"per_rpos"``
         expands FRUST catalytic-cycle molecule structures per reactive position.
     select_mols : str or list of str, optional
-        Molecule subset to generate for ``per_rpos`` targets. Common values are
-        ``"all"``, ``"uniques"``, and ``"generics"``.
+        Molecules to generate for ``per_rpos`` targets. Accepted individual
+        states are ``"dimer"``, ``"HH"``, ``"ligand"``, ``"catalyst"``,
+        ``"int1"``, ``"int2"``, ``"HBpin-ligand"``, and ``"HBpin-mol"``.
+        ``"int1"`` is the charge-separated catalyst/substrate adduct formerly
+        called ``"int2"``; ``"int2"`` is the neutral adduct formerly called
+        ``"mol2"``. ``"all"`` selects every state; ``"uniques"`` selects
+        ``"ligand"``, ``"int1"``, ``"int2"``, and ``"HBpin-ligand"``;
+        ``"generics"`` selects ``"dimer"``, ``"HH"``, ``"catalyst"``, and
+        ``"HBpin-mol"``.
     method : MethodPlan or str or None, optional
         Calculator plan for all workflow stages. Accepts ``None`` for the
         default ``"wb97xd3-631g"`` preset, a preset string, or a custom
@@ -836,11 +980,21 @@ def mols(
     >>> wf = ft.workflows.mols(
     ...     csv_path="molecules.csv",
     ...     split="per_rpos",
-    ...     select_mols=["int2", "mol2"],
+    ...     select_mols=["int1", "int2"],
     ...     method="r2scan-3c",
     ...     dft=True,
     ... )
     >>> wf.targets()[:2]
+
+    Variable catalyst example:
+
+    >>> import pandas as pd
+    >>> components = pd.DataFrame({
+    ...     "compound_name": ["furan", "NMe"],
+    ...     "role": ["substrate", "catalyst"],
+    ...     "smiles": ["C1=CC=CO1", "BC1=C(N(C)C)C=CC=C1"],
+    ... })
+    >>> wf = ft.workflows.mols(dataframe=components, select_mols=["int1", "int2"])
     """
     return MolsWorkflow(
         csv_path=csv_path,
@@ -1087,23 +1241,26 @@ def legacy_ts(
 
 def int3(
     *,
-    csv_path: str | Path,
-    ts_xyz: str | Path,
+    csv_path: str | Path | None = None,
+    dataframe: pd.DataFrame | None = None,
+    ts_xyz: str | Path | None = None,
     method: MethodPlan | str | None = None,
     n_confs: int | None = None,
     top_n: int = 10,
     dft: bool = True,
     prune_initial: bool | dict[str, Any] = False,
-) -> LegacyTSWorkflow:
-    """Create a legacy template-based INT3 workflow.
+) -> Int3Workflow:
+    """Create a modern, dedicated INT3 constrained-minimum workflow.
 
     Parameters
     ----------
-    csv_path : str or pathlib.Path
-        Ligand/substrate CSV containing a ``smiles`` column and optional
-        ``rpos`` values.
-    ts_xyz : str or pathlib.Path
-        INT3-compatible template XYZ file used by the legacy transformer path.
+    csv_path : str or pathlib.Path or None, optional
+        Component screen CSV, expanded-system CSV, or substrate-only CSV.
+    dataframe : pandas.DataFrame or None, optional
+        In-memory input in any of the same forms as ``csv_path``.
+    ts_xyz : str or pathlib.Path or None, optional
+        Deprecated compatibility argument. Modern INT3 construction is
+        role-based and does not read a template XYZ.
     method : MethodPlan or str or None, optional
         Calculator plan for all workflow stages. Accepts ``None`` for the
         default ``"wb97xd3-631g"`` preset, a preset string, or a custom
@@ -1129,31 +1286,35 @@ def int3(
 
     Returns
     -------
-    LegacyTSWorkflow
-        Workflow object whose ``workflow_name`` is set to ``"int3"``.
+    Int3Workflow
+        Dedicated INT3 workflow with its own stage graph and canonical result
+        profile.
 
     Examples
     --------
     >>> import frust as ft
     >>> wf = ft.workflows.int3(
-    ...     csv_path="ligands.csv",
-    ...     ts_xyz="templates/INT3.xyz",
+    ...     csv_path="screen.csv",
     ...     method="r2scan-3c",
     ... )
     >>> result = wf.submit(out_dir="runs/int3", cluster=cluster)
     """
-    workflow = LegacyTSWorkflow(
+    if ts_xyz is not None:
+        warnings.warn(
+            "int3(ts_xyz=...) is deprecated and the template is ignored; "
+            "use legacy_ts(...) only when template transformation is required",
+            DeprecationWarning,
+            stacklevel=2,
+        )
+    return Int3Workflow(
         csv_path=csv_path,
-        ts_xyz=ts_xyz,
-        int3=True,
+        dataframe=dataframe,
         method=method,
         n_confs=n_confs,
         top_n=top_n,
         dft=dft,
         prune_initial=prune_initial,
     )
-    workflow.workflow_name = "int3"
-    return workflow
 
 
 def _ts_screening_stages(
@@ -1179,19 +1340,25 @@ def _ts_screening_stages(
         StageDef("prepare", "prepare", kind="prepare"),
         StageDef("xtb_preopt", "xtb_preopt", constraint=True, n_cores=2),
         StageDef("xtb_sp", "xtb_sp", n_cores=2),
-        StageDef("xtb_opt", "xtb_opt", constraint=True, lowest=top_n, n_cores=2),
+        StageDef(
+            "xtb_opt", "constrained xTB optimization", constraint=True,
+            lowest=top_n, rank_by="xtb_opt", n_cores=2,
+        ),
     ]
     return _with_initial_prune(stages, prune_initial)
 
 
-def _ts_dft_pre_sp_stage() -> StageDef:
+def _dft_rank_sp_stage() -> StageDef:
     """Return the DFT single-point cutoff stage shared by TS workflows."""
-    return StageDef("dft_pre_sp", "DFT-pre-SP")
+    return StageDef("dft_rank_sp", "DFT ranking single point")
 
 
-def _ts_dft_pre_opt_stage() -> StageDef:
+def _dft_preopt_stage() -> StageDef:
     """Return the constrained DFT preoptimization stage."""
-    return StageDef("dft_pre_opt", "DFT-pre-Opt", constraint=True, lowest=1)
+    return StageDef(
+        "dft_preopt", "constrained DFT preoptimization", constraint=True,
+        lowest=1, rank_by="dft_preopt",
+    )
 
 
 def _ts_dft_refinement_stages() -> list[StageDef]:
@@ -1204,19 +1371,19 @@ def _ts_dft_refinement_stages() -> list[StageDef]:
         and solvent single-point stages.
     """
     return [
-        _ts_dft_pre_opt_stage(),
-        StageDef("hess", "Hess", read_files=["input.hess"]),
-        StageDef("optts", "OptTS", use_last_hess=True),
-        StageDef("freq", "Freq"),
-        StageDef("solv", "DFT-solv"),
+        _dft_preopt_stage(),
+        StageDef("dft_hessian", "DFT Hessian", read_files=["input.hess"]),
+        StageDef("dft_ts_opt", "DFT transition-state optimization", use_last_hess=True),
+        StageDef("dft_freq", "DFT frequencies"),
+        StageDef("dft_solv_sp", "DFT solvent single point"),
     ]
 
 
 def _int3_dft_refinement_stages() -> list[StageDef]:
     """Return INT3 DFT refinement stages after the DFT single-point cutoff."""
     return [
-        _ts_dft_pre_opt_stage(),
-        StageDef("dft_opt", "OptTS", lowest=1),
-        StageDef("freq", "Freq"),
-        StageDef("solv", "DFT-solv"),
+        _dft_preopt_stage(),
+        StageDef("dft_opt", "DFT minimum optimization", lowest=1, rank_by="dft_opt"),
+        StageDef("dft_freq", "DFT frequencies"),
+        StageDef("dft_solv_sp", "DFT solvent single point"),
     ]

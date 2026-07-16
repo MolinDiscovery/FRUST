@@ -42,8 +42,8 @@ def create_ts_guess_dataframes(
     systems : pandas.DataFrame
         Expanded substrate-catalyst systems from :func:`frust.screen.expand`.
     ts_types : iterable of str, optional
-        TS types to generate. Supported values are ``"TS1"``, ``"TS2"``,
-        ``"TS3"``, and ``"TS4"``.
+        States to generate. Supported values are ``"TS1"``, ``"TS2"``,
+        ``"TS3"``, ``"TS4"``, and the constrained minimum ``"INT3"``.
     n_confs : int or None, optional
         Number of conformers per generated TS guess. If ``None``, choose a
         count from the generated molecule's rotatable-bond count.
@@ -171,7 +171,11 @@ def _rows_for_system_rpos(
             "custom_name": custom_name,
             "structure_id": f"{spec.name}:{system_name}:r{rpos}",
             "structure_type": spec.name,
-            "molecule_role": "ts",
+            "molecule_role": "ts" if spec.name.startswith("TS") else spec.name.lower(),
+            "state_id": spec.name,
+            "state_kind": (
+                "transition_state" if spec.name.startswith("TS") else "constrained_minimum"
+            ),
             "system_name": system_name,
             "substrate_name": str(system["substrate_name"]),
             "catalyst_name": str(system["catalyst_name"]),
@@ -256,7 +260,7 @@ def _role_mapping_from_mol(mol: Chem.Mol, spec: TSGuess2Spec) -> dict[str, int]:
             "substrate_C": int(match[5]),
             "B_transfer_H": int(b_hydrogens[0]),
         }
-    if spec.name in {"TS3", "TS4"}:
+    if spec.name in {"TS3", "TS4", "INT3"}:
         cat_b = int(match[0])
         transfer_h = int(match[1])
         return {

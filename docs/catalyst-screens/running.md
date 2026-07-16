@@ -42,29 +42,69 @@ Representative target metadata:
 
 This makes the target count visible before expensive RDKit or ORCA work starts.
 
+## Preview TS Structures Without Calculations
+
+`preview()` also works for the modern `screen_ts` workflow. Here the same
+`datasets/1m1c.csv` input produces one TS1 guess for each reactive position:
+
+```python
+ts_wf = ft.workflows.screen_ts(
+    csv_path="datasets/1m1c.csv",
+    ts_types=["TS1"],
+    method=method,
+    n_confs=None,
+    dft=False,
+)
+
+ts_preview = ts_wf.preview()
+ts_preview[["system_name", "state_id", "state_kind", "rpos", "cid"]]
+```
+
+| system_name | state_id | state_kind | rpos | cid |
+| --- | --- | --- | ---: | ---: |
+| `furan__NMe` | `TS1` | `transition_state` | 0 | 0 |
+| `furan__NMe` | `TS1` | `transition_state` | 1 | 0 |
+
+```python
+ft.plot_mols(ts_preview, columns=2)
+```
+
+<iframe
+  src="../../assets/workflow-ts-preview.html"
+  title="Interactive 3D preview of TS1 guesses generated from datasets/1m1c.csv"
+  width="100%"
+  height="320"
+  loading="lazy"
+  style="border: 1px solid var(--md-default-fg-color--lightest); border-radius: 6px;"
+></iframe>
+
+The preview stops after TS assembly and embedding. Constraint metadata remains
+on the dataframe for inspection, but pruning, xTB, and DFT stages do not run.
+Keep interactive 3D grids to no more than two columns.
+
 ## Inspect Stages
 
 ```python
 wf.show_stages(execution="dft_staged")[
-    ["group", "stage", "engine", "options", "constraint", "lowest"]
+    ["group", "stage", "engine", "options", "constraint", "lowest", "rank_by"]
 ]
 ```
 
 Typical `screen_ts(..., method="r2scan-3c", dft=True)` stages:
 
-| group | stage | engine | options | constraint | lowest |
-| --- | --- | --- | --- | --- | ---: |
-| `init` | `prepare` | `prepare` |  |  |  |
-| `init` | `initial_prune` | `prism_pruner` | `modes=moi,rmsd moi_max_deviation=0.01 rmsd_max_rmsd=1.25` | false |  |
-| `init` | `xtb_preopt` | `xtb` | `gfnff opt` | true |  |
-| `init` | `xtb_sp` | `gxtb` |  | false |  |
-| `init` | `xtb_opt` | `gxtb` | `opt` | true | 10 |
-| `init` | `dft_pre_sp` | `orca` | `r2SCAN-3c TightSCF SP NoSym` | false |  |
-| `init` | `dft_pre_opt` | `orca` | `r2SCAN-3c TightSCF SlowConv Opt NoSym` | true | 1 |
-| `hess` | `hess` | `orca` | `r2SCAN-3c TightSCF SlowConv Freq NoSym` | false |  |
-| `optts` | `optts` | `orca` | `r2SCAN-3c TightSCF SlowConv OptTS NoSym` | false |  |
-| `freq` | `freq` | `orca` | `r2SCAN-3c TightSCF SlowConv Freq NoSym` | false |  |
-| `solv` | `solv` | `orca` | `r2SCAN-3c TightSCF SP NoSym` | false |  |
+| group | stage | engine | options | constraint | lowest | rank_by |
+| --- | --- | --- | --- | --- | ---: | --- |
+| `init` | `prepare` | `prepare` |  |  |  |  |
+| `init` | `initial_prune` | `prism_pruner` | `modes=moi,rmsd moi_max_deviation=0.01 rmsd_max_rmsd=1.25` | false |  |  |
+| `init` | `xtb_preopt` | `xtb` | `gfnff opt` | true |  |  |
+| `init` | `xtb_sp` | `gxtb` |  | false |  |  |
+| `init` | `xtb_opt` | `gxtb` | `opt` | true | 10 | `xtb_opt` |
+| `init` | `dft_rank_sp` | `orca` | `r2SCAN-3c TightSCF SP NoSym` | false |  |  |
+| `init` | `dft_preopt` | `orca` | `r2SCAN-3c TightSCF SlowConv Opt NoSym` | true | 1 | `dft_preopt` |
+| `dft_hessian` | `dft_hessian` | `orca` | `r2SCAN-3c TightSCF SlowConv Freq NoSym` | false |  |  |
+| `dft_ts_opt` | `dft_ts_opt` | `orca` | `r2SCAN-3c TightSCF SlowConv OptTS NoSym` | false |  |  |
+| `dft_freq` | `dft_freq` | `orca` | `r2SCAN-3c TightSCF SlowConv Freq NoSym` | false |  |  |
+| `dft_solv_sp` | `dft_solv_sp` | `orca` | `r2SCAN-3c TightSCF SP NoSym` | false |  |  |
 
 `constraint=True` stages render row-level constraints from `constraint_roles`
 and `constraint_spec`. This is why a screen-generated dataframe does not need
@@ -139,15 +179,15 @@ wf = ft.workflows.screen_ts(
 )
 ```
 
-With `dft=False`, `screen_ts(...)` still runs through `DFT-pre-SP` and then
-keeps the lowest DFT single-point row. It skips `DFT-pre-Opt`, `Hess`, `OptTS`,
-`Freq`, and `DFT-solv`.
+With `dft=False`, `screen_ts(...)` still runs through `dft_rank_sp` and then
+keeps the lowest DFT single-point row. It skips `dft_preopt`, `dft_hessian`,
+`dft_ts_opt`, `dft_freq`, and `dft_solv_sp`.
 
 Then inspect the generated and optimized structures:
 
 ```python
 ft.plot_mols(df, range(0, min(6, len(df))))
-df[["custom_name", "rpos", "DFT-pre-SP-EE", "DFT-pre-SP-NT"]].head()
+df[["custom_name", "rpos", "dft_rank_sp-EE", "dft_rank_sp-NT"]].head()
 ```
 
 ## Submit A Staged Cluster Run
@@ -167,10 +207,10 @@ result = wf.submit(
     execution="dft_staged",
     stage_resources={
         "init": Resources(cpus=24, mem_gb=20, timeout_min=7200),
-        "hess": Resources(cpus=8, mem_gb=64, timeout_min=7200),
-        "optts": Resources(cpus=24, mem_gb=20, timeout_min=7200),
-        "freq": Resources(cpus=8, mem_gb=64, timeout_min=7200),
-        "solv": Resources(cpus=24, mem_gb=20, timeout_min=3600),
+        "dft_hessian": Resources(cpus=8, mem_gb=64, timeout_min=7200),
+        "dft_ts_opt": Resources(cpus=24, mem_gb=20, timeout_min=7200),
+        "dft_freq": Resources(cpus=8, mem_gb=64, timeout_min=7200),
+        "dft_solv_sp": Resources(cpus=24, mem_gb=20, timeout_min=3600),
     },
 )
 ```
@@ -185,7 +225,7 @@ finish, successful target directories are compacted:
 ```text
 runs/screen_ts/
 ├── TS1__n_methyl_pyrrole__tmp_bcat__r2/
-│   ├── init.hess.optts.freq.solv.parquet
+│   ├── init.dft_hessian.dft_ts_opt.dft_freq.dft_solv_sp.parquet
 │   └── timing.json
 ├── merged.parquet
 └── collection_report.json

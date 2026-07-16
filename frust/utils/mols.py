@@ -535,21 +535,33 @@ def create_mol_per_rpos(
     ligand_smiles_df: pd.DataFrame,
     return_format: str = "dict",
     select_mols: str | list[str] = "all",
+    show_iupac: bool = True,
 ) -> list[dict[str, Mol | tuple[Mol, dict]]] | dict[str, Mol | tuple[Mol, dict]]:
     """Generate catalytic-cycle molecules for each unique ligand SMILES.
 
     Parameters
     ----------
     ligand_smiles_df : pandas.DataFrame
-        Input table containing a ``smiles`` column with ligand SMILES strings.
-        Duplicate SMILES entries are ignored after the first occurrence.
+        Input table containing a ``smiles`` column with substrate SMILES.
+        Optional ``catalyst_smiles`` and ``system_name`` columns select a
+        variable catalyst and stable key prefix for each system. Duplicate
+        substrate/catalyst/system records are ignored after the first.
     return_format : str, optional
         Output format. Use ``"dict"`` to return a merged dictionary of
         molecule names to RDKit molecules, or ``"list"`` to return a list of
         single-item dictionaries.
     select_mols : str or list[str], optional
-        Molecule selection passed through to :func:`frust.transformers.transformer_mols`.
-        Supported string values are ``"all"``, ``"uniques"``, and ``"generics"``.
+        Accepted states are ``"dimer"``, ``"HH"``, ``"ligand"``,
+        ``"catalyst"``, ``"int1"``, ``"int2"``, ``"HBpin-ligand"``, and
+        ``"HBpin-mol"``. ``"all"`` selects every state; ``"uniques"``
+        selects ``"ligand"``, ``"int1"``, ``"int2"``, and
+        ``"HBpin-ligand"``; ``"generics"`` selects ``"dimer"``, ``"HH"``,
+        ``"catalyst"``, and ``"HBpin-mol"``. The former ``"int2"`` is now
+        ``"int1"`` and the former ``"mol2"`` is now ``"int2"``.
+    show_iupac : bool, optional
+        Resolve PubChem/IUPAC substrate names when ``True``. Modern typed
+        workflows set this to ``False`` because input metadata already owns
+        naming and structure generation should not require network access.
 
     Returns
     -------
@@ -572,26 +584,50 @@ def create_mol_per_rpos(
 
     from frust.transformers import transformer_mols
 
-    ligand_smiles_list = list(dict.fromkeys(smiles_series.tolist()))
-    rpos_map: dict[str, tuple[int, ...]] = {}
+    has_catalysts = "catalyst_smiles" in ligand_smiles_df.columns
+    has_system_names = "system_name" in ligand_smiles_df.columns
+    records: list[tuple[str, str | None, str | None]] = []
+    for _, row in ligand_smiles_df.iterrows():
+        catalyst = None
+        if has_catalysts and not pd.isna(row.get("catalyst_smiles")):
+            catalyst = str(row["catalyst_smiles"])
+        system_name = None
+        if has_system_names and not pd.isna(row.get("system_name")):
+            system_name = str(row["system_name"])
+        record = (str(row["smiles"]), catalyst, system_name)
+        if record not in records:
+            records.append(record)
+    rpos_map: dict[tuple[str, str | None, str | None], tuple[int, ...]] = {}
 
     if "rpos" in ligand_smiles_df.columns:
         extracted_rpos = _extract_rpos_from_df(ligand_smiles_df)
-        grouped_rpos: dict[str, list[int]] = {}
+        grouped_rpos: dict[tuple[str, str | None, str | None], list[int]] = {}
 
-        for smi, rpos_tuple in zip(smiles_series.tolist(), extracted_rpos):
-            grouped_rpos.setdefault(smi, [])
+        for (_, row), rpos_tuple in zip(ligand_smiles_df.iterrows(), extracted_rpos):
+            catalyst = None
+            if has_catalysts and not pd.isna(row.get("catalyst_smiles")):
+                catalyst = str(row["catalyst_smiles"])
+            system_name = None
+            if has_system_names and not pd.isna(row.get("system_name")):
+                system_name = str(row["system_name"])
+            key = (str(row["smiles"]), catalyst, system_name)
+            grouped_rpos.setdefault(key, [])
             for rpos in rpos_tuple:
-                if rpos not in grouped_rpos[smi]:
-                    grouped_rpos[smi].append(rpos)
+                if rpos not in grouped_rpos[key]:
+                    grouped_rpos[key].append(rpos)
 
-        rpos_map = {smi: tuple(rpos_list) for smi, rpos_list in grouped_rpos.items()}
+        rpos_map = {key: tuple(rpos_list) for key, rpos_list in grouped_rpos.items()}
 
     mols: dict[str, Mol] = {}
-    for smi in ligand_smiles_list:
-        transformer_kwargs = {"ligand_smiles": smi}
-        if smi in rpos_map:
-            transformer_kwargs["rpos_list"] = rpos_map[smi]
+    for smi, catalyst, system_name in records:
+        transformer_kwargs = {"ligand_smiles": smi, "show_IUPAC": show_iupac}
+        key = (smi, catalyst, system_name)
+        if key in rpos_map:
+            transformer_kwargs["rpos_list"] = rpos_map[key]
+        if catalyst is not None:
+            transformer_kwargs["catalyst_smiles"] = catalyst
+        if system_name is not None:
+            transformer_kwargs["key_prefix"] = system_name
 
         if select_mols == "all":
             tmp = transformer_mols(**transformer_kwargs, return_metadata=True)

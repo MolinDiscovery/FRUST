@@ -56,6 +56,10 @@ def submit_jobs(
         Forwarded to the selected FRUST pipeline as ``DFT`` when supported.
     select_mols : str or list[str], optional
         Molecule selection forwarded to molecule workflows when supported.
+        Accepted states are ``"dimer"``, ``"HH"``, ``"ligand"``,
+        ``"catalyst"``, ``"int1"``, ``"int2"``, ``"HBpin-ligand"``, and
+        ``"HBpin-mol"``; shortcuts are ``"all"``, ``"uniques"``, and
+        ``"generics"``.
     work_dir : str or pathlib.Path or None, optional
         Optional work directory override. If omitted, ``cluster.work_dir`` is
         used.

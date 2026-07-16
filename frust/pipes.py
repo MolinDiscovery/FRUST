@@ -761,12 +761,14 @@ def run_mols(
     select_mols : str or list[str], optional
         Molecular states to generate before embedding. Use ``"all"`` for the
         full set. Use ``"uniques"`` for the ligand and rpos-dependent states
-        such as ``int2_rpos(...)``, ``mol2_rpos(...)``, and
+        such as ``int1_rpos(...)``, ``int2_rpos(...)``, and
         ``HBpin-ligand_rpos(...)``. Use ``"generics"`` for states shared
         across all ligands/rpos values: ``dimer``, ``HH``, ``catalyst``, and
         ``HBpin-mol``. Use a string or list to select explicit families from
-        ``"dimer"``, ``"HH"``, ``"ligand"``, ``"catalyst"``, ``"int2"``,
-        ``"mol2"``, ``"HBpin-ligand"``, and ``"HBpin-mol"``.
+        ``"dimer"``, ``"HH"``, ``"ligand"``, ``"catalyst"``, ``"int1"``,
+        ``"int2"``, ``"HBpin-ligand"``, and ``"HBpin-mol"``. The former
+        ``"int2"`` is now ``"int1"`` and the former ``"mol2"`` is now
+        ``"int2"``.
 
     Returns
     -------
@@ -966,12 +968,14 @@ def run_mols_custom(
     select_mols : str or list[str], optional
         Molecular states to generate before embedding. Use ``"all"`` for the
         full set. Use ``"uniques"`` for the ligand and rpos-dependent states
-        such as ``int2_rpos(...)``, ``mol2_rpos(...)``, and
+        such as ``int1_rpos(...)``, ``int2_rpos(...)``, and
         ``HBpin-ligand_rpos(...)``. Use ``"generics"`` for states shared
         across all ligands/rpos values: ``dimer``, ``HH``, ``catalyst``, and
         ``HBpin-mol``. Use a string or list to select explicit families from
-        ``"dimer"``, ``"HH"``, ``"ligand"``, ``"catalyst"``, ``"int2"``,
-        ``"mol2"``, ``"HBpin-ligand"``, and ``"HBpin-mol"``.
+        ``"dimer"``, ``"HH"``, ``"ligand"``, ``"catalyst"``, ``"int1"``,
+        ``"int2"``, ``"HBpin-ligand"``, and ``"HBpin-mol"``. The former
+        ``"int2"`` is now ``"int1"`` and the former ``"mol2"`` is now
+        ``"int2"``.
 
     Returns
     -------

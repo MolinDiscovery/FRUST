@@ -19,7 +19,7 @@ every calculator and visualization dependency immediately.
 | Vibration analysis | `ft.inspect_ts_vibrations`, `ft.summarize_ts_vibrations` |
 | Structure preparation | `ft.create_mol_per_rpos`, `ft.create_ts_per_rpos`, `ft.embed_mols`, `ft.embed_ts` |
 | File IO | `ft.read_ts_type_from_xyz`, `ft.write_xyz`, `ft.write_xyz_structures` |
-| Schema | `ft.normalize_dataframe`, `ft.energy_columns`, `ft.normal_termination_columns` |
+| Results and schema | `ft.result_column`, `ft.get_result`, `ft.upgrade_dataframe`, `ft.normalize_dataframe`, `ft.energy_columns`, `ft.normal_termination_columns` |
 | Visualization | `ft.plot_mols`, `ft.plot_conformers`, `ft.plot_row`, `ft.plot_vibs`, `ft.plot_energy_profile`, `ft.plot_regression_outliers` |
 | Molecular viewers | `ft.MolTo3DGrid`, `ft.RxnTo3DGrid`, `ft.DrawMolSvg`, `ft.DrawUniqueChGrid` |
 | Cluster | `ft.ClusterConfig`, `ft.Resources`, `ft.submit_jobs`, `ft.submit_chain`, `ft.submit_screen_chain` |
@@ -32,6 +32,7 @@ Use namespaces when the task belongs to a larger workflow domain:
 | --- | --- |
 | `ft.workflows` | Recommended workflow objects and method plans |
 | `ft.screen` | Catalyst-screen input normalization, expansion, and TS generation |
+| `ft.structures` | Calculation-free MOLS/INT3 generation, typed targets, state registry, planning, and deferred builders |
 | `ft.cluster` | Submission configuration and lower-level cluster helpers |
 | `ft.pipes` | Supported compact helper workflows |
 | `ft.pipelines` | Explicit staged pipeline modules |
@@ -41,3 +42,19 @@ Use namespaces when the task belongs to a larger workflow domain:
 
 Direct helpers are intentionally curated. Broader discoverability belongs under
 the stable namespaces rather than mirroring every module symbol into `ft`.
+
+For calculation-free geometry inspection, keep the chemistry domain explicit:
+
+```python
+systems = ft.screen.expand(ft.screen.read("screen.csv"))
+
+mols = ft.structures.create_mols(
+    systems,
+    states=["HH", "int1", "int2"],
+    n_confs=1,
+)
+int3 = ft.structures.create_int3_guesses(systems, n_confs=1)
+```
+
+Both calls return canonical embedded-structure dataframes. They do not run xTB
+or DFT.

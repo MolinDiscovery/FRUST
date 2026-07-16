@@ -265,10 +265,10 @@ Output:
 | substrate_name | structure_type | molecule_role | rpos | cid |
 | --- | --- | --- | ---: | ---: |
 | phenol | MOL | ligand |  | 0 |
+| phenol | MOL | int1 | 2 | 0 |
+| phenol | MOL | int1 | 3 | 0 |
 | phenol | MOL | int2 | 2 | 0 |
 | phenol | MOL | int2 | 3 | 0 |
-| phenol | MOL | mol2 | 2 | 0 |
-| phenol | MOL | mol2 | 3 | 0 |
 
 Because the input dataframe has no `rpos` column, FRUST expands the workflow
 structures over the valid aromatic C-H positions it finds for the substrate.

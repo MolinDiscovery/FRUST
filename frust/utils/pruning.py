@@ -24,7 +24,7 @@ DEFAULT_PRUNING_OPTIONS: dict[str, Any] = {
     "energy_col": None,
     "group_cols": None,
     "moi_max_deviation": 0.01,
-    "rmsd_max_rmsd": 1.25,
+    "rmsd_max_rmsd": 0.5,
     "rmsd_max_dev": None,
     "timeout_s": 60,
     "heavy_atoms_only": True,

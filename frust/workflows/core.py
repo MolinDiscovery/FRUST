@@ -25,7 +25,14 @@ from frust.cluster.executor import (
     update_executor_with_dependency,
 )
 from frust.cluster.naming import sanitize_tag
-from frust.schema import normal_termination_columns, normalize_dataframe
+from frust.results import ResultProfile, attach_result_contract
+from frust.schema import (
+    canonical_state_columns,
+    normal_termination_columns,
+    normalize_dataframe,
+    output_column,
+    stamp_schema,
+)
 from frust.stepper import Stepper, make_stepper_logger
 from frust.utils.dataframes import lowest_energy_rows, merge_dataframe_attrs
 from frust.utils.timing import (
@@ -46,6 +53,14 @@ TargetRetention = Literal["compact_success", "all"]
 DEFAULT_WORKFLOW_RESOURCES = Resources(cpus=4, mem_gb=20, timeout_min=720)
 DEFAULT_COLLECTION_RESOURCES = Resources(cpus=2, mem_gb=4, timeout_min=120)
 TARGET_TIMING_FILE = "timing.json"
+_LEGACY_STAGE_RESOURCE_KEYS = {
+    "dft_rank_sp": "dft_pre_sp",
+    "dft_preopt": "dft_pre_opt",
+    "dft_hessian": "hess",
+    "dft_ts_opt": "optts",
+    "dft_freq": "freq",
+    "dft_solv_sp": "solv",
+}
 
 
 @dataclass(frozen=True)
@@ -85,9 +100,8 @@ class StageDef:
         stage's :class:`frust.workflows.methods.CalculatorSpec` from the active
         method plan.
     name : str
-        Calculation name passed to :class:`frust.stepper.Stepper`. Stepper uses
-        this as the dataframe column prefix, for example ``"OptTS"`` produces
-        columns such as ``"OptTS-EE"`` and ``"OptTS-NT"``.
+        Human-readable calculation label shown by ``wf.show_stages()``.
+        Canonical dataframe columns always use ``id`` as their prefix.
     kind : {"prepare", "calc", "filter", "prune"}, optional
         Stage kind. ``"prepare"`` creates the initial dataframe, ``"calc"``
         dispatches to a calculator, ``"filter"`` keeps lowest-energy rows, and
@@ -101,6 +115,10 @@ class StageDef:
     lowest : int, optional
         Number of rows to keep after this stage, grouped by FRUST structure
         identity.
+    rank_by : str or None, optional
+        Canonical stage id whose electronic energy controls selection. For a
+        calculator stage this normally matches ``id``; filters must set it
+        explicitly so selection never depends on dataframe column order.
     n_cores : int, optional
         Stage-local calculator core count forwarded to Stepper. Submission
         resources still control the scheduler allocation.
@@ -121,6 +139,7 @@ class StageDef:
     method_stage: str | None = None
     constraint: bool = False
     lowest: int | None = None
+    rank_by: str | None = None
     n_cores: int | None = None
     read_files: list[str] | None = None
     use_last_hess: bool = False
@@ -181,10 +200,12 @@ class BaseWorkflow:
     Subclasses provide chemistry by implementing ``_build_targets()``,
     ``_prepare_initial_df(...)``, ``_stage_defs()``, and optionally
     ``_step_type_for_target(...)``. This base class owns target selection,
-    stage grouping, local execution, cluster submission, and result collection.
+    calculation-free preview, stage grouping, local execution, cluster
+    submission, and result collection.
     """
 
     workflow_name = "workflow"
+    result_profile: ResultProfile | None = None
 
     def __init__(
         self,
@@ -218,6 +239,61 @@ class BaseWorkflow:
         if self._target_cache is None:
             self._target_cache = self._build_targets()
         return list(self._target_cache)
+
+    def preview(
+        self,
+        *,
+        n_confs: int | None = 1,
+        targets: Iterable[WorkflowTarget] | Iterable[int] | None = None,
+        n_cores: int = 1,
+    ) -> pd.DataFrame:
+        """Generate selected target structures without running calculations.
+
+        Parameters
+        ----------
+        n_confs : int or None, optional
+            Number of embedded conformers per selected target. If ``None``,
+            use the structure builder's conformer-count heuristic.
+        targets : iterable of target objects or int or None, optional
+            Typed structure targets to preview. Integers select positions from
+            ``wf.targets()``. If omitted, all targets are generated.
+        n_cores : int, optional
+            RDKit embedding threads.
+
+        Returns
+        -------
+        pandas.DataFrame
+            Canonical embedded structures containing ``system_name``,
+            ``state_id``, ``state_kind``, ``rpos``, ``atoms``, and
+            ``coords_embedded``. No xTB or DFT stages are run.
+
+        Examples
+        --------
+        >>> planned = wf.targets()
+        >>> preview = wf.preview(n_confs=1, targets=[0])
+
+        Notes
+        -----
+        Preview is available for workflows backed by typed
+        :class:`frust.structures.StructureTarget` objects. It delegates to the
+        same target builder used by ``run()`` and therefore preserves
+        preview/run structure-generation parity.
+        """
+        from frust.structures.api import _create_from_targets
+        from frust.structures.models import StructureTarget
+
+        selected = self._select_targets(targets)
+        if not all(isinstance(target, StructureTarget) for target in selected):
+            raise TypeError(
+                f"{self.workflow_name}.preview() requires typed StructureTarget "
+                "objects; use the modern per_rpos/tsguess2 workflow path"
+            )
+        return _create_from_targets(
+            selected,
+            n_confs=n_confs,
+            n_cores=n_cores,
+            source=f"frust.workflows.{self.workflow_name}.preview",
+        )
 
     def show_stages(self, *, execution: ExecutionMode | None = None) -> pd.DataFrame:
         """Return the active workflow stage graph as a compact dataframe.
@@ -277,6 +353,7 @@ class BaseWorkflow:
                         "engine": _stage_engine(stage, spec),
                         "options": options_text,
                         "lowest": stage.lowest,
+                        "rank_by": stage.rank_by,
                         "constraint": stage.constraint,
                         "n_cores": stage.n_cores,
                     }
@@ -292,6 +369,7 @@ class BaseWorkflow:
                 "engine",
                 "options",
                 "lowest",
+                "rank_by",
                 "constraint",
                 "n_cores",
             ],
@@ -303,7 +381,7 @@ class BaseWorkflow:
         targets: Iterable[WorkflowTarget] | Iterable[int] | None = None,
         out_dir: str | Path | None = None,
         execution: ExecutionMode | None = None,
-        n_cores: int = 4,
+        n_cores: int = 10,
         mem_gb: int = 20,
         debug: bool = False,
         save_output_dir: bool = True,
@@ -457,9 +535,9 @@ class BaseWorkflow:
             ``wf.show_stages(execution="dft_staged")`` to see the active group
             names before choosing overrides. In ``"dft_staged"`` mode, raw
             molecule and molecule workflows usually use ``"init"``,
-            ``"dft_opt"``, ``"freq"``, and ``"solv"``; screen TS workflows
-            usually use ``"init"``, ``"hess"``, ``"optts"``, ``"freq"``, and
-            ``"solv"``.
+            ``"dft_opt"``, ``"dft_freq"``, and ``"dft_solv_sp"``; screen TS
+            workflows usually use ``"init"``, ``"dft_hessian"``,
+            ``"dft_ts_opt"``, ``"dft_freq"``, and ``"dft_solv_sp"``.
         targets : iterable of WorkflowTarget or int or None, optional
             Targets to submit. Integers select positions from ``wf.targets()``.
             If omitted, all workflow targets are submitted.
@@ -855,7 +933,9 @@ class BaseWorkflow:
         if not self.dft:
             return [stages]
 
-        dft_stage_ids = {"hess", "optts", "freq", "solv", "dft_opt"}
+        dft_stage_ids = {
+            "dft_hessian", "dft_ts_opt", "dft_freq", "dft_solv_sp", "dft_opt"
+        }
         first_split = next(
             (idx for idx, stage in enumerate(stages) if stage.id in dft_stage_ids),
             len(stages),
@@ -1597,9 +1677,15 @@ def _resource_for_group(
         return default
     if group_name in resources:
         return resources[group_name]
+    legacy_group = _LEGACY_STAGE_RESOURCE_KEYS.get(group_name)
+    if legacy_group in resources:
+        return resources[legacy_group]
     for stage in group:
         if stage.id in resources:
             return resources[stage.id]
+        legacy_stage = _LEGACY_STAGE_RESOURCE_KEYS.get(stage.id)
+        if legacy_stage in resources:
+            return resources[legacy_stage]
     return default
 
 
@@ -1617,7 +1703,7 @@ def _next_parquet(current: str | None, group_name: str) -> str:
     -------
     str
         ``"init.parquet"`` for the first group, then dotted filenames such as
-        ``"init.hess.optts.parquet"``.
+        ``"init.dft_hessian.dft_ts_opt.parquet"``.
     """
     if current is None:
         return "init.parquet"
@@ -1762,8 +1848,13 @@ def _apply_calculator(
         Dataframe returned by ``Stepper.xtb(...)``, ``Stepper.gxtb(...)``, or
         ``Stepper.orca(...)``.
     """
+    if stage.lowest is not None and stage.rank_by != stage.id:
+        raise ValueError(
+            f"Calculator stage {stage.id!r} with lowest= must set rank_by={stage.id!r}; "
+            "use an explicit filter stage to rank by a different calculation"
+        )
     kwargs = {
-        "name": stage.name,
+        "name": stage.id,
         "options": spec.options,
         "constraint": stage.constraint,
         "lowest": stage.lowest,
@@ -1826,7 +1917,13 @@ def _run_stage_calculation(
         Stage output dataframe.
     """
     if stage.kind == "filter":
-        return lowest_energy_rows(df)
+        if not stage.rank_by:
+            raise ValueError(f"Filter stage {stage.id!r} must define rank_by")
+        return lowest_energy_rows(
+            df,
+            n=stage.lowest or 1,
+            energy_col=output_column(stage.rank_by, "electronic_energy"),
+        )
 
     step = Stepper(
         step_type=workflow._step_type_for_target(target),
@@ -1870,12 +1967,17 @@ def _attach_workflow_attrs(
     pandas.DataFrame
         Same dataframe with ``df.attrs["frust_workflow"]`` populated.
     """
+    df = canonical_state_columns(df)
     df.attrs.setdefault("frust_workflow", {})
     df.attrs["frust_workflow"].update(
         {
             "workflow": workflow.workflow_name,
             "method": workflow.method.name,
             "target": target.tag,
+            "result_profile": workflow.result_profile,
         }
     )
+    if workflow.result_profile is not None:
+        attach_result_contract(df, workflow.result_profile, dft=workflow.dft)
+    stamp_schema(df)
     return df

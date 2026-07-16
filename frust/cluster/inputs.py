@@ -104,7 +104,10 @@ def prepare_pipeline_inputs(
     ts_xyz : str or pathlib.Path or None, optional
         TS template file for TS-dependent pipelines.
     select_mols : str or list[str], optional
-        Molecule selection passthrough for molecule workflows.
+        Molecule selection passthrough for molecule workflows. Accepted
+        states are ``"dimer"``, ``"HH"``, ``"ligand"``, ``"catalyst"``,
+        ``"int1"``, ``"int2"``, ``"HBpin-ligand"``, and ``"HBpin-mol"``;
+        shortcuts are ``"all"``, ``"uniques"``, and ``"generics"``.
 
     Returns
     -------

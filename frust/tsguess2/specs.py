@@ -128,4 +128,25 @@ BUILTIN_TS_SPECS_V2: dict[str, TSGuess2Spec] = {
         ),
         constraint_order=("cat_B", "transfer_H", "pin_B", "substrate_C"),
     ),
+    "INT3": TSGuess2Spec(
+        name="INT3",
+        spec_id="INT3::builtin::tmp_v2",
+        builder_key="ts3_ts4",
+        core_smarts="[#5]~[#1]~[#5]~[#6]",
+        role_coordinates={
+            "cat_B": (1.239315, 0.051379, 0.884948),
+            "transfer_H": (1.922198, -0.860414, 0.276733),
+            "pin_B": (2.609655, -1.114321, 1.414101),
+            "substrate_C": (1.789172, 0.052638, 2.481973),
+        },
+        constraints=(
+            ConstraintEntry("distance", ("cat_B", "transfer_H"), 1.279),
+            ConstraintEntry("distance", ("cat_B", "substrate_C"), 1.688),
+            ConstraintEntry("distance", ("pin_B", "transfer_H"), 1.378),
+            ConstraintEntry("distance", ("pin_B", "substrate_C"), 1.749),
+            ConstraintEntry("angle", ("cat_B", "transfer_H", "pin_B"), 89.85),
+            ConstraintEntry("angle", ("cat_B", "substrate_C", "pin_B"), 66.22),
+        ),
+        constraint_order=("cat_B", "transfer_H", "pin_B", "substrate_C"),
+    ),
 }
