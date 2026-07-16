@@ -1,3 +1,2 @@
-,smiles
-0,CN1C=CC=C1
-
+substrate_name,smiles,rpos
+1-methylpyrrole,CN1C=CC=C1,2
