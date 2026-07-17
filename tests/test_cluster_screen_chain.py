@@ -195,6 +195,9 @@ class ScreenChainSubmissionTests(unittest.TestCase):
             if params.get("slurm_additional_parameters", {}).get("dependency")
         ]
         self.assertTrue(dependent_updates)
+        for params, (_, kwargs) in zip(fake.parameters, fake.submissions):
+            if "mem_gb" in kwargs:
+                self.assertAlmostEqual(kwargs["mem_gb"], params["mem_gb"] * 0.8)
 
     def test_submit_screen_chain_forwards_composite_method(self):
         with tempfile.TemporaryDirectory() as tmp:

@@ -4,7 +4,13 @@ import inspect
 from pathlib import Path
 
 from frust.cluster.chains import submit_chain_jobs
-from frust.cluster.config import ClusterConfig, JobSubmissionResult, Resources
+from frust.cluster.config import (
+    DEFAULT_ORCA_MEMORY_FRACTION,
+    ClusterConfig,
+    JobSubmissionResult,
+    Resources,
+    orca_memory_gb,
+)
 from frust.cluster.executor import create_executor, update_executor
 from frust.cluster.inputs import prepare_pipeline_inputs, load_pipeline
 from frust.cluster.naming import pipeline_output_parquet, sanitize_tag
@@ -25,6 +31,7 @@ def submit_jobs(
     dft: bool = False,
     select_mols: str | list[str] = "all",
     work_dir: str | Path | None = None,
+    orca_memory_fraction: float = DEFAULT_ORCA_MEMORY_FRACTION,
 ) -> JobSubmissionResult:
     """Submit independent FRUST workflow jobs from a CSV input file.
 
@@ -63,6 +70,10 @@ def submit_jobs(
     work_dir : str or pathlib.Path or None, optional
         Optional work directory override. If omitted, ``cluster.work_dir`` is
         used.
+    orca_memory_fraction : float, optional
+        Fraction of the full Slurm allocation forwarded to ORCA-capable
+        pipeline stages. Defaults to ``0.8``; Slurm still receives the full
+        ``resources.mem_gb`` allocation.
 
     Returns
     -------
@@ -94,7 +105,7 @@ def submit_jobs(
         kwargs = {
             "n_confs": None if production and n_confs is None else n_confs,
             "n_cores": resources.cpus,
-            "mem_gb": resources.mem_gb,
+            "mem_gb": orca_memory_gb(resources, orca_memory_fraction),
             "debug": debug,
             "out_dir": str(out_path),
             "output_parquet": output_parquet,
@@ -150,6 +161,7 @@ def submit_chain(
     basisset_solv: str | None = None,
     save_output_dir: bool = True,
     work_dir: str | Path | None = None,
+    orca_memory_fraction: float = DEFAULT_ORCA_MEMORY_FRACTION,
 ) -> JobSubmissionResult:
     """Submit a dependent stage chain from a CSV input file.
 
@@ -194,6 +206,9 @@ def submit_chain(
     work_dir : str or pathlib.Path or None, optional
         Optional work directory override. If omitted, ``cluster.work_dir`` is
         used.
+    orca_memory_fraction : float, optional
+        Fraction of each stage's Slurm allocation forwarded to ORCA. Defaults
+        to ``0.8`` while Slurm retains the full requested allocation.
 
     Returns
     -------
@@ -217,6 +232,7 @@ def submit_chain(
         basisset_solv=basisset_solv,
         save_output_dir=save_output_dir,
         work_dir=work_dir,
+        orca_memory_fraction=orca_memory_fraction,
     )
 
 
@@ -237,6 +253,7 @@ def submit_screen_chain(
     composite_method: str | None = None,
     save_output_dir: bool = True,
     work_dir: str | Path | None = None,
+    orca_memory_fraction: float = DEFAULT_ORCA_MEMORY_FRACTION,
 ) -> JobSubmissionResult:
     """Submit a screen-based TS chain for substrate/catalyst systems.
 
@@ -278,6 +295,9 @@ def submit_screen_chain(
     work_dir : str or pathlib.Path or None, optional
         Optional work directory override. If omitted, ``cluster.work_dir`` is
         used.
+    orca_memory_fraction : float, optional
+        Fraction of each stage's Slurm allocation forwarded to ORCA. Defaults
+        to ``0.8`` while Slurm retains the full requested allocation.
 
     Returns
     -------
@@ -321,4 +341,5 @@ def submit_screen_chain(
         composite_method=composite_method,
         save_output_dir=save_output_dir,
         work_dir=work_dir,
+        orca_memory_fraction=orca_memory_fraction,
     )

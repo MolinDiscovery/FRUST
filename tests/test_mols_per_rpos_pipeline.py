@@ -182,6 +182,7 @@ class MolsPerRposSubmissionTests(unittest.TestCase):
                     resources=Resources(cpus=4, mem_gb=10, timeout_min=60),
                     n_confs=3,
                     select_mols="int2",
+                    orca_memory_fraction=0.75,
                 )
 
         self.assertEqual(result.mode, "run_mols_per_rpos")
@@ -192,7 +193,8 @@ class MolsPerRposSubmissionTests(unittest.TestCase):
             self.assertNotIn("ligand_smiles_df", kwargs)
             self.assertEqual(kwargs["n_confs"], 3)
             self.assertEqual(kwargs["n_cores"], 4)
-            self.assertEqual(kwargs["mem_gb"], 10)
+            self.assertEqual(kwargs["mem_gb"], 7.5)
+        self.assertEqual([params["mem_gb"] for params in fake.parameters], [10, 10])
 
 
 if __name__ == "__main__":

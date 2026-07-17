@@ -13,6 +13,8 @@ from frust.cluster.config import (
     DEFAULT_CUSTOM_STAGE_RESOURCES,
     JobSubmissionResult,
     Resources,
+    DEFAULT_ORCA_MEMORY_FRACTION,
+    orca_memory_gb,
 )
 from frust.cluster.executor import create_executor, update_executor_with_dependency
 from frust.cluster.inputs import prepare_chain_inputs
@@ -112,6 +114,7 @@ def submit_chain_jobs(
     composite_method: str | None = None,
     save_output_dir: bool = True,
     work_dir: str | Path | None = None,
+    orca_memory_fraction: float = DEFAULT_ORCA_MEMORY_FRACTION,
 ) -> JobSubmissionResult:
     """Submit a dependent stage chain through submitit.
 
@@ -161,6 +164,9 @@ def submit_chain_jobs(
         Forwarded to initialization stages when supported.
     work_dir : str or pathlib.Path or None, optional
         Optional work directory override.
+    orca_memory_fraction : float, optional
+        Fraction of each stage's full Slurm memory allocation forwarded to
+        ORCA through the stage function. Defaults to ``0.8``.
 
     Returns
     -------
@@ -245,7 +251,7 @@ def submit_chain_jobs(
                         run_init_arg: payload,
                         "n_confs": None if production and n_confs is None else n_confs,
                         "n_cores": resources.cpus,
-                        "mem_gb": resources.mem_gb,
+                        "mem_gb": orca_memory_gb(resources, orca_memory_fraction),
                         "save_output_dir": save_output_dir,
                     }
                 )
@@ -258,7 +264,7 @@ def submit_chain_jobs(
                     {
                         "parquet_path": current_parquet,
                         "n_cores": resources.cpus,
-                        "mem_gb": resources.mem_gb,
+                        "mem_gb": orca_memory_gb(resources, orca_memory_fraction),
                     }
                 )
 

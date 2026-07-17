@@ -18,7 +18,13 @@ from typing import Any, Iterable, Literal
 
 import pandas as pd
 
-from frust.cluster.config import ClusterConfig, JobSubmissionResult, Resources
+from frust.cluster.config import (
+    DEFAULT_ORCA_MEMORY_FRACTION,
+    ClusterConfig,
+    JobSubmissionResult,
+    Resources,
+    orca_memory_gb,
+)
 from frust.cluster.executor import (
     create_executor,
     update_executor_with_dependencies,
@@ -510,6 +516,7 @@ class BaseWorkflow:
         collect_require_normal_termination: bool = True,
         collect_resources: Resources | None = None,
         target_retention: TargetRetention = "compact_success",
+        orca_memory_fraction: float = DEFAULT_ORCA_MEMORY_FRACTION,
     ) -> JobSubmissionResult:
         """Submit selected workflow targets to a submitit cluster executor.
 
@@ -571,6 +578,11 @@ class BaseWorkflow:
             ``timing.json`` for collected targets. Failed, skipped, missing, and
             non-normal-termination targets remain untouched. ``"all"`` keeps
             all intermediate target parquets.
+        orca_memory_fraction : float, optional
+            Fraction of each target job's Slurm memory allocation forwarded to
+            ORCA through Stepper. The default, ``0.8``, reserves 20 percent
+            of the requested allocation for job overhead. Slurm still receives
+            the full ``Resources.mem_gb`` value.
 
         Returns
         -------
@@ -618,7 +630,7 @@ class BaseWorkflow:
                 )
                 options = ExecutionOptions(
                     n_cores=resources.cpus,
-                    mem_gb=resources.mem_gb,
+                    mem_gb=orca_memory_gb(resources, orca_memory_fraction),
                     debug=debug,
                     save_output_dir=save_output_dir,
                     work_dir=str(work_dir or cluster.work_dir) if (work_dir or cluster.work_dir) else None,
@@ -657,7 +669,7 @@ class BaseWorkflow:
                 output_parquet = _next_parquet(current_parquet, group_name)
                 options = ExecutionOptions(
                     n_cores=resources.cpus,
-                    mem_gb=resources.mem_gb,
+                    mem_gb=orca_memory_gb(resources, orca_memory_fraction),
                     debug=debug,
                     save_output_dir=save_output_dir,
                     work_dir=str(work_dir or cluster.work_dir) if (work_dir or cluster.work_dir) else None,

@@ -99,6 +99,40 @@ class JobSubmissionResult:
 
 
 DEFAULT_CUSTOM_STAGE_RESOURCES = Resources(cpus=4, mem_gb=20, timeout_min=720)
+DEFAULT_ORCA_MEMORY_FRACTION = 0.8
+
+
+def orca_memory_gb(
+    resources: Resources,
+    fraction: float = DEFAULT_ORCA_MEMORY_FRACTION,
+) -> float:
+    """Return the memory budget forwarded to ORCA for a submitted job.
+
+    Parameters
+    ----------
+    resources : Resources
+        Full CPU, memory, and timeout allocation requested from the scheduler.
+    fraction : float, optional
+        Portion of ``resources.mem_gb`` made available to ORCA. It must be
+        greater than zero and no greater than one. The default, ``0.8``,
+        reserves 20 percent of the Slurm allocation for Python, filesystem,
+        and other process overhead.
+
+    Returns
+    -------
+    float
+        ORCA memory budget in GB.
+
+    Examples
+    --------
+    A 64 GB Slurm allocation leaves 51.2 GB available to ORCA:
+
+    >>> orca_memory_gb(Resources(cpus=12, mem_gb=64, timeout_min=720))
+    51.2
+    """
+    if not 0 < fraction <= 1:
+        raise ValueError("orca_memory_fraction must be greater than zero and no greater than one")
+    return float(resources.mem_gb) * fraction
 
 
 CHAIN_PRESET_MODULES: dict[ChainPreset, str] = {

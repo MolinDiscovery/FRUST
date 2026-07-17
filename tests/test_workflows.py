@@ -623,6 +623,14 @@ class WorkflowExecutionTests(unittest.TestCase):
         self.assertEqual(dependencies[1], "afterok:job-1")
         self.assertEqual(dependencies[2], "afterok:job-2")
         self.assertEqual(dependencies[3], "afterok:job-3")
+        self.assertEqual(
+            [params["mem_gb"] for params in fake.parameters],
+            [11, 13, 8, 6],
+        )
+        self.assertEqual(
+            [round(submission[1][6].mem_gb, 2) for submission in fake.submissions],
+            [8.8, 10.4, 6.4, 4.8],
+        )
         self.assertIsNone(result.collection_job_id)
 
     def test_raw_mols_submit_dft_staged_submits_dependent_groups(self):
@@ -763,6 +771,11 @@ class WorkflowExecutionTests(unittest.TestCase):
         self.assertEqual(result.mode, "mols:single_job")
         self.assertEqual(len(result.tags), 2)
         self.assertEqual(len(fake.submissions), 2)
+        self.assertEqual([params["mem_gb"] for params in fake.parameters], [20, 20])
+        self.assertEqual(
+            [submission[1][3].mem_gb for submission in fake.submissions],
+            [16.0, 16.0],
+        )
 
     def test_collect_expected_outputs_writes_report_and_skips_failed_outputs(self):
         df = pd.DataFrame(
