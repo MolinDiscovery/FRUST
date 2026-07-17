@@ -32,7 +32,7 @@ wf = ft.workflows.screen_ts(
     ts_types=["TS1", "TS2", "TS3", "TS4"],
     method="r2scan-3c",
     n_confs=None,
-    top_n=10,
+    top_n=20,
     dft=True,
 )
 ```

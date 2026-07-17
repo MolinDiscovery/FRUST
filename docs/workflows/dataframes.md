@@ -170,7 +170,7 @@ Example output from a merged workflow:
 | `DFT-SP-solvent` | `orca` | `direct` | `wB97X-D3 6-31+G** TightSCF SP NoSym` | 18 | 18 |  |
 
 This example used an explicit `rmsd_max_rmsd=0.25` pruning override. The
-default `prune_initial=True` workflow configuration uses `1.25`.
+default `prune_initial=True` workflow configuration uses `0.5`.
 
 For merged workflow outputs, the default summary collapses stored variants such
 as `xtb_opt__variant_001` into one logical `xtb_opt` row. The compact columns

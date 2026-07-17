@@ -201,9 +201,9 @@ class MolsWorkflow(BaseWorkflow):
         select_mols: str | list[str] = "all",
         method: MethodPlan | str | None = None,
         n_confs: int | None = None,
-        top_n: int = 10,
-        dft: bool = False,
-        prune_initial: bool | dict[str, Any] = False,
+        top_n: int = 20,
+        dft: bool = True,
+        prune_initial: bool | dict[str, Any] = True,
     ) -> None:
         super().__init__(method=method, n_confs=n_confs, top_n=top_n, dft=dft)
         self.csv_path = csv_path
@@ -520,9 +520,9 @@ class ScreenTSWorkflow(BaseWorkflow):
         ts_backend: str = "tsguess2",
         method: MethodPlan | str | None = None,
         n_confs: int | None = None,
-        top_n: int = 10,
+        top_n: int = 20,
         dft: bool = True,
-        prune_initial: bool | dict[str, Any] = False,
+        prune_initial: bool | dict[str, Any] = True,
     ) -> None:
         super().__init__(method=method, n_confs=n_confs, top_n=top_n, dft=dft)
         self.csv_path = csv_path
@@ -682,9 +682,9 @@ class Int3Workflow(BaseWorkflow):
         dataframe: pd.DataFrame | None = None,
         method: MethodPlan | str | None = None,
         n_confs: int | None = None,
-        top_n: int = 10,
+        top_n: int = 20,
         dft: bool = True,
-        prune_initial: bool | dict[str, Any] = False,
+        prune_initial: bool | dict[str, Any] = True,
     ) -> None:
         super().__init__(method=method, n_confs=n_confs, top_n=top_n, dft=dft)
         self.csv_path = csv_path
@@ -918,7 +918,7 @@ def mols(
     method: MethodPlan | str | None = None,
     n_confs: int | None = None,
     top_n: int = 20,
-    dft: bool = False,
+    dft: bool = True,
     prune_initial: bool | dict[str, Any] = True,
 ) -> MolsWorkflow:
     """Create a molecule-state workflow.
@@ -1091,7 +1091,7 @@ def screen_ts(
     ts_backend: str = "tsguess2",
     method: MethodPlan | str | None = None,
     n_confs: int | None = None,
-    top_n: int = 10,
+    top_n: int = 20,
     dft: bool = True,
     prune_initial: bool | dict[str, Any] = True,
 ) -> ScreenTSWorkflow:
@@ -1246,9 +1246,9 @@ def int3(
     ts_xyz: str | Path | None = None,
     method: MethodPlan | str | None = None,
     n_confs: int | None = None,
-    top_n: int = 10,
+    top_n: int = 20,
     dft: bool = True,
-    prune_initial: bool | dict[str, Any] = False,
+    prune_initial: bool | dict[str, Any] = True,
 ) -> Int3Workflow:
     """Create a modern, dedicated INT3 constrained-minimum workflow.
 

@@ -25,7 +25,7 @@ wf = ft.workflows.screen_ts(
     ts_types=["TS1", "TS2", "TS3", "TS4"],
     method=method,
     n_confs=None,
-    top_n=10,
+    top_n=20,
     dft=True,
 )
 ```
@@ -105,7 +105,7 @@ wf = ft.workflows.screen_ts(
 )
 ```
 
-Here `0.25` is an explicit override; the workflow default is `1.25`. Install
+Here `0.25` is an explicit override; the workflow default is `0.5`. Install
 `prism-pruner` in the environment that runs the `init` stage, or pass
 `prune_initial=False` when pruning should be skipped.
 
