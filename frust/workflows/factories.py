@@ -1130,7 +1130,7 @@ def screen_ts(
     prune_initial : bool or dict, optional
         Defaults to ``True``, which inserts PRISM pruning immediately after
         ``prepare`` with ``modes=("moi", "rmsd")``,
-        ``moi_max_deviation=0.01``, ``rmsd_max_rmsd=1.25``,
+        ``moi_max_deviation=0.01``, ``rmsd_max_rmsd=0.5``,
         ``heavy_atoms_only=True``, and
         ``graph_source="connectivity_bonds"``. If ``False``, leave the initial
         TS conformer ensemble unchanged. Pass a dictionary to override the
