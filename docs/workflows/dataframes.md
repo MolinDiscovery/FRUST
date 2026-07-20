@@ -138,10 +138,12 @@ energies = ft.get_result(df, purpose="analysis")
 coords_col = ft.result_column(df, key="coords", purpose="optimized")
 ```
 
-For a completed DFT workflow, `purpose="analysis"` resolves to
-`dft_solv_sp-EE` for MOLS, screen TS, and INT3 results. Their optimization
-columns stay chemically distinct: `dft_opt-oc` for minima/INT3 and
-`dft_ts_opt-oc` for transition states.
+For a completed DFT workflow with a separate terminal solvent single point,
+`purpose="analysis"` resolves to `dft_solv_sp-EE` for MOLS, screen TS, and
+INT3 results. With the solvent-inclusive `r2scan-3c-solv` or
+`wb97xd3-631g-solv` presets, it resolves to `dft_freq-EE` because no terminal
+single point is run. Their optimization columns stay chemically distinct:
+`dft_opt-oc` for minima/INT3 and `dft_ts_opt-oc` for transition states.
 
 Common executable sources:
 

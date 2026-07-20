@@ -12,7 +12,12 @@ ResultProfile = Literal["minimum", "transition_state", "constrained_minimum"]
 ResultPurpose = Literal["analysis", "ranking", "optimized", "frequency"]
 
 
-def result_contract(profile: ResultProfile, *, dft: bool) -> dict[str, object]:
+def result_contract(
+    profile: ResultProfile,
+    *,
+    dft: bool,
+    include_terminal_solv_sp: bool = True,
+) -> dict[str, object]:
     """Return the canonical semantic-column contract for a workflow profile.
 
     Parameters
@@ -20,7 +25,11 @@ def result_contract(profile: ResultProfile, *, dft: bool) -> dict[str, object]:
     profile : {"minimum", "transition_state", "constrained_minimum"}
         Workflow chemistry/result profile.
     dft : bool
-        Whether the workflow includes DFT refinement and solvent stages.
+        Whether the workflow includes DFT refinement.
+    include_terminal_solv_sp : bool, optional
+        Whether the DFT workflow includes a final solvent single point. When
+        ``False``, the final DFT frequency-stage electronic energy is the
+        analysis energy because all DFT stages already include solvent.
 
     Returns
     -------
@@ -38,7 +47,13 @@ def result_contract(profile: ResultProfile, *, dft: bool) -> dict[str, object]:
         optimized_stage = "dft_opt" if dft else "xtb_opt"
     else:
         raise ValueError(f"Unknown result profile {profile!r}")
-    analysis_stage = "dft_solv_sp" if dft else ranking_stage
+    analysis_stage = (
+        "dft_solv_sp"
+        if dft and include_terminal_solv_sp
+        else "dft_freq"
+        if dft
+        else ranking_stage
+    )
     columns: dict[str, dict[str, str]] = {
         "analysis": {
             "electronic_energy": output_column(analysis_stage, "electronic_energy")
@@ -62,7 +77,11 @@ def result_contract(profile: ResultProfile, *, dft: bool) -> dict[str, object]:
 
 
 def attach_result_contract(
-    df: pd.DataFrame, profile: ResultProfile, *, dft: bool
+    df: pd.DataFrame,
+    profile: ResultProfile,
+    *,
+    dft: bool,
+    include_terminal_solv_sp: bool = True,
 ) -> pd.DataFrame:
     """Attach compact semantic result metadata to a dataframe in place.
 
@@ -74,13 +93,19 @@ def attach_result_contract(
         Workflow chemistry/result profile.
     dft : bool
         Whether the workflow includes DFT refinement.
+    include_terminal_solv_sp : bool, optional
+        Whether a separate final solvent single point was calculated.
 
     Returns
     -------
     pandas.DataFrame
         The same dataframe with ``frust_results`` metadata.
     """
-    df.attrs["frust_results"] = result_contract(profile, dft=dft)
+    df.attrs["frust_results"] = result_contract(
+        profile,
+        dft=dft,
+        include_terminal_solv_sp=include_terminal_solv_sp,
+    )
     return df
 
 

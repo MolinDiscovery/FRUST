@@ -3,8 +3,9 @@
 Workflow classes define stage ids such as ``"xtb_opt"`` or ``"dft_ts_opt"``.
 ``MethodPlan`` maps those ids to ``CalculatorSpec`` objects, which are then
 dispatched by :mod:`frust.workflows.core` to ``Stepper.xtb``, ``Stepper.gxtb``,
-or ``Stepper.orca``. Changing a method plan changes calculator settings only; it
-does not change workflow targets or chemistry.
+or ``Stepper.orca``. A method plan changes calculator settings and can choose
+whether the workflow needs a separate terminal solvent single point; it does
+not change workflow targets or chemistry.
 """
 
 from __future__ import annotations
@@ -45,6 +46,10 @@ class CalculatorSpec:
         Extra xTB/g-xTB input cards.
     xtra_inp_str : str, optional
         Extra ORCA input block.
+    solvent : str or None, optional
+        Semantic solvent name used by the calculator. ORCA specifications
+        created with :func:`orca` populate this field so workflow inspection
+        can display solvent settings without parsing raw input text.
     kwargs : dict, optional
         Additional engine-specific keyword arguments forwarded to Stepper.
 
@@ -59,6 +64,7 @@ class CalculatorSpec:
     options: dict[str, Any] = field(default_factory=dict)
     detailed_inp_str: str = ""
     xtra_inp_str: str = ""
+    solvent: str | None = None
     kwargs: dict[str, Any] = field(default_factory=dict)
 
     def __post_init__(self) -> None:
@@ -67,6 +73,8 @@ class CalculatorSpec:
             raise ValueError(f"Unsupported calculator engine: {self.engine!r}")
         object.__setattr__(self, "engine", engine)
         object.__setattr__(self, "options", dict(self.options or {}))
+        solvent = None if self.solvent is None else str(self.solvent).strip()
+        object.__setattr__(self, "solvent", solvent or None)
         object.__setattr__(self, "kwargs", dict(self.kwargs or {}))
 
 
@@ -80,13 +88,18 @@ class MethodPlan:
         Human-readable method-plan name.
     stages : mapping
         Mapping from workflow stage ids to :class:`CalculatorSpec` objects.
+    include_terminal_solv_sp : bool, optional
+        Whether DFT workflow graphs should end with their separate
+        ``dft_solv_sp`` calculation. Set this to ``False`` when the DFT
+        ranking, optimization, and frequency stages already include solvent.
 
     Notes
     -----
     Stage ids must match the ``StageDef.id`` values used by a workflow, unless a
     stage explicitly sets ``StageDef.method_stage``. For example, the screen TS
     workflow asks for keys such as ``"xtb_preopt"``, ``"dft_hessian"``,
-    ``"dft_ts_opt"``, ``"dft_freq"``, and ``"dft_solv_sp"``.
+    ``"dft_ts_opt"``, and ``"dft_freq"``. Plans with
+    ``include_terminal_solv_sp=True`` also require ``"dft_solv_sp"``.
 
     A method plan can contain more stages than a specific workflow will run.
     For example, the built-in ``"r2scan-3c"`` preset contains TS-specific keys
@@ -99,6 +112,7 @@ class MethodPlan:
 
     name: str
     stages: Mapping[str, CalculatorSpec]
+    include_terminal_solv_sp: bool = True
 
     def __post_init__(self) -> None:
         normalized: dict[str, CalculatorSpec] = {}
@@ -107,6 +121,11 @@ class MethodPlan:
                 raise TypeError(f"Stage {stage_id!r} must be a CalculatorSpec")
             normalized[str(stage_id)] = spec
         object.__setattr__(self, "stages", normalized)
+        object.__setattr__(
+            self,
+            "include_terminal_solv_sp",
+            bool(self.include_terminal_solv_sp),
+        )
 
     def for_stage(self, stage_id: str) -> CalculatorSpec:
         """Return the calculator spec for one workflow stage.
@@ -345,6 +364,7 @@ def orca(
         engine="orca",
         options=options,
         xtra_inp_str=extra,
+        solvent=solvent,
         kwargs=kwargs,
     )
 
@@ -406,6 +426,11 @@ def preset(name: str) -> MethodPlan:
         - ``"wb97xd3-631g"``: use ORCA ``wB97X-D3`` with ``6-31G**`` for most
           DFT stages and ``6-31+G**`` for the solvent single-point stage. This
           is the workflow default when ``method=None``.
+        - ``"r2scan-3c-solv"``: use solvent-inclusive ORCA ``r2SCAN-3c`` DFT
+          stages with SMD chloroform and no terminal solvent single point.
+        - ``"wb97xd3-631g-solv"``: use solvent-inclusive ORCA
+          ``wB97X-D3/6-31G**`` DFT stages with SMD chloroform and no terminal
+          solvent single point.
         - ``"r2scan-def2svp"``: use ORCA ``R2SCAN`` with the ``def2-SVP`` basis
           for DFT stages.
 
@@ -488,6 +513,8 @@ def _ensure_builtin_presets() -> None:
         return
     register_preset("r2scan-3c", _r2scan_3c())
     register_preset("wb97xd3-631g", _wb97xd3_631g())
+    register_preset("r2scan-3c-solv", _r2scan_3c_solv())
+    register_preset("wb97xd3-631g-solv", _wb97xd3_631g_solv())
     register_preset("r2scan-def2svp", _r2scan_def2svp())
     _BUILTINS_REGISTERED = True
 
@@ -500,16 +527,16 @@ def _base_stages(
     dft_hessian: CalculatorSpec,
     dft_ts_opt: CalculatorSpec,
     dft_freq: CalculatorSpec,
-    dft_solv_sp: CalculatorSpec,
+    dft_solv_sp: CalculatorSpec | None = None,
 ) -> dict[str, CalculatorSpec]:
     """Return common stage specs for built-in workflow presets.
 
     Parameters
     ----------
     dft_rank_sp, dft_preopt, dft_opt, dft_hessian, dft_ts_opt, dft_freq,
-    dft_solv_sp : CalculatorSpec
-        DFT-stage calculator specs. Shared initialization specs are added by
-        this helper.
+    dft_solv_sp : CalculatorSpec or None, optional
+        Terminal solvent single-point calculator. Use ``None`` for a method
+        plan whose DFT stages are solvent-inclusive.
 
     Returns
     -------
@@ -526,8 +553,9 @@ def _base_stages(
         "dft_hessian": dft_hessian,
         "dft_ts_opt": dft_ts_opt,
         "dft_freq": dft_freq,
-        "dft_solv_sp": dft_solv_sp,
     }
+    if dft_solv_sp is not None:
+        canonical["dft_solv_sp"] = dft_solv_sp
     return canonical
 
 
@@ -562,6 +590,52 @@ def _wb97xd3_631g() -> MethodPlan:
             dft_freq=orca(method=method, basis="6-31G**", job="freq"),
             dft_solv_sp=orca(
                 method=method, basis="6-31+G**", job="sp", solvent="chloroform"
+            ),
+        ),
+    )
+
+
+def _r2scan_3c_solv() -> MethodPlan:
+    """Build the solvent-inclusive ORCA r2SCAN-3c method preset."""
+    method = "r2SCAN-3c"
+    return MethodPlan(
+        name="r2scan-3c-solv",
+        include_terminal_solv_sp=False,
+        stages=_base_stages(
+            dft_rank_sp=orca_composite(method, job="sp", solvent="chloroform"),
+            dft_preopt=orca_composite(method, job="opt", solvent="chloroform"),
+            dft_opt=orca_composite(method, job="opt", solvent="chloroform"),
+            dft_hessian=orca_composite(method, job="freq", solvent="chloroform"),
+            dft_ts_opt=orca_composite(method, job="optts", solvent="chloroform"),
+            dft_freq=orca_composite(method, job="freq", solvent="chloroform"),
+        ),
+    )
+
+
+def _wb97xd3_631g_solv() -> MethodPlan:
+    """Build the solvent-inclusive ORCA wB97X-D3/6-31G workflow preset."""
+    method = "wB97X-D3"
+    return MethodPlan(
+        name="wb97xd3-631g-solv",
+        include_terminal_solv_sp=False,
+        stages=_base_stages(
+            dft_rank_sp=orca(
+                method=method, basis="6-31G**", job="sp", solvent="chloroform"
+            ),
+            dft_preopt=orca(
+                method=method, basis="6-31G**", job="opt", solvent="chloroform"
+            ),
+            dft_opt=orca(
+                method=method, basis="6-31G**", job="opt", solvent="chloroform"
+            ),
+            dft_hessian=orca(
+                method=method, basis="6-31G**", job="freq", solvent="chloroform"
+            ),
+            dft_ts_opt=orca(
+                method=method, basis="6-31G**", job="optts", solvent="chloroform"
+            ),
+            dft_freq=orca(
+                method=method, basis="6-31G**", job="freq", solvent="chloroform"
             ),
         ),
     )

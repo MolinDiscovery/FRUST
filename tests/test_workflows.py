@@ -291,6 +291,113 @@ class WorkflowExecutionTests(unittest.TestCase):
         self.assertEqual(optts["calculation"], "DFT transition-state optimization")
         self.assertEqual(optts["method_key"], "dft_ts_opt")
 
+    def test_solvent_inclusive_preset_omits_terminal_solvent_stage_for_mols(self):
+        wf = ft.workflows.mols(
+            dataframe=pd.DataFrame({"smiles": ["CCO"]}),
+            method="r2scan-3c-solv",
+            dft=True,
+        )
+
+        stages = wf.show_stages()
+
+        self.assertEqual(
+            list(stages["stage"])[-3:],
+            ["dft_rank_sp", "dft_opt", "dft_freq"],
+        )
+        self.assertNotIn("dft_solv_sp", stages["stage"].tolist())
+
+    def test_solvent_inclusive_preset_omits_terminal_solvent_stage_for_screen_ts(self):
+        wf = ft.workflows.screen_ts(
+            dataframe=_screen_df(),
+            ts_types=["TS1"],
+            method="r2scan-3c-solv",
+            dft=True,
+        )
+
+        stages = wf.show_stages()
+
+        self.assertEqual(
+            list(stages["stage"])[-4:],
+            ["dft_preopt", "dft_hessian", "dft_ts_opt", "dft_freq"],
+        )
+        self.assertNotIn("dft_solv_sp", stages["stage"].tolist())
+        dft_stages = stages.loc[stages["stage"].str.startswith("dft_")]
+        self.assertEqual(set(dft_stages["solvent"]), {"SMD(chloroform)"})
+
+    def test_solvent_inclusive_preset_omits_terminal_solvent_stage_for_int3(self):
+        wf = ft.workflows.int3(
+            dataframe=_screen_df(),
+            method="r2scan-3c-solv",
+            dft=True,
+        )
+
+        stages = wf.show_stages()
+
+        self.assertEqual(
+            list(stages["stage"])[-3:],
+            ["dft_preopt", "dft_opt", "dft_freq"],
+        )
+        self.assertNotIn("dft_solv_sp", stages["stage"].tolist())
+
+    def test_solvent_inclusive_preset_uses_frequency_energy_as_final_result(self):
+        df = pd.DataFrame({"compound_name": ["raw"], "smiles": ["CCO"]})
+        with (
+            patch("frust.workflows.factories.Stepper", FakeStepper),
+            patch("frust.workflows.core.Stepper", FakeStepper),
+        ):
+            wf = ft.workflows.raw_mols(
+                dataframe=df,
+                method="r2scan-3c-solv",
+                dft=True,
+            )
+            out = wf.run(targets=[0], n_cores=2, mem_gb=4)
+
+        orca_calls = [call for call in FakeStepper.calls if call[0] == "orca"]
+        self.assertEqual(
+            [call[1] for call in orca_calls],
+            ["dft_rank_sp", "dft_opt", "dft_freq"],
+        )
+        self.assertEqual(ft.result_column(out), "dft_freq-EE")
+
+    def test_show_stages_full_exposes_planned_inputs_and_stage_controls(self):
+        method = methods.preset("r2scan-3c-solv").replace(
+            dft_ts_opt=methods.orca_composite(
+                "r2SCAN-3c",
+                job="optts",
+                solvent="chloroform",
+                uma="omol",
+            )
+        )
+        wf = ft.workflows.screen_ts(
+            dataframe=_screen_df(),
+            ts_types=["TS1"],
+            method=method,
+            dft=True,
+        )
+
+        stages = wf.show_stages(detail="full")
+
+        self.assertIn("xtra_inp_str", stages.columns)
+        self.assertIn("calculator_kwargs", stages.columns)
+        rank_sp = stages.loc[stages["stage"].eq("dft_rank_sp")].iloc[0]
+        self.assertEqual(
+            rank_sp["xtra_inp_str"],
+            '%CPCM\\nSMD TRUE\\nSMDSOLVENT "chloroform"\\nend',
+        )
+        hessian = stages.loc[stages["stage"].eq("dft_hessian")].iloc[0]
+        self.assertEqual(hessian["read_files"], '["input.hess"]')
+        optts = stages.loc[stages["stage"].eq("dft_ts_opt")].iloc[0]
+        self.assertTrue(optts["use_last_hess"])
+        self.assertEqual(optts["calculator_kwargs"], '{"uma": "omol"}')
+        prune = stages.loc[stages["stage"].eq("initial_prune")].iloc[0]
+        self.assertIn('"modes": ["moi", "rmsd"]', prune["prune_options"])
+
+    def test_show_stages_rejects_unknown_detail(self):
+        wf = ft.workflows.raw_mols(smiles=["CCO"])
+
+        with self.assertRaisesRegex(ValueError, "detail must be 'summary' or 'full'"):
+            wf.show_stages(detail="verbose")
+
     def test_screen_ts_dft_false_stops_after_dft_pre_sp_filter(self):
         wf = ft.workflows.screen_ts(
             dataframe=_screen_df(),

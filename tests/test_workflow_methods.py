@@ -25,7 +25,13 @@ class WorkflowMethodTests(unittest.TestCase):
         self.assertEqual(spec.options, {})
 
     def test_builtin_presets_use_gxtb_for_low_cost_init_stages(self):
-        for name in ("r2scan-3c", "wb97xd3-631g", "r2scan-def2svp"):
+        for name in (
+            "r2scan-3c",
+            "wb97xd3-631g",
+            "r2scan-3c-solv",
+            "wb97xd3-631g-solv",
+            "r2scan-def2svp",
+        ):
             with self.subTest(name=name):
                 method = methods.preset(name)
 
@@ -33,6 +39,44 @@ class WorkflowMethodTests(unittest.TestCase):
                 self.assertEqual(method.for_stage("xtb_sp").options, {})
                 self.assertEqual(method.for_stage("xtb_opt").engine, "gxtb")
                 self.assertEqual(method.for_stage("xtb_opt").options, {"opt": None})
+
+    def test_solvent_inclusive_presets_solvate_every_dft_stage(self):
+        dft_stages = (
+            "dft_rank_sp",
+            "dft_preopt",
+            "dft_opt",
+            "dft_hessian",
+            "dft_ts_opt",
+            "dft_freq",
+        )
+        for name in ("r2scan-3c-solv", "wb97xd3-631g-solv"):
+            with self.subTest(name=name):
+                method = methods.preset(name)
+
+                self.assertFalse(method.include_terminal_solv_sp)
+                self.assertNotIn("dft_solv_sp", method.stages)
+                for stage in dft_stages:
+                    self.assertIn(
+                        'SMDSOLVENT "chloroform"',
+                        method.for_stage(stage).xtra_inp_str,
+                    )
+                    self.assertEqual(method.for_stage(stage).solvent, "chloroform")
+
+    def test_wb97xd3_solvent_preset_keeps_the_regular_dft_basis(self):
+        method = methods.preset("wb97xd3-631g-solv")
+
+        for stage in (
+            "dft_rank_sp",
+            "dft_preopt",
+            "dft_opt",
+            "dft_hessian",
+            "dft_ts_opt",
+            "dft_freq",
+        ):
+            with self.subTest(stage=stage):
+                options = method.for_stage(stage).options
+                self.assertIn("6-31G**", options)
+                self.assertNotIn("6-31+G**", options)
 
     def test_method_replace_updates_only_named_stage(self):
         base = methods.preset("r2scan-3c")

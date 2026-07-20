@@ -7,7 +7,7 @@ separate:
 | Concept | Owns | Example |
 | --- | --- | --- |
 | `Workflow` | chemistry, targets, stage graph | `ft.workflows.screen_ts(...)` |
-| `MethodPlan` | calculator engines/options | `ft.workflows.methods.preset("r2scan-3c")` |
+| `MethodPlan` | calculator engines/options and terminal solvent-SP policy | `ft.workflows.methods.preset("r2scan-3c")` |
 | execution mode | job grouping | `single_job`, `dft_staged`, `fully_staged` |
 
 The same workflow and method can be used in both places:
@@ -80,14 +80,17 @@ because the calculation level is visible at the workflow construction site.
 
 ### Built-In Presets
 
-| preset name | DFT stages | solvent stage | Use when |
+| preset name | DFT stages | solvent treatment | Use when |
 | --- | --- | --- | --- |
 | `"r2scan-3c"` | ORCA `r2SCAN-3c` composite method | ORCA `r2SCAN-3c` single point with SMD chloroform | You want the compact composite-method workflow currently used in most new examples. |
 | `"wb97xd3-631g"` | ORCA `wB97X-D3/6-31G**` | ORCA `wB97X-D3/6-31+G**` single point with SMD chloroform | You want FRUST's legacy/default workflow behavior. |
+| `"r2scan-3c-solv"` | Solvent-inclusive ORCA `r2SCAN-3c` composite method | SMD chloroform in every DFT stage; no final solvent SP | You want the structure, frequencies, and ranking energies evaluated consistently in chloroform. |
+| `"wb97xd3-631g-solv"` | Solvent-inclusive ORCA `wB97X-D3/6-31G**` | SMD chloroform in every DFT stage; no final solvent SP | You want the conventional wB97X-D3 workflow evaluated consistently in chloroform. |
 | `"r2scan-def2svp"` | ORCA `R2SCAN/def2-SVP` | ORCA `R2SCAN/def2-SVPD` single point with SMD chloroform | You want a conventional R2SCAN/basis-set workflow instead of the `r2SCAN-3c` composite method. |
 
-All three built-ins use the same stage ids. The low-cost initialization stages
-are identical across presets; the ORCA options differ by preset.
+The low-cost initialization stages are identical across presets. The existing
+gas-phase presets end with `dft_solv_sp`; the two `*-solv` presets omit that
+stage because their DFT calculations already include SMD chloroform.
 
 | stage id | default engine | role |
 | --- | --- | --- |
@@ -100,14 +103,38 @@ are identical across presets; the ORCA options differ by preset.
 | `dft_hessian` | `orca` | Hessian/frequency stage for TS optimization |
 | `dft_ts_opt` | `orca` | ORCA `OptTS` |
 | `dft_freq` | `orca` | final frequency check |
-| `dft_solv_sp` | `orca` | final solvent single point |
+| `dft_solv_sp` | `orca` | final solvent single point for gas-phase presets only |
 
 `method.stages` is the reusable calculator map. To see which parts of that map
 a specific workflow will actually run, inspect the workflow:
 
 ```python
-wf.show_stages()[["group", "stage", "method_key", "engine", "options"]]
+wf.show_stages()[["group", "stage", "method_key", "engine", "options", "solvent"]]
 ```
+
+For the complete planned configuration, request the full view:
+
+```python
+full = wf.show_stages(detail="full")
+full[[
+    "stage",
+    "options",
+    "solvent",
+    "detailed_inp_str",
+    "xtra_inp_str",
+    "calculator_kwargs",
+    "read_files",
+    "use_last_hess",
+    "save_files",
+    "prune_options",
+]]
+```
+
+Multiline calculator input uses literal `\n` separators so the dataframe can
+be printed with `.to_markdown()` without breaking rows. This is the planned
+configuration; runtime-derived coordinates, memory directives, executable
+paths, and generated constraint blocks are recorded in calculation provenance
+and output files after execution.
 
 !!! note "Presets are larger than any one workflow"
 
@@ -133,6 +160,60 @@ SMD TRUE
 SMDSOLVENT "chloroform"
 end
 ```
+
+#### Solvent-Inclusive Presets
+
+Use a `*-solv` preset when solvent must affect both the geometries and the
+energies used to rank structures. It adds the same SMD chloroform block to all
+active DFT stages and deliberately does not schedule `dft_solv_sp`.
+
+```python
+import frust as ft
+
+wf = ft.workflows.screen_ts(
+    csv_path="docs/examples/screen.csv",
+    ts_types=["TS1"],
+    method="r2scan-3c-solv",
+    dft=True,
+)
+
+wf.show_stages(execution="dft_staged")
+```
+
+The `solvent` column makes the implicit-solvent model visible for every DFT
+stage:
+
+| stage | options | solvent |
+| --- | --- | --- |
+| `dft_rank_sp` | `r2SCAN-3c TightSCF SP NoSym` | `SMD(chloroform)` |
+| `dft_preopt` | `r2SCAN-3c TightSCF SlowConv Opt NoSym` | `SMD(chloroform)` |
+| `dft_hessian` | `r2SCAN-3c TightSCF SlowConv Freq NoSym` | `SMD(chloroform)` |
+| `dft_ts_opt` | `r2SCAN-3c TightSCF SlowConv OptTS NoSym` | `SMD(chloroform)` |
+| `dft_freq` | `r2SCAN-3c TightSCF SlowConv Freq NoSym` | `SMD(chloroform)` |
+
+| workflow | active solvent-inclusive DFT stages |
+| --- | --- |
+| `ft.workflows.mols(...)` | `dft_rank_sp -> dft_opt -> dft_freq` |
+| `ft.workflows.screen_ts(...)` | `dft_rank_sp -> dft_preopt -> dft_hessian -> dft_ts_opt -> dft_freq` |
+| `ft.workflows.int3(...)` | `dft_rank_sp -> dft_preopt -> dft_opt -> dft_freq` |
+
+`r2scan-3c-solv` uses the r2SCAN-3c composite keyword at every DFT stage.
+`wb97xd3-631g-solv` uses `wB97X-D3/6-31G**` at every DFT stage; it does not
+move the gas-phase preset's `6-31+G**` final-single-point basis into the
+optimization or frequency calculations.
+
+The final analysis electronic energy for these workflows is `dft_freq-EE`:
+
+```python
+energy_column = ft.result_column(df, purpose="analysis")
+# "dft_freq-EE"
+```
+
+!!! info "No terminal solvent-SP resource group"
+
+    With a `*-solv` preset, `wf.show_stages()` has no `dft_solv_sp` row. Do
+    not include a `"dft_solv_sp"` entry in `stage_resources`; the final DFT
+    resource group is `dft_freq`.
 
 #### `r2scan-3c`
 

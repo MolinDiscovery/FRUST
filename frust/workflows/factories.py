@@ -109,6 +109,7 @@ def _molecule_stage_defs(
     *,
     top_n: int,
     dft: bool,
+    include_terminal_solv_sp: bool = True,
     prune_initial: bool | dict[str, Any] | None = False,
 ) -> list[StageDef]:
     """Return the shared molecule stage graph."""
@@ -124,9 +125,10 @@ def _molecule_stage_defs(
                 StageDef("dft_rank_sp", "DFT ranking single point"),
                 StageDef("dft_opt", "DFT minimum optimization", lowest=1, rank_by="dft_opt"),
                 StageDef("dft_freq", "DFT frequencies"),
-                StageDef("dft_solv_sp", "DFT solvent single point"),
             ]
         )
+        if include_terminal_solv_sp:
+            stages.append(StageDef("dft_solv_sp", "DFT solvent single point"))
     else:
         stages.append(StageDef("filter", "filter", kind="filter", lowest=1, rank_by="xtb_opt"))
     return _with_initial_prune(stages, prune_initial)
@@ -163,7 +165,9 @@ class MolsWorkflow(BaseWorkflow):
         default ``"wb97xd3-631g"`` preset, a preset string, or a custom
         :class:`frust.workflows.methods.MethodPlan`. Built-in preset strings
         are ``"r2scan-3c"`` (ORCA r2SCAN-3c composite DFT stages),
-        ``"wb97xd3-631g"`` (default ORCA wB97X-D3/6-31G** workflow), and
+        ``"wb97xd3-631g"`` (default ORCA wB97X-D3/6-31G** workflow),
+        ``"r2scan-3c-solv"`` and ``"wb97xd3-631g-solv"``
+        (solvent-inclusive DFT stages without a terminal solvent SP), and
         ``"r2scan-def2svp"`` (ORCA R2SCAN/def2-SVP DFT stages). A preset may
         contain stage keys this molecule workflow does not use; call
         ``wf.show_stages()`` to inspect the active stages.
@@ -172,8 +176,10 @@ class MolsWorkflow(BaseWorkflow):
     top_n : int, optional
         Number of rows kept after ranking/filtering stages.
     dft : bool, optional
-        If ``True``, add DFT optimization, frequency, and solvent stages. If
-        ``False``, end with a lowest-energy filter after xTB stages.
+        If ``True``, add DFT optimization and frequency stages. Gas-phase
+        presets also add a terminal solvent single point; solvent-inclusive
+        presets do not. If ``False``, end with a lowest-energy filter after xTB
+        stages.
     prune_initial : bool or dict, optional
         If ``False``, leave the initial conformer ensemble unchanged. If
         ``True``, insert PRISM pruning immediately after ``prepare`` using the
@@ -184,8 +190,10 @@ class MolsWorkflow(BaseWorkflow):
     Notes
     -----
     The default stage graph is ``prepare -> xtb_preopt -> xtb_sp -> xtb_opt``.
-    DFT workflows then run ``dft_rank_sp -> dft_opt -> dft_freq -> dft_solv_sp``;
-    non-DFT workflows run a final ``filter`` stage.
+    DFT workflows normally run ``dft_rank_sp -> dft_opt -> dft_freq ->
+    dft_solv_sp``. The solvent-inclusive presets omit ``dft_solv_sp`` because
+    all their DFT stages already include SMD chloroform. Non-DFT workflows run
+    a final ``filter`` stage.
     """
 
     workflow_name = "mols"
@@ -334,6 +342,7 @@ class MolsWorkflow(BaseWorkflow):
         return _molecule_stage_defs(
             top_n=self.top_n,
             dft=self.dft,
+            include_terminal_solv_sp=self.method.include_terminal_solv_sp,
             prune_initial=self.prune_initial,
         )
 
@@ -354,7 +363,9 @@ class RawMolsWorkflow(BaseWorkflow):
         default ``"wb97xd3-631g"`` preset, a preset string, or a custom
         :class:`frust.workflows.methods.MethodPlan`. Built-in preset strings
         are ``"r2scan-3c"`` (ORCA r2SCAN-3c composite DFT stages),
-        ``"wb97xd3-631g"`` (default ORCA wB97X-D3/6-31G** workflow), and
+        ``"wb97xd3-631g"`` (default ORCA wB97X-D3/6-31G** workflow),
+        ``"r2scan-3c-solv"`` and ``"wb97xd3-631g-solv"``
+        (solvent-inclusive DFT stages without a terminal solvent SP), and
         ``"r2scan-def2svp"`` (ORCA R2SCAN/def2-SVP DFT stages). A preset may
         contain TS-specific calculator keys, but ``raw_mols`` only uses the
         molecule stages shown by ``wf.show_stages()``.
@@ -376,10 +387,11 @@ class RawMolsWorkflow(BaseWorkflow):
     -----
     This workflow treats each input SMILES as the structure to calculate. It
     does not call ``create_mol_per_rpos`` and does not support ``select_mols``.
-    With ``dft=True``, the active DFT stages are ``dft_rank_sp -> dft_opt ->
-    dft_freq -> dft_solv_sp``. The ``dft_freq`` stage is a normal
-    minimum-frequency check used for thermochemistry; TS-specific
-    ``dft_hessian`` and ``dft_ts_opt`` stages are not run.
+    With ``dft=True``, gas-phase presets use ``dft_rank_sp -> dft_opt ->
+    dft_freq -> dft_solv_sp``. The solvent-inclusive presets stop at
+    ``dft_freq``. That stage is a normal minimum-frequency check used for
+    thermochemistry; TS-specific ``dft_hessian`` and ``dft_ts_opt`` stages are
+    not run.
     """
 
     workflow_name = "raw_mols"
@@ -497,6 +509,7 @@ class RawMolsWorkflow(BaseWorkflow):
         return _molecule_stage_defs(
             top_n=self.top_n,
             dft=self.dft,
+            include_terminal_solv_sp=self.method.include_terminal_solv_sp,
             prune_initial=self.prune_initial,
         )
 
@@ -653,7 +666,11 @@ class ScreenTSWorkflow(BaseWorkflow):
         stages = _ts_screening_stages(self.top_n, prune_initial=self.prune_initial)
         stages.append(_dft_rank_sp_stage())
         if self.dft:
-            stages.extend(_ts_dft_refinement_stages())
+            stages.extend(
+                _ts_dft_refinement_stages(
+                    include_terminal_solv_sp=self.method.include_terminal_solv_sp,
+                )
+            )
         else:
             stages.append(
                 StageDef(
@@ -733,7 +750,11 @@ class Int3Workflow(BaseWorkflow):
         stages = _ts_screening_stages(self.top_n, prune_initial=self.prune_initial)
         stages.append(_dft_rank_sp_stage())
         if self.dft:
-            stages.extend(_int3_dft_refinement_stages())
+            stages.extend(
+                _int3_dft_refinement_stages(
+                    include_terminal_solv_sp=self.method.include_terminal_solv_sp,
+                )
+            )
         else:
             stages.append(
                 StageDef(
@@ -902,9 +923,17 @@ class LegacyTSWorkflow(BaseWorkflow):
             )
             return stages
         if self.int3:
-            stages.extend(_int3_dft_refinement_stages())
+            stages.extend(
+                _int3_dft_refinement_stages(
+                    include_terminal_solv_sp=self.method.include_terminal_solv_sp,
+                )
+            )
         else:
-            stages.extend(_ts_dft_refinement_stages())
+            stages.extend(
+                _ts_dft_refinement_stages(
+                    include_terminal_solv_sp=self.method.include_terminal_solv_sp,
+                )
+            )
         return stages
 
 
@@ -951,7 +980,9 @@ def mols(
         default ``"wb97xd3-631g"`` preset, a preset string, or a custom
         :class:`frust.workflows.methods.MethodPlan`. Built-in preset strings
         are ``"r2scan-3c"`` (ORCA r2SCAN-3c composite DFT stages),
-        ``"wb97xd3-631g"`` (default ORCA wB97X-D3/6-31G** workflow), and
+        ``"wb97xd3-631g"`` (default ORCA wB97X-D3/6-31G** workflow),
+        ``"r2scan-3c-solv"`` and ``"wb97xd3-631g-solv"``
+        (solvent-inclusive DFT stages without a terminal solvent SP), and
         ``"r2scan-def2svp"`` (ORCA R2SCAN/def2-SVP DFT stages). A preset may
         contain stage keys this molecule workflow does not use; call
         ``wf.show_stages()`` to inspect the active stages.
@@ -960,7 +991,9 @@ def mols(
     top_n : int, optional
         Number of rows retained by ranking/filtering stages.
     dft : bool, optional
-        Include DFT optimization, frequency, and solvent stages when ``True``.
+        Include DFT optimization and frequency stages when ``True``. Gas-phase
+        presets also include a terminal solvent single point; solvent-inclusive
+        presets do not.
     prune_initial : bool or dict, optional
         If ``False``, leave the initial conformer ensemble unchanged. If
         ``True``, insert PRISM pruning immediately after ``prepare`` using the
@@ -1116,7 +1149,9 @@ def screen_ts(
         default ``"wb97xd3-631g"`` preset, a preset string, or a custom
         :class:`frust.workflows.methods.MethodPlan`. Built-in preset strings
         are ``"r2scan-3c"`` (ORCA r2SCAN-3c composite DFT stages),
-        ``"wb97xd3-631g"`` (default ORCA wB97X-D3/6-31G** workflow), and
+        ``"wb97xd3-631g"`` (default ORCA wB97X-D3/6-31G** workflow),
+        ``"r2scan-3c-solv"`` and ``"wb97xd3-631g-solv"``
+        (solvent-inclusive DFT stages without a terminal solvent SP), and
         ``"r2scan-def2svp"`` (ORCA R2SCAN/def2-SVP DFT stages).
     n_confs : int or None, optional
         Number of TS guess conformers generated per target.
@@ -1125,8 +1160,10 @@ def screen_ts(
         cutoff.
     dft : bool, optional
         If ``True``, include constrained DFT preoptimization, Hessian,
-        ``OptTS``, frequency, and solvent stages. If ``False``, stop after the
-        DFT pre-SP cutoff and keep the lowest-energy row.
+        ``OptTS``, and frequency stages. Gas-phase presets also include a
+        terminal solvent single point; solvent-inclusive presets do not. If
+        ``False``, stop after the DFT pre-SP cutoff and keep the lowest-energy
+        row.
     prune_initial : bool or dict, optional
         Defaults to ``True``, which inserts PRISM pruning immediately after
         ``prepare`` with ``modes=("moi", "rmsd")``,
@@ -1195,7 +1232,9 @@ def legacy_ts(
         default ``"wb97xd3-631g"`` preset, a preset string, or a custom
         :class:`frust.workflows.methods.MethodPlan`. Built-in preset strings
         are ``"r2scan-3c"`` (ORCA r2SCAN-3c composite DFT stages),
-        ``"wb97xd3-631g"`` (default ORCA wB97X-D3/6-31G** workflow), and
+        ``"wb97xd3-631g"`` (default ORCA wB97X-D3/6-31G** workflow),
+        ``"r2scan-3c-solv"`` and ``"wb97xd3-631g-solv"``
+        (solvent-inclusive DFT stages without a terminal solvent SP), and
         ``"r2scan-def2svp"`` (ORCA R2SCAN/def2-SVP DFT stages).
     n_confs : int or None, optional
         Conformer count for initial TS embedding.
@@ -1275,8 +1314,10 @@ def int3(
         cutoff.
     dft : bool, optional
         If ``True``, include constrained DFT preoptimization, INT3 DFT
-        optimization, frequency, and solvent stages. If ``False``, stop after
-        the DFT pre-SP cutoff and keep the lowest-energy row.
+        optimization, and frequency stages. Gas-phase presets also include a
+        terminal solvent single point; solvent-inclusive presets do not. If
+        ``False``, stop after the DFT pre-SP cutoff and keep the lowest-energy
+        row.
     prune_initial : bool or dict, optional
         If ``False``, leave the initial INT3 conformer ensemble unchanged. If
         ``True``, insert PRISM pruning immediately after ``prepare`` using the
@@ -1361,29 +1402,33 @@ def _dft_preopt_stage() -> StageDef:
     )
 
 
-def _ts_dft_refinement_stages() -> list[StageDef]:
+def _ts_dft_refinement_stages(*, include_terminal_solv_sp: bool = True) -> list[StageDef]:
     """Return common TS DFT refinement stages.
 
     Returns
     -------
     list of StageDef
         Constrained DFT preoptimization, Hessian, ``OptTS``, final frequency,
-        and solvent single-point stages.
+        and, by default, a solvent single-point stage.
     """
-    return [
+    stages = [
         _dft_preopt_stage(),
         StageDef("dft_hessian", "DFT Hessian", read_files=["input.hess"]),
         StageDef("dft_ts_opt", "DFT transition-state optimization", use_last_hess=True),
         StageDef("dft_freq", "DFT frequencies"),
-        StageDef("dft_solv_sp", "DFT solvent single point"),
     ]
+    if include_terminal_solv_sp:
+        stages.append(StageDef("dft_solv_sp", "DFT solvent single point"))
+    return stages
 
 
-def _int3_dft_refinement_stages() -> list[StageDef]:
+def _int3_dft_refinement_stages(*, include_terminal_solv_sp: bool = True) -> list[StageDef]:
     """Return INT3 DFT refinement stages after the DFT single-point cutoff."""
-    return [
+    stages = [
         _dft_preopt_stage(),
         StageDef("dft_opt", "DFT minimum optimization", lowest=1, rank_by="dft_opt"),
         StageDef("dft_freq", "DFT frequencies"),
-        StageDef("dft_solv_sp", "DFT solvent single point"),
     ]
+    if include_terminal_solv_sp:
+        stages.append(StageDef("dft_solv_sp", "DFT solvent single point"))
+    return stages

@@ -190,7 +190,9 @@ class BaseWorkflow:
         :func:`frust.workflows.methods.preset`, or a custom
         :class:`frust.workflows.methods.MethodPlan`. Built-in preset strings
         are ``"r2scan-3c"`` (ORCA r2SCAN-3c composite DFT stages),
-        ``"wb97xd3-631g"`` (default ORCA wB97X-D3/6-31G** workflow), and
+        ``"wb97xd3-631g"`` (default ORCA wB97X-D3/6-31G** workflow),
+        ``"r2scan-3c-solv"`` and ``"wb97xd3-631g-solv"``
+        (solvent-inclusive DFT stages without a terminal solvent SP), and
         ``"r2scan-def2svp"`` (ORCA R2SCAN/def2-SVP DFT stages).
     n_confs : int or None, optional
         Conformer count forwarded to the workflow's initial dataframe
@@ -301,7 +303,11 @@ class BaseWorkflow:
             source=f"frust.workflows.{self.workflow_name}.preview",
         )
 
-    def show_stages(self, *, execution: ExecutionMode | None = None) -> pd.DataFrame:
+    def show_stages(
+        self,
+        execution: ExecutionMode | None = None,
+        detail: str = "summary",
+    ) -> pd.DataFrame:
         """Return the active workflow stage graph as a compact dataframe.
 
         Parameters
@@ -313,6 +319,13 @@ class BaseWorkflow:
             one job per target, ``"dft_staged"`` keeps initialization together
             and splits DFT stages into dependent jobs, and ``"fully_staged"``
             splits every stage into its own dependent job.
+        detail : {"summary", "full"}, optional
+            Level of planned configuration to return. ``"summary"`` keeps the
+            compact stage table. ``"full"`` additionally includes raw
+            calculator input blocks, calculator keyword arguments, file reuse,
+            Hessian reuse, saved files, and complete pruning options. Multiline
+            input blocks use literal ``\\n`` separators so Markdown tables stay
+            readable.
 
         Returns
         -------
@@ -321,10 +334,16 @@ class BaseWorkflow:
             for the scheduler/resource group, ``stage`` for the workflow stage
             id, ``method_key`` for the calculator key read from
             ``method.stages``, ``engine`` for the calculator backend, and
-            ``options`` for the compact calculator keywords. The table
-            describes the method-plan keys this workflow will actually use; it
-            does not list unused entries from ``method.stages`` and does not
-            build targets, embed structures, or run calculators.
+            ``options`` for the compact calculator keywords. ``solvent`` shows
+            solvent settings such as ``"SMD(chloroform)"``. The table describes
+            the method-plan keys this workflow will actually use; it does not
+            list unused entries from ``method.stages`` and does not build
+            targets, embed structures, or run calculators.
+
+            Full detail describes the planned configuration. Runtime-derived
+            values such as rendered coordinates, resource-derived memory, and
+            resolved executable paths are recorded by the executed calculation
+            rather than this planning table.
 
         Examples
         --------
@@ -333,7 +352,11 @@ class BaseWorkflow:
         >>> import frust as ft
         >>> wf = ft.workflows.raw_mols(csv_path="raw_dimers.csv", method="r2scan-3c", dft=True)
         >>> wf.show_stages()[["group", "stage", "engine"]]
+        >>> wf.show_stages(detail="full")[["stage", "xtra_inp_str", "read_files"]]
         """
+        if detail not in {"summary", "full"}:
+            raise ValueError("detail must be 'summary' or 'full'")
+
         mode = execution or ("dft_staged" if self.dft else "single_job")
         rows: list[dict[str, Any]] = []
         for group in self._stage_groups(mode):
@@ -349,37 +372,67 @@ class BaseWorkflow:
                     else _format_stage_options(spec.options if spec is not None else None)
                 )
 
-                rows.append(
-                    {
-                        "group": group_name,
-                        "stage": stage.id,
-                        "calculation": stage.name,
-                        "kind": stage.kind,
-                        "method_key": method_key if stage.kind == "calc" else None,
-                        "engine": _stage_engine(stage, spec),
-                        "options": options_text,
-                        "lowest": stage.lowest,
-                        "rank_by": stage.rank_by,
-                        "constraint": stage.constraint,
-                        "n_cores": stage.n_cores,
-                    }
-                )
-        return pd.DataFrame(
-            rows,
-            columns=[
-                "group",
-                "stage",
-                "calculation",
-                "kind",
-                "method_key",
-                "engine",
-                "options",
-                "lowest",
-                "rank_by",
-                "constraint",
-                "n_cores",
-            ],
-        )
+                row = {
+                    "group": group_name,
+                    "stage": stage.id,
+                    "calculation": stage.name,
+                    "kind": stage.kind,
+                    "method_key": method_key if stage.kind == "calc" else None,
+                    "engine": _stage_engine(stage, spec),
+                    "options": options_text,
+                    "solvent": _format_stage_solvent(spec),
+                    "lowest": stage.lowest,
+                    "rank_by": stage.rank_by,
+                    "constraint": stage.constraint,
+                    "n_cores": stage.n_cores,
+                }
+                if detail == "full":
+                    row.update(
+                        {
+                            "detailed_inp_str": _format_planned_input(
+                                spec.detailed_inp_str if spec is not None else None
+                            ),
+                            "xtra_inp_str": _format_planned_input(
+                                spec.xtra_inp_str if spec is not None else None
+                            ),
+                            "calculator_kwargs": _format_planned_mapping(
+                                spec.kwargs if spec is not None else None
+                            ),
+                            "read_files": _format_planned_sequence(stage.read_files),
+                            "use_last_hess": stage.use_last_hess,
+                            "save_files": _format_planned_sequence(stage.save_files),
+                            "prune_options": _format_planned_mapping(stage.prune_options),
+                        }
+                    )
+                rows.append(row)
+
+        columns = [
+            "group",
+            "stage",
+            "calculation",
+            "kind",
+            "method_key",
+            "engine",
+            "options",
+            "solvent",
+            "lowest",
+            "rank_by",
+            "constraint",
+            "n_cores",
+        ]
+        if detail == "full":
+            columns.extend(
+                [
+                    "detailed_inp_str",
+                    "xtra_inp_str",
+                    "calculator_kwargs",
+                    "read_files",
+                    "use_last_hess",
+                    "save_files",
+                    "prune_options",
+                ]
+            )
+        return pd.DataFrame(rows, columns=columns)
 
     def run(
         self,
@@ -1608,6 +1661,35 @@ def _format_stage_options(options: Mapping[str, Any] | None) -> str | None:
     return " ".join(parts)
 
 
+def _format_stage_solvent(spec: CalculatorSpec | None) -> str | None:
+    """Return a compact solvent label for workflow stage inspection."""
+    if spec is None or spec.solvent is None:
+        return None
+    return f"SMD({spec.solvent})"
+
+
+def _format_planned_input(value: str | None) -> str | None:
+    """Return a Markdown-safe one-line representation of an input block."""
+    if value is None or not str(value).strip():
+        return None
+    normalized = str(value).strip().replace("\r\n", "\n").replace("\r", "\n")
+    return normalized.replace("\n", r"\n")
+
+
+def _format_planned_mapping(value: Mapping[str, Any] | None) -> str | None:
+    """Return a stable compact representation of planned keyword arguments."""
+    if not value:
+        return None
+    return json.dumps(dict(value), default=str, sort_keys=True)
+
+
+def _format_planned_sequence(value: list[str] | None) -> str | None:
+    """Return a compact representation of planned file lists."""
+    if not value:
+        return None
+    return json.dumps(list(value))
+
+
 def _format_pruning_stage_options(options: Mapping[str, Any] | None) -> str | None:
     """Format pruning options for ``BaseWorkflow.show_stages``."""
     if not options:
@@ -1638,8 +1720,9 @@ def _coerce_method(method: MethodPlan | str | None) -> MethodPlan:
         Explicit method plan, registered preset name, or ``None`` for the
         workflow default. Built-in preset strings are ``"r2scan-3c"`` for ORCA
         r2SCAN-3c composite DFT stages, ``"wb97xd3-631g"`` for the default ORCA
-        wB97X-D3/6-31G** workflow, and ``"r2scan-def2svp"`` for ORCA
-        R2SCAN/def2-SVP DFT stages.
+        wB97X-D3/6-31G** workflow, ``"r2scan-3c-solv"`` and
+        ``"wb97xd3-631g-solv"`` for solvent-inclusive DFT stages, and
+        ``"r2scan-def2svp"`` for ORCA R2SCAN/def2-SVP DFT stages.
 
     Returns
     -------
@@ -1990,6 +2073,11 @@ def _attach_workflow_attrs(
         }
     )
     if workflow.result_profile is not None:
-        attach_result_contract(df, workflow.result_profile, dft=workflow.dft)
+        attach_result_contract(
+            df,
+            workflow.result_profile,
+            dft=workflow.dft,
+            include_terminal_solv_sp=workflow.method.include_terminal_solv_sp,
+        )
     stamp_schema(df)
     return df
