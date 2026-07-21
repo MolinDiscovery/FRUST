@@ -67,7 +67,6 @@ nav:
       - Workflows:
           - Overview: workflows/overview.md
           - Workflow Method Plans: workflows/workflow-methods.md
-          - Legacy Template TS Generation: workflows/ts-guess-generation.md
           - Optimization Pipeline: workflows/optimization-pipeline.md
           - Inspecting Results: workflows/inspecting-results.md
           - Directory And Outputs: workflows/directory-outputs.md
@@ -109,6 +108,5 @@ nav:
           - Utility Modules: api/utils.md
   - Tutorials:
       - Building Initial DataFrames: tutorials/building-initial-dataframes.md
-      - Legacy XYZ Templates: tutorials/templates.md
       - Catalyst And Substrate Screens: tutorials/catalyst-substrate-screens.md
       - Workflow Method Plans: tutorials/workflow-method-plans.md

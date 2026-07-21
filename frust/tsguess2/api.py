@@ -4,6 +4,7 @@ from __future__ import annotations
 
 from collections.abc import Callable, Iterable
 from typing import Any
+import warnings
 
 import pandas as pd
 from rdkit import Chem
@@ -16,7 +17,10 @@ from frust.tsguess2.builders import (
     build_ts1_ts2_connected_smiles,
     build_ts3_ts4_connected_smiles,
 )
-from frust.tsguess2.specs import BUILTIN_TS_SPECS_V2, TSGuess2Spec
+from frust.tsguess2.specs import (
+    TSGuess2Spec,
+    resolve_profile_specs,
+)
 
 PRUNE_RMS_THRESH = -1
 RANDOM_SEED = 0xF00D
@@ -34,6 +38,8 @@ def create_ts_guess_dataframes(
     n_confs: int | None = 1,
     n_cores: int = 1,
     validate: bool = True,
+    spec_profile: str = "wb97xd3-631g/gas",
+    spec_match: str = "prefer-exact",
 ) -> dict[str, pd.DataFrame]:
     """Generate grouped TS guess dataframes from expanded screen systems.
 
@@ -51,6 +57,13 @@ def create_ts_guess_dataframes(
         RDKit embedding threads forwarded to ``numThreads``.
     validate : bool, optional
         If ``True``, validate required system columns before generation.
+    spec_profile : str, optional
+        Method/environment geometry profile. The default preserves the
+        original wB97X-D3/6-31G** gas-phase specification.
+    spec_match : {"prefer-exact", "exact"}, optional
+        Profile resolution policy. ``"prefer-exact"`` permits the other
+        environment of the same method and records the fallback. It never
+        crosses method families.
 
     Returns
     -------
@@ -60,7 +73,25 @@ def create_ts_guess_dataframes(
     if validate:
         _validate_systems(systems)
 
-    requested_specs = [_resolve_spec(ts_type) for ts_type in ts_types]
+    requested_types = [str(ts_type).upper() for ts_type in ts_types]
+    selections = resolve_profile_specs(
+        requested_types,
+        spec_profile,
+        match=spec_match,
+    )
+    requested_specs = [selections[ts_type].spec for ts_type in requested_types]
+    fallback_profiles = {
+        (selection.requested_profile, selection.resolved_profile)
+        for selection in selections.values()
+        if selection.match != "exact"
+    }
+    for requested, resolved in sorted(fallback_profiles):
+        warnings.warn(
+            f"No exact selectable tsguess2 geometry was available for every requested "
+            f"state in {requested!r}; using same-method profile {resolved!r} where needed.",
+            UserWarning,
+            stacklevel=2,
+        )
     rows_by_type: dict[str, list[dict[str, Any]]] = {spec.name: [] for spec in requested_specs}
     conformers_by_type: dict[str, list[dict[str, Any]]] = {spec.name: [] for spec in requested_specs}
     smiles_by_type: dict[str, list[dict[str, Any]]] = {spec.name: [] for spec in requested_specs}
@@ -85,7 +116,8 @@ def create_ts_guess_dataframes(
     for ts_type, rows in rows_by_type.items():
         df = pd.DataFrame(rows)
         conformer_records = conformers_by_type[ts_type]
-        spec = _resolve_spec(ts_type)
+        selection = selections[ts_type]
+        spec = selection.spec
         if conformer_records:
             df.attrs["frust_conformers"] = {
                 "schema_version": 1,
@@ -104,6 +136,12 @@ def create_ts_guess_dataframes(
             "backend": "tsguess2",
             "builder": _BUILDERS[spec.builder_key].__name__,
             "spec_id": spec.spec_id,
+            "spec_selection": {
+                "requested_profile": selection.requested_profile,
+                "resolved_profile": selection.resolved_profile,
+                "match": selection.match,
+                "state_specs": {ts_type: spec.spec_id},
+            },
             "embedding": {
                 "maxAttempts": 0,
                 "randomSeed": RANDOM_SEED,
@@ -160,7 +198,6 @@ def _rows_for_system_rpos(
     atoms = [atom.GetSymbol() for atom in mol.GetAtoms()]
     connectivity_bonds = _connectivity_bonds(mol)
     constraint_spec = spec.constraint_dicts()
-    constraint_atoms = [roles[role] for role in spec.constraint_order if role in roles]
 
     rows: list[dict[str, Any]] = []
     system_name = str(system["system_name"])
@@ -190,7 +227,6 @@ def _rows_for_system_rpos(
             "coords_embedded": coords,
             "constraint_roles": dict(roles),
             "constraint_spec": constraint_spec,
-            "constraint_atoms": constraint_atoms,
             "ts_spec_id": spec.spec_id,
             "tsguess_backend": "tsguess2",
             "ts_core_metrics": core_metrics(coords, roles, constraint_spec),
@@ -306,15 +342,6 @@ def _resolve_n_confs(mol: Chem.Mol, n_confs: int | None) -> int:
     if rotatable_bonds <= 12:
         return 200
     return 300
-
-
-def _resolve_spec(ts_type: str) -> TSGuess2Spec:
-    key = str(ts_type).upper()
-    try:
-        return BUILTIN_TS_SPECS_V2[key]
-    except KeyError as exc:
-        known = ", ".join(sorted(BUILTIN_TS_SPECS_V2))
-        raise ValueError(f"Unsupported ts_type {ts_type!r}; expected one of {known}") from exc
 
 
 def _validate_systems(systems: pd.DataFrame) -> None:

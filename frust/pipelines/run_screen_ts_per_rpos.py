@@ -12,6 +12,8 @@ import pandas as pd
 from frust.schema import energy_columns, infer_group_columns, normalize_dataframe
 from frust.screen import create_ts_guesses
 from frust.stepper import Stepper
+from frust.workflows.methods import orca
+from frust.workflows.spec_profiles import geometry_key_for_calculator
 
 FUNCTIONAL = "wB97X-D3"
 BASISSET = "6-31G**"
@@ -151,6 +153,8 @@ def run_init(
     basisset: str | None = None,
     basisset_solv: str | None = None,
     composite_method: str | None = None,
+    spec_profile: str = "auto",
+    spec_match: str = "prefer-exact",
 ) -> pd.DataFrame:
     """Generate one screen TS target and run the initialization filter chain.
 
@@ -186,6 +190,11 @@ def run_init(
     composite_method : str or None, optional
         Complete ORCA composite-method keyword, such as ``"r2SCAN-3c"``. When
         provided, no separate basis set keywords are emitted.
+    spec_profile : str, optional
+        ``tsguess2`` geometry profile. ``"auto"`` derives the profile from
+        the ORCA transition-state method used by this chain.
+    spec_match : {"prefer-exact", "exact"}, optional
+        Geometry-profile matching policy.
 
     Returns
     -------
@@ -196,12 +205,26 @@ def run_init(
     save_path = Path(save_dir or ".")
     save_path.mkdir(parents=True, exist_ok=True)
 
+    current_method, current_basisset, _ = _resolve_theory(
+        functional=functional,
+        basisset=basisset,
+        basisset_solv=basisset_solv,
+        composite_method=composite_method,
+    )
+    resolved_profile = spec_profile
+    if spec_profile == "auto":
+        resolved_profile = geometry_key_for_calculator(
+            orca(method=current_method, basis=current_basisset, job="optts")
+        ).profile_id
+
     guesses = create_ts_guesses(
         target,
         ts_types=[ts_type],
         n_confs=n_confs,
         n_cores=n_cores,
         backend=ts_backend,
+        spec_profile=resolved_profile,
+        spec_match=spec_match,
     )
     df = guesses[ts_type]
     if df.empty:
@@ -233,13 +256,6 @@ def run_init(
         constraint=True,
         lowest=top_n,
         n_cores=2,
-    )
-
-    current_method, current_basisset, _ = _resolve_theory(
-        functional=functional,
-        basisset=basisset,
-        basisset_solv=basisset_solv,
-        composite_method=composite_method,
     )
 
     df = step.orca(

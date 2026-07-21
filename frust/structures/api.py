@@ -88,6 +88,8 @@ def create_int3_guesses(
     *,
     n_confs: int | None = 1,
     n_cores: int = 1,
+    spec_profile: str = "wb97xd3-631g/gas",
+    spec_match: str = "prefer-exact",
 ) -> pd.DataFrame:
     """Create embedded INT3 guesses without running calculations.
 
@@ -101,6 +103,10 @@ def create_int3_guesses(
         connected-graph builder's conformer-count heuristic.
     n_cores : int, optional
         RDKit embedding threads.
+    spec_profile : str, optional
+        Method/environment geometry profile.
+    spec_match : {"prefer-exact", "exact"}, optional
+        Geometry-profile matching policy.
 
     Returns
     -------
@@ -127,6 +133,8 @@ def create_int3_guesses(
         n_confs=n_confs,
         n_cores=n_cores,
         source="frust.structures.create_int3_guesses",
+        spec_profile=spec_profile,
+        spec_match=spec_match,
     )
 
 
@@ -136,6 +144,8 @@ def _create_from_targets(
     n_confs: int | None,
     n_cores: int,
     source: str,
+    spec_profile: str = "wb97xd3-631g/gas",
+    spec_match: str = "prefer-exact",
 ) -> pd.DataFrame:
     """Build and concatenate typed targets without executing workflow stages."""
     target_list = list(targets)
@@ -146,16 +156,19 @@ def _create_from_targets(
     if not all(isinstance(target, StructureTarget) for target in target_list):
         raise TypeError("structure generation requires typed StructureTarget objects")
 
-    frames = [
-        build(
-            target,
-            n_confs=n_confs,
-            n_cores=int(n_cores),
-            memory_gb=4,
-            debug=False,
-        )
-        for target in target_list
-    ]
+    frames = []
+    for target in target_list:
+        build_kwargs = {
+            "n_confs": n_confs,
+            "n_cores": int(n_cores),
+            "memory_gb": 4,
+            "debug": False,
+        }
+        if target.builder_spec.startswith("connected_graph::"):
+            build_kwargs.update(
+                {"spec_profile": spec_profile, "spec_match": spec_match}
+            )
+        frames.append(build(target, **build_kwargs))
     if frames:
         out = pd.concat(frames, ignore_index=True)
         out.attrs.update(
@@ -173,7 +186,7 @@ def _create_from_targets(
             "typed structure builder omitted canonical columns: " + ", ".join(missing)
         )
 
-    out.attrs["frust_structure_generation"] = {
+    generation_metadata = {
         "schema_version": 1,
         "source": source,
         "calculation_free": True,
@@ -182,5 +195,10 @@ def _create_from_targets(
         "n_targets": len(target_list),
         "states": list(dict.fromkeys(target.state_id for target in target_list)),
     }
+    if any(target.builder_spec.startswith("connected_graph::") for target in target_list):
+        generation_metadata.update(
+            {"spec_profile": spec_profile, "spec_match": spec_match}
+        )
+    out.attrs["frust_structure_generation"] = generation_metadata
     stamp_schema(out)
     return out

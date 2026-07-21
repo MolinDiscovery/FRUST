@@ -117,6 +117,8 @@ def create_ts_guesses(
     n_cores: int = 1,
     validate: bool = True,
     backend: str = "tsguess2",
+    spec_profile: str = "wb97xd3-631g/gas",
+    spec_match: str = "prefer-exact",
 ) -> dict[str, pd.DataFrame]:
     """Create grouped TS guess dataframes for an expanded screen.
 
@@ -138,6 +140,10 @@ def create_ts_guesses(
         ``"tsguess3"`` uses the SMILES-roundtrip backend with fragment-aware
         TS3/TS4 embedding.
         ``"tsguess"`` uses the original role-assembly backend.
+    spec_profile : str, optional
+        Method/environment geometry profile used by ``tsguess2``.
+    spec_match : {"prefer-exact", "exact"}, optional
+        Profile matching policy used by ``tsguess2``.
 
     Returns
     -------
@@ -154,13 +160,20 @@ def create_ts_guesses(
     else:
         raise ValueError("backend must be one of 'tsguess2', 'tsguess3', or 'tsguess'")
 
-    return create(
-        systems,
-        ts_types=ts_types,
-        n_confs=n_confs,
-        n_cores=n_cores,
-        validate=validate,
-    )
+    kwargs = {
+        "ts_types": ts_types,
+        "n_confs": n_confs,
+        "n_cores": n_cores,
+        "validate": validate,
+    }
+    if backend_key == "tsguess2":
+        kwargs.update(
+            {
+                "spec_profile": spec_profile,
+                "spec_match": spec_match,
+            }
+        )
+    return create(systems, **kwargs)
 
 
 def _normalize_role(value: object) -> str | None:

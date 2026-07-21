@@ -34,7 +34,6 @@ mapping.
       show_root_full_path: false
       members:
         - create_mol_per_rpos
-        - create_ts_per_rpos
 
 ## g-xTB
 

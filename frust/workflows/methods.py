@@ -50,6 +50,13 @@ class CalculatorSpec:
         Semantic solvent name used by the calculator. ORCA specifications
         created with :func:`orca` populate this field so workflow inspection
         can display solvent settings without parsing raw input text.
+    method, basis : str or None, optional
+        Semantic electronic-structure method and basis metadata. These values
+        are retained separately from raw engine options so structure builders
+        can select a matching reference geometry.
+    solvation_model : str or None, optional
+        Semantic solvation model. Built-in ORCA solvent calculations use
+        ``"smd"``.
     kwargs : dict, optional
         Additional engine-specific keyword arguments forwarded to Stepper.
 
@@ -65,6 +72,9 @@ class CalculatorSpec:
     detailed_inp_str: str = ""
     xtra_inp_str: str = ""
     solvent: str | None = None
+    method: str | None = None
+    basis: str | None = None
+    solvation_model: str | None = None
     kwargs: dict[str, Any] = field(default_factory=dict)
 
     def __post_init__(self) -> None:
@@ -75,6 +85,20 @@ class CalculatorSpec:
         object.__setattr__(self, "options", dict(self.options or {}))
         solvent = None if self.solvent is None else str(self.solvent).strip()
         object.__setattr__(self, "solvent", solvent or None)
+        method = None if self.method is None else str(self.method).strip()
+        basis = None if self.basis is None else str(self.basis).strip()
+        model = (
+            None
+            if self.solvation_model is None
+            else str(self.solvation_model).strip().lower()
+        )
+        if solvent and not model:
+            model = "smd"
+        if model and not solvent:
+            raise ValueError("solvation_model requires solvent metadata")
+        object.__setattr__(self, "method", method or None)
+        object.__setattr__(self, "basis", basis or None)
+        object.__setattr__(self, "solvation_model", model or None)
         object.__setattr__(self, "kwargs", dict(self.kwargs or {}))
 
 
@@ -365,6 +389,9 @@ def orca(
         options=options,
         xtra_inp_str=extra,
         solvent=solvent,
+        method=method,
+        basis=basis,
+        solvation_model="smd" if solvent else None,
         kwargs=kwargs,
     )
 
@@ -410,6 +437,95 @@ def orca_composite(
         xtra_inp_str=xtra_inp_str,
         **kwargs,
     )
+
+
+def with_ts_mode_following(
+    plan: MethodPlan,
+    *,
+    mode_roles: tuple[str, ...] | list[str],
+    active_roles: tuple[str, ...] | list[str] | None = None,
+    active_atoms_factor: float | None = None,
+    recalc_hess: int | None = None,
+    trust_radius: float | None = None,
+    stage: str = "dft_ts_opt",
+    tight_opt: bool = True,
+) -> MethodPlan:
+    """Return a method plan with role-based ORCA TS mode following.
+
+    Parameters
+    ----------
+    plan : MethodPlan
+        Method plan whose transition-state optimization stage should be
+        customized.
+    mode_roles : tuple or list of str
+        Chemical roles defining the internal coordinate ORCA should follow.
+        Two roles define a bond, three an angle, and four a dihedral.
+    active_roles : tuple or list of str or None, optional
+        Chemical roles passed to ORCA ``TS_Active_Atoms``.
+    active_atoms_factor : float or None, optional
+        ORCA ``TS_Active_Atoms_Factor``. Requires ``active_roles``.
+    recalc_hess : int or None, optional
+        Number of OptTS cycles between exact Hessian recalculations.
+    trust_radius : float or None, optional
+        Initial adaptive ORCA trust radius.
+    stage : str, optional
+        Method-plan stage to customize. Defaults to ``"dft_ts_opt"``.
+    tight_opt : bool, optional
+        Add the ORCA ``TightOpt`` simple-input keyword. Defaults to ``True``.
+
+    Returns
+    -------
+    MethodPlan
+        Copy of ``plan`` with only the selected ORCA stage changed.
+
+    Raises
+    ------
+    TypeError
+        If ``plan`` is not a :class:`MethodPlan`.
+    ValueError
+        If the selected stage does not use ORCA.
+
+    Examples
+    --------
+    Configure TS3 using chemical roles rather than fixed atom indices:
+
+    >>> method = preset("r2scan-3c-solv")
+    >>> method = with_ts_mode_following(
+    ...     method,
+    ...     mode_roles=("pin_B", "substrate_C"),
+    ...     active_roles=("cat_B", "transfer_H", "pin_B", "substrate_C"),
+    ...     active_atoms_factor=1.5,
+    ...     recalc_hess=3,
+    ...     trust_radius=0.15,
+    ... )
+    """
+    if not isinstance(plan, MethodPlan):
+        raise TypeError("plan must be a MethodPlan")
+
+    spec = plan.for_stage(stage)
+    if spec.engine != "orca":
+        raise ValueError(
+            f"TS mode following requires an ORCA stage; {stage!r} uses {spec.engine!r}"
+        )
+
+    options = dict(spec.options)
+    if tight_opt:
+        options.setdefault("TightOpt", None)
+
+    kwargs = dict(spec.kwargs)
+    kwargs.update(
+        {
+            "ts_mode": tuple(mode_roles),
+            "ts_active_atoms": (
+                None if active_roles is None else tuple(active_roles)
+            ),
+            "ts_active_atoms_factor": active_atoms_factor,
+            "recalc_hess": recalc_hess,
+            "trust_radius": trust_radius,
+        }
+    )
+    updated = dataclass_replace(spec, options=options, kwargs=kwargs)
+    return plan.with_stage(stage, updated)
 
 
 def preset(name: str) -> MethodPlan:

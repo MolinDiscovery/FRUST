@@ -136,7 +136,7 @@ def conformer_ensemble_scene_from_dataframe(
         ``atoms`` and at least one coordinate column such as
         ``coords_embedded`` or an optimized coordinate column. Optional columns
         used when present are ``connectivity_bonds``, ``constraint_roles``,
-        ``constraint_atoms``, and energy columns.
+        and energy columns.
     row_index
         Positional row used to choose the conformer family. This is not a
         pandas index label. The selected row is matched against ``group_cols``
@@ -159,9 +159,9 @@ def conformer_ensemble_scene_from_dataframe(
         family.
     core_atoms
         Atoms used for rigid alignment and drawn once as the fixed black core.
-        ``"auto"`` uses atom indices from ``constraint_roles`` first, then
-        legacy ``constraint_atoms``. Pass an explicit sequence when the
-        automatic core is too small, too large, or chemically ambiguous.
+        ``"auto"`` uses atom indices from ``constraint_roles``. Pass an
+        explicit sequence when the automatic core is too small, too large, or
+        chemically ambiguous.
     mode
         Display mode:
 
@@ -547,8 +547,7 @@ def plot_conformers(
     df
         FRUST dataframe containing one row per conformer. Required columns are
         ``atoms`` and at least one coordinate column. ``connectivity_bonds``,
-        ``constraint_roles``, ``constraint_atoms``, and energy columns are used
-        when available.
+        ``constraint_roles`` and energy columns are used when available.
     row_index
         Positional row used to choose one conformer family. If omitted, all
         inferred conformer families are shown.
@@ -568,8 +567,8 @@ def plot_conformers(
         standard FRUST identity columns, or pass custom columns for custom
         dataframes.
     core_atoms
-        ``"auto"`` to use ``constraint_roles`` then ``constraint_atoms`` for
-        the fixed alignment core, or an explicit sequence of atom indices.
+        ``"auto"`` to use ``constraint_roles`` for the fixed alignment core,
+        or an explicit sequence of atom indices.
     mode
         Display mode. ``"single"`` shows one conformer, ``"cloud"`` shows the
         mobile-atom cloud only, ``"representatives+cloud"`` adds the
@@ -942,11 +941,6 @@ def _auto_core_atoms(row: pd.Series) -> list[int]:
     roles = row.get("constraint_roles")
     if isinstance(roles, Mapping) and roles:
         return [int(atom_idx) for atom_idx in roles.values()]
-    atoms = row.get("constraint_atoms")
-    if isinstance(atoms, np.ndarray):
-        return [int(atom_idx) for atom_idx in atoms.tolist()]
-    if isinstance(atoms, Sequence) and not isinstance(atoms, (str, bytes)):
-        return [int(atom_idx) for atom_idx in atoms]
     return []
 
 

@@ -11,7 +11,7 @@ method = ft.workflows.methods.preset("r2scan-3c")
 
 wf = ft.workflows.screen_ts(
     csv_path="docs/examples/screen.csv",
-    ts_types=["TS1", "TS2", "TS3", "TS4"],
+    ts_types=["TS1", "TS2", "TS4"],
     method=method,
     n_confs=None,
     top_n=20,
@@ -121,7 +121,7 @@ not pruned against another.
 ```python
 wf = ft.workflows.screen_ts(
     csv_path="docs/examples/screen.csv",
-    ts_types=["TS1", "TS2", "TS3", "TS4"],
+    ts_types=["TS1", "TS2", "TS4"],
     method="r2scan-3c",
     prune_initial={
         "modes": ("moi", "rmsd"),
@@ -136,6 +136,7 @@ To include rotamer-corrected RMSD pruning, opt in explicitly:
 ```python
 wf = ft.workflows.screen_ts(
     csv_path="docs/examples/screen.csv",
+    ts_types=["TS1", "TS2", "TS4"],
     method="r2scan-3c",
     prune_initial={
         "modes": ("moi", "rmsd", "rot_corr_rmsd"),
@@ -280,12 +281,9 @@ ts4_preopt = step.xtb(
 ts4_lowest = ft.lowest_energy_rows(ts4_preopt)
 ```
 
-With screen-generated rows, `constraint=True` works row-first:
-
-1. If `constraint_roles` and `constraint_spec` are present, `Stepper` renders
-   those role-based constraints.
-2. If they are absent, `Stepper` falls back to the older `step_type` and
-   `constraint_atoms` behavior.
+With screen-generated rows, `constraint=True` renders `constraint_roles` and
+`constraint_spec` from every row. Missing or incomplete row constraints are an
+error; `Stepper` has no structure-type or positional fallback.
 
 ## Older Convenience APIs
 

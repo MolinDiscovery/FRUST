@@ -113,9 +113,8 @@ ft.plot_conformers(df, row_index=0, mode="single")
   style="border: 1px solid var(--md-default-fg-color--lightest); border-radius: 6px;"
 ></iframe>
 
-The core atoms come from `constraint_roles` by default. If a dataframe only has
-legacy `constraint_atoms`, FRUST uses those instead. For custom structures, pass
-the anchor atoms directly:
+The core atoms come from `constraint_roles` by default. For custom structures,
+pass the anchor atoms directly:
 
 ```python
 ft.plot_conformers(

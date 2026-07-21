@@ -31,13 +31,13 @@ _PUBLIC_API: dict[str, tuple[str, str]] = {
     "lowest_energy_rows": ("frust.utils.dataframes", "lowest_energy_rows"),
     "map_substrate_names": ("frust.utils.dataframes", "map_substrate_names"),
     "prune_conformers": ("frust.utils.pruning", "prune_conformers"),
+    "upgrade_legacy_constraints": ("frust.constraints", "upgrade_legacy_constraints"),
     "inspect_ts_vibrations": ("frust.utils.analytics", "inspect_ts_vibrations"),
     "summarize_ts_vibrations": ("frust.utils.analytics", "summarize_ts_vibrations"),
     # Structure preparation
     "create_mol_per_rpos": ("frust.utils.mols", "create_mol_per_rpos"),
-    "create_ts_per_rpos": ("frust.utils.mols", "create_ts_per_rpos"),
     "embed_mols": ("frust.embedder", "embed_mols"),
-    "embed_ts": ("frust.embedder", "embed_ts"),
+    "show_spec_profiles": ("frust.tsguess2", "show_spec_profiles"),
     # File and structure IO
     "read_ts_type_from_xyz": ("frust.utils.io", "read_ts_type_from_xyz"),
     "write_xyz": ("frust.utils.io", "write_xyz"),
@@ -66,7 +66,6 @@ _PUBLIC_API: dict[str, tuple[str, str]] = {
     "ClusterConfig": ("frust.cluster", "ClusterConfig"),
     "Resources": ("frust.cluster", "Resources"),
     "submit_jobs": ("frust.cluster", "submit_jobs"),
-    "submit_chain": ("frust.cluster", "submit_chain"),
     "submit_screen_chain": ("frust.cluster", "submit_screen_chain"),
 }
 
@@ -106,8 +105,9 @@ if TYPE_CHECKING:
     import frust.utils as utils
     import frust.vis as vis
     import frust.workflows as workflows
-    from frust.cluster import ClusterConfig, Resources, submit_chain, submit_jobs, submit_screen_chain
-    from frust.embedder import embed_mols, embed_ts
+    from frust.cluster import ClusterConfig, Resources, submit_jobs, submit_screen_chain
+    from frust.constraints import upgrade_legacy_constraints
+    from frust.embedder import embed_mols
     from frust.schema import (
         energy_columns,
         normal_termination_columns,
@@ -119,7 +119,8 @@ if TYPE_CHECKING:
     from frust.utils.analytics import inspect_ts_vibrations, summarize_ts_vibrations
     from frust.utils.dataframes import show_steps, show_timing, lowest_energy_rows, map_substrate_names
     from frust.utils.io import read_ts_type_from_xyz, write_xyz, write_xyz_structures
-    from frust.utils.mols import create_mol_per_rpos, create_ts_per_rpos
+    from frust.tsguess2 import show_spec_profiles
+    from frust.utils.mols import create_mol_per_rpos
     from frust.utils.pruning import prune_conformers
     from frust.vis import (
         DrawMolSvg,

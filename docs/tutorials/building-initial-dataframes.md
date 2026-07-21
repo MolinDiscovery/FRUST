@@ -305,71 +305,65 @@ df = step.build_initial_df(
 
 ## Use Transition-State Structures
 
-Transition-state workflows start with a template and a substrate table.
-`create_ts_per_rpos(...)` returns raw TS structures with constraint metadata.
-`build_initial_df` embeds those structures and stores the constraint atoms in
-the dataframe.
+Transition-state structures come from the catalyst-screen builder. It assigns
+chemical roles dynamically and returns self-describing row constraints.
 
 ```python
-import pandas as pd
 import frust as ft
 
-substrates = pd.DataFrame(
-    {
-        "smiles": ["CN1C=CC=C1"],
-    }
-)
+components = ft.screen.read("screen.csv")
+systems = ft.screen.expand(components)
 
-ts_structs = ft.create_ts_per_rpos(
-    substrates,
-    ts_guess_xyz="structures/ts1.xyz",
-    return_format="dict",
-)
+ts1 = ft.screen.create_ts_guesses(
+    systems,
+    ts_types=["TS1"],
+    n_confs=1,
+    spec_profile="r2scan-3c/smd-chloroform",
+)["TS1"]
 
-step = ft.Stepper(step_type="auto", save_output_dir=False)
-df = step.build_initial_df(ts_structs, n_confs=1, ts_optimize=False)
-
-df[
+ts1[
     [
         "custom_name",
         "structure_type",
         "rpos",
-        "constraint_atoms",
-        "cid",
-        "coords_embedded",
+        "constraint_roles",
+        "constraint_spec",
+        "ts_spec_id",
     ]
 ]
 ```
 
-Output:
-
-| custom_name | structure_type | rpos | constraint_atoms | cid | coords_embedded |
-| --- | --- | ---: | --- | ---: | --- |
-| `TS1(1-methylpyrrole_rpos(2))` | TS1 | 2 | `[10, 11, 39, 40, 41, 44]` | 0 | 54 x 3 coordinates |
-| `TS1(1-methylpyrrole_rpos(3))` | TS1 | 3 | `[10, 11, 39, 40, 41, 44]` | 0 | 54 x 3 coordinates |
-
-As with the molecule workflow, omitting `rpos` lets FRUST expand over the valid
-aromatic C-H positions. Add an `rpos` column when a template check or production
-screen should target only selected positions.
-
-`step_type="auto"` infers the constrained type from the dataframe. If the
-dataframe contains only `TS1` rows, later constrained calculations use the
-`TS1` constraint template:
+The same builder is used automatically by a workflow:
 
 ```python
-df = step.xtb(
-    df,
+wf = ft.workflows.screen_ts(
+    dataframe=components,
+    ts_types=["TS1", "TS2", "TS4"],
+    method="r2scan-3c-solv",
+)
+
+wf.resolved_spec_profile
+preview = wf.preview(n_confs=1, targets=[0])
+```
+
+`Stepper` does not own TS geometry. It only validates and renders the roles and
+constraints already stored on each row:
+
+```python
+step = ft.Stepper(save_output_dir=False)
+ts1_preopt = step.xtb(
+    ts1,
     name="xtb_preopt",
     options={"gfnff": None, "opt": None},
     constraint=True,
 )
 ```
 
-!!! warning "Auto only chooses the constraint template"
+!!! warning "Historical positional data must be upgraded explicitly"
 
-    `step_type="auto"` does not choose a chemistry workflow. It only infers a
-    single constrained type such as `TS1` or `INT3` from the dataframe built by
-    `build_initial_df`.
+    `constraint_atoms` is not a Stepper fallback. Convert an old parquet with
+    `ft.upgrade_legacy_constraints(old_df, spec_profile=...)` before requesting
+    a constrained calculation.
 
 ## Already Embedded Data Still Works
 
@@ -398,7 +392,6 @@ df = step.build_initial_df(embedded)
 | `{"ethanol": "CCO"}` | Named SMILES batch | Readable labels without a dataframe |
 | DataFrame with `smiles` | Batch with metadata | CSV-like workflows |
 | Raw molecule dict | FRUST structures to embed | `create_mol_per_rpos(...)` output |
-| Raw TS dict | TS/INT structures to embed | `create_ts_per_rpos(...)` output |
 | Embedded dict | Already embedded conformers | Advanced control |
 
 !!! note "If you already have a calculation dataframe"

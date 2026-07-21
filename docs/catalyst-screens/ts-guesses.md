@@ -30,8 +30,8 @@ dict_keys(['TS1', 'TS2', 'TS3', 'TS4'])
 
     Both `ft.screen.create_ts_guesses(...)` and
     `ft.workflows.screen_ts(...)` use `tsguess2` by default. Generated rows
-    record that choice in `tsguess_backend`, and v2 specification identifiers
-    end in `_v2`.
+    record that choice in `tsguess_backend`. Specification identifiers include
+    the method, environment, and immutable revision.
 
     The original `tsguess` role-assembly backend remains available for
     compatibility. It has different construction rules and role names; do not
@@ -58,10 +58,10 @@ Representative output:
 
 | custom_name | structure_type | rpos | cid | tsguess_backend | ts_spec_id |
 | --- | --- | ---: | ---: | --- | --- |
-| `TS1(n_methyl_pyrrole__tmp_bcat_rpos(2))` | `TS1` | 2 | 0 | `tsguess2` | `TS1::builtin::methylpyrrole_v2` |
-| `TS1(n_methyl_pyrrole__tmp_bcat_rpos(3))` | `TS1` | 3 | 0 | `tsguess2` | `TS1::builtin::methylpyrrole_v2` |
-| `TS1(methoxyfuran__tmp_bcat_rpos(3))` | `TS1` | 3 | 0 | `tsguess2` | `TS1::builtin::methylpyrrole_v2` |
-| `TS1(methoxyfuran__tmp_bcat_rpos(5))` | `TS1` | 5 | 0 | `tsguess2` | `TS1::builtin::methylpyrrole_v2` |
+| `TS1(n_methyl_pyrrole__tmp_bcat_rpos(2))` | `TS1` | 2 | 0 | `tsguess2` | `TS1::tsguess2-v2::wb97xd3-631g::gas::r1` |
+| `TS1(n_methyl_pyrrole__tmp_bcat_rpos(3))` | `TS1` | 3 | 0 | `tsguess2` | `TS1::tsguess2-v2::wb97xd3-631g::gas::r1` |
+| `TS1(methoxyfuran__tmp_bcat_rpos(3))` | `TS1` | 3 | 0 | `tsguess2` | `TS1::tsguess2-v2::wb97xd3-631g::gas::r1` |
+| `TS1(methoxyfuran__tmp_bcat_rpos(5))` | `TS1` | 5 | 0 | `tsguess2` | `TS1::tsguess2-v2::wb97xd3-631g::gas::r1` |
 
 Important columns are:
 
@@ -79,10 +79,56 @@ Important columns are:
 | `connectivity_bonds` | Graph connectivity used to reconstruct and draw the row |
 | `constraint_roles` | Mapping from v2 chemical role names to row-specific atom indices |
 | `constraint_spec` | Role-based distance and angle constraints |
-| `constraint_atoms` | Compatibility projection for older fixed-order constraint paths |
 | `tsguess_backend` | Backend that generated the row; normally `tsguess2` |
 | `ts_spec_id` | Versioned built-in specification identifier |
 | `ts_core_metrics` | Measured core distances/angles and deltas from the specification |
+
+## Select The Geometry Profile
+
+The TS topology is method-independent, while coordinates and numerical
+constraint values come from a method/environment profile:
+
+```python
+ft.show_spec_profiles()[["profile", "state", "status"]]
+```
+
+The built-in catalog has four slots:
+
+| Profile | Current availability |
+| --- | --- |
+| `wb97xd3-631g/gas` | TS1--TS4 and INT3 active |
+| `wb97xd3-631g/smd-chloroform` | Missing; same-method gas fallback is available with `prefer-exact` |
+| `r2scan-3c/gas` | Missing; same-method SMD fallback is available where that state is active |
+| `r2scan-3c/smd-chloroform` | TS1, TS2, TS4, and INT3 active; TS3 quarantined |
+
+Workflows select the profile from their DFT geometry stage:
+
+```python
+wf = ft.workflows.screen_ts(
+    dataframe=components,
+    ts_types=["TS1", "TS2", "TS4"],
+    method="r2scan-3c-solv",
+)
+
+wf.resolved_spec_profile
+```
+
+Output:
+
+```text
+'r2scan-3c/smd-chloroform'
+```
+
+Use `spec_match="exact"` when a workflow must stop rather than use the other
+environment from the same method family. FRUST never falls back between
+r2SCAN-3c and wB97X-D3.
+
+!!! warning "r2SCAN-3c/SMD TS3 is quarantined"
+
+    The supplied NMe TS3 reference has two imaginary frequencies and the wrong
+    mode. FRUST will not select it, including through profile fallback. Add a
+    reviewed replacement as a new profile revision when the TMP calculation is
+    ready.
 
 Conformer-generation provenance is stored in
 `df.attrs["frust_conformers"]`. Backend-specific generation details, including
@@ -259,9 +305,20 @@ ts4_preopt = step.xtb(
 )
 ```
 
-When `constraint_roles` and `constraint_spec` are present, `Stepper` renders
-those row-level constraints. `constraint_atoms` is retained only for older
-constraint paths and compatibility with existing data.
+`Stepper` requires `constraint_roles` and `constraint_spec` on every row and
+renders those values directly. It does not choose chemistry from `step_type`
+and has no positional fallback.
+
+For a historical parquet, migrate explicitly before running a constrained
+step:
+
+```python
+old = pd.read_parquet("historical-ts.parquet")
+modern = ft.upgrade_legacy_constraints(
+    old,
+    spec_profile="wb97xd3-631g/gas",
+)
+```
 
 ## Common Failures
 

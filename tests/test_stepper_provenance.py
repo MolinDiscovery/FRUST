@@ -21,6 +21,32 @@ def _df() -> pd.DataFrame:
     )
 
 
+def _ts3_df() -> pd.DataFrame:
+    """Return a minimal TS3 row with chemical roles and a saved Hessian."""
+    return pd.DataFrame(
+        {
+            "atoms": [["B", "H", "B", "C"]],
+            "coords_embedded": [
+                [
+                    [0.0, 0.0, 0.0],
+                    [0.0, 0.0, 1.2],
+                    [1.8, 0.0, 0.0],
+                    [2.2, 0.0, 1.4],
+                ]
+            ],
+            "constraint_roles": [
+                {
+                    "cat_B": 0,
+                    "transfer_H": 1,
+                    "pin_B": 2,
+                    "substrate_C": 3,
+                }
+            ],
+            "dft_hessian-input.hess": ["$orca_hessian_file\n$end\n"],
+        }
+    )
+
+
 def _executable(path: Path) -> Path:
     path.write_text("#!/bin/sh\n")
     path.chmod(0o755)
@@ -223,6 +249,52 @@ end"""
         meta = out.attrs["frust_steps"]["opt_with_hess"]["input"]
         self.assertTrue(meta["calc_hess"])
         self.assertIn("calc_hess", meta["generated_input_blocks"])
+
+    def test_orca_ts_mode_following_resolves_roles_in_one_geom_block(self):
+        calls = []
+        step = Stepper(debug=True, save_output_dir=False)
+        step.orca_fn = _recording_orca(calls)
+
+        out = step.orca(
+            _ts3_df(),
+            name="ts3_mode_following",
+            options={"r2SCAN-3c": None, "OptTS": None, "TightOpt": None},
+            xtra_inp_str='%CPCM\n  SMDSOLVENT "chloroform"\nend',
+            use_last_hess=True,
+            ts_mode=("pin_B", "substrate_C"),
+            ts_active_atoms=("cat_B", "transfer_H", "pin_B", "substrate_C"),
+            ts_active_atoms_factor=1.5,
+            recalc_hess=3,
+            trust_radius=0.15,
+        )
+
+        orca_input = calls[0]["xtra_inp_str"]
+        self.assertEqual(orca_input.count("%geom"), 1)
+        self.assertIn("TS_Mode {B 2 3}", orca_input)
+        self.assertIn("TS_Active_Atoms { 0 1 2 3 }", orca_input)
+        self.assertIn("TS_Active_Atoms_Factor 1.5", orca_input)
+        self.assertIn("inhess Read", orca_input)
+        self.assertIn('InHessName "private_input.hess"', orca_input)
+        self.assertIn("Recalc_Hess 3", orca_input)
+        self.assertIn("Trust 0.15", orca_input)
+
+        meta = out.attrs["frust_steps"]["ts3_mode_following"]["input"]
+        self.assertEqual(meta["ts_mode"], ["pin_B", "substrate_C"])
+        self.assertIn("ts_mode_following", meta["generated_input_blocks"])
+
+    def test_orca_ts_mode_following_rejects_missing_role_before_calculation(self):
+        calls = []
+        step = Stepper(debug=True, save_output_dir=False)
+        step.orca_fn = _recording_orca(calls)
+
+        with self.assertRaisesRegex(ValueError, "missing chemical role.*not_a_role"):
+            step.orca(
+                _ts3_df(),
+                options={"r2SCAN-3c": None, "OptTS": None},
+                ts_mode=("pin_B", "not_a_role"),
+            )
+
+        self.assertEqual(calls, [])
 
     def test_orca_uma_standalone_records_calculator_metadata(self):
         with tempfile.TemporaryDirectory() as td:

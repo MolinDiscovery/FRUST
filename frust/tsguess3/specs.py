@@ -26,8 +26,6 @@ class TSGuess3Spec:
         Mapping from V3 role name to Cartesian coordinate tuple.
     constraints : tuple of ConstraintEntry
         V3 role-level distance and angle constraints.
-    constraint_order : tuple of str
-        Best-effort role order for legacy ``constraint_atoms`` projection.
     """
 
     name: str
@@ -36,7 +34,6 @@ class TSGuess3Spec:
     core_smarts: str
     role_coordinates: dict[str, tuple[float, float, float]]
     constraints: tuple[ConstraintEntry, ...]
-    constraint_order: tuple[str, ...]
 
     def constraint_dicts(self) -> list[dict[str, object]]:
         """Return constraints as dataframe-friendly dictionaries."""
@@ -61,7 +58,6 @@ BUILTIN_TS_SPECS_V3: dict[str, TSGuess3Spec] = {
             ConstraintEntry("distance", ("cat_B", "substrate_C"), 1.68461),
             ConstraintEntry("distance", ("cat_B", "cat_N"), 3.06223),
         ),
-        constraint_order=("cat_B", "cat_N", "transfer_H", "substrate_C"),
     ),
     "TS2": TSGuess3Spec(
         name="TS2",
@@ -80,7 +76,6 @@ BUILTIN_TS_SPECS_V3: dict[str, TSGuess3Spec] = {
             ConstraintEntry("distance", ("cat_B", "cat_N"), 3.080),
             ConstraintEntry("angle", ("cat_B", "B_transfer_H", "cat_N"), 87.38739),
         ),
-        constraint_order=("cat_B", "cat_N", "B_transfer_H", "N_transfer_H", "substrate_C"),
     ),
     "TS3": TSGuess3Spec(
         name="TS3",
@@ -104,7 +99,6 @@ BUILTIN_TS_SPECS_V3: dict[str, TSGuess3Spec] = {
             ConstraintEntry("angle", ("cat_B", "transfer_H", "pin_B"), 98.89),
             ConstraintEntry("angle", ("cat_B", "substrate_C", "pin_B"), 61.75),
         ),
-        constraint_order=("cat_B", "cat_H", "pin_B", "transfer_H", "substrate_C"),
     ),
     "TS4": TSGuess3Spec(
         name="TS4",
@@ -128,6 +122,5 @@ BUILTIN_TS_SPECS_V3: dict[str, TSGuess3Spec] = {
             ConstraintEntry("angle", ("cat_B", "transfer_H", "pin_B"), 89.48),
             ConstraintEntry("angle", ("cat_B", "substrate_C", "pin_B"), 77.13),
         ),
-        constraint_order=("cat_B", "cat_H", "transfer_H", "pin_B", "substrate_C"),
     ),
 }

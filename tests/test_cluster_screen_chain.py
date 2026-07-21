@@ -1,6 +1,5 @@
 from __future__ import annotations
 
-import inspect
 import tempfile
 import unittest
 from pathlib import Path
@@ -9,7 +8,7 @@ from unittest.mock import patch
 
 import pandas as pd
 
-from frust.cluster import ClusterConfig, submit_chain, submit_screen_chain
+from frust.cluster import ClusterConfig, submit_screen_chain
 from frust.cluster.inputs import prepare_screen_chain_inputs
 
 
@@ -68,7 +67,6 @@ def _seed_ts_guess_df() -> pd.DataFrame:
                 "constraint_spec": [
                     {"kind": "distance", "roles": ["a", "b"], "value": 1.0}
                 ],
-                "constraint_atoms": [0, 1, 2, 0, 1, 2],
                 "seed-EE": energy,
             }
         )
@@ -155,6 +153,23 @@ class ScreenChainInputTests(unittest.TestCase):
 
 
 class ScreenChainSubmissionTests(unittest.TestCase):
+    def test_submit_screen_chain_rejects_quarantined_profile_before_executor(self):
+        with tempfile.TemporaryDirectory() as tmp:
+            csv_path = _screen_csv(Path(tmp) / "screen.csv")
+            cluster = ClusterConfig(backend="local")
+
+            with patch("frust.cluster.chains.create_executor") as create_executor:
+                with self.assertRaisesRegex(ValueError, "wrong mode"):
+                    submit_screen_chain(
+                        csv_path=csv_path,
+                        ts_types=["TS3"],
+                        composite_method="r2SCAN-3c",
+                        out_dir=Path(tmp) / "out",
+                        cluster=cluster,
+                    )
+
+            create_executor.assert_not_called()
+
     def test_submit_screen_chain_submits_one_chain_per_target(self):
         with tempfile.TemporaryDirectory() as tmp:
             csv_path = _screen_csv(Path(tmp) / "screen.csv")
@@ -188,6 +203,8 @@ class ScreenChainSubmissionTests(unittest.TestCase):
             self.assertNotIn("ts_struct", kwargs)
             self.assertIsNone(kwargs["n_confs"])
             self.assertEqual(kwargs["top_n"], 10)
+            self.assertEqual(kwargs["spec_profile"], "wb97xd3-631g/gas")
+            self.assertEqual(kwargs["spec_match"], "prefer-exact")
 
         dependent_updates = [
             params
@@ -243,11 +260,6 @@ class ScreenChainSubmissionTests(unittest.TestCase):
                     basisset="def2-SVP",
                 )
 
-    def test_legacy_submit_chain_still_requires_ts_xyz(self):
-        signature = inspect.signature(submit_chain)
-        self.assertIs(signature.parameters["ts_xyz"].default, inspect._empty)
-
-
 class ScreenChainPipelineTests(unittest.TestCase):
     def test_run_init_generates_guesses_inside_cluster_stage(self):
         from frust.pipelines import run_screen_ts_per_rpos
@@ -282,6 +294,8 @@ class ScreenChainPipelineTests(unittest.TestCase):
         self.assertEqual(kwargs["ts_types"], ["TS1"])
         self.assertIsNone(kwargs["n_confs"])
         self.assertEqual(kwargs["n_cores"], 7)
+        self.assertEqual(kwargs["spec_profile"], "wb97xd3-631g/gas")
+        self.assertEqual(kwargs["spec_match"], "prefer-exact")
 
         self.assertEqual(len(FakeStepper.instances), 1)
         self.assertEqual(FakeStepper.instances[0].kwargs["step_type"], None)

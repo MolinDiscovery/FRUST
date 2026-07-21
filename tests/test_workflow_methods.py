@@ -87,6 +87,26 @@ class WorkflowMethodTests(unittest.TestCase):
         self.assertEqual(base.for_stage("xtb_sp").engine, "gxtb")
         self.assertEqual(base.for_stage("xtb_opt").engine, "gxtb")
 
+    def test_with_ts_mode_following_preserves_method_and_solvent(self):
+        base = methods.preset("r2scan-3c-solv")
+
+        updated = methods.with_ts_mode_following(
+            base,
+            mode_roles=("pin_B", "substrate_C"),
+            active_roles=("cat_B", "transfer_H", "pin_B", "substrate_C"),
+            active_atoms_factor=1.5,
+            recalc_hess=3,
+            trust_radius=0.15,
+        )
+
+        spec = updated.for_stage("dft_ts_opt")
+        self.assertEqual(spec.method, "r2SCAN-3c")
+        self.assertEqual(spec.solvent, "chloroform")
+        self.assertIn("TightOpt", spec.options)
+        self.assertEqual(spec.kwargs["ts_mode"], ("pin_B", "substrate_C"))
+        self.assertEqual(spec.kwargs["recalc_hess"], 3)
+        self.assertNotIn("TightOpt", base.for_stage("dft_ts_opt").options)
+
     def test_legacy_stage_alias_updates_canonical_stage(self):
         base = methods.preset("r2scan-3c")
         replacement = methods.orca(method="PBE0", basis="def2-SVP")

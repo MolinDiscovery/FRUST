@@ -301,7 +301,18 @@ class BaseWorkflow:
             n_confs=n_confs,
             n_cores=n_cores,
             source=f"frust.workflows.{self.workflow_name}.preview",
+            **self._structure_build_kwargs(),
         )
+
+    def _structure_build_kwargs(self) -> dict[str, Any]:
+        """Return workflow-specific options for typed structure construction.
+
+        Returns
+        -------
+        dict
+            Keyword arguments forwarded to the shared structure builder.
+        """
+        return {}
 
     def show_stages(
         self,

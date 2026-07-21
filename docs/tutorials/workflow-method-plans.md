@@ -22,7 +22,7 @@ method = ft.workflows.methods.preset("r2scan-3c")
 
 wf = ft.workflows.screen_ts(
     csv_path="docs/examples/screen.csv",
-    ts_types=["TS1", "TS2", "TS3", "TS4"],
+    ts_types=["TS1", "TS2", "TS4"],
     method=method,
     n_confs=None,
     top_n=20,
@@ -96,6 +96,7 @@ individual defaults:
 ```python
 wf = ft.workflows.screen_ts(
     csv_path="docs/examples/screen.csv",
+    ts_types=["TS1", "TS2", "TS4"],
     method="r2scan-3c",
     prune_initial={
         "modes": ("moi", "rmsd"),
@@ -125,6 +126,7 @@ method = (
 
 comparison = ft.workflows.screen_ts(
     csv_path="docs/examples/screen.csv",
+    ts_types=["TS1", "TS2", "TS4"],
     method=method,
 )
 ```
@@ -232,7 +234,6 @@ Use `wf.collect(...)` manually for recovery or a custom merge path.
 | `ft.workflows` | Recommended local-to-cluster workflow objects |
 | `ft.pipes` | Compact supported helpers and existing scripts |
 | `ft.Stepper` | Explicit dataframe-by-dataframe calculator control |
-| `ft.cluster.submit_chain(...)` | Legacy XYZ-template stage chains |
 | `ft.cluster.submit_screen_chain(...)` | Existing lower-level screen chain submission |
 
 See [Workflow Method Plans](../workflows/workflow-methods.md) for the complete

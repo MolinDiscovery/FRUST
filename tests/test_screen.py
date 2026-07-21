@@ -428,7 +428,10 @@ class ScreenWorkflowTests(unittest.TestCase):
         self.assertEqual(set(guesses), {"TS1", "TS2", "TS3", "TS4"})
         ts2 = guesses["TS2"].iloc[0]
         self.assertEqual(ts2["tsguess_backend"], "tsguess2")
-        self.assertEqual(ts2["ts_spec_id"], "TS2::builtin::methylpyrrole_v2")
+        self.assertEqual(
+            ts2["ts_spec_id"],
+            "TS2::tsguess2-v2::wb97xd3-631g::gas::r1",
+        )
         self.assertIn("B_transfer_H", ts2["constraint_roles"])
         self.assertIn("N_transfer_H", ts2["constraint_roles"])
         self.assertTrue(ts2["smiles"])
@@ -449,7 +452,7 @@ class ScreenWorkflowTests(unittest.TestCase):
                 set(roles),
                 {"cat_B", "pin_B", "transfer_H", "substrate_C"},
             )
-            self.assertIn(transfer_h, row["constraint_atoms"])
+            self.assertNotIn("constraint_atoms", row.index)
             self.assertIn(transfer_h, cat_b_hydrogens)
         self.assertEqual(guesses["TS2"].attrs["frust_tsguess2"]["backend"], "tsguess2")
 

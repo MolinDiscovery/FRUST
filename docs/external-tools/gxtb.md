@@ -295,7 +295,7 @@ method = (
 
 wf = ft.workflows.screen_ts(
     csv_path="docs/examples/screen.csv",
-    ts_types=["TS1", "TS2", "TS3", "TS4"],
+    ts_types=["TS1", "TS2", "TS4"],
     method=method,
     n_confs=None,
     top_n=20,
@@ -423,8 +423,9 @@ df_ts1 = step.gxtb(
 )
 ```
 
-The dataframe must contain the constraint metadata expected by the step type,
-typically `constraint_atoms`.
+Every dataframe row must contain `constraint_roles` and `constraint_spec`.
+`Stepper` renders those self-describing constraints; `step_type` does not
+select a hard-coded geometry.
 
 For custom xTB control input, pass `detailed_inp_str`:
 

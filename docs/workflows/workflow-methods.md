@@ -27,7 +27,7 @@ method = ft.workflows.methods.preset("r2scan-3c")
 
 wf = ft.workflows.screen_ts(
     csv_path="docs/examples/screen.csv",
-    ts_types=["TS1", "TS2", "TS3", "TS4"],
+    ts_types=["TS1", "TS2", "TS4"],
     method=method,
     n_confs=None,
     top_n=20,
@@ -299,6 +299,7 @@ screening followed by RMSD pruning:
 ```python
 wf = ft.workflows.screen_ts(
     csv_path="docs/examples/screen.csv",
+    ts_types=["TS1", "TS2", "TS4"],
     method="r2scan-3c",
     prune_initial=True,
 )
@@ -309,6 +310,7 @@ Use a dictionary to change the thresholds or modes:
 ```python
 wf = ft.workflows.screen_ts(
     csv_path="docs/examples/screen.csv",
+    ts_types=["TS1", "TS2", "TS4"],
     method="r2scan-3c",
     prune_initial={
         "modes": ("moi", "rmsd"),
@@ -459,7 +461,6 @@ parquet file from each target directory and merges dataframe attrs.
 | `ft.workflows` | recommended high-level API | local test and cluster production should share one object |
 | `ft.pipes` | supported helper layer | you want a quick local convenience function |
 | `ft.Stepper` | supported low-level layer | you want full dataframe-by-dataframe calculator control |
-| `ft.cluster.submit_chain(...)` | supported legacy chain layer | you are using transformer/template `.xyz` workflows |
 | `ft.cluster.submit_screen_chain(...)` | supported screen-chain helper | you want the previous screen-chain API directly |
 
 The workflow layer does not remove the lower layers. It packages the common

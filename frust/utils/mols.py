@@ -6,7 +6,6 @@ from rdkit.Chem import rdchem, rdDetermineBonds
 from rdkit.Geometry.rdGeometry import Point3D
 from rdkit.Chem.rdchem import RWMol
 from rdkit.Chem.rdchem import Mol
-from frust.utils.io import read_ts_type_from_xyz
 
 
 def canonicalize_smiles(smiles: str) -> str:
@@ -357,55 +356,6 @@ def fix_cat_frag(mol: Chem.Mol, bh_len: float = 1.19) -> Chem.Mol:
     return rw.GetMol()
 
 
-def create_ts_per_rpos_old(
-    ligand_smiles_list: list[str],
-    ts_guess_xyz: str,
-    ) -> list[dict[str, Mol]]:
-    """
-    Generate transition state (TS) structures for each ligand SMILES using a TS guess XYZ template.
-
-    Args:
-        ligand_smiles_list (List[str]): List of ligand SMILES strings for which to create TS structures.
-        ts_guess_xyz (str): Path to an XYZ file containing the TS guess geometry. The TS type
-            (e.g., 'TS1', 'TS2', 'TS3', 'TS4') is inferred from the comment line.
-
-    Returns:
-        List[Dict[str, rdkit.Chem.Mol]]: A list of dictionaries, each mapping a TS identifier
-            (e.g., reaction position key) to an RDKit Mol object representing the generated TS.
-    """
-
-    ts_type = read_ts_type_from_xyz(ts_guess_xyz)
-
-    if ts_type == 'TS1':
-        from frust.transformers import transformer_ts1
-        transformer_ts = transformer_ts1
-    elif ts_type == 'TS2':
-        from frust.transformers import transformer_ts2
-        transformer_ts = transformer_ts2
-    elif ts_type == 'TS3':
-        from frust.transformers import transformer_ts3
-        transformer_ts = transformer_ts3
-    elif ts_type == 'TS4':
-        from frust.transformers import transformer_ts4
-        transformer_ts = transformer_ts4
-    elif ts_type == 'INT3':
-        from frust.transformers import transformer_int3
-        transformer_ts = transformer_int3        
-    else:
-        raise ValueError(f"Unrecognized TS type: {ts_type}")
-
-    ts_structs = {}
-    for smi in ligand_smiles_list:
-        ts_mols = transformer_ts(smi, ts_guess_xyz)
-        ts_structs.update(ts_mols)
-
-    ts_structs_list = []
-    for k, i in ts_structs.items():
-        ts_structs_list.append({k:i})   
-
-    return ts_structs_list
-
-
 def _extract_rpos_from_df(df):
     rpos_list = []
     for _, row in df.iterrows():
@@ -449,86 +399,6 @@ def _extract_rpos_from_df(df):
         rpos_list.append(rpos_out)
             
     return rpos_list
-
-
-def create_ts_per_rpos(
-    ligand_smiles_df: pd.DataFrame,
-    ts_guess_xyz: str,
-    return_format: str = "list",
-    ) -> list[dict[str, Mol]]:
-    """Generate TS structures from a dataframe of SMILES and optional reactive positions.
-
-    Parameters
-    ----------
-    ligand_smiles_df : pandas.DataFrame
-        Dataframe containing a ``smiles`` column. If present, the ``rpos``
-        column specifies one or more aromatic C-H positions per row. Multiple
-        positions may be given as a semicolon-separated string such as
-        ``"2;3"``.
-    ts_guess_xyz : str
-        Path to a TS-guess XYZ file. The TS type is inferred from the comment
-        line in the file.
-    return_format : str, optional
-        Output format. Use ``"list"`` to return a list of single-item
-        dictionaries, or ``"dict"`` to return one merged dictionary.
-
-    Returns
-    -------
-    list[dict[str, rdkit.Chem.Mol]] or dict[str, rdkit.Chem.Mol]
-        Generated TS structures keyed by their TS identifiers. Duplicate
-        SMILES entries in ``ligand_smiles_df`` are ignored after the first
-        occurrence.
-
-    Notes
-    -----
-    The ``rpos`` values are validated against the aromatic C-H positions for
-    each SMILES string before the corresponding transformer is called.
-    """
-
-    ligand_smiles_list = list(dict.fromkeys(ligand_smiles_df["smiles"]))
-
-    rpos_list = None
-    if "rpos" in ligand_smiles_df.columns:
-        rpos_list = _extract_rpos_from_df(ligand_smiles_df)
-
-    ts_type = read_ts_type_from_xyz(ts_guess_xyz)
-
-    if ts_type == 'TS1':
-        from frust.transformers import transformer_ts1
-        transformer_ts = transformer_ts1
-    elif ts_type == 'TS2':
-        from frust.transformers import transformer_ts2
-        transformer_ts = transformer_ts2
-    elif ts_type == 'TS3':
-        from frust.transformers import transformer_ts3
-        transformer_ts = transformer_ts3
-    elif ts_type == 'TS4':
-        from frust.transformers import transformer_ts4
-        transformer_ts = transformer_ts4
-    elif ts_type == 'INT3':
-        from frust.transformers import transformer_int3
-        transformer_ts = transformer_int3        
-    else:
-        raise ValueError(f"Unrecognized TS type: {ts_type}")
-
-    ts_structs = {}
-    if rpos_list is None:
-        for smi in ligand_smiles_list:
-            ts_mols = transformer_ts(smi, ts_guess_xyz)
-            ts_structs.update(ts_mols)
-    else:
-        for smi, rpos in zip(ligand_smiles_list, rpos_list):
-            ts_mols = transformer_ts(smi, ts_guess_xyz, rpos_list=rpos)
-            ts_structs.update(ts_mols)
-
-    if return_format == "dict":
-        return ts_structs
-
-    if return_format == "list":
-        ts_structs_list = []
-        for k, i in ts_structs.items():
-            ts_structs_list.append({k:i})   
-        return ts_structs_list
 
 
 def create_mol_per_rpos(

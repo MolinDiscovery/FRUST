@@ -25,6 +25,8 @@ def build(
     stepper_cls: type[Stepper] = Stepper,
     ts_guess_factory: Any = create_ts_guesses,
     mol_factory: Any = create_mol_per_rpos,
+    spec_profile: str = "wb97xd3-631g/gas",
+    spec_match: str = "prefer-exact",
 ) -> pd.DataFrame:
     """Construct an initial dataframe for one typed target.
 
@@ -38,6 +40,10 @@ def build(
         Directory used for the inspectable pre-calculation TS/INT guess.
     stepper_cls, ts_guess_factory, mol_factory : callable, optional
         Injectable collaborators used by workflow tests.
+    spec_profile : str, optional
+        Method/environment geometry profile for connected constrained states.
+    spec_match : {"prefer-exact", "exact"}, optional
+        Geometry-profile matching policy.
 
     Returns
     -------
@@ -60,6 +66,8 @@ def build(
             n_confs=n_confs,
             n_cores=n_cores,
             ts_guess_factory=ts_guess_factory,
+            spec_profile=spec_profile,
+            spec_match=spec_match,
         )
         if save_dir is not None:
             df.to_parquet(save_dir / "structure_guess.parquet")
@@ -135,6 +143,8 @@ def _build_connected(
     n_confs: int | None,
     n_cores: int,
     ts_guess_factory: Any,
+    spec_profile: str,
+    spec_match: str,
 ) -> pd.DataFrame:
     if target.rpos is None:
         raise ValueError(f"Connected-graph target {target.target_id!r} requires rpos")
@@ -146,5 +156,7 @@ def _build_connected(
         n_confs=n_confs,
         n_cores=n_cores,
         backend="tsguess2",
+        spec_profile=spec_profile,
+        spec_match=spec_match,
     )
     return grouped[target.state_id]

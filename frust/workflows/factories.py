@@ -8,7 +8,6 @@ prepares structures and executes the stage graph.
 
 from __future__ import annotations
 
-import warnings
 from pathlib import Path
 from typing import Any, Literal
 
@@ -18,11 +17,11 @@ from frust.cluster.naming import sanitize_tag
 from frust.screen import create_ts_guesses
 from frust.screen import expand as expand_screen
 from frust.screen import read as read_screen
-from frust.schema import parse_structure_name
 from frust.stepper import Stepper
 from frust.tsguess.matching import parse_rpos_value
 from frust.tsguess.specs import BUILTIN_TS_SPECS
 from frust.tsguess2.specs import BUILTIN_TS_SPECS_V2
+from frust.tsguess2.specs import resolve_profile_specs
 from frust.tsguess3.specs import BUILTIN_TS_SPECS_V3
 from frust.structures import (
     StructureTarget,
@@ -31,11 +30,11 @@ from frust.structures import (
     normalize_systems,
     plan_targets,
 )
-from frust.utils.io import read_ts_type_from_xyz
-from frust.utils.mols import create_mol_per_rpos, create_ts_per_rpos
+from frust.utils.mols import create_mol_per_rpos
 from frust.utils.pruning import normalize_pruning_options
 from frust.workflows.core import BaseWorkflow, ExecutionOptions, StageDef, WorkflowTarget
 from frust.workflows.methods import MethodPlan
+from frust.workflows.spec_profiles import profile_for_geometry_stage
 
 
 SplitMode = Literal["per_input", "per_rpos"]
@@ -531,6 +530,8 @@ class ScreenTSWorkflow(BaseWorkflow):
         dataframe: pd.DataFrame | None = None,
         ts_types: tuple[str, ...] | list[str] = ("TS1", "TS2", "TS3", "TS4"),
         ts_backend: str = "tsguess2",
+        spec_profile: str = "auto",
+        spec_match: str = "prefer-exact",
         method: MethodPlan | str | None = None,
         n_confs: int | None = None,
         top_n: int = 20,
@@ -542,7 +543,29 @@ class ScreenTSWorkflow(BaseWorkflow):
         self.dataframe = dataframe
         self.ts_types = tuple(str(ts_type).upper() for ts_type in ts_types)
         self.ts_backend = str(ts_backend).strip().lower()
+        self.spec_profile = str(spec_profile).strip().lower()
+        self.spec_match = str(spec_match).strip().lower()
         self.prune_initial = prune_initial
+
+    def _resolved_spec_profile(self) -> str:
+        """Return the explicit or method-derived tsguess2 profile."""
+        if self.spec_profile != "auto":
+            return self.spec_profile
+        return profile_for_geometry_stage(self.method, "dft_ts_opt")
+
+    @property
+    def resolved_spec_profile(self) -> str:
+        """Return the geometry profile selected for TS construction."""
+        return self._resolved_spec_profile()
+
+    def _structure_build_kwargs(self) -> dict[str, Any]:
+        """Return method-aware connected-structure build options."""
+        if self.ts_backend != "tsguess2":
+            return {}
+        return {
+            "spec_profile": self._resolved_spec_profile(),
+            "spec_match": self.spec_match,
+        }
 
     def _systems(self) -> pd.DataFrame:
         """Return expanded substrate/catalyst systems.
@@ -582,6 +605,11 @@ class ScreenTSWorkflow(BaseWorkflow):
             raise ValueError(f"Unsupported screen TS types {unknown}. Supported: {supported}")
         systems = self._systems()
         if self.ts_backend == "tsguess2":
+            resolve_profile_specs(
+                self.ts_types,
+                self._resolved_spec_profile(),
+                match=self.spec_match,
+            )
             return plan_targets(systems, states=self.ts_types)
         targets: list[WorkflowTarget] = []
         for _, system in systems.iterrows():
@@ -641,6 +669,8 @@ class ScreenTSWorkflow(BaseWorkflow):
                 save_dir=save_dir,
                 stepper_cls=Stepper,
                 ts_guess_factory=create_ts_guesses,
+                spec_profile=self._resolved_spec_profile(),
+                spec_match=self.spec_match,
             )
         screen_target = target.payload
         ts_type = str(screen_target["ts_type"].iloc[0]).upper()
@@ -650,6 +680,8 @@ class ScreenTSWorkflow(BaseWorkflow):
             n_confs=self.n_confs,
             n_cores=options.n_cores,
             backend=self.ts_backend,
+            spec_profile=self._resolved_spec_profile(),
+            spec_match=self.spec_match,
         )
         df = guesses[ts_type]
         if save_dir is not None:
@@ -697,6 +729,8 @@ class Int3Workflow(BaseWorkflow):
         *,
         csv_path: str | Path | None = None,
         dataframe: pd.DataFrame | None = None,
+        spec_profile: str = "auto",
+        spec_match: str = "prefer-exact",
         method: MethodPlan | str | None = None,
         n_confs: int | None = None,
         top_n: int = 20,
@@ -706,7 +740,27 @@ class Int3Workflow(BaseWorkflow):
         super().__init__(method=method, n_confs=n_confs, top_n=top_n, dft=dft)
         self.csv_path = csv_path
         self.dataframe = dataframe
+        self.spec_profile = str(spec_profile).strip().lower()
+        self.spec_match = str(spec_match).strip().lower()
         self.prune_initial = prune_initial
+
+    def _resolved_spec_profile(self) -> str:
+        """Return the explicit or method-derived INT3 geometry profile."""
+        if self.spec_profile != "auto":
+            return self.spec_profile
+        return profile_for_geometry_stage(self.method, "dft_opt")
+
+    @property
+    def resolved_spec_profile(self) -> str:
+        """Return the geometry profile selected for INT3 construction."""
+        return self._resolved_spec_profile()
+
+    def _structure_build_kwargs(self) -> dict[str, Any]:
+        """Return method-aware connected-structure build options."""
+        return {
+            "spec_profile": self._resolved_spec_profile(),
+            "spec_match": self.spec_match,
+        }
 
     def _systems(self) -> pd.DataFrame:
         """Return normalized explicit systems for INT3 construction."""
@@ -717,6 +771,11 @@ class Int3Workflow(BaseWorkflow):
 
     def _build_targets(self) -> list[StructureTarget]:
         """Plan one lightweight INT3 target per system and reactive position."""
+        resolve_profile_specs(
+            ["INT3"],
+            self._resolved_spec_profile(),
+            match=self.spec_match,
+        )
         return plan_targets(self._systems(), states=["INT3"])
 
     def _prepare_initial_df(
@@ -738,6 +797,8 @@ class Int3Workflow(BaseWorkflow):
             save_dir=save_dir,
             stepper_cls=Stepper,
             ts_guess_factory=create_ts_guesses,
+            spec_profile=self._resolved_spec_profile(),
+            spec_match=self.spec_match,
         )
 
     def _step_type_for_target(self, target: WorkflowTarget) -> str | None:
@@ -763,175 +824,6 @@ class Int3Workflow(BaseWorkflow):
                     kind="filter",
                     lowest=1,
                     rank_by="dft_rank_sp",
-                )
-            )
-        return stages
-
-
-class LegacyTSWorkflow(BaseWorkflow):
-    """Workflow for legacy transformer TS and INT template inputs.
-
-    Parameters
-    ----------
-    csv_path : str or pathlib.Path
-        Ligand/substrate CSV containing SMILES and optional ``rpos`` values.
-    ts_xyz : str or pathlib.Path
-        Template XYZ file used by the legacy transformer functions. The TS type
-        is inferred from the XYZ comment line unless ``int3=True`` is set.
-    int3 : bool, optional
-        Treat the workflow as an INT3 workflow instead of a TS workflow.
-    method : MethodPlan or str or None, optional
-        Calculator plan for all workflow stages. Accepts ``None`` for the
-        default ``"wb97xd3-631g"`` preset, a preset string, or a custom
-        :class:`frust.workflows.methods.MethodPlan`. Built-in preset strings
-        are ``"r2scan-3c"`` (ORCA r2SCAN-3c composite DFT stages),
-        ``"wb97xd3-631g"`` (default ORCA wB97X-D3/6-31G** workflow), and
-        ``"r2scan-def2svp"`` (ORCA R2SCAN/def2-SVP DFT stages). A preset may
-        contain stage keys this legacy workflow does not use; call
-        ``wf.show_stages()`` to inspect the active stages.
-    n_confs : int or None, optional
-        Conformer count passed to ``Stepper.build_initial_df``.
-    top_n : int, optional
-        Number of rows kept after constrained low-cost optimization.
-    dft : bool, optional
-        If ``True``, add TS or INT3 DFT continuation stages. If ``False``, stop
-        after the DFT pre-SP cutoff and keep the lowest-energy row.
-    prune_initial : bool or dict, optional
-        If ``False``, leave the initial conformer ensemble unchanged. If
-        ``True``, insert PRISM pruning immediately after ``prepare`` using the
-        default modes ``("moi", "rmsd")``. A dictionary enables pruning and
-        overrides default pruning options, for example
-        ``{"modes": ("moi", "rmsd", "rot_corr_rmsd")}``.
-
-    Notes
-    -----
-    This workflow preserves the older template-transformer path based on
-    :func:`frust.utils.mols.create_ts_per_rpos`. For new substrate/catalyst
-    screens, prefer :func:`screen_ts`.
-    """
-
-    workflow_name = "legacy_ts"
-    result_profile = "transition_state"
-
-    def __init__(
-        self,
-        *,
-        csv_path: str | Path,
-        ts_xyz: str | Path,
-        int3: bool = False,
-        method: MethodPlan | str | None = None,
-        n_confs: int | None = None,
-        top_n: int = 10,
-        dft: bool = True,
-        prune_initial: bool | dict[str, Any] = False,
-    ) -> None:
-        super().__init__(method=method, n_confs=n_confs, top_n=top_n, dft=dft)
-        self.csv_path = csv_path
-        self.ts_xyz = ts_xyz
-        self.int3 = int3
-        self.result_profile = "constrained_minimum" if int3 else "transition_state"
-        self.prune_initial = prune_initial
-
-    def _build_targets(self) -> list[WorkflowTarget]:
-        """Build legacy transformer targets from the input CSV and template."""
-        df = pd.read_csv(self.csv_path)
-        jobs = create_ts_per_rpos(df, str(self.ts_xyz), return_format="list")
-        return [
-            WorkflowTarget(
-                tag=sanitize_tag(list(job.keys())[0]),
-                payload=job,
-                metadata={"structure_type": self._default_step_type(job)},
-            )
-            for job in jobs
-        ]
-
-    def _default_step_type(self, job: dict[str, Any]) -> str:
-        """Infer the Stepper type for a legacy transformed target.
-
-        Parameters
-        ----------
-        job : dict
-            Single transformed structure payload.
-
-        Returns
-        -------
-        str
-            ``"INT3"`` when requested, otherwise the TS type inferred from the
-            template XYZ file or generated structure name.
-        """
-        if self.int3:
-            return "INT3"
-        try:
-            return read_ts_type_from_xyz(str(self.ts_xyz)).upper()
-        except Exception:
-            name = list(job.keys())[0]
-            return parse_structure_name(name).structure_type.upper()
-
-    def _prepare_initial_df(
-        self,
-        target: WorkflowTarget,
-        *,
-        save_dir: Path | None,
-        options: ExecutionOptions,
-    ) -> pd.DataFrame:
-        """Embed one legacy TS or INT target into an initial dataframe.
-
-        Parameters
-        ----------
-        target : WorkflowTarget
-            Legacy transformed target.
-        save_dir : pathlib.Path or None
-            Unused for legacy preparation.
-        options : ExecutionOptions
-            Runtime options controlling embedding and TS optimization.
-
-        Returns
-        -------
-        pandas.DataFrame
-            Initial TS or INT dataframe for calculator stages.
-        """
-        del save_dir
-        step = Stepper(
-            step_type=self._step_type_for_target(target),
-            n_cores=options.n_cores,
-            memory_gb=options.mem_gb,
-            debug=options.debug,
-            save_output_dir=False,
-        )
-        return step.build_initial_df(
-            target.payload,
-            n_confs=self.n_confs,
-            n_cores=options.n_cores,
-            ts_type=self._step_type_for_target(target),
-            ts_optimize=not options.debug,
-        )
-
-    def _step_type_for_target(self, target: WorkflowTarget) -> str | None:
-        """Return the TS or INT structure type stored in target metadata."""
-        return (target.metadata or {}).get("structure_type")
-
-    def _stage_defs(self) -> list[StageDef]:
-        """Return legacy TS or INT3 workflow stages."""
-        stages = _ts_screening_stages(self.top_n, prune_initial=self.prune_initial)
-        stages.append(_dft_rank_sp_stage())
-        if not self.dft:
-            stages.append(
-                StageDef(
-                    "filter", "filter", kind="filter",
-                    lowest=1, rank_by="dft_rank_sp",
-                )
-            )
-            return stages
-        if self.int3:
-            stages.extend(
-                _int3_dft_refinement_stages(
-                    include_terminal_solv_sp=self.method.include_terminal_solv_sp,
-                )
-            )
-        else:
-            stages.extend(
-                _ts_dft_refinement_stages(
-                    include_terminal_solv_sp=self.method.include_terminal_solv_sp,
                 )
             )
         return stages
@@ -1123,6 +1015,8 @@ def screen_ts(
     ts_types: tuple[str, ...] | list[str] = ("TS1", "TS2", "TS3", "TS4"),
     ts_backend: str = "tsguess2",
     method: MethodPlan | str | None = None,
+    spec_profile: str = "auto",
+    spec_match: str = "prefer-exact",
     n_confs: int | None = None,
     top_n: int = 20,
     dft: bool = True,
@@ -1153,6 +1047,16 @@ def screen_ts(
         ``"r2scan-3c-solv"`` and ``"wb97xd3-631g-solv"``
         (solvent-inclusive DFT stages without a terminal solvent SP), and
         ``"r2scan-def2svp"`` (ORCA R2SCAN/def2-SVP DFT stages).
+    spec_profile : str, optional
+        Geometry-reference profile used by ``tsguess2``. ``"auto"`` selects
+        the profile from the DFT TS-optimization method and environment. Pass
+        an explicit profile such as ``"r2scan-3c/smd(chloroform)"`` for a
+        custom method plan.
+    spec_match : {"prefer-exact", "exact"}, optional
+        Profile matching policy. ``"prefer-exact"`` may use the other
+        environment from the same method family when an exact reference is
+        missing; ``"exact"`` requires the requested environment. Neither
+        policy crosses method families.
     n_confs : int or None, optional
         Number of TS guess conformers generated per target.
     top_n : int, optional
@@ -1200,77 +1104,8 @@ def screen_ts(
         ts_types=ts_types,
         ts_backend=ts_backend,
         method=method,
-        n_confs=n_confs,
-        top_n=top_n,
-        dft=dft,
-        prune_initial=prune_initial,
-    )
-
-
-def legacy_ts(
-    *,
-    csv_path: str | Path,
-    ts_xyz: str | Path,
-    method: MethodPlan | str | None = None,
-    n_confs: int | None = None,
-    top_n: int = 10,
-    dft: bool = True,
-    prune_initial: bool | dict[str, Any] = False,
-) -> LegacyTSWorkflow:
-    """Create a legacy template-based TS workflow.
-
-    Parameters
-    ----------
-    csv_path : str or pathlib.Path
-        Ligand/substrate CSV containing a ``smiles`` column and optional
-        ``rpos`` values.
-    ts_xyz : str or pathlib.Path
-        Template XYZ file used by the legacy TS transformer. The template
-        comment line is used to infer the TS type when possible.
-    method : MethodPlan or str or None, optional
-        Calculator plan for all workflow stages. Accepts ``None`` for the
-        default ``"wb97xd3-631g"`` preset, a preset string, or a custom
-        :class:`frust.workflows.methods.MethodPlan`. Built-in preset strings
-        are ``"r2scan-3c"`` (ORCA r2SCAN-3c composite DFT stages),
-        ``"wb97xd3-631g"`` (default ORCA wB97X-D3/6-31G** workflow),
-        ``"r2scan-3c-solv"`` and ``"wb97xd3-631g-solv"``
-        (solvent-inclusive DFT stages without a terminal solvent SP), and
-        ``"r2scan-def2svp"`` (ORCA R2SCAN/def2-SVP DFT stages).
-    n_confs : int or None, optional
-        Conformer count for initial TS embedding.
-    top_n : int, optional
-        Number of low-cost optimized TS structures kept before the DFT pre-SP
-        cutoff.
-    dft : bool, optional
-        If ``True``, include constrained DFT preoptimization, Hessian,
-        ``OptTS``, frequency, and solvent stages. If ``False``, stop after the
-        DFT pre-SP cutoff and keep the lowest-energy row.
-    prune_initial : bool or dict, optional
-        If ``False``, leave the initial TS conformer ensemble unchanged. If
-        ``True``, insert PRISM pruning immediately after ``prepare`` using the
-        default modes ``("moi", "rmsd")``. A dictionary enables pruning and
-        overrides default pruning options, for example
-        ``{"modes": ("moi", "rmsd", "rot_corr_rmsd")}``.
-
-    Returns
-    -------
-    LegacyTSWorkflow
-        Workflow object for the older transformer/template TS path.
-
-    Examples
-    --------
-    >>> import frust as ft
-    >>> wf = ft.workflows.legacy_ts(
-    ...     csv_path="ligands.csv",
-    ...     ts_xyz="templates/TS3.xyz",
-    ...     method="r2scan-3c",
-    ... )
-    >>> wf.targets()[:1]
-    """
-    return LegacyTSWorkflow(
-        csv_path=csv_path,
-        ts_xyz=ts_xyz,
-        method=method,
+        spec_profile=spec_profile,
+        spec_match=spec_match,
         n_confs=n_confs,
         top_n=top_n,
         dft=dft,
@@ -1282,8 +1117,9 @@ def int3(
     *,
     csv_path: str | Path | None = None,
     dataframe: pd.DataFrame | None = None,
-    ts_xyz: str | Path | None = None,
     method: MethodPlan | str | None = None,
+    spec_profile: str = "auto",
+    spec_match: str = "prefer-exact",
     n_confs: int | None = None,
     top_n: int = 20,
     dft: bool = True,
@@ -1297,9 +1133,6 @@ def int3(
         Component screen CSV, expanded-system CSV, or substrate-only CSV.
     dataframe : pandas.DataFrame or None, optional
         In-memory input in any of the same forms as ``csv_path``.
-    ts_xyz : str or pathlib.Path or None, optional
-        Deprecated compatibility argument. Modern INT3 construction is
-        role-based and does not read a template XYZ.
     method : MethodPlan or str or None, optional
         Calculator plan for all workflow stages. Accepts ``None`` for the
         default ``"wb97xd3-631g"`` preset, a preset string, or a custom
@@ -1307,6 +1140,13 @@ def int3(
         are ``"r2scan-3c"`` (ORCA r2SCAN-3c composite DFT stages),
         ``"wb97xd3-631g"`` (default ORCA wB97X-D3/6-31G** workflow), and
         ``"r2scan-def2svp"`` (ORCA R2SCAN/def2-SVP DFT stages).
+    spec_profile : str, optional
+        Geometry-reference profile used for INT3 construction. ``"auto"``
+        selects it from the DFT optimization method and environment.
+    spec_match : {"prefer-exact", "exact"}, optional
+        Profile matching policy. ``"prefer-exact"`` may fall back to the
+        other environment from the same method family; ``"exact"`` requires
+        the requested environment.
     n_confs : int or None, optional
         Conformer count for initial INT3 embedding.
     top_n : int, optional
@@ -1340,17 +1180,12 @@ def int3(
     ... )
     >>> result = wf.submit(out_dir="runs/int3", cluster=cluster)
     """
-    if ts_xyz is not None:
-        warnings.warn(
-            "int3(ts_xyz=...) is deprecated and the template is ignored; "
-            "use legacy_ts(...) only when template transformation is required",
-            DeprecationWarning,
-            stacklevel=2,
-        )
     return Int3Workflow(
         csv_path=csv_path,
         dataframe=dataframe,
         method=method,
+        spec_profile=spec_profile,
+        spec_match=spec_match,
         n_confs=n_confs,
         top_n=top_n,
         dft=dft,

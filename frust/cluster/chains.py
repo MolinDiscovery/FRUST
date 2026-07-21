@@ -99,7 +99,6 @@ def submit_chain_jobs(
     preset: str | None,
     module_path: str | None,
     stage_order: list[str] | None,
-    ts_xyz: str | Path | None,
     out_dir: str | Path,
     cluster: ClusterConfig,
     stage_resources: dict[str, Resources] | None = None,
@@ -112,6 +111,8 @@ def submit_chain_jobs(
     basisset: str | None = None,
     basisset_solv: str | None = None,
     composite_method: str | None = None,
+    spec_profile: str = "auto",
+    spec_match: str = "prefer-exact",
     save_output_dir: bool = True,
     work_dir: str | Path | None = None,
     orca_memory_fraction: float = DEFAULT_ORCA_MEMORY_FRACTION,
@@ -128,8 +129,6 @@ def submit_chain_jobs(
         Custom stage module path for advanced chains.
     stage_order : list[str] or None
         Explicit stage order for custom chains.
-    ts_xyz : str or pathlib.Path or None
-        TS template file used to generate initial stage inputs.
     out_dir : str or pathlib.Path
         Root output directory for the chain submission.
     cluster : frust.cluster.config.ClusterConfig
@@ -160,6 +159,10 @@ def submit_chain_jobs(
         Complete ORCA composite-method keyword forwarded to preset stage
         modules when they accept it. Composite methods are mutually exclusive
         with ``functional``, ``basisset``, and ``basisset_solv``.
+    spec_profile : str, optional
+        Geometry profile forwarded to modern screen initialization stages.
+    spec_match : {"prefer-exact", "exact"}, optional
+        Geometry-profile matching policy.
     save_output_dir : bool, optional
         Forwarded to initialization stages when supported.
     work_dir : str or pathlib.Path or None, optional
@@ -199,7 +202,6 @@ def submit_chain_jobs(
     prepared = prepare_chain_inputs(
         csv_path,
         preset or "custom",
-        ts_xyz,
         ts_types=ts_types,
     )
     run_init_arg = prepared.get("run_init_arg", "ts_struct")
@@ -253,6 +255,8 @@ def submit_chain_jobs(
                         "n_cores": resources.cpus,
                         "mem_gb": orca_memory_gb(resources, orca_memory_fraction),
                         "save_output_dir": save_output_dir,
+                        "spec_profile": spec_profile,
+                        "spec_match": spec_match,
                     }
                 )
                 if top_n is not None:

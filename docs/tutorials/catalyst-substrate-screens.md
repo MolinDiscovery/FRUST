@@ -72,7 +72,7 @@ Use one conformer while checking the wiring:
 ```python
 ts_guesses = ft.screen.create_ts_guesses(
     systems,
-    ts_types=["TS1", "TS2", "TS3", "TS4"],
+    ts_types=["TS1", "TS2", "TS4"],
     n_confs=1,
 )
 
@@ -145,7 +145,7 @@ repeating the dataframe cascade:
 ```python
 wf = ft.workflows.screen_ts(
     csv_path="docs/examples/screen.csv",
-    ts_types=["TS1", "TS2", "TS3", "TS4"],
+    ts_types=["TS1", "TS2", "TS4"],
     method="r2scan-3c",
     n_confs=None,
     top_n=20,

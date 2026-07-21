@@ -303,8 +303,9 @@ When changing stage order or parquet names, update tests that assert:
   output/calculation name.
 - Dataframe provenance belongs in `df.attrs`, not sparse stage-specific
   columns.
-- Existing `pipes.py`, `Stepper`, `submit_chain(...)`, and
-  `submit_screen_chain(...)` remain supported lower layers.
+- Existing molecule helpers, `Stepper`, and `submit_screen_chain(...)` remain
+  supported lower layers. Positional XYZ-template TS chains are not part of
+  the public architecture.
 
 ## Test Map
 

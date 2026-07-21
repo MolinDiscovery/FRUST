@@ -1111,9 +1111,8 @@ class ConformerEnsembleSceneTests(unittest.TestCase):
 
         np.testing.assert_allclose(aligned[[0, 1, 2]], ref[[0, 1, 2]], atol=1e-10)
 
-    def test_conformer_scene_supports_constraint_atoms_fallback_and_cluster_mode(self):
-        df = self.conformer_df().drop(columns=["constraint_roles"])
-        df["constraint_atoms"] = [[0, 1, 2]] * len(df)
+    def test_conformer_scene_supports_role_based_core_and_cluster_mode(self):
+        df = self.conformer_df()
 
         scene = conformer_ensemble_scene_from_dataframe(
             df,

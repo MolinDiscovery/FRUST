@@ -43,7 +43,6 @@ def _guess_df(ts_type: str, *, rpos: int = 2) -> pd.DataFrame:
                 "coords_embedded": [[(0.0, 0.0, 0.0), (1.0, 0.0, 0.0)]],
                 "constraint_roles": [{"a": 0, "b": 1}],
                 "constraint_spec": [[{"kind": "distance", "roles": ["a", "b"], "value": 1.0}]],
-                "constraint_atoms": [[0, 1, 0, 1, 0, 1]],
                 "mock_energy": energy,
             }
         )
@@ -105,7 +104,6 @@ class ScreenPipesTests(unittest.TestCase):
                 "create_ts_guesses",
                 side_effect=_fake_create_ts_guesses,
             ) as create_ts_guesses,
-            patch.object(pipes, "embed_ts", side_effect=AssertionError("legacy embedder used")),
         ):
             out = pipes.run_screen_ts_per_rpos(
                 _component_df(),

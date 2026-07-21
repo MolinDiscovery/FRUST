@@ -42,8 +42,6 @@ class TSSpec:
         Mapping from role name to Cartesian coordinate tuple.
     constraints : tuple of ConstraintEntry
         Role-level constraints rendered by :class:`frust.stepper.Stepper`.
-    constraint_order : tuple of str
-        Role order used to project legacy ``constraint_atoms``.
     extra_fragment : str or None
         Optional built-in fragment added during assembly.
     """
@@ -52,7 +50,6 @@ class TSSpec:
     spec_id: str
     role_coordinates: dict[str, tuple[float, float, float]]
     constraints: tuple[ConstraintEntry, ...]
-    constraint_order: tuple[str, ...]
     extra_fragment: str | None = None
 
     def constraint_dicts(self) -> list[dict[str, object]]:
@@ -79,7 +76,6 @@ BUILTIN_TS_SPECS: dict[str, TSSpec] = {
             ConstraintEntry("angle", ("cat_N", "transfer_H", "substrate_C"), 170.1342),
             ConstraintEntry("angle", ("transfer_H", "substrate_C", "cat_B"), 87.4870),
         ),
-        constraint_order=("cat_B", "cat_N", "transfer_H", "substrate_C"),
         extra_fragment="H",
     ),
     "TS2": TSSpec(
@@ -99,7 +95,6 @@ BUILTIN_TS_SPECS: dict[str, TSSpec] = {
             ConstraintEntry("distance", ("cat_B", "cat_N"), 3.080),
             ConstraintEntry("angle", ("cat_B", "transfer_H", "cat_N"), 86.58),
         ),
-        constraint_order=("cat_B", "cat_N", "cat_H", "transfer_H", "n_transfer_H", "substrate_C"),
         extra_fragment="H2",
     ),
     "TS3": TSSpec(
@@ -123,7 +118,6 @@ BUILTIN_TS_SPECS: dict[str, TSSpec] = {
             ConstraintEntry("angle", ("cat_B", "transfer_H", "pin_B"), 98.89),
             ConstraintEntry("angle", ("cat_B", "substrate_C", "pin_B"), 61.75),
         ),
-        constraint_order=("cat_B", "cat_N", "cat_H", "pin_B", "transfer_H", "substrate_C"),
         extra_fragment="HBpin",
     ),
     "TS4": TSSpec(
@@ -147,7 +141,6 @@ BUILTIN_TS_SPECS: dict[str, TSSpec] = {
             ConstraintEntry("angle", ("cat_B", "transfer_H", "pin_B"), 89.48),
             ConstraintEntry("angle", ("cat_B", "substrate_C", "pin_B"), 77.13),
         ),
-        constraint_order=("cat_B", "cat_N", "cat_H", "transfer_H", "pin_B", "substrate_C"),
         extra_fragment="HBpin",
     ),
 }

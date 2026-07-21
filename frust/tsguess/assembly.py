@@ -144,7 +144,6 @@ def _rows_for_system_rpos(
     atoms = [atom.GetSymbol() for atom in embedded.GetAtoms()]
     connectivity_bonds = _connectivity_bonds(embedded)
     constraint_spec = spec.constraint_dicts()
-    constraint_atoms = [roles[role] for role in spec.constraint_order if role in roles]
 
     rows: list[dict[str, Any]] = []
     system_name = str(system["system_name"])
@@ -174,7 +173,6 @@ def _rows_for_system_rpos(
             "coords_embedded": coords,
             "constraint_roles": dict(roles),
             "constraint_spec": constraint_spec,
-            "constraint_atoms": constraint_atoms,
             "ts_spec_id": spec.spec_id,
             "ts_core_metrics": core_metrics(coords, roles, constraint_spec),
         }

@@ -37,12 +37,12 @@ from frust.schema import (
     metadata_from_mapping,
     normalize_dataframe,
     output_column,
-    parse_structure_name,
 )
 from frust.constraints import (
-    dataframe_has_row_constraints,
+    render_orca_geometry_controls,
     render_orca_constraints,
     render_xtb_constraints,
+    validate_dataframe_constraints,
 )
 
 
@@ -353,33 +353,14 @@ class Stepper:
             self.logger.info(message)
         return out
 
-    def _step_type_upper(self) -> str:
-        """Normalize step_type for callers that only need TS dispatch."""
-        return (self.step_type or "").upper()
-
     def _effective_n_cores(self, n_cores: int | None = None) -> int:
         """Return the effective core count for one calculator call."""
         return int(n_cores) if n_cores is not None else int(self.n_cores)
 
     def _validate_constraint_request(self, df: pd.DataFrame) -> str:
-        """Validate that constraint mode is fully specified."""
-        if dataframe_has_row_constraints(df):
-            return "row"
-
-        step_type = self._step_type_upper()
-        if not step_type:
-            raise ValueError(
-                "`constraint=True` requires `Stepper(step_type=...)` so the correct TS/INT constraints can be selected"
-            )
-        if step_type not in {"TS1", "TS2", "TS3", "TS4", "INT3"}:
-            raise ValueError(
-                f"`constraint=True` is only supported for TS1/TS2/TS3/TS4/INT3, got {self.step_type!r}"
-            )
-        if "constraint_atoms" not in df.columns:
-            raise ValueError(
-                "`constraint=True` requires a 'constraint_atoms' column in the input DataFrame"
-            )
-        return step_type
+        """Validate complete role-based constraints for every dataframe row."""
+        validate_dataframe_constraints(df)
+        return "row"
 
     @staticmethod
     def _validate_required_columns(
@@ -422,23 +403,6 @@ class Stepper:
         if value is not None and not pd.isna(value):
             return str(value)
         return str(index)
-
-    @staticmethod
-    def _constraint_atoms(row: Series, min_size: int = 6) -> list[int]:
-        """Validate and return constraint atoms for TS/INT workflows."""
-        atoms = row.get("constraint_atoms")
-        if atoms is None:
-            raise ValueError("Missing 'constraint_atoms' for a constrained row")
-        if not isinstance(atoms, (list, tuple, np.ndarray)):
-            if pd.isna(atoms):
-                raise ValueError("Missing 'constraint_atoms' for a constrained row")
-            raise ValueError("'constraint_atoms' must be a sequence of atom indices")
-        atoms = list(atoms)
-        if len(atoms) < min_size:
-            raise ValueError(
-                f"'constraint_atoms' must contain at least {min_size} entries for constrained workflows"
-            )
-        return atoms
 
     @staticmethod
     def _plain_molecule_metadata(label: str, smiles: str | None) -> dict[str, Any]:
@@ -671,27 +635,6 @@ class Stepper:
             first, second, third = value
             if isinstance(first, Mol) and cls._sequence_is_cids(second) and isinstance(third, dict):
                 return "embedded_mol"
-            if isinstance(first, Mol) and cls._sequence_is_cids(second) and isinstance(third, str):
-                return "raw_ts"
-        if len(value) == 4:
-            first, second, third, fourth = value
-            if (
-                isinstance(first, Mol)
-                and cls._sequence_is_cids(second)
-                and isinstance(third, (list, tuple, np.ndarray))
-                and isinstance(fourth, str)
-            ):
-                return "embedded_ts"
-        if len(value) == 5:
-            first, second, third, fourth, fifth = value
-            if (
-                isinstance(first, Mol)
-                and cls._sequence_is_cids(second)
-                and isinstance(third, (list, tuple, np.ndarray))
-                and isinstance(fourth, str)
-                and isinstance(fifth, (list, tuple))
-            ):
-                return "embedded_ts"
         return "unknown"
 
     @classmethod
@@ -702,10 +645,10 @@ class Stepper:
         kinds = {cls._dict_value_kind(value) for value in data.values()}
         if "unknown" in kinds:
             raise ValueError(
-                "Could not classify build_initial_df dictionary input; expected SMILES, XYZ, RDKit molecules, raw molecules, raw TS/INT structures, or embedded structures"
+                "Could not classify build_initial_df dictionary input; expected "
+                "SMILES, XYZ, RDKit molecules, raw molecules, or embedded molecules"
             )
-        embedded = {"embedded_mol", "embedded_ts"}
-        if kinds <= embedded:
+        if kinds == {"embedded_mol"}:
             return "embedded"
         if len(kinds) > 1:
             raise ValueError(
@@ -941,31 +884,6 @@ class Stepper:
                     f"Stepper(step_type={self.step_type!r}) does not match dataframe structure_type values: {types}"
                 )
 
-    def _infer_ts_type(self, raw_ts_dict: dict[str, Any], ts_type: str | None) -> str:
-        """Choose the TS/INT embedding type for raw TS dictionary inputs."""
-        constrained = {"TS1", "TS2", "TS3", "TS4", "INT3"}
-        if ts_type is not None:
-            inferred = ts_type.upper()
-        elif self.step_type in constrained:
-            inferred = self.step_type
-        else:
-            parsed_types = {
-                parse_structure_name(name).structure_type.upper()
-                for name in raw_ts_dict
-            }
-            parsed_types = parsed_types & constrained
-            if len(parsed_types) != 1:
-                types = ", ".join(sorted(parsed_types)) or "none"
-                raise ValueError(
-                    "Raw TS/INT dictionaries require one inferable TS type "
-                    f"or an explicit `ts_type=`, got {types}"
-                )
-            inferred = next(iter(parsed_types))
-
-        if inferred not in constrained:
-            raise ValueError(f"`ts_type=` must be one of TS1/TS2/TS3/TS4/INT3, got {ts_type!r}")
-        return inferred
-
     def _with_initial_df_attrs(
         self,
         df: pd.DataFrame,
@@ -977,8 +895,6 @@ class Stepper:
         optimization: str | None = None,
         max_iters: int | None = None,
         select_mols: str | list[str] | None = None,
-        ts_type: str | None = None,
-        ts_optimize: bool | None = None,
     ) -> pd.DataFrame:
         """Attach normalized initial-dataframe provenance to attrs."""
         configured_step_type = "auto" if self._auto_step_type else self.step_type
@@ -990,8 +906,6 @@ class Stepper:
             "optimization": optimization,
             "max_iters": max_iters,
             "select_mols": select_mols,
-            "ts_type": ts_type,
-            "ts_optimize": ts_optimize,
             "step_type": configured_step_type,
             "resolved_step_type": self.step_type,
         }
@@ -1009,9 +923,6 @@ class Stepper:
         max_iters: int = 100,
         workflow: str | None = None,
         select_mols: str | list[str] = "all",
-        ts_type: str | None = None,
-        ts_optimize: bool | None = None,
-        optimize: bool | None = None,
     ) -> pd.DataFrame:
         """Build a FRUST conformer dataframe from embedded or raw structures.
 
@@ -1020,9 +931,8 @@ class Stepper:
         structures : dict, str, pathlib.Path, list, pandas.DataFrame, rdkit.Chem.Mol
             Input structures. Existing embedded dictionaries keep the previous
             behavior. Raw SMILES inputs, XYZ paths/blocks, bare RDKit
-            molecules, raw molecule dictionaries, and raw TS/INT dictionaries
-            are normalized before dataframe construction. XYZ geometry is
-            preserved as supplied.
+            molecules, and raw molecule dictionaries are normalized before
+            dataframe construction. XYZ geometry is preserved as supplied.
         name : str, optional
             Label for a single SMILES, XYZ block/path, or RDKit molecule
             input. Written to ``substrate_name``.
@@ -1047,15 +957,6 @@ class Stepper:
             ``"HBpin-ligand"``, and ``"HBpin-mol"``. The shortcuts are
             ``"all"``, ``"uniques"`` (ligand, int1, int2, HBpin-ligand), and
             ``"generics"`` (dimer, HH, catalyst, HBpin-mol).
-        ts_type : str or None, optional
-            Explicit TS/INT embedding type for raw TS dictionaries when it
-            cannot be inferred from structure names.
-        ts_optimize : bool or None, optional
-            Whether raw TS/INT embedding should run constrained UFF
-            optimization. Defaults to ``False``.
-        optimize : bool or None, optional
-            Backward-friendly alias for ``ts_optimize``.
-
         Returns
         -------
         pandas.DataFrame
@@ -1242,34 +1143,6 @@ class Stepper:
                     max_iters=max_iters,
                     select_mols=select_mols if workflow else None,
                 )
-            if kind == "raw_ts":
-                from frust.embedder import embed_ts
-
-                if ts_optimize is None:
-                    ts_optimize = bool(optimize) if optimize is not None else False
-                inferred_ts_type = self._infer_ts_type(structures, ts_type)
-                embedded = embed_ts(
-                    structures,
-                    ts_type=inferred_ts_type,
-                    n_confs=n_confs,
-                    n_cores=embed_cores,
-                    optimize=ts_optimize,
-                )
-                df = self._build_initial_df_from_embedded(
-                    embedded,
-                    requested_n_confs=n_confs,
-                    resolve_n_confs=True,
-                )
-                self._resolve_auto_step_type(df)
-                return self._with_initial_df_attrs(
-                    df,
-                    input_kind="raw_ts_dict",
-                    workflow=workflow,
-                    n_confs=n_confs,
-                    n_cores=embed_cores,
-                    ts_type=inferred_ts_type,
-                    ts_optimize=ts_optimize,
-                )
             if kind == "smiles":
                 raw_mols = self._raw_smiles_input_to_mols(
                     structures,
@@ -1320,20 +1193,10 @@ class Stepper:
         """
         Turn a dictionary of embedded‐conformer data into a tidy DataFrame.
 
-        The dictionary keys can be either:
-          1) TS names of the form 'TS(..._rpos(N))' (with a 4‐ or 5‐tuple value)
-          2) plain molecule names (without '_rpos(...)') and a 2‐tuple value
-
-        For TS entries:
-            key = 'TS(molname_rpos(N))'
-            value = (Mol_with_H, cids, keep_idxs, smiles[, energies])
-
-        For plain‐mol entries:
-            key = 'some_name'
-            value = (Mol, cids)
-
-        In legacy-input cases, structure metadata is parsed from the key as a
-        fallback. New generated records should carry metadata directly.
+        Values are either ``(mol, conformer_ids)`` or
+        ``(mol, conformer_ids, metadata)``. Constraint-bearing TS/INT rows are
+        already dataframes produced by the modern role-based builders and do
+        not pass through this molecule-only adapter.
 
         Returns
         -------
@@ -1345,7 +1208,6 @@ class Stepper:
               - structure_type      (MOL, TS1, TS2, TS3, TS4, INT3)
               - molecule_role       (ts, ligand, int1, int2, ...)
               - rpos                (int or None)
-              - constraint_atoms    (list[int] or NA)
               - cid                 (conformer ID)
               - smiles              (str or None)
               - atoms               (list of atomic symbols)
@@ -1358,28 +1220,18 @@ class Stepper:
         for name, val in embedded_dict.items():
             if len(val) == 2:
                 mol, cids = val
-                keep_idxs = None
                 smi = None
-                energies: list[tuple[float,int]] = []
                 metadata = None
             elif len(val) == 3 and isinstance(val[2], dict):
                 mol, cids, metadata = val
-                keep_idxs = None
                 smi = metadata.get("smiles") or metadata.get("input_smiles")
-                energies = []
-            elif len(val) == 4:
-                mol, cids, keep_idxs, smi = val
-                energies = []
-                metadata = None
-            elif len(val) == 5:
-                mol, cids, keep_idxs, smi, energies = val
-                metadata = None
             else:
-                raise ValueError(f"Bad tuple length for {name}")
+                raise ValueError(
+                    f"Unsupported embedded value for {name!r}; expected "
+                    "(mol, conformer_ids[, metadata])"
+                )
 
             meta = metadata_from_mapping(metadata, fallback_name=name, smiles=smi)
-
-            e_map: dict[int,float] = {cid_val: e_val for (e_val, cid_val) in energies} if energies else {}
 
             atom_syms = [atom.GetSymbol() for atom in mol.GetAtoms()]
             cids_list = [int(cid) for cid in cids]
@@ -1413,13 +1265,12 @@ class Stepper:
                     "structure_type":   meta.structure_type,
                     "molecule_role":    meta.molecule_role,
                     "rpos":             meta.rpos,
-                    "constraint_atoms": keep_idxs,
                     "cid":              cid,
                     "smiles":           meta.smiles or smi,
                     "input_smiles":     meta.input_smiles or smi,
                     "atoms":            atom_syms,
                     "coords_embedded":  coords,
-                    "energy_uff":       e_map.get(cid, None)
+                    "energy_uff":       None
                 })
 
         df = pd.DataFrame(rows)
@@ -1907,7 +1758,8 @@ class Stepper:
                 - ``atoms``: list of atomic symbols
                 - one coordinate column, typically ``coords_embedded`` or a
                   prior ``*-oc`` column
-                - ``constraint_atoms`` when ``constraint=True``
+                - ``constraint_roles`` and ``constraint_spec`` when
+                  ``constraint=True``
                 - ``substrate_name`` when ``lowest`` is used
             name (str): Base name for the xTB step, used to prefix result
                 columns.
@@ -1915,11 +1767,9 @@ class Stepper:
                 'opt': None}``. Defaults to ``{'gfn': 0}``.
             detailed_inp_str (str, optional): Additional xTB input block
                 (cards) to include. Defaults to ``""``.
-            constraint (bool, optional): If ``True``, applies predefined
-                distance and angle constraints for supported ``step_type``
-                values. Requires ``Stepper(step_type=...)`` with one of
-                ``TS1``, ``TS2``, ``TS3``, ``TS4``, or ``INT3``. Defaults to
-                ``False``.
+            constraint (bool, optional): If ``True``, renders the role-based
+                distance and angle constraints stored on every dataframe row.
+                Defaults to ``False``.
             save_step (bool, optional): If ``True``, saves calculation
                 directories for each conformer. Defaults to ``False``.
             lowest (int or None, optional): If set, retains only the
@@ -1954,7 +1804,6 @@ class Stepper:
 
         def build_xtb(row: pd.Series) -> dict:
             inp: dict[str, object] = {"options": opts}
-            step_type = self._step_type_upper()
 
             # Per-call override: only affects xTB, not ORCA.
             if n_cores is not None:
@@ -1966,84 +1815,6 @@ class Stepper:
                 inp["detailed_input_str"] = base_str
 
             block = render_xtb_constraints(row) if constraint else None
-
-            if block is None and step_type == "TS1" and constraint:
-                B, N, H, C = 0, 1, 4, 5
-                atom = [x + 1 for x in self._constraint_atoms(row)]
-                block = textwrap.dedent(f"""
-                $constrain
-                force constant=50
-                distance: {atom[B]}, {atom[H]}, 2.07696
-                distance: {atom[N]}, {atom[H]}, 1.5127 
-                distance: {atom[H]}, {atom[C]}, 1.29095
-                distance: {atom[B]}, {atom[C]}, 1.68461
-                distance: {atom[B]}, {atom[N]}, 3.06223
-                angle: {atom[N]}, {atom[H]}, {atom[C]}, 170.1342
-                angle: {atom[H]}, {atom[C]}, {atom[B]}, 87.4870
-                $end
-                """).strip()
-
-            if block is None and step_type == "TS2" and constraint:
-                BCat10, N17, H40, H41, C46 = 0, 1, 4, 3, 5  # noqa: F841
-                atom = [x + 1 for x in self._constraint_atoms(row)]
-                block = textwrap.dedent(f"""
-                $constrain
-                force constant=50
-                distance: {atom[BCat10]}, {atom[H41]}, 1.656
-                distance: {atom[N17]}, {atom[H40]}, 1.961
-                distance: {atom[BCat10]}, {atom[N17]}, 3.080
-                angle: {atom[BCat10]}, {atom[H41]}, {atom[N17]}, 86.58
-                $end
-                """).strip()
-
-            if block is None and step_type == "TS3" and constraint:
-                BCat10, H11, BPin22, H21, C = 0, 2, 3, 4, 5
-                atom = [x + 1 for x in self._constraint_atoms(row)]
-                block = textwrap.dedent(f"""
-                $constrain
-                force constant=50
-                distance: {atom[H21]}, {atom[BCat10]}, 1.376
-                distance: {atom[H21]}, {atom[BPin22]}, 1.264
-                distance: {atom[H21]}, {atom[C]}, 2.477
-                distance: {atom[BCat10]}, {atom[C]}, 1.616
-                distance: {atom[BPin22]}, {atom[C]}, 2.180
-                distance: {atom[BPin22]}, {atom[BCat10]}, 2.007
-                angle: {atom[BCat10]}, {atom[H21]}, {atom[BPin22]}, 98.89
-                angle: {atom[BCat10]}, {atom[C]}, {atom[BPin22]}, 61.75
-                $end
-                """).strip()
-
-            if block is None and step_type == "TS4" and constraint:
-                BCat11, H12, H13, BPin37, C = 0, 2, 3, 4, 5 # noqa: F841
-                atom = [x + 1 for x in self._constraint_atoms(row)]
-                block = textwrap.dedent(f"""
-                $constrain
-                force constant=50
-                distance: {atom[BCat11]}, {atom[BPin37]}, 2.219
-                distance: {atom[BPin37]}, {atom[H13]}, 1.868
-                distance: {atom[C]}, {atom[H13]}, 2.489
-                distance: {atom[BCat11]}, {atom[H13]}, 1.216
-                distance: {atom[BCat11]}, {atom[C]}, 1.946
-                distance: {atom[BPin37]}, {atom[C]}, 1.585
-                angle: {atom[BCat11]}, {atom[H13]}, {atom[BPin37]}, 89.48
-                angle: {atom[BCat11]}, {atom[C]}, {atom[BPin37]}, 77.13
-                $end
-                """).strip()
-
-            if block is None and step_type == "INT3" and constraint:
-                BCat10, BPin42, H11, C = 0, 3, 4, 5
-                atom = [x + 1 for x in self._constraint_atoms(row)]
-                block = textwrap.dedent(f"""
-                $constrain
-                force constant=50
-                distance: {atom[BCat10]}, {atom[H11]}, 1.279
-                distance: {atom[BCat10]}, {atom[C]}, 1.688
-                distance: {atom[BPin42]}, {atom[H11]}, 1.378
-                distance: {atom[BPin42]}, {atom[C]}, 1.749
-                angle: {atom[BCat10]}, {atom[H11]}, {atom[BPin42]}, 89.85
-                angle: {atom[BCat10]}, {atom[C]}, {atom[BPin42]}, 66.22
-                $end
-                """).strip()
 
             if block:
                 if "detailed_input_str" in inp:
@@ -2106,7 +1877,6 @@ class Stepper:
 
         def build_gxtb(row: pd.Series) -> dict:
             inp: dict[str, object] = {"options": opts}
-            step_type = self._step_type_upper()
 
             if n_cores is not None:
                 inp["n_cores"] = effective_n_cores
@@ -2116,84 +1886,6 @@ class Stepper:
                 inp["detailed_input_str"] = base_str
 
             block = render_xtb_constraints(row) if constraint else None
-
-            if block is None and step_type == "TS1" and constraint:
-                B, N, H, C = 0, 1, 4, 5
-                atom = [x + 1 for x in self._constraint_atoms(row)]
-                block = textwrap.dedent(f"""
-                $constrain
-                force constant=50
-                distance: {atom[B]}, {atom[H]}, 2.07696
-                distance: {atom[N]}, {atom[H]}, 1.5127
-                distance: {atom[H]}, {atom[C]}, 1.29095
-                distance: {atom[B]}, {atom[C]}, 1.68461
-                distance: {atom[B]}, {atom[N]}, 3.06223
-                angle: {atom[N]}, {atom[H]}, {atom[C]}, 170.1342
-                angle: {atom[H]}, {atom[C]}, {atom[B]}, 87.4870
-                $end
-                """).strip()
-
-            if block is None and step_type == "TS2" and constraint:
-                BCat10, N17, H40, H41, C46 = 0, 1, 4, 3, 5  # noqa: F841
-                atom = [x + 1 for x in self._constraint_atoms(row)]
-                block = textwrap.dedent(f"""
-                $constrain
-                force constant=50
-                distance: {atom[BCat10]}, {atom[H41]}, 1.656
-                distance: {atom[N17]}, {atom[H40]}, 1.961
-                distance: {atom[BCat10]}, {atom[N17]}, 3.080
-                angle: {atom[BCat10]}, {atom[H41]}, {atom[N17]}, 86.58
-                $end
-                """).strip()
-
-            if block is None and step_type == "TS3" and constraint:
-                BCat10, H11, BPin22, H21, C = 0, 2, 3, 4, 5
-                atom = [x + 1 for x in self._constraint_atoms(row)]
-                block = textwrap.dedent(f"""
-                $constrain
-                force constant=50
-                distance: {atom[H21]}, {atom[BCat10]}, 1.376
-                distance: {atom[H21]}, {atom[BPin22]}, 1.264
-                distance: {atom[H21]}, {atom[C]}, 2.477
-                distance: {atom[BCat10]}, {atom[C]}, 1.616
-                distance: {atom[BPin22]}, {atom[C]}, 2.180
-                distance: {atom[BPin22]}, {atom[BCat10]}, 2.007
-                angle: {atom[BCat10]}, {atom[H21]}, {atom[BPin22]}, 98.89
-                angle: {atom[BCat10]}, {atom[C]}, {atom[BPin22]}, 61.75
-                $end
-                """).strip()
-
-            if block is None and step_type == "TS4" and constraint:
-                BCat11, H12, H13, BPin37, C = 0, 2, 3, 4, 5  # noqa: F841
-                atom = [x + 1 for x in self._constraint_atoms(row)]
-                block = textwrap.dedent(f"""
-                $constrain
-                force constant=50
-                distance: {atom[BCat11]}, {atom[BPin37]}, 2.219
-                distance: {atom[BPin37]}, {atom[H13]}, 1.868
-                distance: {atom[C]}, {atom[H13]}, 2.489
-                distance: {atom[BCat11]}, {atom[H13]}, 1.216
-                distance: {atom[BCat11]}, {atom[C]}, 1.946
-                distance: {atom[BPin37]}, {atom[C]}, 1.585
-                angle: {atom[BCat11]}, {atom[H13]}, {atom[BPin37]}, 89.48
-                angle: {atom[BCat11]}, {atom[C]}, {atom[BPin37]}, 77.13
-                $end
-                """).strip()
-
-            if block is None and step_type == "INT3" and constraint:
-                BCat10, BPin42, H11, C = 0, 3, 4, 5
-                atom = [x + 1 for x in self._constraint_atoms(row)]
-                block = textwrap.dedent(f"""
-                $constrain
-                force constant=50
-                distance: {atom[BCat10]}, {atom[H11]}, 1.279
-                distance: {atom[BCat10]}, {atom[C]}, 1.688
-                distance: {atom[BPin42]}, {atom[H11]}, 1.378
-                distance: {atom[BPin42]}, {atom[C]}, 1.749
-                angle: {atom[BCat10]}, {atom[H11]}, {atom[BPin42]}, 89.85
-                angle: {atom[BCat10]}, {atom[C]}, {atom[BPin42]}, 66.22
-                $end
-                """).strip()
 
             if block:
                 if "detailed_input_str" in inp:
@@ -2254,6 +1946,11 @@ class Stepper:
         uma_memory_per_thread_mib: int = 500,
         uma_keep_logs: bool | str = "on_failure",
         uma_log_dir: str | None = None,
+        ts_mode: tuple[str, ...] | list[str] | None = None,
+        ts_active_atoms: tuple[str, ...] | list[str] | None = None,
+        ts_active_atoms_factor: float | None = None,
+        recalc_hess: int | None = None,
+        trust_radius: float | None = None,
         gxtb: bool = False,
         gxtb_exe: str | None = None,
         gxtb_ext_params: str | None = None,
@@ -2267,7 +1964,8 @@ class Stepper:
                 - ``atoms``: list of atomic symbols
                 - one coordinate column, typically ``coords_embedded`` or a
                   prior ``*-oc`` column
-                - ``constraint_atoms`` when ``constraint=True``
+                - ``constraint_roles`` and ``constraint_spec`` when
+                  ``constraint=True``
                 - ``substrate_name`` when ``lowest`` is used
                 - a prior ``*.hess`` column when ``use_last_hess=True``
             name (str): Base name for the ORCA step, used to prefix result
@@ -2278,11 +1976,9 @@ class Stepper:
             xtra_inp_str (str, optional): Additional ORCA input block such as
                 CPCM settings or custom geometry directives. Defaults to
                 ``""``.
-            constraint (bool, optional): If ``True``, applies predefined
-                distance and angle constraints for supported ``step_type``
-                values. Requires ``Stepper(step_type=...)`` with one of
-                ``TS1``, ``TS2``, ``TS3``, ``TS4``, or ``INT3``. Defaults to
-                ``False``.
+            constraint (bool, optional): If ``True``, renders the role-based
+                distance and angle constraints stored on every dataframe row.
+                Defaults to ``False``.
             save_step (bool, optional): If ``True``, saves ORCA run
                 directories for inspection. Defaults to ``False``.
             save_files (list[str] or None, optional): Specific ORCA output
@@ -2326,6 +2022,21 @@ class Stepper:
             uma_log_dir (str or None, optional): Directory for preserved UMA
                 server logs. If omitted, transient logs are written to a temp
                 directory and preserved failures are copied to ``UMA-logs``.
+            ts_mode (sequence of str or None, optional): Chemical roles defining
+                the ORCA internal coordinate followed during ``OptTS``. Two
+                roles select a bond, three an angle, and four a dihedral. For
+                TS3, use ``("pin_B", "substrate_C")``. Atom indices are
+                resolved from each row's ``constraint_roles``.
+            ts_active_atoms (sequence of str or None, optional): Chemical roles
+                passed to ORCA ``TS_Active_Atoms``. For TS3, use the complete
+                reactive core ``("cat_B", "transfer_H", "pin_B",
+                "substrate_C")``.
+            ts_active_atoms_factor (float or None, optional): Positive ORCA
+                ``TS_Active_Atoms_Factor``. Requires ``ts_active_atoms``.
+            recalc_hess (int or None, optional): Positive number of OptTS cycles
+                between exact Hessian recalculations.
+            trust_radius (float or None, optional): Positive initial adaptive
+                ORCA trust radius.
             gxtb (bool, optional): If ``True``, runs ORCA with OET g-xTB v2 as
                 an external method provider. ORCA still owns ``Opt``,
                 ``OptTS``, ``NEB-TS``, and related run types. Defaults to
@@ -2377,6 +2088,34 @@ class Stepper:
             opts = {"ExtOpt": None, **opts}
         if constraint:
             self._validate_constraint_request(df)
+        ts_controls_requested = any(
+            value is not None
+            for value in (
+                ts_mode,
+                ts_active_atoms,
+                ts_active_atoms_factor,
+                recalc_hess,
+                trust_radius,
+            )
+        )
+        if ts_controls_requested and "OptTS" not in opts:
+            raise ValueError("TS mode-following controls require the ORCA OptTS keyword")
+        if ts_controls_requested:
+            for index, row in df.iterrows():
+                try:
+                    render_orca_geometry_controls(
+                        row,
+                        ts_mode=ts_mode,
+                        ts_active_atoms=ts_active_atoms,
+                        ts_active_atoms_factor=ts_active_atoms_factor,
+                        recalc_hess=recalc_hess,
+                        trust_radius=trust_radius,
+                    )
+                except (TypeError, ValueError) as exc:
+                    raise ValueError(
+                        f"Invalid ORCA TS mode-following controls for dataframe "
+                        f"row {index!r}: {exc}"
+                    ) from exc
         if save_files is None and self.save_output:
             save_files = ["orca.out"]
         keys = list(opts)
@@ -2398,11 +2137,10 @@ class Stepper:
             generated_input_blocks.append("calc_hess")
         if use_last_hess:
             generated_input_blocks.append("read_last_hess")
+        if ts_controls_requested:
+            generated_input_blocks.append("ts_mode_following")
         if constraint:
-            if dataframe_has_row_constraints(df):
-                generated_input_blocks.append("row_constraints")
-            else:
-                generated_input_blocks.append(f"{self._step_type_upper()}_constraints")
+            generated_input_blocks.append("row_constraints")
 
         def build_input_metadata(**extra: object) -> dict[str, object]:
             metadata: dict[str, object] = {
@@ -2415,6 +2153,11 @@ class Stepper:
                 "read_files": _metadata_list(read_files),
                 "use_last_hess": bool(use_last_hess),
                 "calc_hess": bool(calc_hess),
+                "ts_mode": _metadata_list(ts_mode),
+                "ts_active_atoms": _metadata_list(ts_active_atoms),
+                "ts_active_atoms_factor": ts_active_atoms_factor,
+                "recalc_hess": recalc_hess,
+                "trust_radius": trust_radius,
                 "n_cores": effective_n_cores,
                 "memory_gb": self.memory_gb,
                 "generated_input_blocks": generated_input_blocks or None,
@@ -2459,7 +2202,6 @@ class Stepper:
             )
 
         def build_orca(row: Series) -> dict:
-            step_type = self._step_type_upper()
             inp = {
                 "options": opts,
                 "xtra_inp_str": xtra_inp_str.strip(),
@@ -2468,23 +2210,17 @@ class Stepper:
                 "read_files": read_files,
             }
 
-            if calc_hess:
-                block = textwrap.dedent("""
-                    %geom
-                      Calc_Hess true
-                    end
-                """).strip()
-                inp["xtra_inp_str"] += ("\n\n" + block) if inp["xtra_inp_str"] else block
-
-            if use_last_hess:
-                block = textwrap.dedent(
-                    """
-                    %geom
-                      inhess Read
-                      InHessName "private_input.hess"
-                    end
-                    """
-                ).strip()
+            block = render_orca_geometry_controls(
+                row,
+                calc_hess=calc_hess,
+                read_hessian=use_last_hess,
+                ts_mode=ts_mode,
+                ts_active_atoms=ts_active_atoms,
+                ts_active_atoms_factor=ts_active_atoms_factor,
+                recalc_hess=recalc_hess,
+                trust_radius=trust_radius,
+            )
+            if block:
                 inp["xtra_inp_str"] += ("\n\n" + block) if inp["xtra_inp_str"] else block
 
             row_constraint_block = render_orca_constraints(row) if constraint else None
@@ -2492,89 +2228,6 @@ class Stepper:
                 inp["xtra_inp_str"] += (
                     "\n\n" + row_constraint_block
                 ) if inp["xtra_inp_str"] else row_constraint_block
-
-            if row_constraint_block is None and constraint and step_type == "TS1":
-                atom = self._constraint_atoms(row)
-                B, N, H, C = atom[0], atom[1], atom[4], atom[5]
-                block = textwrap.dedent(f"""
-                    %geom Constraints
-                      {{B {B} {H} 2.07696 C}}
-                      {{B {N} {H} 1.5127 C}}
-                      {{B {H} {C} 1.29095 C}}
-                      {{B {B} {C} 1.68461 C}}
-                      {{B {B} {N} 3.06223 C}}
-                      {{A {N} {H} {C} C}}
-                      {{A {H} {C} {B} 87.4870 C}}
-                    end
-                    end
-                """).strip() # {{A {N} {H} {C} 170.1342 C}}
-                inp["xtra_inp_str"] += ("\n\n" + block) if inp["xtra_inp_str"] else block
-
-            if row_constraint_block is None and constraint and step_type == "TS2":
-                atom = self._constraint_atoms(row)
-                BCat, N17, H40, H41 = atom[0], atom[1], atom[4], atom[3]
-                block = textwrap.dedent(f"""
-                    %geom Constraints
-                      {{B {BCat} {H41} 1.656 C}}
-                      {{B {N17} {H40} 1.961 C}}
-                      {{B {BCat} {N17} 3.080 C}}
-                      {{A {BCat} {H41} {N17} 86.58 C}}
-                    end
-                    end
-                """).strip()
-                inp["xtra_inp_str"] += ("\n\n" + block) if inp["xtra_inp_str"] else block
-
-            if row_constraint_block is None and constraint and step_type == "TS3":
-                atom = self._constraint_atoms(row)
-                BCat, H11, BPin, H21, C = atom[0], atom[2], atom[3], atom[4], atom[5]
-                block = textwrap.dedent(f"""
-                    %geom Constraints
-                      {{B {H21} {BCat} 1.376 C}}
-                      {{B {H21} {BPin} 1.264 C}}
-                      {{B {H21} {C} 2.477 C}}
-                      {{B {BCat} {C} 1.616 C}}
-                      {{B {BPin} {C} 2.180 C}}
-                      {{B {BPin} {BCat} 2.007 C}}
-                      {{A {BCat} {H21} {BPin} 98.89 C}}
-                      {{A {BCat} {C} {BPin} 61.75 C}}
-                    end
-                    end
-                """).strip()
-                inp["xtra_inp_str"] += ("\n\n" + block) if inp["xtra_inp_str"] else block
-
-            if row_constraint_block is None and constraint and step_type == "TS4":
-                atom = self._constraint_atoms(row)
-                BCat, H12, H13, BPin, C = atom[0], atom[2], atom[3], atom[4], atom[5]  # noqa: F841
-                block = textwrap.dedent(f"""
-                    %geom Constraints
-                      {{B {BCat} {BPin} 2.219 C}}
-                      {{B {BPin} {H13} 1.868 C}}
-                      {{B {C} {H13} 2.489 C}}
-                      {{B {BCat} {H13} 1.216 C}}
-                      {{B {BCat} {C} 1.946 C}}
-                      {{B {BPin} {C} 1.585 C}}
-                      {{A {BCat} {H13} {BPin} 89.48 C}}
-                      {{A {BCat} {C} {BPin} 77.13 C}}
-                    end
-                    end
-                """).strip()
-                inp["xtra_inp_str"] += ("\n\n" + block) if inp["xtra_inp_str"] else block
-
-            if row_constraint_block is None and constraint and step_type == "INT3":
-                atom = self._constraint_atoms(row)
-                BCat, BPin, H11, C = atom[0], atom[3], atom[4], atom[5]
-                block = textwrap.dedent(f"""
-                    %geom Constraints
-                      {{B {BCat} {H11} 1.279 C}}
-                      {{B {BCat} {C} 1.688 C}}
-                      {{B {BPin} {H11} 1.378 C}}
-                      {{B {BPin} {C} 1.749 C}}
-                      {{A {BCat} {H11} {BPin} 89.85 C}}
-                      {{A {BCat} {C} {BPin} 66.22 C}}
-                    end
-                    end
-                """).strip()
-                inp["xtra_inp_str"] += ("\n\n" + block) if inp["xtra_inp_str"] else block
 
             return inp
 

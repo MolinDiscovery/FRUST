@@ -25,8 +25,8 @@ result = submit_jobs(
 
 !!! tip "Use local mode for wiring, not chemistry"
 
-    Local submitit mode is best for checking CSV paths, template paths,
-    pipeline names, and basic Python imports. Use Slurm for real ORCA and xTB
+    Local submitit mode is best for checking CSV paths, workflow targets,
+    method plans, and basic Python imports. Use Slurm for real ORCA and xTB
     workloads.
 
 ## Reading Stepper Log Names
@@ -60,26 +60,11 @@ a scheduler job id and did not invent a fake one.
     COc1ccccc1,anisole
     ```
 
-??? question "Missing `ts_xyz`"
-
-    TS workflows need a template path:
-
-    ```python
-    submit_jobs(
-        csv_path="docs/examples/substrates.csv",
-        pipeline="run_ts_per_rpos",
-        ts_xyz="structures/ts2.xyz",
-        out_dir="runs/ts_example",
-        cluster=cluster,
-        resources=resources,
-    )
-    ```
-
 ??? question "Unsupported pipeline name"
 
     `submit_jobs(...)` only accepts the high-level pipelines wired into the
-    cluster interface, such as `run_mols`, `run_ts_per_lig`, and
-    `run_ts_per_rpos`.
+    cluster interface, such as `run_mols` and `run_mols_per_rpos`. Submit TS
+    work through `ft.workflows.screen_ts(...).submit(...)`.
 
 ??? question "Chain stage did not produce the expected parquet"
 
@@ -96,7 +81,8 @@ a scheduler job id and did not invent a fake one.
 
 ## Reading The Submission Result
 
-Both `submit_jobs(...)` and `submit_chain(...)` return a `JobSubmissionResult`:
+`submit_jobs(...)`, `submit_screen_chain(...)`, and workflow submission return
+a `JobSubmissionResult`:
 
 ```python
 print(result.job_ids)

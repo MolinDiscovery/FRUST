@@ -37,7 +37,7 @@ flowchart TD
     Start with this overview, then read
     [Workflow Method Plans](workflow-methods.md),
     [Catalyst Screen Workflow](../catalyst-screens/overview.md),
-    [TS Guess Generation](ts-guess-generation.md) and
+    [TS Guess Dataframes](../catalyst-screens/ts-guesses.md) and
     [Optimization Pipeline](optimization-pipeline.md) before launching a large
     TS screen.
 
@@ -58,7 +58,7 @@ method = ft.workflows.methods.preset("r2scan-3c")
 
 wf = ft.workflows.screen_ts(
     csv_path="docs/examples/screen.csv",
-    ts_types=["TS1", "TS2", "TS3", "TS4"],
+    ts_types=["TS1", "TS2", "TS4"],
     method=method,
     n_confs=None,
     top_n=20,
@@ -214,11 +214,6 @@ ft.plot_mols(preview, columns=2)
   style="border: 1px solid var(--md-default-fg-color--lightest); border-radius: 6px;"
 ></iframe>
 
-!!! important "Use at most two columns for 3D previews"
-
-    Keep `columns=2` (or `columns=1`) when rendering interactive py3Dmol
-    previews in the documentation. Wider grids do not render reliably.
-
 `preview()` does not use the selected calculator method and does not run any
 stage from `show_stages()`. The method plan is retained on `wf` for the later
 `run()` or `submit()` call:
@@ -317,12 +312,9 @@ row-level constraints, and production checklist, see
 Use `frust.pipes` when you want FRUST to do the usual structure generation and
 calculation sequence for you in one local helper call.
 
-These functions are the simplest entry points:
-
-- `run_mols(...)`: start from molecule inputs and run the molecule workflow.
-- `run_ts_per_lig(...)`: use one transition-state template for each ligand.
-- `run_ts_per_rpos(...)`: expand a template over reactive positions and run
-  each generated structure.
+The main compact helper is `run_mols(...)`, which starts from molecule inputs
+and runs the molecule workflow. Use `ft.workflows.screen_ts(...)` for TS work so
+the method plan also selects the geometry profile.
 
 These are good when you are asking a direct screening question, such as “run
 this standard workflow for this ligand table.”
@@ -384,8 +376,7 @@ There are three submission styles:
 
 - `submit_jobs(...)`: submit independent jobs, usually one pipeline run per
   generated structure or input group.
-- `submit_chain(...)`: submit a dependent chain where each stage waits for the
-  previous stage to finish.
+- `submit_screen_chain(...)`: submit the lower-level staged screen helper.
 - workflow objects: call `wf.submit(...)` when you want the new method-plan
   workflow API to manage the target graph.
 
@@ -417,9 +408,9 @@ flowchart TD
     C -->|No| E["Use Stepper directly"]
     B --> F["wf.run(...) for smoke tests"]
     B --> G["wf.submit(...) for Slurm"]
-    D --> H["Need legacy cluster submission?"]
-    H -->|Independent jobs| I["submit_jobs"]
-    H -->|Dependent chain| J["submit_chain"]
+    D --> H["Need submitit directly?"]
+    H -->|Molecule jobs| I["submit_jobs"]
+    H -->|Screen stages| J["submit_screen_chain"]
 ```
 
 In practice, choose the smallest layer that answers your question:
@@ -428,13 +419,9 @@ In practice, choose the smallest layer that answers your question:
   should move from local testing to cluster production with the same method
   plan;
 - use `run_mols(...)` for ordinary molecule screening;
-- use `run_ts_per_lig(...)` when one TS template should be applied to each
-  ligand;
-- use `run_ts_per_rpos(...)` when reactive positions should be expanded from a
-  template;
-- use `submit_jobs(...)` to run those high-level workflows through submitit;
-- use `submit_chain(...)` for staged TS or INT workflows where each stage has
-  its own resources.
+- use `submit_jobs(...)` for supported molecule helpers;
+- use `wf.submit(...)` for staged TS or INT workflows where each stage has its
+  own resources.
 
 ## What Happens During A Run
 

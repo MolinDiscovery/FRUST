@@ -18,9 +18,9 @@ flowchart TD
     I --> J["DFT-solv<br/>solvent single point"]
 ```
 
-This diagram matches the staged `ts_per_rpos` chain in
-`frust.pipelines.run_ts_per_rpos`. The high-level pipeline functions use the
-same idea, but hide more of the orchestration.
+This diagram matches the transition-state stage graph used by
+`ft.workflows.screen_ts(...)`. The workflow object applies the same graph for
+local and submitted execution.
 
 For `ft.workflows.screen_ts(...)`, an `initial_prune` stage runs by default
 between embedded TS guesses and `xtb_preopt`. It removes geometrically
@@ -56,10 +56,9 @@ df = step.orca(
 ORCA stage after `xtb_opt` will use `xtb_opt-oc` rather than the original
 `coords_embedded`.
 
-## TS Chain Stages
+## TS Workflow Stages
 
-The dependent `ts_per_rpos` cluster chain writes a new parquet file after each
-major stage:
+Staged workflow submission writes a new parquet file after each major group:
 
 | Stage | Main purpose | Output suffix |
 | --- | --- | --- |

@@ -10,8 +10,6 @@ from pathlib import Path
 class ChainPreset(StrEnum):
     """Named dependent-stage submission presets bundled with FRUST."""
 
-    TS_PER_RPOS = "ts_per_rpos"
-    INT3_PER_RPOS = "int3_per_rpos"
     SCREEN_TS_PER_RPOS = "screen_ts_per_rpos"
 
 
@@ -136,28 +134,11 @@ def orca_memory_gb(
 
 
 CHAIN_PRESET_MODULES: dict[ChainPreset, str] = {
-    ChainPreset.TS_PER_RPOS: "frust.pipelines.run_ts_per_rpos",
-    ChainPreset.INT3_PER_RPOS: "frust.pipelines.run_int3_per_rpos",
     ChainPreset.SCREEN_TS_PER_RPOS: "frust.pipelines.run_screen_ts_per_rpos",
 }
 
 
 CHAIN_PRESET_STAGE_ORDER: dict[ChainPreset, list[str]] = {
-    ChainPreset.TS_PER_RPOS: [
-        "run_init",
-        "run_hess",
-        "run_OptTS",
-        "run_freq",
-        "run_solv",
-        "run_cleanup",
-    ],
-    ChainPreset.INT3_PER_RPOS: [
-        "run_init",
-        "run_Opt",
-        "run_freq",
-        "run_solv",
-        "run_cleanup",
-    ],
     ChainPreset.SCREEN_TS_PER_RPOS: [
         "run_init",
         "run_hess",
@@ -170,21 +151,6 @@ CHAIN_PRESET_STAGE_ORDER: dict[ChainPreset, list[str]] = {
 
 
 CHAIN_PRESET_RESOURCES: dict[ChainPreset, dict[str, Resources]] = {
-    ChainPreset.TS_PER_RPOS: {
-        "run_init": Resources(24, 20, 7200),
-        "run_hess": Resources(8, 64, 7200),
-        "run_OptTS": Resources(24, 20, 7200),
-        "run_freq": Resources(8, 64, 7200),
-        "run_solv": Resources(24, 20, 3600),
-        "run_cleanup": Resources(2, 2, 60),
-    },
-    ChainPreset.INT3_PER_RPOS: {
-        "run_init": Resources(24, 20, 7200),
-        "run_Opt": Resources(24, 20, 7200),
-        "run_freq": Resources(8, 64, 7200),
-        "run_solv": Resources(24, 20, 3600),
-        "run_cleanup": Resources(2, 2, 60),
-    },
     ChainPreset.SCREEN_TS_PER_RPOS: {
         "run_init": Resources(24, 20, 7200),
         "run_hess": Resources(8, 64, 7200),

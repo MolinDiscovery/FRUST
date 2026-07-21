@@ -29,7 +29,7 @@ Create a workflow object without running any calculations:
 ```python
 wf = ft.workflows.screen_ts(
     csv_path="docs/examples/screen.csv",
-    ts_types=["TS1", "TS2", "TS3", "TS4"],
+    ts_types=["TS1", "TS2", "TS4"],
     method="r2scan-3c",
     n_confs=None,
     top_n=20,

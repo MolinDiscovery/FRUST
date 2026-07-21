@@ -1,110 +1,64 @@
 # Directory And Outputs
 
-FRUST writes ordinary parquet files for tables and optional calculation
-directories for backend files. The exact layout depends on whether you run a
-local pipeline, independent cluster jobs, a legacy dependent stage chain, or a
-workflow object.
-
-```mermaid
-flowchart TD
-    A["runs/example"] --> B["Independent pipeline outputs<br/>run_mols_tag.parquet"]
-    A --> C["Dependent chain output directory<br/>one folder per ligand or TS tag"]
-    C --> D["init.parquet"]
-    D --> E["init.hess.parquet"]
-    E --> F["init.hess.optts.parquet"]
-    F --> G["init.hess.optts.freq.parquet"]
-    G --> H["init.hess.optts.freq.solv.parquet"]
-    C --> I["Saved calculation folders<br/>ORCA, xTB, g-xTB files"]
-    A --> J["submitit logs<br/>when using frust.cluster"]
-    A --> K["Workflow object target directory<br/>final parquet + timing.json after success"]
-```
-
-## Independent Pipeline Outputs
-
-For `submit_jobs(...)`, FRUST builds parquet names from the pipeline name and
-job tag:
+Workflow objects write one directory per lightweight chemistry target. Local
+and submitted runs use the same target tags and stage names.
 
 ```text
-<out_dir>/<pipeline>_<tag>.parquet
+runs/screen_ts/
+├── TS1__substrate__catalyst__r2/
+│   ├── structure_guess.parquet
+│   ├── init.parquet
+│   ├── dft_ts_opt.parquet
+│   └── timing.json
+├── TS4__substrate__catalyst__r2/
+│   └── ...
+├── merged.parquet
+└── collection_report.json
 ```
 
-For example:
+`structure_guess.parquet` is the method-aware, constraint-bearing input. Its
+rows include `constraint_roles`, `constraint_spec`, and `ts_spec_id`.
 
-```text
-runs/mols_example/run_mols_example.parquet
-runs/ts_per_rpos_example/run_ts_per_rpos_anisole_rpos_2.parquet
+## Inspect Outputs
+
+```python
+result = wf.submit(
+    out_dir="runs/screen_ts",
+    cluster=cluster,
+    execution="dft_staged",
+    collect=True,
+)
+
+print(result.save_dirs)
+print(result.collection_output)
 ```
 
-The tag is sanitized so it is safe for file names and scheduler job names.
-
-## Dependent Chain Outputs
-
-For `submit_chain(...)`, each generated input gets its own save directory:
-
-```text
-runs/ts_chain_example/<tag>/
-```
-
-Inside that directory, the staged TS chain evolves the parquet filename:
-
-```text
-init.parquet
-init.hess.parquet
-init.hess.optts.parquet
-init.hess.optts.freq.parquet
-init.hess.optts.freq.solv.parquet
-```
-
-!!! tip "Read the deepest parquet first"
-
-    The deepest suffix usually contains the most complete dataframe. If
-    `run_cleanup` was used, earlier parquet files may have been removed.
-
-## Workflow Object Outputs
-
-For `wf.run(..., out_dir=...)` and `wf.submit(..., collect=True)`, successful
-targets are compacted by default:
-
-```text
-runs/screen_ts/<target>/
-├── init.hess.optts.freq.solv.parquet
-└── timing.json
-```
-
-`timing.json` contains both submitted job-group timings and internal stage
-timings. Failed, skipped, or interrupted targets keep their intermediate
-checkpoint parquets. Pass `target_retention="all"` to `wf.run(...)` or
-`wf.submit(...)` when successful targets should keep every checkpoint.
-
-## Saved Calculation Files
-
-When `save_step=True` or `save_output_dir=True`, FRUST keeps backend files that
-are useful for debugging. Depending on the engine and options, saved folders
-can include ORCA input/output files, xTB logs, optimized XYZ files, Hessians,
-charges, and other backend artifacts.
-
-!!! example "When to keep saved files"
-
-    Use saved calculation directories when:
-
-    - a row has `*-NT=False` and `*-error` is not enough;
-    - an ORCA job converged to the wrong stationary point;
-    - you need to inspect an xTB or g-xTB optimized geometry outside FRUST;
-    - you want to archive the exact backend inputs used for a final result.
-
-## Merging Parquet Files
-
-Large submitit runs may produce many parquet files. Use the packaged command to
-merge them:
-
-```bash
-merge_parquet --input-dir runs/example --output merged.parquet --recursive
-```
-
-Then inspect the merged table with pandas:
+Read and summarize the merged dataframe:
 
 ```python
 import pandas as pd
+import frust as ft
 
-df = pd.read_parquet("merged.parquet")
+df = pd.read_parquet(result.collection_output)
+ft.show_steps(df)
 ```
+
+## Manual Collection
+
+If automatic collection was disabled or a run needs recovery:
+
+```python
+merged = wf.collect(
+    "runs/screen_ts",
+    output="runs/screen_ts/recovered.parquet",
+)
+```
+
+FRUST reads the deepest completed parquet for each known target and merges
+dataframe provenance from `df.attrs`.
+
+## Calculation Directories
+
+When `save_output_dir=True`, Stepper also preserves engine-specific files below
+the target directory. These can include ORCA output, Hessian files, and xTB
+scratch results. Set it to `False` for small wiring tests.

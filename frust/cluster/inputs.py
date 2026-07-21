@@ -10,26 +10,18 @@ from frust.screen import expand as expand_screen
 from frust.screen import read as read_screen
 from frust.tsguess.matching import parse_rpos_value
 from frust.tsguess.specs import BUILTIN_TS_SPECS
-from frust.utils.mols import create_mol_per_rpos, create_ts_per_rpos
+from frust.utils.mols import create_mol_per_rpos
 
-
-TS_PIPELINES = {
-    "run_ts_per_rpos",
-    "run_ts_per_rpos_UMA",
-    "run_ts_per_rpos_UMA_short",
-    "run_orca_smoke_test",
-}
 
 DATAFRAME_PIPELINES = {
     "run_mols",
-    "run_ts_per_lig",
 }
 
 MOLECULE_PIPELINES = {
     "run_mols_per_rpos",
 }
 
-SUPPORTED_PIPELINES = TS_PIPELINES | DATAFRAME_PIPELINES | MOLECULE_PIPELINES
+SUPPORTED_PIPELINES = DATAFRAME_PIPELINES | MOLECULE_PIPELINES
 
 
 def load_csv_input(csv_path: str | Path) -> pd.DataFrame:
@@ -90,7 +82,6 @@ def load_pipeline(pipeline: str):
 def prepare_pipeline_inputs(
     csv_path: str | Path,
     pipeline: str,
-    ts_xyz: str | Path | None = None,
     select_mols: str | list[str] = "all",
 ):
     """Prepare submission payloads for independent FRUST jobs.
@@ -101,8 +92,6 @@ def prepare_pipeline_inputs(
         CSV input containing at least a ``smiles`` column.
     pipeline : str
         Supported pipeline name from :mod:`frust.pipes`.
-    ts_xyz : str or pathlib.Path or None, optional
-        TS template file for TS-dependent pipelines.
     select_mols : str or list[str], optional
         Molecule selection passthrough for molecule workflows. Accepted
         states are ``"dimer"``, ``"HH"``, ``"ligand"``, ``"catalyst"``,
@@ -121,18 +110,6 @@ def prepare_pipeline_inputs(
 
     df = load_csv_input(csv_path)
 
-    if pipeline in TS_PIPELINES:
-        if ts_xyz is None:
-            raise ValueError(f"`ts_xyz` is required for pipeline {pipeline!r}")
-        if pipeline == "run_orca_smoke_test":
-            jobs = [{"smoke_test": ("placeholder", [0], "placeholder")}]
-            tags = [sanitize_tag("smoke_test")]
-            return {"mode": "ts", "payloads": jobs, "tags": tags, "dataframe": df}
-
-        ts_jobs = create_ts_per_rpos(df, str(ts_xyz), return_format="list")
-        tags = [sanitize_tag(list(job.keys())[0]) for job in ts_jobs]
-        return {"mode": "ts", "payloads": ts_jobs, "tags": tags, "dataframe": df}
-
     if pipeline == "run_mols":
         return {"mode": "dataframe", "payloads": [df], "tags": [sanitize_tag("mols")], "dataframe": df}
 
@@ -150,18 +127,12 @@ def prepare_pipeline_inputs(
             "dataframe": df,
         }
 
-    if pipeline == "run_ts_per_lig":
-        if ts_xyz is None:
-            raise ValueError(f"`ts_xyz` is required for pipeline {pipeline!r}")
-        return {"mode": "dataframe", "payloads": [df], "tags": [sanitize_tag("ts_per_lig")], "dataframe": df}
-
     raise ValueError(f"Unsupported combination for pipeline {pipeline!r}")
 
 
 def prepare_chain_inputs(
     csv_path: str | Path,
     preset: str,
-    ts_xyz: str | Path | None,
     *,
     ts_types: tuple[str, ...] | list[str] | None = None,
 ):
@@ -173,8 +144,6 @@ def prepare_chain_inputs(
         CSV input containing at least a ``smiles`` column.
     preset : str
         Chain preset label used for reporting the prepared mode.
-    ts_xyz : str or pathlib.Path or None
-        TS template file used to generate stage inputs.
     ts_types : tuple or list of str or None, optional
         TS types used by the screen-chain preset.
 
@@ -186,19 +155,9 @@ def prepare_chain_inputs(
     """
     if preset == "screen_ts_per_rpos":
         return prepare_screen_chain_inputs(csv_path, ts_types=ts_types)
-
-    if ts_xyz is None:
-        raise ValueError(f"`ts_xyz` is required for chain preset {preset!r}")
-    df = load_csv_input(csv_path)
-    ts_jobs = create_ts_per_rpos(df, str(ts_xyz), return_format="list")
-    tags = [sanitize_tag(list(job.keys())[0]) for job in ts_jobs]
-    return {
-        "mode": preset,
-        "payloads": ts_jobs,
-        "tags": tags,
-        "dataframe": df,
-        "run_init_arg": "ts_struct",
-    }
+    raise ValueError(
+        "Only the 'screen_ts_per_rpos' chain preset is supported"
+    )
 
 
 def prepare_screen_chain_inputs(

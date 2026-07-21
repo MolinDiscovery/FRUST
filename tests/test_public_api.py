@@ -35,9 +35,9 @@ class PublicApiTests(unittest.TestCase):
         from frust import utils as utils_direct
         from frust import vis as vis_direct
         from frust import workflows as workflows_direct
-        from frust.cluster import ClusterConfig, Resources, submit_chain, submit_jobs, submit_screen_chain
+        from frust.cluster import ClusterConfig, Resources, submit_jobs, submit_screen_chain
         from frust.pipes import run_mols, run_mols_per_rpos, run_screen_ts_per_rpos
-        from frust.pipelines import run_ts_per_rpos
+        from frust.pipelines import run_screen_ts_per_rpos as staged_screen_ts
         from frust.stepper import Stepper as StepperDirect
         from frust.utils.analytics import inspect_ts_vibrations as inspect_vibs_direct
         from frust.utils.analytics import summarize_ts_vibrations as summarize_direct
@@ -82,16 +82,15 @@ class PublicApiTests(unittest.TestCase):
             "write_xyz_structures",
             "read_ts_type_from_xyz",
             "create_mol_per_rpos",
-            "create_ts_per_rpos",
             "embed_mols",
-            "embed_ts",
+            "show_spec_profiles",
+            "upgrade_legacy_constraints",
             "normalize_dataframe",
             "energy_columns",
             "normal_termination_columns",
             "ClusterConfig",
             "Resources",
             "submit_jobs",
-            "submit_chain",
             "submit_screen_chain",
         }
 
@@ -121,7 +120,6 @@ class PublicApiTests(unittest.TestCase):
         self.assertIs(ft.ClusterConfig, ClusterConfig)
         self.assertIs(ft.Resources, Resources)
         self.assertIs(ft.submit_jobs, submit_jobs)
-        self.assertIs(ft.submit_chain, submit_chain)
         self.assertIs(ft.submit_screen_chain, submit_screen_chain)
         self.assertIs(ft.cluster.submit_jobs, submit_jobs)
         self.assertIs(ft.utils, utils_direct)
@@ -157,7 +155,7 @@ class PublicApiTests(unittest.TestCase):
         self.assertIs(ft.screen, screen_direct)
         self.assertIs(screen, screen_direct)
         self.assertIs(pipelines, pipelines_direct)
-        self.assertIs(ft.pipelines.run_ts_per_rpos, run_ts_per_rpos)
+        self.assertIs(ft.pipelines.run_screen_ts_per_rpos, staged_screen_ts)
         self.assertIs(ft.pipes.run_mols, run_mols)
         self.assertIs(pipes.run_mols, run_mols)
         self.assertIs(ft.pipes.run_mols_per_rpos, run_mols_per_rpos)
@@ -174,7 +172,7 @@ class PublicApiTests(unittest.TestCase):
             after_import = {
                 "frust.cluster": "frust.cluster" in sys.modules,
                 "frust.pipelines": "frust.pipelines" in sys.modules,
-                "frust.pipelines.run_ts_per_rpos": "frust.pipelines.run_ts_per_rpos" in sys.modules,
+                "frust.pipelines.run_screen_ts_per_rpos": "frust.pipelines.run_screen_ts_per_rpos" in sys.modules,
                 "frust.pipes": "frust.pipes" in sys.modules,
                 "frust.stepper": "frust.stepper" in sys.modules,
                 "frust.utils": "frust.utils" in sys.modules,
@@ -191,7 +189,7 @@ class PublicApiTests(unittest.TestCase):
                 "frust.utils.io": "frust.utils.io" in sys.modules,
                 "frust.cluster": "frust.cluster" in sys.modules,
                 "frust.pipelines": "frust.pipelines" in sys.modules,
-                "frust.pipelines.run_ts_per_rpos": "frust.pipelines.run_ts_per_rpos" in sys.modules,
+                "frust.pipelines.run_screen_ts_per_rpos": "frust.pipelines.run_screen_ts_per_rpos" in sys.modules,
                 "frust.pipes": "frust.pipes" in sys.modules,
                 "frust.stepper": "frust.stepper" in sys.modules,
                 "frust.utils": "frust.utils" in sys.modules,
@@ -236,12 +234,12 @@ class PublicApiTests(unittest.TestCase):
             _ = frust.pipelines
             after_pipelines_namespace = {
                 "frust.pipelines": "frust.pipelines" in sys.modules,
-                "frust.pipelines.run_ts_per_rpos": "frust.pipelines.run_ts_per_rpos" in sys.modules,
+                "frust.pipelines.run_screen_ts_per_rpos": "frust.pipelines.run_screen_ts_per_rpos" in sys.modules,
             }
 
-            _ = frust.pipelines.run_ts_per_rpos
+            _ = frust.pipelines.run_screen_ts_per_rpos
             after_pipeline_module = {
-                "frust.pipelines.run_ts_per_rpos": "frust.pipelines.run_ts_per_rpos" in sys.modules,
+                "frust.pipelines.run_screen_ts_per_rpos": "frust.pipelines.run_screen_ts_per_rpos" in sys.modules,
             }
 
             _ = frust.cluster
@@ -310,7 +308,7 @@ class PublicApiTests(unittest.TestCase):
             {
                 "frust.cluster": False,
                 "frust.pipelines": False,
-                "frust.pipelines.run_ts_per_rpos": False,
+                "frust.pipelines.run_screen_ts_per_rpos": False,
                 "frust.pipes": False,
                 "frust.stepper": False,
                 "frust.utils": False,
@@ -328,7 +326,7 @@ class PublicApiTests(unittest.TestCase):
                 "frust.utils.io": False,
                 "frust.cluster": False,
                 "frust.pipelines": False,
-                "frust.pipelines.run_ts_per_rpos": False,
+                "frust.pipelines.run_screen_ts_per_rpos": False,
                 "frust.pipes": False,
                 "frust.stepper": False,
                 "frust.utils": True,
@@ -374,10 +372,13 @@ class PublicApiTests(unittest.TestCase):
             result["after_pipelines_namespace"],
             {
                 "frust.pipelines": True,
-                "frust.pipelines.run_ts_per_rpos": False,
+                "frust.pipelines.run_screen_ts_per_rpos": False,
             },
         )
-        self.assertEqual(result["after_pipeline_module"], {"frust.pipelines.run_ts_per_rpos": True})
+        self.assertEqual(
+            result["after_pipeline_module"],
+            {"frust.pipelines.run_screen_ts_per_rpos": True},
+        )
         self.assertEqual(result["after_cluster"], {"frust.cluster": True})
         self.assertEqual(
             result["after_vis_namespace"],

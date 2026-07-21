@@ -65,8 +65,6 @@ class StepperBuildInitialDfTests(unittest.TestCase):
                 "optimization": "none",
                 "max_iters": 100,
                 "select_mols": None,
-                "ts_type": None,
-                "ts_optimize": None,
                 "step_type": None,
                 "resolved_step_type": None,
             },
@@ -262,31 +260,12 @@ class StepperBuildInitialDfTests(unittest.TestCase):
         self.assertEqual(df.attrs["frust_initial_df"]["workflow"], "mols")
         self.assertEqual(df.attrs["frust_initial_df"]["select_mols"], "uniques")
 
-    def test_raw_ts_dictionary_embeds_and_resolves_auto_step_type(self):
+    def test_raw_positional_ts_dictionary_is_rejected(self):
         step = Stepper(step_type="auto", debug=True, save_output_dir=False)
         raw_ts = {"TS1(phenol_rpos(2))": (Chem.MolFromSmiles("CCO"), [0, 1, 2, 3, 4, 5], "CCO")}
-        embedded = {
-            "TS1(phenol_rpos(2))": (
-                _mol_with_conformer(),
-                [0],
-                [0, 1, 2, 3, 4, 5],
-                "CCO",
-                [],
-            )
-        }
 
-        with patch("frust.embedder.embed_ts", return_value=embedded) as embed:
-            df = step.build_initial_df(raw_ts, n_confs=1, ts_optimize=True)
-
-        self.assertEqual(embed.call_args.kwargs["ts_type"], "TS1")
-        self.assertTrue(embed.call_args.kwargs["optimize"])
-        self.assertEqual(step.step_type, "TS1")
-        self.assertEqual(df["structure_type"].iloc[0], "TS1")
-        self.assertEqual(df.attrs["frust_initial_df"]["input_kind"], "raw_ts_dict")
-        self.assertEqual(df.attrs["frust_initial_df"]["ts_type"], "TS1")
-        self.assertTrue(df.attrs["frust_initial_df"]["ts_optimize"])
-        self.assertEqual(df.attrs["frust_initial_df"]["step_type"], "auto")
-        self.assertEqual(df.attrs["frust_initial_df"]["resolved_step_type"], "TS1")
+        with self.assertRaisesRegex(ValueError, "Could not classify"):
+            step.build_initial_df(raw_ts, n_confs=1)
 
     def test_existing_embedded_dictionary_records_initial_attrs(self):
         step = Stepper(debug=True, save_output_dir=False)
@@ -297,7 +276,7 @@ class StepperBuildInitialDfTests(unittest.TestCase):
         self.assertEqual(df.attrs["frust_initial_df"]["input_kind"], "embedded_dict")
         self.assertIsNone(df.attrs["frust_initial_df"]["n_confs"])
 
-    def test_explicit_step_type_mismatch_fails(self):
+    def test_embedded_positional_ts_dictionary_is_rejected(self):
         step = Stepper(step_type="TS2", debug=True, save_output_dir=False)
         mol = _mol_with_conformer()
         embedded = {
@@ -310,7 +289,7 @@ class StepperBuildInitialDfTests(unittest.TestCase):
             )
         }
 
-        with self.assertRaisesRegex(ValueError, "does not match"):
+        with self.assertRaisesRegex(ValueError, "Could not classify"):
             step.build_initial_df(embedded)
 
     def test_invalid_and_ambiguous_inputs_fail_clearly(self):

@@ -177,7 +177,14 @@ class StepperGxtbTests(unittest.TestCase):
             return {"normal_termination": True, "electronic_energy": -1.0}
 
         df = _df().head(1).copy()
-        df["constraint_atoms"] = [[0, 1, 0, 1, 0, 1]]
+        df["constraint_roles"] = [{"left_H": 0, "right_H": 1}]
+        df["constraint_spec"] = [[
+            {
+                "kind": "distance",
+                "roles": ["left_H", "right_H"],
+                "value": 0.7,
+            }
+        ]]
         step = Stepper(step_type="TS1", debug=True, save_output_dir=False)
         step.gxtb_fn = fake_gxtb
 
@@ -185,6 +192,7 @@ class StepperGxtbTests(unittest.TestCase):
 
         self.assertIn("$constrain", calls[0]["detailed_input_str"])
         self.assertIn("force constant=50", calls[0]["detailed_input_str"])
+        self.assertIn("distance: 1, 2, 0.7", calls[0]["detailed_input_str"])
 
     def test_gxtb_smoke_is_skipped_without_gxtb_exe(self):
         gxtb_exe = os.environ.get("GXTB_EXE")

@@ -2,8 +2,8 @@
 
 FRUST is a Python workflow package for building and screening frustrated Lewis
 pair substrate structures. It connects substrate inputs to calculation outputs:
-connected-graph and legacy template-based structure generation, conformer
-handling, staged xTB and ORCA runs, UMA and g-xTB integrations, and
+connected-graph structure generation, conformer handling, staged xTB and ORCA
+runs, UMA and g-xTB integrations, and
 parquet-backed result tables.
 
 FRUST is active research software. The workflows are useful now, but APIs and
@@ -25,8 +25,6 @@ defaults may still change as the project evolves.
 - [TS guess dataframes](catalyst-screens/ts-guesses.md) explains how the
   production `tsguess2` backend turns systems and reactive positions into
   constrained TS inputs.
-- [Legacy template TS generation](workflows/ts-guess-generation.md) documents
-  the older fixed-XYZ workflow for existing scripts.
 - [Inspecting results](workflows/inspecting-results.md) gives the practical
   checks to run before using a barrier or scope prediction.
 - [DataFrames and results](workflows/dataframes.md) documents the main input and

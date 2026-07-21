@@ -337,7 +337,10 @@ def test_native_int3_builder_emits_role_based_constrained_minimum():
     assert set(df["state_kind"]) == {"constrained_minimum"}
     roles = df.iloc[0]["constraint_roles"]
     assert {"cat_B", "transfer_H", "pin_B", "substrate_C"} <= set(roles)
-    assert df.iloc[0]["ts_spec_id"] == "INT3::builtin::tmp_v2"
+    assert (
+        df.iloc[0]["ts_spec_id"]
+        == "INT3::tsguess2-v2::wb97xd3-631g::gas::r1"
+    )
     assert len(df.iloc[0]["constraint_spec"]) == 6
     assert not any(column.endswith(("-EE", "-NT", "-oc")) for column in df)
 

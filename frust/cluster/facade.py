@@ -14,6 +14,9 @@ from frust.cluster.config import (
 from frust.cluster.executor import create_executor, update_executor
 from frust.cluster.inputs import prepare_pipeline_inputs, load_pipeline
 from frust.cluster.naming import pipeline_output_parquet, sanitize_tag
+from frust.tsguess2.specs import resolve_profile_specs
+from frust.workflows.methods import orca
+from frust.workflows.spec_profiles import geometry_key_for_calculator
 
 
 def submit_jobs(
@@ -23,7 +26,6 @@ def submit_jobs(
     out_dir: str | Path,
     cluster: ClusterConfig,
     resources: Resources,
-    ts_xyz: str | Path | None = None,
     debug: bool = False,
     production: bool = True,
     n_confs: int | None = None,
@@ -48,8 +50,6 @@ def submit_jobs(
     resources : frust.cluster.config.Resources
         CPU, memory, and timeout settings for every submitted job in this
         submission call.
-    ts_xyz : str or pathlib.Path or None, optional
-        TS template XYZ file required by TS-dependent pipelines.
     debug : bool, optional
         Forwarded to the selected FRUST pipeline.
     production : bool, optional
@@ -83,10 +83,9 @@ def submit_jobs(
     Raises
     ------
     ValueError
-        If the pipeline name is unsupported, if required TS inputs are
-        missing, or if the CSV input is invalid.
+        If the pipeline name is unsupported or the CSV input is invalid.
     """
-    prepared = prepare_pipeline_inputs(csv_path, pipeline, ts_xyz=ts_xyz, select_mols=select_mols)
+    prepared = prepare_pipeline_inputs(csv_path, pipeline, select_mols=select_mols)
     pipeline_fn = load_pipeline(pipeline)
     sig = inspect.signature(pipeline_fn)
 
@@ -119,11 +118,6 @@ def submit_jobs(
             kwargs["ligand_smiles_df"] = payload
         elif pipeline == "run_mols_per_rpos":
             kwargs["mol_struct"] = payload
-        elif pipeline == "run_ts_per_lig":
-            kwargs["ligand_smiles_df"] = payload
-            kwargs["ts_guess_xyz"] = str(ts_xyz)
-        elif pipeline in {"run_ts_per_rpos", "run_ts_per_rpos_UMA", "run_ts_per_rpos_UMA_short", "run_orca_smoke_test"}:
-            kwargs["ts_struct"] = payload
         else:
             raise ValueError(f"Unsupported pipeline {pipeline!r}")
 
@@ -143,99 +137,6 @@ def submit_jobs(
     )
 
 
-def submit_chain(
-    *,
-    csv_path: str | Path,
-    preset: str | None = None,
-    module_path: str | None = None,
-    stage_order: list[str] | None = None,
-    ts_xyz: str | Path,
-    out_dir: str | Path,
-    cluster: ClusterConfig,
-    stage_resources: dict[str, Resources] | None = None,
-    debug: bool = False,
-    production: bool = True,
-    n_confs: int | None = None,
-    functional: str | None = None,
-    basisset: str | None = None,
-    basisset_solv: str | None = None,
-    save_output_dir: bool = True,
-    work_dir: str | Path | None = None,
-    orca_memory_fraction: float = DEFAULT_ORCA_MEMORY_FRACTION,
-) -> JobSubmissionResult:
-    """Submit a dependent stage chain from a CSV input file.
-
-    Parameters
-    ----------
-    csv_path : str or pathlib.Path
-        Path to a CSV file containing at least a ``smiles`` column.
-    preset : str or None, optional
-        Built-in FRUST chain preset, such as ``"ts_per_rpos"`` or
-        ``"int3_per_rpos"``. Use either ``preset`` or the custom
-        ``module_path``/``stage_order`` combination.
-    module_path : str or None, optional
-        Custom Python module containing stage functions for advanced use.
-    stage_order : list[str] or None, optional
-        Explicit stage order for custom chains.
-    ts_xyz : str or pathlib.Path
-        TS template XYZ file used to prepare dependent chain inputs.
-    out_dir : str or pathlib.Path
-        Root directory under which per-tag stage outputs are written.
-    cluster : frust.cluster.config.ClusterConfig
-        Shared cluster or local-executor configuration.
-    stage_resources : dict[str, Resources] or None, optional
-        Optional per-stage resource overrides.
-    debug : bool, optional
-        Forwarded to the stage functions when supported.
-    production : bool, optional
-        If ``True`` and ``n_confs`` is ``None``, preserve the stage default
-        conformer behavior.
-    n_confs : int or None, optional
-        Conformer count forwarded to initialization stages when supported.
-    functional : str or None, optional
-        ORCA functional override for preset stage modules. If omitted, the
-        preset module defaults are used.
-    basisset : str or None, optional
-        ORCA basis set override for gas-phase preset stages. If omitted, the
-        preset module defaults are used.
-    basisset_solv : str or None, optional
-        ORCA basis set override for solvent single-point preset stages. If
-        omitted, the preset module defaults are used.
-    save_output_dir : bool, optional
-        Forwarded to initialization stages when supported.
-    work_dir : str or pathlib.Path or None, optional
-        Optional work directory override. If omitted, ``cluster.work_dir`` is
-        used.
-    orca_memory_fraction : float, optional
-        Fraction of each stage's Slurm allocation forwarded to ORCA. Defaults
-        to ``0.8`` while Slurm retains the full requested allocation.
-
-    Returns
-    -------
-    frust.cluster.config.JobSubmissionResult
-        Summary of the submitted chain jobs.
-    """
-    return submit_chain_jobs(
-        csv_path=csv_path,
-        preset=preset,
-        module_path=module_path,
-        stage_order=stage_order,
-        ts_xyz=ts_xyz,
-        out_dir=out_dir,
-        cluster=cluster,
-        stage_resources=stage_resources,
-        debug=debug,
-        production=production,
-        n_confs=n_confs,
-        functional=functional,
-        basisset=basisset,
-        basisset_solv=basisset_solv,
-        save_output_dir=save_output_dir,
-        work_dir=work_dir,
-        orca_memory_fraction=orca_memory_fraction,
-    )
-
-
 def submit_screen_chain(
     *,
     csv_path: str | Path,
@@ -251,6 +152,8 @@ def submit_screen_chain(
     basisset: str | None = None,
     basisset_solv: str | None = None,
     composite_method: str | None = None,
+    spec_profile: str = "auto",
+    spec_match: str = "prefer-exact",
     save_output_dir: bool = True,
     work_dir: str | Path | None = None,
     orca_memory_fraction: float = DEFAULT_ORCA_MEMORY_FRACTION,
@@ -290,6 +193,11 @@ def submit_screen_chain(
         Complete ORCA composite-method keyword, such as ``"r2SCAN-3c"``. When
         provided, no separate basis set keywords are forwarded. Mutually
         exclusive with ``functional``, ``basisset``, and ``basisset_solv``.
+    spec_profile : str, optional
+        ``tsguess2`` geometry profile. ``"auto"`` selects it from the chain's
+        ORCA transition-state method.
+    spec_match : {"prefer-exact", "exact"}, optional
+        Geometry-profile matching policy.
     save_output_dir : bool, optional
         Forwarded to initialization stages.
     work_dir : str or pathlib.Path or None, optional
@@ -321,12 +229,20 @@ def submit_screen_chain(
                 f"{joined}; ORCA composite methods already include their basis/corrections."
             )
 
+    resolved_profile = spec_profile
+    if spec_profile == "auto":
+        geometry_method = composite_method or functional or "wB97X-D3"
+        geometry_basis = None if composite_method else basisset or "6-31G**"
+        resolved_profile = geometry_key_for_calculator(
+            orca(method=geometry_method, basis=geometry_basis, job="optts")
+        ).profile_id
+    resolve_profile_specs(ts_types, resolved_profile, match=spec_match)
+
     return submit_chain_jobs(
         csv_path=csv_path,
         preset="screen_ts_per_rpos",
         module_path=None,
         stage_order=None,
-        ts_xyz=None,
         ts_types=ts_types,
         out_dir=out_dir,
         cluster=cluster,
@@ -339,6 +255,8 @@ def submit_screen_chain(
         basisset=basisset,
         basisset_solv=basisset_solv,
         composite_method=composite_method,
+        spec_profile=resolved_profile,
+        spec_match=spec_match,
         save_output_dir=save_output_dir,
         work_dir=work_dir,
         orca_memory_fraction=orca_memory_fraction,
