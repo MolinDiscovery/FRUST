@@ -954,8 +954,6 @@ class SceneAdapterTests(unittest.TestCase):
 
         overlay_types = {type(overlay).__name__ for overlay in scene.cells[0].overlays}
         self.assertEqual(overlay_types, {"AngleOverlay"})
-
-
 class ConformerEnsembleSceneTests(unittest.TestCase):
     @staticmethod
     def _transform(coords):
@@ -1774,7 +1772,5 @@ class StructureComparisonTests(unittest.TestCase):
         self.assertEqual(renderer.styles_at_export, expected_styles)
         self.assertEqual(renderer.export_path, "comparison.html")
         self.assertEqual(result["viewer"].show_calls, 0)
-
-
 if __name__ == "__main__":
     unittest.main()
