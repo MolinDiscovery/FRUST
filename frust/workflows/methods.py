@@ -447,6 +447,7 @@ def with_ts_mode_following(
     active_atoms_factor: float | None = None,
     recalc_hess: int | None = None,
     trust_radius: float | None = None,
+    max_step: float | None = None,
     stage: str = "dft_ts_opt",
     tight_opt: bool = True,
 ) -> MethodPlan:
@@ -467,7 +468,10 @@ def with_ts_mode_following(
     recalc_hess : int or None, optional
         Number of OptTS cycles between exact Hessian recalculations.
     trust_radius : float or None, optional
-        Initial adaptive ORCA trust radius.
+        ORCA trust radius. Positive values are adaptive and negative values
+        keep the absolute radius fixed.
+    max_step : float or None, optional
+        Positive ORCA maximum component of the optimization step.
     stage : str, optional
         Method-plan stage to customize. Defaults to ``"dft_ts_opt"``.
     tight_opt : bool, optional
@@ -522,6 +526,7 @@ def with_ts_mode_following(
             "ts_active_atoms_factor": active_atoms_factor,
             "recalc_hess": recalc_hess,
             "trust_radius": trust_radius,
+            "max_step": max_step,
         }
     )
     updated = dataclass_replace(spec, options=options, kwargs=kwargs)

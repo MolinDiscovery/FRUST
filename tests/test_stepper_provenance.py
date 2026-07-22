@@ -296,6 +296,43 @@ end"""
 
         self.assertEqual(calls, [])
 
+    def test_orca_ts_mode_following_supports_fixed_trust_and_max_step(self):
+        calls = []
+        step = Stepper(debug=True, save_output_dir=False)
+        step.orca_fn = _recording_orca(calls)
+
+        out = step.orca(
+            _ts3_df(),
+            name="ts3_fixed_trust",
+            options={"r2SCAN-3c": None, "OptTS": None},
+            use_last_hess=True,
+            ts_mode=("pin_B", "substrate_C"),
+            trust_radius=-0.05,
+            max_step=0.05,
+        )
+
+        orca_input = calls[0]["xtra_inp_str"]
+        self.assertIn("Trust -0.05", orca_input)
+        self.assertIn("MaxStep 0.05", orca_input)
+        meta = out.attrs["frust_steps"]["ts3_fixed_trust"]["input"]
+        self.assertEqual(meta["trust_radius"], -0.05)
+        self.assertEqual(meta["max_step"], 0.05)
+
+    def test_orca_ts_mode_following_rejects_zero_trust_radius(self):
+        calls = []
+        step = Stepper(debug=True, save_output_dir=False)
+        step.orca_fn = _recording_orca(calls)
+
+        with self.assertRaisesRegex(ValueError, "non-zero finite"):
+            step.orca(
+                _ts3_df(),
+                options={"r2SCAN-3c": None, "OptTS": None},
+                ts_mode=("pin_B", "substrate_C"),
+                trust_radius=0.0,
+            )
+
+        self.assertEqual(calls, [])
+
     def test_orca_uma_standalone_records_calculator_metadata(self):
         with tempfile.TemporaryDirectory() as td:
             root = Path(td)

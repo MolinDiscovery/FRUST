@@ -1046,7 +1046,7 @@ def screen_ts(
     spec_profile : str, optional
         Geometry-reference profile used by ``tsguess2``. ``"auto"`` selects
         the profile from the DFT TS-optimization method and environment. Pass
-        an explicit profile such as ``"r2scan-3c/smd(chloroform)"`` for a
+        an explicit profile such as ``"r2scan-3c/smd-chloroform"`` for a
         custom method plan.
     spec_match : {"prefer-exact", "exact"}, optional
         Profile matching policy. ``"prefer-exact"`` may use the other

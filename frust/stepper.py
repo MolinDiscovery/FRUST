@@ -1951,6 +1951,7 @@ class Stepper:
         ts_active_atoms_factor: float | None = None,
         recalc_hess: int | None = None,
         trust_radius: float | None = None,
+        max_step: float | None = None,
         gxtb: bool = False,
         gxtb_exe: str | None = None,
         gxtb_ext_params: str | None = None,
@@ -2035,8 +2036,11 @@ class Stepper:
                 ``TS_Active_Atoms_Factor``. Requires ``ts_active_atoms``.
             recalc_hess (int or None, optional): Positive number of OptTS cycles
                 between exact Hessian recalculations.
-            trust_radius (float or None, optional): Positive initial adaptive
-                ORCA trust radius.
+            trust_radius (float or None, optional): ORCA trust radius. Positive
+                values are adaptive and negative values keep the absolute
+                radius fixed.
+            max_step (float or None, optional): Positive ORCA maximum component
+                of the optimization step.
             gxtb (bool, optional): If ``True``, runs ORCA with OET g-xTB v2 as
                 an external method provider. ORCA still owns ``Opt``,
                 ``OptTS``, ``NEB-TS``, and related run types. Defaults to
@@ -2096,6 +2100,7 @@ class Stepper:
                 ts_active_atoms_factor,
                 recalc_hess,
                 trust_radius,
+                max_step,
             )
         )
         if ts_controls_requested and "OptTS" not in opts:
@@ -2110,6 +2115,7 @@ class Stepper:
                         ts_active_atoms_factor=ts_active_atoms_factor,
                         recalc_hess=recalc_hess,
                         trust_radius=trust_radius,
+                        max_step=max_step,
                     )
                 except (TypeError, ValueError) as exc:
                     raise ValueError(
@@ -2158,6 +2164,7 @@ class Stepper:
                 "ts_active_atoms_factor": ts_active_atoms_factor,
                 "recalc_hess": recalc_hess,
                 "trust_radius": trust_radius,
+                "max_step": max_step,
                 "n_cores": effective_n_cores,
                 "memory_gb": self.memory_gb,
                 "generated_input_blocks": generated_input_blocks or None,
@@ -2219,6 +2226,7 @@ class Stepper:
                 ts_active_atoms_factor=ts_active_atoms_factor,
                 recalc_hess=recalc_hess,
                 trust_radius=trust_radius,
+                max_step=max_step,
             )
             if block:
                 inp["xtra_inp_str"] += ("\n\n" + block) if inp["xtra_inp_str"] else block

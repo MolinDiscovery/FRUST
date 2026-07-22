@@ -97,6 +97,7 @@ class WorkflowMethodTests(unittest.TestCase):
             active_atoms_factor=1.5,
             recalc_hess=3,
             trust_radius=0.15,
+            max_step=0.05,
         )
 
         spec = updated.for_stage("dft_ts_opt")
@@ -105,6 +106,7 @@ class WorkflowMethodTests(unittest.TestCase):
         self.assertIn("TightOpt", spec.options)
         self.assertEqual(spec.kwargs["ts_mode"], ("pin_B", "substrate_C"))
         self.assertEqual(spec.kwargs["recalc_hess"], 3)
+        self.assertEqual(spec.kwargs["max_step"], 0.05)
         self.assertNotIn("TightOpt", base.for_stage("dft_ts_opt").options)
 
     def test_legacy_stage_alias_updates_canonical_stage(self):

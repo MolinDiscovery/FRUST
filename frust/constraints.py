@@ -340,6 +340,7 @@ def render_orca_geometry_controls(
     ts_active_atoms_factor: float | None = None,
     recalc_hess: int | None = None,
     trust_radius: float | None = None,
+    max_step: float | None = None,
 ) -> str | None:
     """Render one ORCA ``%geom`` block from row-level chemical roles.
 
@@ -366,7 +367,10 @@ def render_orca_geometry_controls(
         Positive number of optimization cycles between exact Hessian
         recalculations.
     trust_radius : float or None, optional
-        Positive adaptive ORCA trust radius.
+        ORCA trust radius. Positive values enable adaptive updates; negative
+        values keep the absolute radius fixed. Zero is invalid.
+    max_step : float or None, optional
+        Positive ORCA maximum component of the optimization step.
 
     Returns
     -------
@@ -388,8 +392,8 @@ def render_orca_geometry_controls(
     ...     ts_mode=("pin_B", "substrate_C"),
     ...     ts_active_atoms=("cat_B", "transfer_H", "pin_B", "substrate_C"),
     ...     ts_active_atoms_factor=1.5,
-    ...     recalc_hess=3,
-    ...     trust_radius=0.15,
+    ...     trust_radius=-0.05,
+    ...     max_step=0.05,
     ... )
     >>> "TS_Mode {B 2 3}" in block
     True
@@ -403,6 +407,7 @@ def render_orca_geometry_controls(
             ts_active_atoms_factor is not None,
             recalc_hess is not None,
             trust_radius is not None,
+            max_step is not None,
         )
     )
     if not requested:
@@ -450,8 +455,11 @@ def render_orca_geometry_controls(
         interval = _positive_integer(recalc_hess, name="recalc_hess")
         lines.append(f"  Recalc_Hess {interval}")
     if trust_radius is not None:
-        radius = _positive_finite_float(trust_radius, name="trust_radius")
+        radius = _nonzero_finite_float(trust_radius, name="trust_radius")
         lines.append(f"  Trust {radius:g}")
+    if max_step is not None:
+        step = _positive_finite_float(max_step, name="max_step")
+        lines.append(f"  MaxStep {step:g}")
 
     lines.append("end")
     return "\n".join(lines)
@@ -495,6 +503,13 @@ def _positive_finite_float(value: Any, *, name: str) -> float:
     number = float(value)
     if not isfinite(number) or number <= 0:
         raise ValueError(f"{name} must be a positive finite number")
+    return number
+
+
+def _nonzero_finite_float(value: Any, *, name: str) -> float:
+    number = float(value)
+    if not isfinite(number) or number == 0:
+        raise ValueError(f"{name} must be a non-zero finite number")
     return number
 
 
