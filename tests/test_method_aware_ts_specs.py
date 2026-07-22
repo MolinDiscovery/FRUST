@@ -1,5 +1,8 @@
 from __future__ import annotations
 
+from math import acos, degrees
+
+import numpy as np
 import pandas as pd
 import pytest
 
@@ -39,24 +42,69 @@ def test_profile_catalog_exposes_all_four_method_environment_slots():
         "INT3",
     }
     assert r2_solv.set_index("state").loc["TS3", "status"] == "quarantined"
+    r2_gas = profiles[profiles["profile"].eq("r2scan-3c/gas")]
+    assert set(r2_gas.loc[r2_gas["status"].eq("active"), "state"]) == {
+        "TS1",
+        "TS2",
+        "TS3",
+        "TS4",
+        "INT3",
+    }
+    assert r2_gas["mode_reviewed"].eq(True).all()  # noqa: E712
+    gas_by_state = r2_gas.set_index("state")
+    assert gas_by_state.loc["TS1", "negative_frequencies"] == (-205.46,)
+    assert gas_by_state.loc["TS2", "negative_frequencies"] == (-328.55,)
+    assert gas_by_state.loc["TS3", "negative_frequencies"] == (-82.84,)
+    assert gas_by_state.loc["TS4", "negative_frequencies"] == (-72.05,)
+    assert gas_by_state.loc["INT3", "negative_frequencies"] == ()
+    assert set(r2_gas.loc[r2_gas["state"].str.startswith("TS"), "source_sha256"]) == {
+        "966555c888fa6a41969f791d93bcf97fa9898df89bb2d0402f7c0088819c6e31"
+    }
+    assert gas_by_state.loc["INT3", "source_sha256"] == (
+        "d316deaefc39d41683a99df28819dabbc9e194c012688f2fe264c5016d43e3ee"
+    )
 
 
 def test_profile_resolution_falls_back_only_within_method_family():
     r2 = resolve_profile_spec("TS4", "r2scan-3c/gas")
     wb97 = resolve_profile_spec("TS4", "wb97xd3-631g-solv")
 
-    assert r2.resolved_profile == "r2scan-3c/smd-chloroform"
-    assert r2.match == "same_method_environment_fallback"
+    assert r2.resolved_profile == "r2scan-3c/gas"
+    assert r2.match == "exact"
     assert wb97.resolved_profile == "wb97xd3-631g/gas"
     assert wb97.spec.spec_id.startswith("TS4::tsguess2-v2::wb97xd3-631g")
-    with pytest.raises(ValueError, match="No selectable TS4"):
-        resolve_profile_spec("TS4", "r2scan-3c/gas", match="exact")
+    assert resolve_profile_spec(
+        "TS4",
+        "r2scan-3c/gas",
+        match="exact",
+    ).spec.spec_id == "TS4::tsguess2-v2::r2scan-3c::gas::r1"
 
 
-def test_quarantined_r2scan_ts3_is_never_selected():
-    for profile in ("r2scan-3c/smd-chloroform", "r2scan-3c/gas"):
-        with pytest.raises(ValueError, match="wrong mode"):
-            resolve_profile_spec("TS3", profile)
+def test_quarantined_smd_ts3_falls_back_to_reviewed_gas_reference():
+    selection = resolve_profile_spec("TS3", "r2scan-3c/smd-chloroform")
+
+    assert selection.resolved_profile == "r2scan-3c/gas"
+    assert selection.match == "same_method_environment_fallback"
+    assert selection.spec.spec_id == "TS3::tsguess2-v2::r2scan-3c::gas::r1"
+    with pytest.raises(ValueError, match="wrong mode"):
+        resolve_profile_spec("TS3", "r2scan-3c/smd-chloroform", match="exact")
+
+
+def test_r2scan_gas_constraints_match_stored_role_coordinates():
+    for state in ("TS1", "TS2", "TS3", "TS4", "INT3"):
+        spec = resolve_profile_spec(state, "r2scan-3c/gas", match="exact").spec
+        for constraint in spec.constraints:
+            points = [np.asarray(spec.role_coordinates[role]) for role in constraint.roles]
+            if constraint.kind == "distance":
+                measured = float(np.linalg.norm(points[0] - points[1]))
+            else:
+                left = points[0] - points[1]
+                right = points[2] - points[1]
+                cosine = float(
+                    np.dot(left, right) / (np.linalg.norm(left) * np.linalg.norm(right))
+                )
+                measured = degrees(acos(np.clip(cosine, -1.0, 1.0)))
+            assert constraint.value == pytest.approx(measured, abs=1e-9)
 
 
 def test_workflow_method_plan_selects_geometry_profile_upstream():
@@ -77,23 +125,23 @@ def test_workflow_method_plan_selects_geometry_profile_upstream():
     assert len(gas.targets()) == 1
 
 
-def test_workflow_validates_missing_or_quarantined_profiles_before_embedding():
-    exact_missing = ft.workflows.screen_ts(
+def test_workflow_resolves_gas_exactly_and_rejects_exact_quarantined_smd_ts3():
+    exact_gas = ft.workflows.screen_ts(
         dataframe=_components(),
-        ts_types=["TS4"],
+        ts_types=["TS3"],
         method="r2scan-3c",
         spec_match="exact",
     )
-    quarantined = ft.workflows.screen_ts(
+    exact_quarantined = ft.workflows.screen_ts(
         dataframe=_components(),
         ts_types=["TS3"],
         method="r2scan-3c-solv",
+        spec_match="exact",
     )
 
-    with pytest.raises(ValueError, match="has not been supplied"):
-        exact_missing.targets()
+    assert len(exact_gas.targets()) == 1
     with pytest.raises(ValueError, match="wrong mode"):
-        quarantined.targets()
+        exact_quarantined.targets()
 
 
 def test_explicit_legacy_upgrade_creates_self_describing_constraints():

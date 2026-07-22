@@ -164,6 +164,8 @@ class ScreenChainSubmissionTests(unittest.TestCase):
                         csv_path=csv_path,
                         ts_types=["TS3"],
                         composite_method="r2SCAN-3c",
+                        spec_profile="r2scan-3c/smd-chloroform",
+                        spec_match="exact",
                         out_dir=Path(tmp) / "out",
                         cluster=cluster,
                     )

@@ -98,8 +98,8 @@ The built-in catalog has four slots:
 | --- | --- |
 | `wb97xd3-631g/gas` | TS1--TS4 and INT3 active |
 | `wb97xd3-631g/smd-chloroform` | Missing; same-method gas fallback is available with `prefer-exact` |
-| `r2scan-3c/gas` | Missing; same-method SMD fallback is available where that state is active |
-| `r2scan-3c/smd-chloroform` | TS1, TS2, TS4, and INT3 active; TS3 quarantined |
+| `r2scan-3c/gas` | TS1--TS4 and INT3 active |
+| `r2scan-3c/smd-chloroform` | TS1, TS2, TS4, and INT3 active; TS3 quarantined with reviewed gas fallback available under `prefer-exact` |
 
 Workflows select the profile from their DFT geometry stage:
 
@@ -123,12 +123,18 @@ Use `spec_match="exact"` when a workflow must stop rather than use the other
 environment from the same method family. FRUST never falls back between
 r2SCAN-3c and wB97X-D3.
 
+Maintainers deriving a profile from optimized workflow results should use the
+review-first extractor workflow in
+[Deriving TS Geometry Profiles](../development/ts-spec-profiles.md). The
+extractor recomputes constraints from final coordinates and produces candidate
+JSON; it does not activate specifications automatically.
+
 !!! warning "r2SCAN-3c/SMD TS3 is quarantined"
 
     The supplied NMe TS3 reference has two imaginary frequencies and the wrong
-    mode. FRUST will not select it, including through profile fallback. Add a
-    reviewed replacement as a new profile revision when the TMP calculation is
-    ready.
+    mode, so FRUST never selects that geometry. With `prefer-exact`, an
+    r2SCAN-3c/SMD TS3 request resolves to the reviewed gas-phase r2SCAN-3c TS3.
+    With `spec_match="exact"`, the same request stops instead.
 
 Conformer-generation provenance is stored in
 `df.attrs["frust_conformers"]`. Backend-specific generation details, including

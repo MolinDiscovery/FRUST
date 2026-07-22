@@ -91,6 +91,7 @@ nav:
           - Submission: cluster/submission.md
       - Development:
           - Workflow Architecture: development/workflow-architecture.md
+          - Deriving TS Geometry Profiles: development/ts-spec-profiles.md
       - Troubleshooting:
           - Failed Calculations: troubleshooting/failed-calculations.md
           - Transition States: troubleshooting/transition-states.md

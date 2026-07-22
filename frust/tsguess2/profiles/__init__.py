@@ -13,6 +13,10 @@ from frust.tsguess2.models import (
     StateGeometrySpec,
     TSGuess2Spec,
 )
+from frust.tsguess2.profiles.r2scan3c_gas import (
+    GEOMETRIES as R2SCAN3C_GAS_GEOMETRIES,
+    GEOMETRY_KEY as R2SCAN3C_GAS_KEY,
+)
 from frust.tsguess2.profiles.r2scan3c_smd_chloroform import (
     GEOMETRIES as R2SCAN3C_SMD_GEOMETRIES,
     GEOMETRY_KEY as R2SCAN3C_SMD_KEY,
@@ -31,7 +35,6 @@ WB97_SMD_KEY = GeometryKey(
     solvation_model="smd",
     solvent="chloroform",
 )
-R2SCAN3C_GAS_KEY = GeometryKey(method="r2scan-3c")
 
 PROFILE_KEYS: dict[str, GeometryKey] = {
     key.profile_id: key
@@ -40,6 +43,7 @@ PROFILE_KEYS: dict[str, GeometryKey] = {
 
 _GEOMETRIES: dict[str, dict[str, StateGeometrySpec]] = {
     WB97_GAS_KEY.profile_id: WB97_GAS_GEOMETRIES,
+    R2SCAN3C_GAS_KEY.profile_id: R2SCAN3C_GAS_GEOMETRIES,
     R2SCAN3C_SMD_KEY.profile_id: R2SCAN3C_SMD_GEOMETRIES,
 }
 _QUARANTINED: dict[str, dict[str, str]] = {
