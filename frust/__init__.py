@@ -16,7 +16,6 @@ _PUBLIC_MODULES: dict[str, str] = {
     "screen": "frust.screen",
     "structures": "frust.structures",
     "tsguess2": "frust.tsguess2",
-    "tsguess3": "frust.tsguess3",
     "utils": "frust.utils",
     "vis": "frust.vis",
     "workflows": "frust.workflows",
@@ -101,7 +100,6 @@ if TYPE_CHECKING:
     import frust.screen as screen
     import frust.structures as structures
     import frust.tsguess2 as tsguess2
-    import frust.tsguess3 as tsguess3
     import frust.utils as utils
     import frust.vis as vis
     import frust.workflows as workflows

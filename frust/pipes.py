@@ -83,7 +83,7 @@ def run_screen_ts_per_rpos(
         expanded systems dataframe from :func:`frust.screen.expand`.
     ts_types : tuple or list of str, optional
         Transition-state types to generate. Defaults to TS1-TS4.
-    ts_backend : {"tsguess2", "tsguess3", "tsguess"}, optional
+    ts_backend : {"tsguess2", "tsguess"}, optional
         TS guess backend used by :func:`frust.screen.create_ts_guesses`.
     n_confs : int or None, optional
         Number of conformers per TS guess. ``None`` uses the TS guess module's

@@ -10,7 +10,6 @@ import pandas as pd
 
 from frust.tsguess import create_ts_guess_dataframes as create_tsguess_dataframes
 from frust.tsguess2 import create_ts_guess_dataframes as create_tsguess2_dataframes
-from frust.tsguess3 import create_ts_guess_dataframes as create_tsguess3_dataframes
 
 ROLE_ALIASES = {"substrate": "substrate", "sub": "substrate", "catalyst": "catalyst", "cat": "catalyst"}
 BASE_COLUMNS = {"role", "smiles", "compound_name", "rpos"}
@@ -135,10 +134,8 @@ def create_ts_guesses(
         RDKit embedding threads.
     validate : bool, optional
         Validate required columns before generation.
-    backend : {"tsguess2", "tsguess3", "tsguess"}, optional
+    backend : {"tsguess2", "tsguess"}, optional
         TS guess backend. ``"tsguess2"`` uses the SMILES-roundtrip backend.
-        ``"tsguess3"`` uses the SMILES-roundtrip backend with fragment-aware
-        TS3/TS4 embedding.
         ``"tsguess"`` uses the original role-assembly backend.
     spec_profile : str, optional
         Method/environment geometry profile used by ``tsguess2``.
@@ -153,12 +150,10 @@ def create_ts_guesses(
     backend_key = str(backend).strip().lower()
     if backend_key == "tsguess2":
         create = create_tsguess2_dataframes
-    elif backend_key == "tsguess3":
-        create = create_tsguess3_dataframes
     elif backend_key == "tsguess":
         create = create_tsguess_dataframes
     else:
-        raise ValueError("backend must be one of 'tsguess2', 'tsguess3', or 'tsguess'")
+        raise ValueError("backend must be one of 'tsguess2' or 'tsguess'")
 
     kwargs = {
         "ts_types": ts_types,

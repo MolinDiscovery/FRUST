@@ -90,10 +90,10 @@ ts1[["structure_type", "rpos", "cid", "tsguess_backend", "ts_spec_id"]].head()
 
 | structure_type | rpos | cid | tsguess_backend | ts_spec_id |
 | --- | ---: | ---: | --- | --- |
-| `TS1` | 2 | 0 | `tsguess2` | `TS1::builtin::methylpyrrole_v2` |
-| `TS1` | 3 | 0 | `tsguess2` | `TS1::builtin::methylpyrrole_v2` |
-| `TS1` | 3 | 0 | `tsguess2` | `TS1::builtin::methylpyrrole_v2` |
-| `TS1` | 5 | 0 | `tsguess2` | `TS1::builtin::methylpyrrole_v2` |
+| `TS1` | 2 | 0 | `tsguess2` | `TS1::tsguess2-v2::wb97xd3-631g::gas::r1` |
+| `TS1` | 3 | 0 | `tsguess2` | `TS1::tsguess2-v2::wb97xd3-631g::gas::r1` |
+| `TS1` | 3 | 0 | `tsguess2` | `TS1::tsguess2-v2::wb97xd3-631g::gas::r1` |
+| `TS1` | 5 | 0 | `tsguess2` | `TS1::tsguess2-v2::wb97xd3-631g::gas::r1` |
 
 The role sets differ by TS family:
 

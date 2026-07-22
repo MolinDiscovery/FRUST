@@ -95,7 +95,7 @@ Typical `screen_ts(..., method="r2scan-3c", dft=True)` stages:
 | group | stage | engine | options | constraint | lowest | rank_by |
 | --- | --- | --- | --- | --- | ---: | --- |
 | `init` | `prepare` | `prepare` |  |  |  |  |
-| `init` | `initial_prune` | `prism_pruner` | `modes=moi,rmsd moi_max_deviation=0.01 rmsd_max_rmsd=1.25` | false |  |  |
+| `init` | `initial_prune` | `prism_pruner` | `modes=moi,rmsd moi_max_deviation=0.01 rmsd_max_rmsd=0.5` | false |  |  |
 | `init` | `xtb_preopt` | `xtb` | `gfnff opt` | true |  |  |
 | `init` | `xtb_sp` | `gxtb` |  | false |  |  |
 | `init` | `xtb_opt` | `gxtb` | `opt` | true | 10 | `xtb_opt` |

@@ -456,8 +456,7 @@ class ScreenWorkflowTests(unittest.TestCase):
             self.assertIn(transfer_h, cat_b_hydrogens)
         self.assertEqual(guesses["TS2"].attrs["frust_tsguess2"]["backend"], "tsguess2")
 
-    @pytest.mark.slow
-    def test_tsguess3_backend_uses_v3_provenance(self):
+    def test_ts_guess_backend_rejects_removed_tsguess3(self):
         systems = ft.screen.expand(
             ft.screen.read(
                 pd.DataFrame(
@@ -471,88 +470,8 @@ class ScreenWorkflowTests(unittest.TestCase):
             )
         )
 
-        guesses = ft.screen.create_ts_guesses(
-            systems,
-            ts_types=["TS1", "TS2", "TS3", "TS4"],
-            n_confs=1,
-            backend="tsguess3",
-        )
-
-        self.assertEqual(set(guesses), {"TS1", "TS2", "TS3", "TS4"})
-        for ts_type, rows in guesses.items():
-            row = rows.iloc[0]
-            self.assertEqual(row["tsguess_backend"], "tsguess3")
-            self.assertIn("_v3", row["ts_spec_id"])
-            self.assertEqual(rows.attrs["frust_conformers"]["backend"], "tsguess3")
-            self.assertEqual(rows.attrs["frust_tsguess3"]["backend"], "tsguess3")
-            self.assertNotIn("frust_tsguess2", rows.attrs)
-            embedding = rows.attrs["frust_tsguess3"]["embedding"]
-            if ts_type in {"TS3", "TS4"}:
-                self.assertIn("cat_H", row["constraint_roles"])
-                self.assertEqual(embedding["mode"], "fragmented")
-                self.assertEqual(embedding["pruneRmsThresh"], -1.0)
-                self.assertEqual(
-                    embedding["hard_anchor_roles"],
-                    ["cat_B", "pin_B", "transfer_H", "substrate_C"],
-                )
-            else:
-                self.assertEqual(embedding["mode"], "connected")
-                self.assertEqual(embedding["pruneRmsThresh"], 0.1)
-
-    @pytest.mark.slow
-    def test_tsguess3_ts3_ts4_fragment_embedding_keeps_connected_support_bonds(self):
-        systems = ft.screen.expand(
-            ft.screen.read(
-                pd.DataFrame(
-                    {
-                        "role": ["substrate", "catalyst"],
-                        "smiles": ["C1=CC=CO1", CATALYST_V2],
-                        "compound_name": ["furan", "cat_v3"],
-                        "rpos": ["1", None],
-                    }
-                )
-            )
-        )
-
-        guesses = ft.screen.create_ts_guesses(
-            systems,
-            ts_types=["TS3", "TS4"],
-            n_confs=40,
-            backend="tsguess3",
-        )
-
-        for ts_type, rows in guesses.items():
-            roles = rows.iloc[0]["constraint_roles"]
-            coords = np.array(list(rows["coords_embedded"]), dtype=float)
-            for role in ("cat_B", "pin_B", "transfer_H", "substrate_C"):
-                span = np.ptp(coords[:, roles[role], :], axis=0)
-                self.assertLess(float(np.max(span)), 1e-8, role)
-            cat_h_span = np.ptp(coords[:, roles["cat_H"], :], axis=0)
-            self.assertGreater(float(np.max(cat_h_span)), 0.5, ts_type)
-
-            row = rows.iloc[0]
-            mol = _row_to_mol(row, row["atoms"], row["coords_embedded"])
-            self.assertTrue(_role_bond_exists(mol, roles, "cat_B", "substrate_C"))
-            self.assertTrue(_role_bond_exists(mol, roles, "pin_B", "substrate_C"))
-            self.assertTrue(_role_bond_exists(mol, roles, "cat_B", "transfer_H"))
-            self.assertTrue(_role_bond_exists(mol, roles, "pin_B", "transfer_H"))
-
-    def test_ts_guess_backend_errors_list_tsguess3(self):
-        systems = ft.screen.expand(
-            ft.screen.read(
-                pd.DataFrame(
-                    {
-                        "role": ["substrate", "catalyst"],
-                        "smiles": ["CN1C=CC=C1", CATALYST_V2],
-                        "compound_name": ["pyrrole", "cat_v3"],
-                        "rpos": ["2", None],
-                    }
-                )
-            )
-        )
-
-        with self.assertRaisesRegex(ValueError, "tsguess3"):
-            ft.screen.create_ts_guesses(systems, backend="missing")
+        with self.assertRaisesRegex(ValueError, "'tsguess2' or 'tsguess'"):
+            ft.screen.create_ts_guesses(systems, backend="tsguess3")
 
     @pytest.mark.slow
     def test_multifragment_ts_guess_does_not_collapse_fragments(self):

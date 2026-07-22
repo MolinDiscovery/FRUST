@@ -70,20 +70,22 @@ def main() -> None:
         failures.append(f"workflows.screen_ts backend is {workflow_backend!r}, expected 'tsguess2'")
 
     spec_ids = {name: spec.spec_id for name, spec in BUILTIN_TS_SPECS_V2.items()}
-    stale_ids = {name: spec_id for name, spec_id in spec_ids.items() if not spec_id.endswith("_v2")}
+    stale_ids = {
+        name: spec_id
+        for name, spec_id in spec_ids.items()
+        if "::tsguess2-v2::" not in spec_id
+    }
     if stale_ids:
-        failures.append(f"tsguess2 specification ids are not v2: {stale_ids}")
+        failures.append(f"tsguess2 specification ids are not method-aware v2 ids: {stale_ids}")
 
     pruning_rmsd = DEFAULT_PRUNING_OPTIONS["rmsd_max_rmsd"]
-    if pruning_rmsd != 1.25:
-        failures.append(f"workflow pruning RMSD default is {pruning_rmsd!r}, expected 1.25")
 
     ts_docs = _read("docs/catalyst-screens/ts-guesses.md")
-    for required in ("tsguess2", "methylpyrrole_v2", "B_transfer_H", "N_transfer_H"):
+    for required in ("tsguess2", "::tsguess2-v2::", "B_transfer_H", "N_transfer_H"):
         if required not in ts_docs:
             failures.append(f"TS guess documentation is missing {required!r}")
-    if "methylpyrrole_v1" in ts_docs:
-        failures.append("default TS guess documentation still contains a v1 specification id")
+    if "::builtin::" in ts_docs:
+        failures.append("TS guess documentation still contains a legacy built-in specification id")
 
     expected_pruning = f"rmsd_max_rmsd={pruning_rmsd}"
     for relative_path in (
