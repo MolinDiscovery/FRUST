@@ -428,14 +428,14 @@ def render_orca_geometry_controls(
             raise ValueError("ts_mode requires two, three, or four chemical roles") from exc
         mode_atoms = _role_atom_indices(row, mode_roles)
         lines.append(
-            f"  TS_Mode {{{coordinate_type} {' '.join(str(index) for index in mode_atoms)}}}"
+            f"  TS_Mode {{{coordinate_type} {' '.join(str(index) for index in mode_atoms)}}} end"
         )
 
     if ts_active_atoms is not None:
         active_roles = _role_sequence(ts_active_atoms, name="ts_active_atoms")
         active_atoms = _role_atom_indices(row, active_roles)
         lines.append(
-            f"  TS_Active_Atoms {{ {' '.join(str(index) for index in active_atoms)} }}"
+            f"  TS_Active_Atoms {{ {' '.join(str(index) for index in active_atoms)} }} end"
         )
     if ts_active_atoms_factor is not None:
         if ts_active_atoms is None:

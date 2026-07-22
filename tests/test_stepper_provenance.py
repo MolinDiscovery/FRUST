@@ -270,8 +270,8 @@ end"""
 
         orca_input = calls[0]["xtra_inp_str"]
         self.assertEqual(orca_input.count("%geom"), 1)
-        self.assertIn("TS_Mode {B 2 3}", orca_input)
-        self.assertIn("TS_Active_Atoms { 0 1 2 3 }", orca_input)
+        self.assertIn("TS_Mode {B 2 3} end", orca_input)
+        self.assertIn("TS_Active_Atoms { 0 1 2 3 } end", orca_input)
         self.assertIn("TS_Active_Atoms_Factor 1.5", orca_input)
         self.assertIn("inhess Read", orca_input)
         self.assertIn('InHessName "private_input.hess"', orca_input)
