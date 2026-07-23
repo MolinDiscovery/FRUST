@@ -781,6 +781,32 @@ class SceneAdapterTests(unittest.TestCase):
 
         self.assertEqual(scene.cells[0].models[0].bonds, [(0, 1)])
 
+    def test_molecule_scene_applies_legends_in_rendered_cell_order(self):
+        df = self.small_molecule_df()
+        df["Opt-oc"] = df["coords_embedded"]
+        df.at[1, "Opt-oc"] = None
+
+        scene = molecule_scene_from_dataframe(
+            df,
+            coord_indices=None,
+            legends=["furan embedded", "furan optimized", "pyrrole embedded"],
+        )
+
+        self.assertEqual(
+            [cell.title for cell in scene.cells],
+            ["furan embedded", "furan optimized", "pyrrole embedded"],
+        )
+
+    def test_molecule_scene_rejects_legend_count_mismatch(self):
+        with self.assertRaisesRegex(
+            ValueError,
+            "Expected 2 legends for rendered cells, received 1",
+        ):
+            molecule_scene_from_dataframe(
+                self.small_molecule_df(),
+                legends=["only one"],
+            )
+
     def test_vibration_scene_from_dataframe_supports_all_rows_and_columns(self):
         scene = vibration_scene_from_dataframe(
             self.small_vib_df(),
@@ -835,6 +861,81 @@ class SceneAdapterTests(unittest.TestCase):
 
         show.assert_called_once()
         self.assertIsNone(viewer)
+
+    def test_plot_mols_has_explicit_keyword_only_scene_options(self):
+        signature = inspect.signature(plot_mols)
+        scene_options = {
+            "legends",
+            "cell_size",
+            "columns",
+            "linked",
+            "show_labels",
+            "show_charges",
+            "kekulize",
+            "background_color",
+            "export_HTML",
+        }
+
+        self.assertNotIn(
+            inspect.Parameter.VAR_KEYWORD,
+            [parameter.kind for parameter in signature.parameters.values()],
+        )
+        for option in scene_options:
+            self.assertEqual(
+                signature.parameters[option].kind,
+                inspect.Parameter.KEYWORD_ONLY,
+            )
+
+    def test_plot_mols_forwards_explicit_scene_options_and_legends(self):
+        with patch("frust.vis.molecules.Py3DmolGridRenderer") as renderer_class:
+            plot_mols(
+                self.small_molecule_df(),
+                row_indices=[1],
+                dark=True,
+                legends=["custom pyrrole"],
+                cell_size=(320, 280),
+                columns=2,
+                linked=True,
+                show_labels=True,
+                show_charges=False,
+                kekulize=False,
+                background_color=("white", 0.8),
+                export_HTML="grid.html",
+            )
+
+        scene = renderer_class.call_args.args[0]
+        model = scene.cells[0].models[0]
+        self.assertEqual(scene.cells[0].title, "custom pyrrole")
+        self.assertEqual(scene.cell_size, (320, 280))
+        self.assertEqual(scene.columns, 2)
+        self.assertTrue(scene.linked)
+        self.assertEqual(scene.background_color, ("white", 0.8))
+        self.assertTrue(model.show_atom_labels)
+        self.assertFalse(model.show_charges)
+        self.assertFalse(model.kekulize)
+        renderer_class.return_value.show.assert_called_once_with()
+        renderer_class.return_value.write_html.assert_called_once_with("grid.html")
+
+    def test_plot_mols_uses_dark_background_without_explicit_background(self):
+        with patch("frust.vis.molecules.Py3DmolGridRenderer") as renderer_class:
+            plot_mols(self.small_molecule_df(), row_indices=[0], dark=True)
+
+        scene = renderer_class.call_args.args[0]
+        self.assertEqual(scene.background_color, ("black", 1.0))
+
+    def test_plot_mols_raises_for_invalid_selection(self):
+        with self.assertRaisesRegex(ValueError, "No molecules match"):
+            plot_mols(
+                self.small_molecule_df(),
+                substrate_filter=["missing"],
+            )
+
+    def test_plot_mols_rejects_unsupported_molto3d_option(self):
+        with self.assertRaises(TypeError):
+            plot_mols(
+                self.small_molecule_df(),
+                decimals_of_measure=1,
+            )
 
     def test_plot_vibs_returns_viewer_without_explicit_show(self):
         with (

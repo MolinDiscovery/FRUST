@@ -55,6 +55,7 @@ def molecule_scene_from_dataframe(
     exclude_coords: Sequence[str] | None = None,
     include_coords: Sequence[str] | None = None,
     coord_indices: Sequence[int] | slice | None = slice(-1, None),
+    legends: Sequence[str] | None = None,
     columns: int | None = None,
     cell_size: tuple[int, int] = DEFAULT_CELL_SIZE,
     linked: bool = False,
@@ -82,6 +83,10 @@ def molecule_scene_from_dataframe(
         Coordinate column name fragments to include.
     coord_indices
         Positional coordinate-column selection.
+    legends
+        Custom title for each valid rendered cell in dataframe-row and then
+        coordinate-column order. The number of titles must equal the number of
+        cells remaining after missing coordinates are skipped.
     columns
         Grid columns. When omitted, preserve ``plot_mols`` defaults.
     cell_size
@@ -145,6 +150,15 @@ def molecule_scene_from_dataframe(
 
     if not cells:
         raise ValueError("No valid molecules could be generated for display.")
+
+    if legends is not None:
+        if len(legends) != len(cells):
+            raise ValueError(
+                f"Expected {len(cells)} legends for rendered cells, "
+                f"received {len(legends)}."
+            )
+        for cell, legend in zip(cells, legends):
+            cell.title = legend
 
     if columns is None:
         columns = len(coord_columns) if coord_indices is None else 4

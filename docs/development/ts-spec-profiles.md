@@ -165,7 +165,7 @@ and animate the imaginary mode of **every** TS:
 ft.plot_mols(
     ts,
     include_coords=["dft_ts_opt-oc"],
-    coord_indices=[0],
+    coord_indices=None,
     linked=False,
 )
 ```

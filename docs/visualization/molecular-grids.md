@@ -148,20 +148,37 @@ ft.plot_conformers(
 
 ## DataFrame Scene Objects
 
-Most users should call `plot_mols(...)` directly:
+Choose the helper from the form of the molecular input:
+
+| Input | Helper | Legend mapping | Display options |
+| --- | --- | --- | --- |
+| FRUST dataframe rows and coordinate columns | `ft.plot_mols` | One legend per rendered row-coordinate cell | `cell_size`, `columns`, `linked`, atom labels and charges, background, HTML export |
+| Molecules, SMILES, or XYZ paths | `ft.MolTo3DGrid` | One legend per input molecule | The grid options plus conformer display, atom highlights, hidden bonds, and measurement precision |
+
+Most dataframe workflows should call `plot_mols(...)` directly:
 
 ```python
 import frust as ft
 
-ft.plot_mols(ts_guesses["TS1"], row_indices=range(4))
+ft.plot_mols(
+    ts_guesses["TS1"],
+    row_indices=range(4),
+    legends=["TS1 ortho", "TS1 meta", "TS1 para", "TS1 second ortho"],
+)
 ```
 
-Internally FRUST turns each selected row into a scene cell:
+The default coordinate selection displays the last coordinate column, so the
+example creates one cell and consumes one legend per selected row. When
+multiple coordinate columns are selected, cell order is dataframe row first
+and coordinate column second.
+
+Internally FRUST turns each selected row-coordinate pair into a scene cell:
 
 ```python
 scene = ft.vis.molecule_scene_from_dataframe(
     ts_guesses["TS1"],
     row_indices=range(4),
+    legends=["TS1 ortho", "TS1 meta", "TS1 para", "TS1 second ortho"],
 )
 
 ft.vis.show_scene(scene)
@@ -182,6 +199,14 @@ scene = ft.vis.ts_guess_scene(
 
 ft.vis.show_scene(scene)
 ```
+
+!!! note "`plot_mols` does not call `MolTo3DGrid`"
+
+    The helpers share the same scene renderer, but they prepare different
+    inputs. `plot_mols` accepts its documented dataframe-scene options
+    directly. Options such as `show_confs`, `highlightAtoms`,
+    `bonds_to_remove`, and `decimals_of_measure` belong to `MolTo3DGrid` and
+    are not forwarded by `plot_mols`.
 
 ## Reaction Grids
 

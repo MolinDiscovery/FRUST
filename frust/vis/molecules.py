@@ -1,4 +1,5 @@
 import os
+from collections.abc import Sequence
 from numbers import Integral
 from typing import Any, List, Optional, Union
 
@@ -235,61 +236,113 @@ def plot_mols(
     include_coords: Optional[List[str]] = None,
     coord_indices: Optional[Union[List[int], slice]] = slice(-1, None),
     dark: bool = False,
-    **molto3d_kwargs: Any
+    *,
+    legends: Sequence[str] | None = None,
+    cell_size: tuple[int, int] = (400, 400),
+    columns: int | None = None,
+    linked: bool = False,
+    show_labels: bool = False,
+    show_charges: bool = True,
+    kekulize: bool = True,
+    background_color: str | tuple[str, float] | None = None,
+    export_HTML: str = "none",
 ) -> None:
-    """
-    Display molecules from a dataframe with filtering capabilities.
+    """Display molecules from a dataframe in an interactive 3D grid.
 
-    Args:
-        df: DataFrame with molecular data
-        row_indices: List of row indices to display (if None, displays all
-            rows)
-        substrate_filter: List of substrate names to include (if None, includes all)
-        rpos_filter: List of rpos values to include (if None, includes all)
-        exclude_coords: List of coordinate column patterns to exclude
-        include_coords: List of coordinate column patterns to include
-            (overrides exclude)
-        coord_indices: List of indices or a slice for coordinate columns
-            (overrides include/exclude).
-        dark: If True, use a dark background by default. Ignored if
-            'background_color' is explicitly provided in molto3d_kwargs.
-        **molto3d_kwargs: Additional arguments to pass to MolTo3DGrid
+    Examples
+    --------
+    Label the last available coordinates for two selected rows::
 
-    Returns:
-        None
-    """
-    scene_kwargs = {
-        "cell_size": molto3d_kwargs.pop("cell_size", (400, 400)),
-        "columns": molto3d_kwargs.pop("columns", None),
-        "linked": molto3d_kwargs.pop("linked", False),
-        "show_labels": molto3d_kwargs.pop("show_labels", False),
-        "show_charges": molto3d_kwargs.pop("show_charges", True),
-        "kekulize": molto3d_kwargs.pop("kekulize", True),
-    }
-    export_HTML = molto3d_kwargs.pop("export_HTML", "none")
-    if "background_color" in molto3d_kwargs:
-        scene_kwargs["background_color"] = molto3d_kwargs.pop("background_color")
-    elif dark:
-        scene_kwargs["background_color"] = ("black", 1.0)
+        import frust as ft
 
-    if molto3d_kwargs:
-        ignored = ", ".join(sorted(molto3d_kwargs))
-        print(f"Ignoring unsupported scene-grid options: {ignored}")
-
-    try:
-        scene = molecule_scene_from_dataframe(
+        ft.plot_mols(
             df,
-            row_indices=row_indices,
-            substrate_filter=substrate_filter,
-            rpos_filter=rpos_filter,
-            exclude_coords=exclude_coords,
-            include_coords=include_coords,
-            coord_indices=coord_indices,
-            **scene_kwargs,
+            row_indices=[0, 1],
+            legends=["Reactant", "Product"],
+            columns=2,
         )
-    except ValueError as exc:
-        print(str(exc))
-        return None
+
+    Parameters
+    ----------
+    df
+        Dataframe containing ``atoms`` and one or more coordinate columns.
+    row_indices
+        Positional dataframe rows to display. When omitted, display all rows.
+    substrate_filter
+        Substrate names to include. When omitted, include every substrate.
+    rpos_filter
+        Reactive-position values to include. When omitted, include every
+        reactive position.
+    exclude_coords
+        Coordinate-column name fragments to exclude when ``coord_indices`` and
+        ``include_coords`` are both ``None``.
+    include_coords
+        Coordinate-column name fragments to include when ``coord_indices`` is
+        ``None``.
+    coord_indices
+        Positional coordinate-column selection. The default selects only the
+        last coordinate column. Set this to ``None`` to use ``include_coords``
+        or ``exclude_coords``.
+    dark
+        If ``True``, use an opaque black background unless
+        ``background_color`` is provided.
+    legends
+        Custom title for each valid rendered cell. Titles follow dataframe-row
+        order and then coordinate-column order. The number of titles must
+        equal the number of rendered cells after missing coordinates are
+        skipped.
+    cell_size
+        Width and height of each grid cell in pixels.
+    columns
+        Number of grid columns. When omitted, FRUST chooses a layout from the
+        coordinate selection.
+    linked
+        If ``True``, link rotation and zoom across all cells.
+    show_labels
+        If ``True``, draw atom labels.
+    show_charges
+        If ``True``, display non-zero formal charges.
+    kekulize
+        Whether to kekulize generated RDKit mol blocks.
+    background_color
+        Viewer background as a color string or ``(color, opacity)`` tuple.
+        This takes precedence over ``dark``.
+    export_HTML
+        Output path for HTML export. Use ``"none"`` to disable export.
+
+    Returns
+    -------
+    None
+        The viewer is displayed directly in notebook contexts.
+
+    Raises
+    ------
+    ValueError
+        If filters or coordinate selection produce no molecules, or if the
+        number of legends does not match the rendered cells.
+    """
+    scene_background = (
+        background_color
+        if background_color is not None
+        else ("black", 1.0) if dark else ("blue", 0.1)
+    )
+    scene = molecule_scene_from_dataframe(
+        df,
+        row_indices=row_indices,
+        substrate_filter=substrate_filter,
+        rpos_filter=rpos_filter,
+        exclude_coords=exclude_coords,
+        include_coords=include_coords,
+        coord_indices=coord_indices,
+        legends=legends,
+        cell_size=cell_size,
+        columns=columns,
+        linked=linked,
+        show_labels=show_labels,
+        show_charges=show_charges,
+        kekulize=kekulize,
+        background_color=scene_background,
+    )
 
     print(f"Generated {len(scene.cells)} molecules for display")
     renderer = Py3DmolGridRenderer(scene)
