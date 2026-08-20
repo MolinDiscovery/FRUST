@@ -7,7 +7,7 @@ separate:
 | Concept | Owns | Example |
 | --- | --- | --- |
 | `Workflow` | chemistry, targets, stage graph | `ft.workflows.screen_ts(...)` |
-| `MethodPlan` | calculator engines/options and terminal solvent-SP policy | `ft.workflows.methods.preset("r2scan-3c")` |
+| `MethodPlan` | calculator engines/options, solvent-SP policy, and thermochemistry recipe | `ft.workflows.methods.preset("r2scan-3c")` |
 | execution mode | job grouping | `single_job`, `dft_staged`, `fully_staged` |
 
 The same workflow and method can be used in both places:
@@ -91,6 +91,24 @@ because the calculation level is visible at the workflow construction site.
 The low-cost initialization stages are identical across presets. The existing
 gas-phase presets end with `dft_solv_sp`; the two `*-solv` presets omit that
 stage because their DFT calculations already include SMD chloroform.
+
+The plan also records how molecular free energies are assembled:
+
+| preset family | recorded expression |
+| --- | --- |
+| gas frequencies + solvent single point | `G = E_solv + (G_freq - E_freq)` |
+| solvent-inclusive frequencies | `G = G_freq` |
+
+```python
+method = ft.workflows.methods.preset("r2scan-3c")
+method.thermochemistry.to_dict()
+method.fingerprint()
+```
+
+The fingerprint includes calculator settings and the thermochemistry recipe,
+but not the human-readable plan name. The end-to-end screen uses it as part of
+reference compatibility, preventing results from different scientific methods
+from being silently mixed.
 
 | stage id | default engine | role |
 | --- | --- | --- |

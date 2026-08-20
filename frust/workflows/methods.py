@@ -10,6 +10,8 @@ not change workflow targets or chemistry.
 
 from __future__ import annotations
 
+import hashlib
+import json
 from collections.abc import Mapping
 from dataclasses import dataclass, field, replace as dataclass_replace
 from typing import Any
@@ -27,6 +29,51 @@ _STAGE_ALIASES = {
     "dft_solv_sp": "solv",
 }
 _LEGACY_STAGE_ALIASES = {legacy: canonical for canonical, legacy in _STAGE_ALIASES.items()}
+
+
+@dataclass(frozen=True)
+class ThermochemistrySpec:
+    """Describe how analysis should assemble a molecular free energy.
+
+    Parameters
+    ----------
+    mode : {"frequency_gibbs", "electronic_plus_thermal"}
+        ``"frequency_gibbs"`` uses the Gibbs energy reported by the final
+        frequency calculation. ``"electronic_plus_thermal"`` combines the
+        analysis electronic energy with the frequency-stage thermal correction
+        as ``E_analysis + (G_frequency - E_frequency)``.
+    temperature_k : float, optional
+        Temperature associated with the frequency thermochemistry in kelvin.
+    energy_unit : {"hartree"}, optional
+        Unit stored by the calculation result columns.
+    """
+
+    mode: str
+    temperature_k: float = 298.15
+    energy_unit: str = "hartree"
+
+    def __post_init__(self) -> None:
+        allowed = {"frequency_gibbs", "electronic_plus_thermal"}
+        mode = str(self.mode).strip().lower()
+        if mode not in allowed:
+            raise ValueError(f"thermochemistry mode must be one of {sorted(allowed)}")
+        if float(self.temperature_k) <= 0:
+            raise ValueError("thermochemistry temperature_k must be positive")
+        unit = str(self.energy_unit).strip().lower()
+        if unit != "hartree":
+            raise ValueError("thermochemistry energy_unit currently must be 'hartree'")
+        object.__setattr__(self, "mode", mode)
+        object.__setattr__(self, "temperature_k", float(self.temperature_k))
+        object.__setattr__(self, "energy_unit", unit)
+
+    def to_dict(self) -> dict[str, Any]:
+        """Return a JSON-compatible thermochemistry description."""
+        return {
+            "schema_version": 1,
+            "mode": self.mode,
+            "temperature_k": self.temperature_k,
+            "energy_unit": self.energy_unit,
+        }
 
 
 @dataclass(frozen=True)
@@ -101,6 +148,20 @@ class CalculatorSpec:
         object.__setattr__(self, "solvation_model", model or None)
         object.__setattr__(self, "kwargs", dict(self.kwargs or {}))
 
+    def to_dict(self) -> dict[str, Any]:
+        """Return a canonical JSON-compatible calculator description."""
+        return {
+            "engine": self.engine,
+            "options": _json_compatible(self.options),
+            "detailed_inp_str": self.detailed_inp_str,
+            "xtra_inp_str": self.xtra_inp_str,
+            "solvent": self.solvent,
+            "method": self.method,
+            "basis": self.basis,
+            "solvation_model": self.solvation_model,
+            "kwargs": _json_compatible(self.kwargs),
+        }
+
 
 @dataclass(frozen=True)
 class MethodPlan:
@@ -116,6 +177,9 @@ class MethodPlan:
         Whether DFT workflow graphs should end with their separate
         ``dft_solv_sp`` calculation. Set this to ``False`` when the DFT
         ranking, optimization, and frequency stages already include solvent.
+    thermochemistry : ThermochemistrySpec or None, optional
+        Explicit rule used to assemble molecular free energies from the
+        frequency and analysis stages.
 
     Notes
     -----
@@ -137,6 +201,7 @@ class MethodPlan:
     name: str
     stages: Mapping[str, CalculatorSpec]
     include_terminal_solv_sp: bool = True
+    thermochemistry: ThermochemistrySpec | None = None
 
     def __post_init__(self) -> None:
         normalized: dict[str, CalculatorSpec] = {}
@@ -150,6 +215,43 @@ class MethodPlan:
             "include_terminal_solv_sp",
             bool(self.include_terminal_solv_sp),
         )
+        if self.thermochemistry is not None and not isinstance(
+            self.thermochemistry, ThermochemistrySpec
+        ):
+            raise TypeError("thermochemistry must be a ThermochemistrySpec or None")
+
+    def to_dict(self, *, include_name: bool = True) -> dict[str, Any]:
+        """Return a stable JSON-compatible method-plan description.
+
+        Parameters
+        ----------
+        include_name : bool, optional
+            Include the human-facing plan name. Fingerprints deliberately omit
+            it so differently named but scientifically identical plans match.
+        """
+        payload: dict[str, Any] = {
+            "schema_version": 1,
+            "include_terminal_solv_sp": self.include_terminal_solv_sp,
+            "thermochemistry": (
+                None if self.thermochemistry is None else self.thermochemistry.to_dict()
+            ),
+            "stages": {
+                stage_id: self.stages[stage_id].to_dict()
+                for stage_id in sorted(self.stages)
+            },
+        }
+        if include_name:
+            payload["name"] = self.name
+        return payload
+
+    def fingerprint(self) -> str:
+        """Return a SHA-256 fingerprint of scientific calculator settings."""
+        encoded = json.dumps(
+            self.to_dict(include_name=False),
+            sort_keys=True,
+            separators=(",", ":"),
+        ).encode("utf-8")
+        return hashlib.sha256(encoded).hexdigest()
 
     def for_stage(self, stage_id: str) -> CalculatorSpec:
         """Return the calculator spec for one workflow stage.
@@ -685,6 +787,7 @@ def _r2scan_3c() -> MethodPlan:
     method = "r2SCAN-3c"
     return MethodPlan(
         name="r2scan-3c",
+        thermochemistry=ThermochemistrySpec("electronic_plus_thermal"),
         stages=_base_stages(
             dft_rank_sp=orca_composite(method, job="sp"),
             dft_preopt=orca_composite(method, job="opt"),
@@ -702,6 +805,7 @@ def _wb97xd3_631g() -> MethodPlan:
     method = "wB97X-D3"
     return MethodPlan(
         name="wb97xd3-631g",
+        thermochemistry=ThermochemistrySpec("electronic_plus_thermal"),
         stages=_base_stages(
             dft_rank_sp=orca(method=method, basis="6-31G**", job="sp"),
             dft_preopt=orca(method=method, basis="6-31G**", job="opt"),
@@ -722,6 +826,7 @@ def _r2scan_3c_solv() -> MethodPlan:
     return MethodPlan(
         name="r2scan-3c-solv",
         include_terminal_solv_sp=False,
+        thermochemistry=ThermochemistrySpec("frequency_gibbs"),
         stages=_base_stages(
             dft_rank_sp=orca_composite(method, job="sp", solvent="chloroform"),
             dft_preopt=orca_composite(method, job="opt", solvent="chloroform"),
@@ -739,6 +844,7 @@ def _wb97xd3_631g_solv() -> MethodPlan:
     return MethodPlan(
         name="wb97xd3-631g-solv",
         include_terminal_solv_sp=False,
+        thermochemistry=ThermochemistrySpec("frequency_gibbs"),
         stages=_base_stages(
             dft_rank_sp=orca(
                 method=method, basis="6-31G**", job="sp", solvent="chloroform"
@@ -767,6 +873,7 @@ def _r2scan_def2svp() -> MethodPlan:
     method = "R2SCAN"
     return MethodPlan(
         name="r2scan-def2svp",
+        thermochemistry=ThermochemistrySpec("electronic_plus_thermal"),
         stages=_base_stages(
             dft_rank_sp=orca(method=method, basis="def2-SVP", job="sp"),
             dft_preopt=orca(method=method, basis="def2-SVP", job="opt"),
@@ -832,3 +939,19 @@ def _solvent_block(solvent: str) -> str:
         ORCA input block enabling SMD through CPCM.
     """
     return f'%CPCM\nSMD TRUE\nSMDSOLVENT "{solvent}"\nend'
+
+
+def _json_compatible(value: Any) -> Any:
+    """Return a deterministic JSON-compatible representation."""
+    if value is None or isinstance(value, (str, int, float, bool)):
+        return value
+    if isinstance(value, Mapping):
+        return {
+            str(key): _json_compatible(item)
+            for key, item in sorted(value.items(), key=lambda pair: str(pair[0]))
+        }
+    if isinstance(value, (list, tuple)):
+        return [_json_compatible(item) for item in value]
+    raise TypeError(
+        f"Method-plan value {value!r} of type {type(value).__name__} is not JSON-compatible"
+    )

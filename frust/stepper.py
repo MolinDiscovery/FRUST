@@ -2123,7 +2123,7 @@ class Stepper:
                         f"row {index!r}: {exc}"
                     ) from exc
         if save_files is None and self.save_output:
-            save_files = ["orca.out"]
+            save_files = ["input.inp", "orca.out"]
         keys = list(opts)
         if len(keys) < 1:
             raise ValueError("`options` must include at least one ORCA method key")

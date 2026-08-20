@@ -57,6 +57,7 @@ class PublicApiTests(unittest.TestCase):
         from frust.vis import reaction_scene_cells
         from frust.workflows import mols as workflow_mols
         from frust.workflows import raw_mols as workflow_raw_mols
+        from frust.workflows import catalyst_screen as workflow_catalyst_screen
         from frust.workflows import inspect_failures as workflow_inspect_failures
         from frust.workflows import methods as workflow_methods
 
@@ -148,6 +149,9 @@ class PublicApiTests(unittest.TestCase):
         self.assertIs(workflows, workflows_direct)
         self.assertIs(ft.workflows.mols, workflow_mols)
         self.assertIs(ft.workflows.raw_mols, workflow_raw_mols)
+        self.assertIs(ft.workflows.catalyst_screen, workflow_catalyst_screen)
+        self.assertTrue(callable(ft.screen.open_run))
+        self.assertTrue(callable(ft.screen.open_reference_library))
         self.assertIs(ft.workflows.inspect_failures, workflow_inspect_failures)
         self.assertNotIn("raw_mols", ft.__all__)
         self.assertIs(ft.workflows.methods, workflow_methods)

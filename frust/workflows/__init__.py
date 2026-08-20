@@ -20,12 +20,16 @@ _PUBLIC_API: dict[str, tuple[str, str]] = {
     "mols": ("frust.workflows.factories", "mols"),
     "raw_mols": ("frust.workflows.factories", "raw_mols"),
     "screen_ts": ("frust.workflows.factories", "screen_ts"),
+    "catalyst_screen": ("frust.workflows.screening", "catalyst_screen"),
     "int3": ("frust.workflows.factories", "int3"),
     "inspect_failures": ("frust.workflows.diagnostics", "inspect_failures"),
     "WorkflowTarget": ("frust.workflows.core", "WorkflowTarget"),
     "StructureTarget": ("frust.structures", "StructureTarget"),
     "MethodPlan": ("frust.workflows.methods", "MethodPlan"),
     "CalculatorSpec": ("frust.workflows.methods", "CalculatorSpec"),
+    "ThermochemistrySpec": ("frust.workflows.methods", "ThermochemistrySpec"),
+    "CatalystScreenWorkflow": ("frust.workflows.screening", "CatalystScreenWorkflow"),
+    "ScreenSubmissionResult": ("frust.workflows.screening", "ScreenSubmissionResult"),
 }
 
 __all__ = sorted({*_PUBLIC_MODULES, *_PUBLIC_API})
@@ -77,8 +81,13 @@ def __dir__() -> list[str]:
 
 if TYPE_CHECKING:
     from frust.workflows import methods
+    from frust.workflows.screening import (
+        CatalystScreenWorkflow,
+        ScreenSubmissionResult,
+        catalyst_screen,
+    )
     from frust.workflows.core import WorkflowTarget
     from frust.workflows.diagnostics import inspect_failures
     from frust.structures import StructureTarget
     from frust.workflows.factories import int3, mols, raw_mols, screen_ts
-    from frust.workflows.methods import CalculatorSpec, MethodPlan
+    from frust.workflows.methods import CalculatorSpec, MethodPlan, ThermochemistrySpec

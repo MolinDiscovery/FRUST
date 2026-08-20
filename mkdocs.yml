@@ -77,6 +77,7 @@ nav:
           - Input Tables: catalyst-screens/input-tables.md
           - TS Guess DataFrames: catalyst-screens/ts-guesses.md
           - Running Screens: catalyst-screens/running.md
+          - End-To-End Calculation And Analysis: catalyst-screens/end-to-end.md
       - Visualization:
           - Overview: visualization/overview.md
           - Molecular Grids: visualization/molecular-grids.md

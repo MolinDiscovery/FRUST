@@ -2,7 +2,7 @@
 
 from __future__ import annotations
 
-from typing import Literal
+from typing import Any, Literal
 
 import pandas as pd
 
@@ -17,6 +17,7 @@ def result_contract(
     *,
     dft: bool,
     include_terminal_solv_sp: bool = True,
+    thermochemistry: Any | None = None,
 ) -> dict[str, object]:
     """Return the canonical semantic-column contract for a workflow profile.
 
@@ -30,6 +31,9 @@ def result_contract(
         Whether the DFT workflow includes a final solvent single point. When
         ``False``, the final DFT frequency-stage electronic energy is the
         analysis energy because all DFT stages already include solvent.
+    thermochemistry : ThermochemistrySpec or None, optional
+        Explicit molecular free-energy assembly recipe recorded in the result
+        contract.
 
     Returns
     -------
@@ -68,12 +72,19 @@ def result_contract(
             "gibbs_energy": output_column("dft_freq", "gibbs_energy"),
             "electronic_energy": output_column("dft_freq", "electronic_energy"),
         }
-    return {
+    contract = {
         "schema_version": 2,
         "profile": profile,
         "dft": bool(dft),
         "columns": columns,
     }
+    if thermochemistry is not None:
+        to_dict = getattr(thermochemistry, "to_dict", None)
+        if not callable(to_dict):
+            raise TypeError("thermochemistry must provide to_dict()")
+        contract["thermochemistry"] = to_dict()
+        contract["schema_version"] = 3
+    return contract
 
 
 def attach_result_contract(
@@ -82,6 +93,7 @@ def attach_result_contract(
     *,
     dft: bool,
     include_terminal_solv_sp: bool = True,
+    thermochemistry: Any | None = None,
 ) -> pd.DataFrame:
     """Attach compact semantic result metadata to a dataframe in place.
 
@@ -95,6 +107,8 @@ def attach_result_contract(
         Whether the workflow includes DFT refinement.
     include_terminal_solv_sp : bool, optional
         Whether a separate final solvent single point was calculated.
+    thermochemistry : ThermochemistrySpec or None, optional
+        Explicit molecular free-energy assembly recipe to record.
 
     Returns
     -------
@@ -105,6 +119,7 @@ def attach_result_contract(
         profile,
         dft=dft,
         include_terminal_solv_sp=include_terminal_solv_sp,
+        thermochemistry=thermochemistry,
     )
     return df
 
@@ -177,3 +192,101 @@ def get_result(
         Resolved result values.
     """
     return df[result_column(df, key, purpose=purpose)]
+
+
+def free_energy_components(
+    df: pd.DataFrame,
+    *,
+    thermochemistry: Any | None = None,
+) -> pd.DataFrame:
+    """Return auditable free-energy components for each dataframe row.
+
+    Parameters
+    ----------
+    df : pandas.DataFrame
+        Canonical DFT workflow result.
+    thermochemistry : ThermochemistrySpec or mapping or None, optional
+        Explicit recipe. When omitted, use the recipe recorded in the
+        dataframe's ``frust_results`` contract.
+
+    Returns
+    -------
+    pandas.DataFrame
+        Component energies in Hartree. ``free_energy_hartree`` is either the
+        direct frequency Gibbs energy or the analysis electronic energy plus
+        the frequency-stage thermal correction.
+    """
+    recipe = _thermochemistry_mapping(df, thermochemistry)
+    mode = str(recipe.get("mode", "")).strip().lower()
+    frequency_ge = get_result(df, "gibbs_energy", purpose="frequency")
+    frequency_ee = get_result(df, "electronic_energy", purpose="frequency")
+    analysis_ee = get_result(df, "electronic_energy", purpose="analysis")
+    thermal = frequency_ge - frequency_ee
+    if mode == "frequency_gibbs":
+        free_energy = frequency_ge
+    elif mode == "electronic_plus_thermal":
+        free_energy = analysis_ee + thermal
+    else:
+        raise ValueError(
+            "thermochemistry mode must be 'frequency_gibbs' or "
+            "'electronic_plus_thermal'"
+        )
+    return pd.DataFrame(
+        {
+            "analysis_electronic_energy_hartree": analysis_ee,
+            "frequency_electronic_energy_hartree": frequency_ee,
+            "frequency_gibbs_energy_hartree": frequency_ge,
+            "thermal_correction_hartree": thermal,
+            "free_energy_hartree": free_energy,
+            "thermochemistry_mode": mode,
+        },
+        index=df.index,
+    )
+
+
+def get_free_energy(
+    df: pd.DataFrame,
+    *,
+    thermochemistry: Any | None = None,
+) -> pd.Series:
+    """Return assembled molecular free energies in Hartree.
+
+    Parameters
+    ----------
+    df : pandas.DataFrame
+        Canonical DFT workflow result.
+    thermochemistry : ThermochemistrySpec or mapping or None, optional
+        Explicit recipe. When omitted, use the recipe recorded in the result
+        contract.
+
+    Returns
+    -------
+    pandas.Series
+        One assembled free energy per dataframe row, in Hartree.
+    """
+    return free_energy_components(
+        df,
+        thermochemistry=thermochemistry,
+    )["free_energy_hartree"]
+
+
+def _thermochemistry_mapping(
+    df: pd.DataFrame,
+    thermochemistry: Any | None,
+) -> dict[str, Any]:
+    """Resolve an explicit or result-contract thermochemistry mapping."""
+    value = thermochemistry
+    if value is None:
+        contract = df.attrs.get("frust_results", {})
+        value = contract.get("thermochemistry") if isinstance(contract, dict) else None
+    if value is None:
+        raise ValueError(
+            "No thermochemistry recipe is recorded; use a MethodPlan with a "
+            "ThermochemistrySpec or pass thermochemistry explicitly"
+        )
+    if isinstance(value, dict):
+        return dict(value)
+    to_dict = getattr(value, "to_dict", None)
+    if callable(to_dict):
+        return dict(to_dict())
+    raise TypeError("thermochemistry must be a mapping or provide to_dict()")

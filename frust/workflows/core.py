@@ -2079,6 +2079,7 @@ def _attach_workflow_attrs(
         {
             "workflow": workflow.workflow_name,
             "method": workflow.method.name,
+            "method_fingerprint": workflow.method.fingerprint(),
             "target": target.tag,
             "result_profile": workflow.result_profile,
         }
@@ -2089,6 +2090,7 @@ def _attach_workflow_attrs(
             workflow.result_profile,
             dft=workflow.dft,
             include_terminal_solv_sp=workflow.method.include_terminal_solv_sp,
+            thermochemistry=workflow.method.thermochemistry,
         )
     stamp_schema(df)
     return df

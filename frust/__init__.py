@@ -48,6 +48,7 @@ _PUBLIC_API: dict[str, tuple[str, str]] = {
     "upgrade_dataframe": ("frust.schema", "upgrade_dataframe"),
     "result_column": ("frust.results", "result_column"),
     "get_result": ("frust.results", "get_result"),
+    "get_free_energy": ("frust.results", "get_free_energy"),
     # Visualization
     "plot_vibs": ("frust.vis", "plot_vibs"),
     "plot_mols": ("frust.vis", "plot_mols"),
@@ -112,7 +113,7 @@ if TYPE_CHECKING:
         normalize_dataframe,
         upgrade_dataframe,
     )
-    from frust.results import get_result, result_column
+    from frust.results import get_free_energy, get_result, result_column
     from frust.stepper import Stepper
     from frust.utils.analytics import inspect_ts_vibrations, summarize_ts_vibrations
     from frust.utils.dataframes import show_steps, show_timing, lowest_energy_rows, map_substrate_names
