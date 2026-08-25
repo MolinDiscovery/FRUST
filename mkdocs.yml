@@ -111,4 +111,5 @@ nav:
   - Tutorials:
       - Building Initial DataFrames: tutorials/building-initial-dataframes.md
       - Catalyst And Substrate Screens: tutorials/catalyst-substrate-screens.md
+      - End-To-End Catalyst Screen: tutorials/end-to-end-catalyst-screen.md
       - Workflow Method Plans: tutorials/workflow-method-plans.md

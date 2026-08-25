@@ -20,6 +20,7 @@ from frust.screen import read as read_screen
 from frust.screen.references import ReferenceLibrary, ReferenceRecord, ReusePolicy
 from frust.screen.runs import ScreenRun, build_analysis
 from frust.structures import StructureTarget
+from frust.utils.dataframes import merge_dataframe_attrs
 from frust.workflows.factories import Int3Workflow, MolsWorkflow, ScreenTSWorkflow
 from frust.workflows.methods import MethodPlan, preset as method_preset
 
@@ -439,6 +440,7 @@ class CatalystScreenWorkflow:
         branch_dir = _branch_dir(root, "references")
         local_library = ReferenceLibrary(branch_dir).initialize()
         frames: list[pd.DataFrame] = []
+        sources: list[Path] = []
         for item in items:
             if item.action != "reuse":
                 continue
@@ -450,7 +452,8 @@ class CatalystScreenWorkflow:
             frame["reference_id"] = local.reference_id
             frame["reference_source"] = "shared_library"
             frames.append(frame)
-        reused = pd.concat(frames, ignore_index=True) if frames else pd.DataFrame()
+            sources.append(local.path / "result.parquet")
+        reused = _concat_reference_results(frames, source_files=sources)
         reused.to_parquet(branch_dir / "reused.parquet", index=False)
 
     def _write_manifest(self, root: Path) -> None:
@@ -648,6 +651,7 @@ def _finalize_run(workflow: CatalystScreenWorkflow, root: Path) -> dict[str, Any
     computed_path = reference_dir / "computed.parquet"
     computed = pd.read_parquet(computed_path) if computed_path.exists() else pd.DataFrame()
     computed_frames: list[pd.DataFrame] = []
+    computed_sources: list[Path] = []
     reference_targets = workflow.children()["references"].targets()
     for target in reference_targets:
         target_dir = reference_dir / target.tag
@@ -670,6 +674,7 @@ def _finalize_run(workflow: CatalystScreenWorkflow, root: Path) -> dict[str, Any
         frame["reference_id"] = local_record.reference_id
         frame["reference_source"] = "calculated"
         computed_frames.append(frame)
+        computed_sources.append(local_record.path / "result.parquet")
         if shared_library is not None:
             shared_library.publish(
                 frame.drop(columns=["reference_id", "reference_source"], errors="ignore"),
@@ -680,12 +685,23 @@ def _finalize_run(workflow: CatalystScreenWorkflow, root: Path) -> dict[str, Any
                 source_target_dir=target_dir,
             )
     if computed_frames:
-        computed = pd.concat(computed_frames, ignore_index=True)
+        computed = _concat_reference_results(
+            computed_frames,
+            source_files=computed_sources,
+        )
         computed.to_parquet(computed_path, index=False)
     reused_path = reference_dir / "reused.parquet"
     reused = pd.read_parquet(reused_path) if reused_path.exists() else pd.DataFrame()
     available = [frame for frame in (computed, reused) if not frame.empty]
-    combined = pd.concat(available, ignore_index=True) if available else pd.DataFrame()
+    available_paths = [
+        path
+        for frame, path in ((computed, computed_path), (reused, reused_path))
+        if not frame.empty
+    ]
+    combined = _concat_reference_results(
+        available,
+        source_files=available_paths,
+    )
     combined.to_parquet(reference_dir / "merged.parquet", index=False)
 
     analysis_report = build_analysis(root)
@@ -706,6 +722,58 @@ def _finalize_run(workflow: CatalystScreenWorkflow, root: Path) -> dict[str, Any
         json.dumps(report, indent=2, sort_keys=True, default=str) + "\n"
     )
     return report
+
+
+def _concat_reference_results(
+    frames: list[pd.DataFrame],
+    *,
+    source_files: list[str | Path],
+) -> pd.DataFrame:
+    """Concatenate reference results without losing canonical metadata.
+
+    Parameters
+    ----------
+    frames : list of pandas.DataFrame
+        Canonical minimum-result dataframes to concatenate.
+    source_files : list of str or pathlib.Path
+        Source labels corresponding one-to-one with ``frames``.
+
+    Returns
+    -------
+    pandas.DataFrame
+        Concatenated reference results with merged dataframe attrs.
+
+    Raises
+    ------
+    ValueError
+        If a source lacks a canonical result contract or the contracts are
+        incompatible.
+    """
+    if not frames:
+        return pd.DataFrame()
+    if len(frames) != len(source_files):
+        raise ValueError("reference frames and source_files must have equal length")
+
+    missing_contract = [
+        str(source)
+        for frame, source in zip(frames, source_files)
+        if not isinstance(frame.attrs.get("frust_results"), dict)
+    ]
+    if missing_contract:
+        raise ValueError(
+            "Reference result has no canonical frust_results contract: "
+            + ", ".join(missing_contract)
+        )
+
+    attrs = merge_dataframe_attrs(frames, source_files=source_files)
+    if not isinstance(attrs.get("frust_results"), dict):
+        raise ValueError(
+            "Reference results have incompatible canonical frust_results contracts"
+        )
+    merged = pd.concat(frames, ignore_index=True)
+    merged.attrs.clear()
+    merged.attrs.update(attrs)
+    return merged
 
 
 def _branch_dir(root: Path, branch: str) -> Path:

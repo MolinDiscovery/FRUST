@@ -667,16 +667,18 @@ def _json_hash(value: Any) -> str:
 def _json_value(value: Any) -> Any:
     if value is pd.NA:
         return None
-    if value is None or isinstance(value, (str, int, bool)):
+    if value is None or isinstance(value, str):
         return value
+    if isinstance(value, (bool, np.bool_)):
+        return bool(value)
+    if isinstance(value, (int, np.integer)):
+        return int(value)
     if isinstance(value, (float, np.floating)):
         return None if np.isnan(value) else float(value)
-    if isinstance(value, (np.integer,)):
-        return int(value)
     if isinstance(value, np.ndarray):
-        return value.tolist()
+        return _json_value(value.tolist())
     if isinstance(value, pd.DataFrame):
-        return value.to_dict(orient="records")
+        return _json_value(value.to_dict(orient="records"))
     if isinstance(value, pd.Series):
         return {str(key): _json_value(item) for key, item in value.items()}
     if isinstance(value, Mapping):

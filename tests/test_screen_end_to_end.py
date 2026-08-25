@@ -13,6 +13,7 @@ import pytest
 from rdkit.Chem.rdMolDescriptors import CalcMolFormula
 
 import frust as ft
+import frust.screen.runs as screen_runs
 from frust.results import attach_result_contract, free_energy_components
 from frust.screen.references import ReferenceLibrary
 from frust.structures import ChemicalSystem, StructureTarget
@@ -68,10 +69,17 @@ def _row(
     rpos: int | None = None,
 ) -> dict:
     atoms = _atoms(formula)
+    mode = np.zeros((len(atoms), 3)).tolist()
     vibrations = (
-        [{"frequency": -250.0}, {"frequency": 30.0}]
+        [
+            {"frequency": -250.0, "mode": mode},
+            {"frequency": 30.0, "mode": mode},
+        ]
         if state_kind == "transition_state"
-        else [{"frequency": 20.0}, {"frequency": 50.0}]
+        else [
+            {"frequency": 20.0, "mode": mode},
+            {"frequency": 50.0, "mode": mode},
+        ]
     )
     return {
         "structure_id": f"{state_id}:{system_name}:r{rpos}",
@@ -225,6 +233,30 @@ def test_thermochemistry_recipes_and_method_fingerprints():
     solvent = ft.workflows.methods.preset("r2scan-3c-solv")
     assert gas.fingerprint() == renamed.fingerprint()
     assert gas.fingerprint() != solvent.fingerprint()
+
+
+def test_result_hash_normalizes_nested_numpy_arrays():
+    mode = [[0.1, 0.2, 0.3], [-0.1, -0.2, -0.3]]
+    list_payload = {
+        "vibrations": [{"frequency": -123.4, "mode": mode}],
+    }
+    array_vibrations = np.empty(1, dtype=object)
+    array_vibrations[0] = {
+        "frequency": np.float64(-123.4),
+        "mode": np.asarray(mode),
+    }
+    array_payload = {"vibrations": array_vibrations}
+
+    assert screen_runs._json_hash(list_payload) == screen_runs._json_hash(array_payload)
+
+    changed = np.empty(1, dtype=object)
+    changed[0] = {
+        "frequency": np.float64(-123.4),
+        "mode": np.asarray([[0.1, 0.2, 0.4], [-0.1, -0.2, -0.3]]),
+    }
+    assert screen_runs._json_hash(array_payload) != screen_runs._json_hash(
+        {"vibrations": changed}
+    )
 
 
 def test_reference_library_keeps_inspectable_structure_and_review(tmp_path):
@@ -452,6 +484,76 @@ def test_finalizer_publishes_and_future_workflow_reuses_approved_references(tmp_
     assert (root / "calculations/references/merged.parquet").exists()
     assert len(list((root / "calculations/references/entries").rglob("optimized.xyz"))) == 4
 
+    for filename in ("computed.parquet", "merged.parquet"):
+        frame = pd.read_parquet(reference_dir / filename)
+        assert isinstance(frame.attrs.get("frust_results"), dict)
+    first_run = ft.screen.open_run(root)
+    assert first_run.summary().query(
+        "artifact == 'barriers' and quality_status == 'review'"
+    ).iloc[0]["count"] == 4
+
+    first_two = library.index()["reference_id"].iloc[:2]
+    for reference_id in first_two:
+        library.get(reference_id).approve(note="One-time scientific structure review")
+
+    mixed = ft.workflows.catalyst_screen(
+        dataframe=_components(),
+        method="r2scan-3c-solv",
+        reference_store=store,
+    )
+    mixed_plan = mixed.plan().query("branch == 'references'")
+    assert set(mixed_plan["action"]) == {"calculate", "reuse"}
+    mixed_root = tmp_path / "mixed_run"
+    mixed_root.mkdir()
+    mixed._write_manifest(mixed_root)
+    mixed_items = [item for item in mixed.targets() if item.branch == "references"]
+    mixed._snapshot_reused_references(mixed_root, mixed_items)
+    for index, item in enumerate(mixed_items):
+        if item.action != "calculate":
+            continue
+        frame = pd.DataFrame(
+            [_row(item.target.state_id, -10.0 - index, formulas[item.target.state_id])]
+        )
+        attach_result_contract(
+            frame,
+            "minimum",
+            dft=True,
+            include_terminal_solv_sp=False,
+            thermochemistry=mixed.method.thermochemistry,
+        )
+        target_dir = mixed_root / "calculations" / "references" / item.target.tag
+        target_dir.mkdir(parents=True)
+        frame.to_parquet(target_dir / "final.parquet", index=False)
+    _write_result(
+        mixed_root / "calculations/transition_states/merged.parquet",
+        [
+            _row(
+                state,
+                -30.0 - index,
+                {"C": 13, "H": 19, "B": 1, "N": 2}
+                if state in {"TS1", "TS2"}
+                else {"C": 19, "H": 30, "B": 2, "N": 2, "O": 2},
+                state_kind="transition_state",
+                rpos=2,
+            )
+            for index, state in enumerate(("TS1", "TS2", "TS3", "TS4"))
+        ],
+        "transition_state",
+    )
+    mixed_report = _finalize_run(mixed, mixed_root)
+    mixed_references = mixed_root / "calculations" / "references"
+    assert mixed_report["n_references_calculated"] == 2
+    assert mixed_report["n_references_reused"] == 2
+    assert isinstance(
+        pd.read_parquet(mixed_references / "reused.parquet").attrs.get("frust_results"),
+        dict,
+    )
+    assert isinstance(
+        pd.read_parquet(mixed_references / "merged.parquet").attrs.get("frust_results"),
+        dict,
+    )
+    assert len(ft.screen.open_run(mixed_root).states()) == 8
+
     for reference_id in library.index()["reference_id"]:
         library.get(reference_id).approve(note="One-time scientific structure review")
     repeated = ft.workflows.catalyst_screen(
@@ -461,6 +563,37 @@ def test_finalizer_publishes_and_future_workflow_reuses_approved_references(tmp_
     )
     reference_plan = repeated.plan().query("branch == 'references'")
     assert set(reference_plan["action"]) == {"reuse"}
+
+    reused_root = tmp_path / "reused_run"
+    reused_root.mkdir()
+    repeated._write_manifest(reused_root)
+    reused_items = [item for item in repeated.targets() if item.branch == "references"]
+    repeated._snapshot_reused_references(reused_root, reused_items)
+    _write_result(
+        reused_root / "calculations/transition_states/merged.parquet",
+        [
+            _row(
+                state,
+                -30.0 - index,
+                {"C": 13, "H": 19, "B": 1, "N": 2}
+                if state in {"TS1", "TS2"}
+                else {"C": 19, "H": 30, "B": 2, "N": 2, "O": 2},
+                state_kind="transition_state",
+                rpos=2,
+            )
+            for index, state in enumerate(("TS1", "TS2", "TS3", "TS4"))
+        ],
+        "transition_state",
+    )
+    reused_report = _finalize_run(repeated, reused_root)
+    reused_references = reused_root / "calculations" / "references"
+    assert reused_report["n_references_calculated"] == 0
+    assert reused_report["n_references_reused"] == 4
+    assert isinstance(
+        pd.read_parquet(reused_references / "merged.parquet").attrs.get("frust_results"),
+        dict,
+    )
+    assert len(ft.screen.open_run(reused_root).states()) == 8
 
 
 def test_composed_slurm_submission_finishes_with_afterany_finalizer(tmp_path):
