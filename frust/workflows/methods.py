@@ -1,11 +1,11 @@
 """Calculator method plans for FRUST workflows.
 
 Workflow classes define stage ids such as ``"xtb_opt"`` or ``"dft_ts_opt"``.
-``MethodPlan`` maps those ids to ``CalculatorSpec`` objects, which are then
-dispatched by :mod:`frust.workflows.core` to ``Stepper.xtb``, ``Stepper.gxtb``,
-or ``Stepper.orca``. A method plan changes calculator settings and can choose
-whether the workflow needs a separate terminal solvent single point; it does
-not change workflow targets or chemistry.
+``ScreeningPlan`` owns the inexpensive GFN-FF/g-xTB stages, while
+``MethodPlan`` maps the complete executable stage graph to ``CalculatorSpec``
+objects. The end-to-end workflow composes the two before dispatching stages to
+``Stepper.xtb``, ``Stepper.gxtb``, or ``Stepper.orca``. Calculator plans change
+methods and solvation; they do not change workflow targets or chemistry.
 """
 
 from __future__ import annotations
@@ -14,11 +14,15 @@ import hashlib
 import json
 from collections.abc import Mapping
 from dataclasses import dataclass, field, replace as dataclass_replace
-from typing import Any
+from typing import Any, Literal
 
 
 _PRESETS: dict[str, "MethodPlan"] = {}
 _BUILTINS_REGISTERED = False
+_SCREENING_PRESETS: dict[str, "ScreeningPlan"] = {}
+_SCREENING_BUILTINS_REGISTERED = False
+
+CalculationLevel = Literal["low_cost", "dft_ranked", "full"]
 
 _STAGE_ALIASES = {
     "dft_rank_sp": "dft_pre_sp",
@@ -161,6 +165,72 @@ class CalculatorSpec:
             "solvation_model": self.solvation_model,
             "kwargs": _json_compatible(self.kwargs),
         }
+
+
+@dataclass(frozen=True)
+class ScreeningPlan:
+    """Calculator choices for the inexpensive structure-screening stages.
+
+    Parameters
+    ----------
+    name : str
+        Human-readable screening-plan name.
+    stages : mapping
+        Calculator specifications for ``xtb_preopt``, ``xtb_sp``, and
+        ``xtb_opt``. The built-in ``"gxtb-default"`` plan uses GFN-FF for
+        preoptimization and direct g-xTB for ranking and optimization.
+
+    Notes
+    -----
+    A screening plan deliberately contains no DFT settings. It can therefore
+    be fingerprinted and reported independently from the optional downstream
+    :class:`MethodPlan`.
+    """
+
+    name: str
+    stages: Mapping[str, CalculatorSpec]
+
+    def __post_init__(self) -> None:
+        required = {"xtb_preopt", "xtb_sp", "xtb_opt"}
+        normalized = {str(key): value for key, value in self.stages.items()}
+        missing = sorted(required - set(normalized))
+        extra = sorted(set(normalized) - required)
+        if missing or extra:
+            details = []
+            if missing:
+                details.append(f"missing {missing}")
+            if extra:
+                details.append(f"unexpected {extra}")
+            raise ValueError(
+                "ScreeningPlan must define exactly the screening stages: "
+                + "; ".join(details)
+            )
+        for stage_id, spec in normalized.items():
+            if not isinstance(spec, CalculatorSpec):
+                raise TypeError(f"Stage {stage_id!r} must be a CalculatorSpec")
+        object.__setattr__(self, "stages", normalized)
+
+    def to_dict(self, *, include_name: bool = True) -> dict[str, Any]:
+        """Return a stable JSON-compatible screening-plan description."""
+        payload: dict[str, Any] = {
+            "schema_version": 1,
+            "stages": {
+                stage_id: self.stages[stage_id].to_dict()
+                for stage_id in sorted(self.stages)
+            },
+        }
+        if include_name:
+            payload["name"] = self.name
+        return payload
+
+    def fingerprint(self) -> str:
+        """Return a SHA-256 fingerprint of the screening calculator settings."""
+        encoded = json.dumps(
+            self.to_dict(include_name=False),
+            sort_keys=True,
+            separators=(",", ":"),
+        ).encode("utf-8")
+        return hashlib.sha256(encoded).hexdigest()
 
 
 @dataclass(frozen=True)
@@ -440,6 +510,126 @@ def gxtb(
         detailed_inp_str=detailed_inp_str,
         kwargs=kwargs,
     )
+
+
+def screening_preset(name: str = "gxtb-default") -> ScreeningPlan:
+    """Return a registered inexpensive screening-plan preset.
+
+    Parameters
+    ----------
+    name : str, optional
+        Preset name. The built-in ``"gxtb-default"`` plan runs GFN-FF
+        preoptimization followed by direct g-xTB single-point ranking and
+        optimization.
+
+    Returns
+    -------
+    ScreeningPlan
+        Reusable low-cost stage plan.
+    """
+    _ensure_screening_presets()
+    key = _preset_key(name)
+    try:
+        return _SCREENING_PRESETS[key]
+    except KeyError as exc:
+        available = ", ".join(sorted(_SCREENING_PRESETS))
+        raise KeyError(
+            f"Unknown screening preset {name!r}. Available: {available}"
+        ) from exc
+
+
+def register_screening_preset(name: str, plan: ScreeningPlan) -> ScreeningPlan:
+    """Register a screening preset for the current Python session.
+
+    Parameters
+    ----------
+    name : str
+        Preset lookup name.
+    plan : ScreeningPlan
+        Screening plan to register.
+
+    Returns
+    -------
+    ScreeningPlan
+        The supplied plan.
+    """
+    if not isinstance(plan, ScreeningPlan):
+        raise TypeError("plan must be a ScreeningPlan")
+    _SCREENING_PRESETS[_preset_key(name)] = plan
+    return plan
+
+
+def apply_screening_plan(method: MethodPlan, screening: ScreeningPlan) -> MethodPlan:
+    """Return a method plan using the selected inexpensive screening stages.
+
+    Parameters
+    ----------
+    method : MethodPlan
+        Downstream DFT plan.
+    screening : ScreeningPlan
+        Low-cost plan whose three stages replace the corresponding entries in
+        ``method``.
+
+    Returns
+    -------
+    MethodPlan
+        Composed calculator map used internally by a workflow.
+    """
+    if not isinstance(method, MethodPlan):
+        raise TypeError("method must be a MethodPlan")
+    if not isinstance(screening, ScreeningPlan):
+        raise TypeError("screening must be a ScreeningPlan")
+    return method.replace(**dict(screening.stages))
+
+
+def with_ranking_solvation(
+    method: MethodPlan,
+    ranking_solvation: str = "method",
+) -> tuple[MethodPlan, dict[str, str | None]]:
+    """Resolve solvation for DFT single points on g-xTB geometries.
+
+    Parameters
+    ----------
+    method : MethodPlan
+        DFT plan containing ``dft_rank_sp``.
+    ranking_solvation : str, optional
+        ``"method"`` inherits the solvent used for the plan's final analysis
+        energy, ``"gas"`` requests no implicit solvent, and any other value is
+        interpreted as an SMD solvent name such as ``"chloroform"`` or
+        ``"toluene"``.
+
+    Returns
+    -------
+    MethodPlan
+        Plan with a resolved ``dft_rank_sp`` specification.
+    dict
+        JSON-compatible ``model`` and ``solvent`` metadata.
+    """
+    requested = str(ranking_solvation).strip()
+    if not requested:
+        raise ValueError("ranking_solvation cannot be empty")
+    if requested.casefold() == "method":
+        solvent = _analysis_solvent(method)
+    elif requested.casefold() == "gas":
+        solvent = None
+    else:
+        solvent = requested
+
+    rank_spec = method.for_stage("dft_rank_sp")
+    if rank_spec.engine != "orca":
+        raise ValueError("DFT ranking solvation currently requires an ORCA dft_rank_sp")
+    updated = _replace_orca_solvation(rank_spec, solvent)
+    resolved = method.with_stage("dft_rank_sp", updated)
+    requested_value = (
+        requested.casefold()
+        if requested.casefold() in {"method", "gas"}
+        else requested
+    )
+    return resolved, {
+        "requested": requested_value,
+        "model": None if solvent is None else "smd",
+        "solvent": solvent,
+    }
 
 
 def orca(
@@ -740,6 +930,63 @@ def _ensure_builtin_presets() -> None:
     register_preset("wb97xd3-631g-solv", _wb97xd3_631g_solv())
     register_preset("r2scan-def2svp", _r2scan_def2svp())
     _BUILTINS_REGISTERED = True
+
+
+def _ensure_screening_presets() -> None:
+    """Register built-in inexpensive screening plans once."""
+    global _SCREENING_BUILTINS_REGISTERED
+    if _SCREENING_BUILTINS_REGISTERED:
+        return
+    register_screening_preset(
+        "gxtb-default",
+        ScreeningPlan(
+            name="gxtb-default",
+            stages={
+                "xtb_preopt": xtb(gfnff=True, opt=True),
+                "xtb_sp": gxtb(job="sp"),
+                "xtb_opt": gxtb(job="opt"),
+            },
+        ),
+    )
+    _SCREENING_BUILTINS_REGISTERED = True
+
+
+def _analysis_solvent(method: MethodPlan) -> str | None:
+    """Return the solvent associated with a method plan's analysis energy."""
+    stage_order = (
+        "dft_solv_sp",
+        "dft_freq",
+        "dft_opt",
+        "dft_ts_opt",
+        "dft_rank_sp",
+    )
+    for stage_id in stage_order:
+        if stage_id not in method.stages:
+            continue
+        solvent = method.for_stage(stage_id).solvent
+        if solvent:
+            return solvent
+    return None
+
+
+def _replace_orca_solvation(
+    spec: CalculatorSpec,
+    solvent: str | None,
+) -> CalculatorSpec:
+    """Return an ORCA specification with a replaced CPCM/SMD solvent block."""
+    extra = spec.xtra_inp_str
+    if spec.solvent:
+        previous = _solvent_block(spec.solvent)
+        extra = extra.replace(previous, "", 1).lstrip("\n")
+    if solvent:
+        block = _solvent_block(solvent)
+        extra = block if not extra else f"{block}\n{extra}"
+    return dataclass_replace(
+        spec,
+        xtra_inp_str=extra,
+        solvent=solvent,
+        solvation_model="smd" if solvent else None,
+    )
 
 
 def _base_stages(

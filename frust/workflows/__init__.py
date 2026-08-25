@@ -26,6 +26,7 @@ _PUBLIC_API: dict[str, tuple[str, str]] = {
     "WorkflowTarget": ("frust.workflows.core", "WorkflowTarget"),
     "StructureTarget": ("frust.structures", "StructureTarget"),
     "MethodPlan": ("frust.workflows.methods", "MethodPlan"),
+    "ScreeningPlan": ("frust.workflows.methods", "ScreeningPlan"),
     "CalculatorSpec": ("frust.workflows.methods", "CalculatorSpec"),
     "ThermochemistrySpec": ("frust.workflows.methods", "ThermochemistrySpec"),
     "CatalystScreenWorkflow": ("frust.workflows.screening", "CatalystScreenWorkflow"),
@@ -90,4 +91,9 @@ if TYPE_CHECKING:
     from frust.workflows.diagnostics import inspect_failures
     from frust.structures import StructureTarget
     from frust.workflows.factories import int3, mols, raw_mols, screen_ts
-    from frust.workflows.methods import CalculatorSpec, MethodPlan, ThermochemistrySpec
+    from frust.workflows.methods import (
+        CalculatorSpec,
+        MethodPlan,
+        ScreeningPlan,
+        ThermochemistrySpec,
+    )

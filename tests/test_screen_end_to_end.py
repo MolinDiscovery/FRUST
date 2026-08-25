@@ -116,12 +116,21 @@ def _write_result(path: Path, rows: list[dict], profile: str) -> None:
 def _manifest(scope: str = "barriers") -> dict:
     method = ft.workflows.methods.preset("r2scan-3c-solv")
     return {
-        "schema_version": 1,
+        "schema_version": 2,
         "run_type": "catalyst_screen",
         "scope": scope,
+        "calculation_level": "full",
+        "screening": ft.workflows.methods.screening_preset().to_dict(),
+        "screening_fingerprint": ft.workflows.methods.screening_preset().fingerprint(),
         "method": method.to_dict(),
         "method_fingerprint": method.fingerprint(),
-        "corrections_kcal_mol": {"TS1": -1.89, "TS3": -1.89},
+        "ranking_solvation": {
+            "requested": "method",
+            "model": "smd",
+            "solvent": "chloroform",
+            "applied": True,
+        },
+        "g_corrections_kcal_mol": {"TS1": -1.89, "TS3": -1.89},
         "analysis_targets": [
             {
                 "state_id": state,
@@ -316,16 +325,103 @@ def test_reference_library_keeps_inspectable_structure_and_review(tmp_path):
     assert library.find(target, method, protocol={"n_confs": 10}) is None
 
 
+def test_reference_identity_uses_level_and_only_active_reference_stages(tmp_path):
+    method = ft.workflows.methods.preset("r2scan-3c-solv")
+    system = ChemicalSystem("pyrrole__NMe", "pyrrole", "NMe", "CN1C=CC=C1", CATALYST)
+    target = StructureTarget(
+        target_id="dimer:NMe",
+        tag="dimer__NMe",
+        system=system,
+        state_id="dimer",
+        state_kind="minimum",
+        builder_spec="cycle::dimer::v2",
+        scope="catalyst",
+    )
+    changed_ts_only = method.replace(
+        dft_ts_opt=ft.workflows.methods.orca_composite(
+            "r2SCAN-3c",
+            job="optts",
+            solvent="chloroform",
+            uma="omol",
+        )
+    )
+    from frust.screen.references import reference_identity
+
+    full_key, _ = reference_identity(target, method, calculation_level="full")
+    changed_key, _ = reference_identity(
+        target,
+        changed_ts_only,
+        calculation_level="full",
+    )
+    ranked_key, _ = reference_identity(
+        target,
+        method,
+        calculation_level="dft_ranked",
+    )
+    gas_method, _ = ft.workflows.methods.with_ranking_solvation(method, "gas")
+    ranked_gas_key, _ = reference_identity(
+        target,
+        gas_method,
+        calculation_level="dft_ranked",
+    )
+    assert changed_key == full_key
+    assert ranked_key != full_key
+    assert ranked_gas_key != ranked_key
+
+    atoms = ["H", "H"]
+    frame = pd.DataFrame(
+        {
+            "state_id": ["dimer"],
+            "atoms": [atoms],
+            "xtb_opt-oc": [np.zeros((2, 3)).tolist()],
+            "dft_rank_sp-EE": [-1.0],
+            "dft_rank_sp-NT": [True],
+        }
+    )
+    attach_result_contract(
+        frame,
+        "minimum",
+        dft=False,
+        calculation_level="dft_ranked",
+    )
+    library = ReferenceLibrary(tmp_path / "tiered").initialize()
+    record = library.publish(
+        frame,
+        target,
+        method,
+        calculation_level="dft_ranked",
+    )
+    assert record.metadata["calculation_level"] == "dft_ranked"
+    assert record.metadata["free_energy_hartree"] is None
+    assert "entries/screening/dft_ranked" in str(record.path)
+    assert library.find(
+        target,
+        method,
+        calculation_level="dft_ranked",
+    ).reference_id == record.reference_id
+    assert library.review_queue().empty
+
+
 def test_barrier_analysis_matches_supplied_formulas_and_survives_relocation(tmp_path):
     original = tmp_path / "original"
     _write_barrier_bundle(original)
     run = ft.screen.open_run(original).refresh_analysis()
     barriers = run.barriers().set_index("ts_type")
 
-    assert barriers.loc["TS1", "barrier_kcal_mol"] == pytest.approx(0.1 * 627.5094740631 - 1.89)
-    assert barriers.loc["TS2", "barrier_kcal_mol"] == pytest.approx(0.2 * 627.5094740631)
-    assert barriers.loc["TS3", "barrier_kcal_mol"] == pytest.approx(0.3 * 627.5094740631 - 1.89)
-    assert barriers.loc["TS4", "barrier_kcal_mol"] == pytest.approx(0.4 * 627.5094740631)
+    assert barriers.loc["TS1", "delta_e_kcal_mol"] == pytest.approx(0.15 * 627.5094740631)
+    assert barriers.loc["TS1", "delta_g_kcal_mol"] == pytest.approx(0.1 * 627.5094740631)
+    assert barriers.loc["TS1", "delta_g_corrected_kcal_mol"] == pytest.approx(
+        0.1 * 627.5094740631 - 1.89
+    )
+    assert barriers.loc["TS2", "delta_g_corrected_kcal_mol"] == pytest.approx(
+        0.2 * 627.5094740631
+    )
+    assert barriers.loc["TS3", "delta_g_corrected_kcal_mol"] == pytest.approx(
+        0.3 * 627.5094740631 - 1.89
+    )
+    assert barriers.loc["TS4", "delta_g_corrected_kcal_mol"] == pytest.approx(
+        0.4 * 627.5094740631
+    )
     assert set(barriers["quality_status"]) == {"review"}
 
     relocated = tmp_path / "downloaded" / "run"
@@ -333,6 +429,141 @@ def test_barrier_analysis_matches_supplied_formulas_and_survives_relocation(tmp_
     shutil.copytree(original, relocated)
     moved = ft.screen.open_run(relocated)
     pd.testing.assert_frame_equal(run.barriers(), moved.barriers())
+
+
+@pytest.mark.parametrize(
+    ("level", "energy_stage"),
+    [("low_cost", "xtb_opt"), ("dft_ranked", "dft_rank_sp")],
+)
+def test_electronic_levels_build_delta_e_without_frequencies(
+    tmp_path,
+    level,
+    energy_stage,
+):
+    root = tmp_path / level
+    root.mkdir()
+    manifest = _manifest()
+    manifest["calculation_level"] = level
+    manifest["ranking_solvation"]["applied"] = level == "dft_ranked"
+    (root / "manifest.json").write_text(json.dumps(manifest, indent=2))
+    formulas = {
+        "ligand": {"C": 5, "H": 7, "N": 1},
+        "dimer": {"C": 16, "H": 24, "B": 2, "N": 2},
+        "HBpin-mol": {"C": 6, "H": 13, "B": 1, "O": 2},
+        "HH": {"H": 2},
+    }
+
+    def electronic_row(state_id, energy, formula, *, state_kind="minimum"):
+        atoms = _atoms(formula)
+        return {
+            "state_id": state_id,
+            "state_kind": state_kind,
+            "system_name": "pyrrole__NMe",
+            "substrate_name": "pyrrole",
+            "catalyst_name": "NMe",
+            "rpos": 2 if state_kind == "transition_state" else None,
+            "atoms": atoms,
+            "xtb_opt-oc": np.zeros((len(atoms), 3)).tolist(),
+            f"{energy_stage}-EE": energy,
+            f"{energy_stage}-NT": True,
+        }
+
+    references = pd.DataFrame(
+        [
+            electronic_row("ligand", -10.0, formulas["ligand"]),
+            electronic_row("dimer", -40.0, formulas["dimer"]),
+            electronic_row("HBpin-mol", -5.0, formulas["HBpin-mol"]),
+            electronic_row("HH", -1.0, formulas["HH"]),
+        ]
+    )
+    transition_states = pd.DataFrame(
+        [
+            electronic_row(
+                state,
+                energy,
+                {"C": 13, "H": 19, "B": 1, "N": 2}
+                if state in {"TS1", "TS2"}
+                else {"C": 19, "H": 30, "B": 2, "N": 2, "O": 2},
+                state_kind="transition_state",
+            )
+            for state, energy in {
+                "TS1": -29.9,
+                "TS2": -29.8,
+                "TS3": -33.7,
+                "TS4": -33.6,
+            }.items()
+        ]
+    )
+    for frame, profile, path in (
+        (
+            references,
+            "minimum",
+            root / "calculations/references/merged.parquet",
+        ),
+        (
+            transition_states,
+            "transition_state",
+            root / "calculations/transition_states/merged.parquet",
+        ),
+    ):
+        attach_result_contract(
+            frame,
+            profile,
+            dft=False,
+            calculation_level=level,
+            thermochemistry=None,
+        )
+        path.parent.mkdir(parents=True, exist_ok=True)
+        frame.to_parquet(path, index=False)
+
+    run = ft.screen.open_run(root).refresh_analysis()
+    barriers = run.barriers().set_index("ts_type")
+    assert barriers.loc["TS1", "delta_e_kcal_mol"] == pytest.approx(
+        0.1 * 627.5094740631
+    )
+    assert barriers["delta_g_kcal_mol"].isna().all()
+    assert barriers["delta_g_corrected_kcal_mol"].isna().all()
+    assert set(barriers["quality_status"]) == {"ready"}
+    assert run.review_queue().empty
+
+
+def test_end_to_end_levels_use_consistent_stages_and_solvent(tmp_path):
+    expected = {
+        "low_cost": {"xtb_preopt", "xtb_sp", "xtb_opt"},
+        "dft_ranked": {"xtb_preopt", "xtb_sp", "xtb_opt", "dft_rank_sp"},
+        "full": {
+            "xtb_preopt",
+            "xtb_sp",
+            "xtb_opt",
+            "dft_rank_sp",
+            "dft_freq",
+        },
+    }
+    for level, required in expected.items():
+        workflow = ft.workflows.catalyst_screen(
+            dataframe=_components(),
+            screening="gxtb-default",
+            level=level,
+            method="r2scan-3c",
+        )
+        stages = workflow.show_stages()
+        for branch in ("transition_states", "references"):
+            branch_stages = set(stages.query("branch == @branch")["stage"])
+            assert required <= branch_stages
+            assert ("dft_rank_sp" in branch_stages) == (level != "low_cost")
+        rank_rows = stages.query("stage == 'dft_rank_sp'")
+        if level == "low_cost":
+            assert rank_rows.empty
+        else:
+            assert set(rank_rows["solvent"]) == {"SMD(chloroform)"}
+
+    gas = ft.workflows.catalyst_screen(
+        dataframe=_components(),
+        level="dft_ranked",
+        method="r2scan-3c",
+        ranking_solvation="gas",
+    )
+    assert gas.show_stages().query("stage == 'dft_rank_sp'")["solvent"].isna().all()
 
 
 def test_full_cycle_is_balanced_and_review_persists(tmp_path):

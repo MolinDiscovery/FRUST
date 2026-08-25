@@ -13,7 +13,7 @@ from typing import Any, Literal
 import numpy as np
 import pandas as pd
 
-from frust.results import free_energy_components
+from frust.results import free_energy_components, get_result
 from frust.schema import normal_termination_columns
 
 
@@ -88,6 +88,18 @@ class ScreenRun:
                         "artifact": artifact,
                         "quality_status": status,
                         "count": int(counts.get(status, 0)),
+                        "calculation_level": self.manifest.get(
+                            "calculation_level", "full"
+                        ),
+                        "screening": self.manifest.get("screening", {}).get("name"),
+                        "method": self.manifest.get("method", {}).get("name"),
+                        "ranking_solvation": _solvation_label(
+                            self.manifest.get("ranking_solvation", {})
+                        ),
+                        "electronic_barriers": True,
+                        "gibbs_barriers": self.manifest.get(
+                            "calculation_level", "full"
+                        ) == "full",
                     }
                 )
         return pd.DataFrame(rows)
@@ -108,6 +120,7 @@ class ScreenRun:
         system_name: str | None = None,
         rpos: int | None = None,
         include_invalid: bool = False,
+        quantity: Literal["electronic", "gibbs"] = "gibbs",
     ) -> pd.DataFrame:
         """Return one ordered balanced catalytic-cycle profile."""
         self._ensure_analysis()
@@ -121,7 +134,19 @@ class ScreenRun:
             table = table[table["rpos"].eq(int(rpos))]
         if not include_invalid:
             table = table[~table["quality_status"].isin(["invalid", "incomplete"])]
-        return table.sort_values(["system_name", "rpos", "profile_order"]).reset_index(drop=True)
+        if quantity not in {"electronic", "gibbs"}:
+            raise ValueError("quantity must be 'electronic' or 'gibbs'")
+        if quantity == "gibbs" and self.manifest.get("calculation_level", "full") != "full":
+            raise ValueError("Gibbs profiles require level='full'; use quantity='electronic'")
+        result = table.sort_values(
+            ["system_name", "rpos", "profile_order"]
+        ).reset_index(drop=True)
+        result.attrs["energy_column"] = (
+            "relative_g_corrected_kcal_mol"
+            if quantity == "gibbs"
+            else "relative_e_kcal_mol"
+        )
+        return result
 
     def plot_profile(
         self,
@@ -129,6 +154,7 @@ class ScreenRun:
         system_name: str,
         rpos: int,
         include_invalid: bool = False,
+        quantity: Literal["electronic", "gibbs"] = "gibbs",
         **kwargs: Any,
     ) -> Any:
         """Plot one balanced profile with FRUST's energy-profile renderer."""
@@ -138,14 +164,18 @@ class ScreenRun:
             system_name=system_name,
             rpos=rpos,
             include_invalid=include_invalid,
+            quantity=quantity,
         )
         if profile.empty:
             raise ValueError("No plottable profile states match the requested system and rpos")
-        states = list(zip(profile["profile_state"], profile["relative_g_kcal_mol"]))
+        energy_column = str(profile.attrs["energy_column"])
+        states = list(zip(profile["profile_state"], profile[energy_column]))
         return plot_energy_profile(states, **kwargs)
 
     def review_queue(self) -> pd.DataFrame:
         """Return TS results needing manual imaginary-mode review."""
+        if self.manifest.get("calculation_level", "full") != "full":
+            return self.states().iloc[0:0].copy()
         states = self.states()
         return states[
             states["state_kind"].eq("transition_state")
@@ -168,6 +198,8 @@ class ScreenRun:
         reviewer: str = "",
     ) -> None:
         """Persist a TS-mode review and refresh dependent analysis."""
+        if self.manifest.get("calculation_level", "full") != "full":
+            raise ValueError("TS vibration review requires level='full'")
         if decision not in {"approved", "rejected"}:
             raise ValueError("decision must be 'approved' or 'rejected'")
         states = self.states()
@@ -197,9 +229,16 @@ class ScreenRun:
 
     def _raw_result(self, result_id: str) -> pd.DataFrame:
         manifest = self.manifest
-        recipe = manifest["method"]["thermochemistry"]
+        recipe = manifest["method"].get("thermochemistry")
         for source, frame in _load_raw_frames(self.path, manifest):
-            enriched = _state_rows(frame, source=source, recipe=recipe, reviews={})
+            enriched = _state_rows(
+                frame,
+                source=source,
+                recipe=recipe,
+                reviews={},
+                calculation_level=manifest.get("calculation_level", "full"),
+                method=manifest.get("method", {}),
+            )
             mask = enriched["result_id"].eq(str(result_id))
             if mask.any():
                 position = int(np.flatnonzero(mask.to_numpy())[0])
@@ -215,10 +254,18 @@ def build_analysis(run_dir: str | Path) -> dict[str, Any]:
     analysis_dir.mkdir(parents=True, exist_ok=True)
     reviews_path = analysis_dir / "reviews.csv"
     reviews = _latest_reviews(_read_reviews(reviews_path))
-    recipe = manifest["method"]["thermochemistry"]
+    recipe = manifest["method"].get("thermochemistry")
+    calculation_level = manifest.get("calculation_level", "full")
 
     frames = [
-        _state_rows(frame, source=source, recipe=recipe, reviews=reviews)
+        _state_rows(
+            frame,
+            source=source,
+            recipe=recipe,
+            reviews=reviews,
+            calculation_level=calculation_level,
+            method=manifest.get("method", {}),
+        )
         for source, frame in _load_raw_frames(root, manifest)
     ]
     states = pd.concat(frames, ignore_index=True) if frames else _empty_states()
@@ -263,20 +310,39 @@ def _state_rows(
     df: pd.DataFrame,
     *,
     source: str,
-    recipe: Mapping[str, Any],
+    recipe: Mapping[str, Any] | None,
     reviews: Mapping[str, str],
+    calculation_level: str,
+    method: Mapping[str, Any],
 ) -> pd.DataFrame:
     if df.empty:
         return _empty_states()
-    components = free_energy_components(df, thermochemistry=recipe)
+    electronic = get_result(df, "electronic_energy", purpose="analysis")
+    full = calculation_level == "full"
+    components = (
+        free_energy_components(df, thermochemistry=recipe)
+        if full
+        else pd.DataFrame(index=df.index)
+    )
+    protocol = _energy_protocol(df, method, calculation_level)
+    protocol_fingerprint = _json_hash(
+        {
+            "calculation_level": calculation_level,
+            "calculator": protocol.get("calculator"),
+        }
+    )
     nt_columns = normal_termination_columns(df)
     rows: list[dict[str, Any]] = []
     for position, (_, row) in enumerate(df.iterrows()):
-        component = components.iloc[position]
+        component = components.iloc[position] if full else pd.Series(dtype=object)
         state_id = str(row.get("state_id", row.get("structure_type", "")))
         default_kind = "transition_state" if state_id.startswith("TS") else "minimum"
         state_kind = str(row.get("state_kind", default_kind))
-        vibration = _vibration_status(row, state_kind)
+        vibration = (
+            _vibration_status(row, state_kind)
+            if full
+            else _not_applicable_vibration_status()
+        )
         failed_nt = [
             column
             for column in nt_columns
@@ -287,19 +353,29 @@ def _state_rows(
             issues.append("missing_normal_termination_status")
         if failed_nt:
             issues.append("non_normal_termination:" + ",".join(failed_nt))
-        if pd.isna(component["free_energy_hartree"]):
+        electronic_energy = electronic.iloc[position]
+        free_energy = component.get("free_energy_hartree", np.nan)
+        if pd.isna(electronic_energy):
+            issues.append("missing_electronic_energy")
+        if full and pd.isna(free_energy):
             issues.append("missing_free_energy")
-        result_id = _result_id(row, state_id, component, vibration)
+        result_id = _result_id(
+            row,
+            state_id,
+            electronic_energy,
+            free_energy,
+            vibration,
+        )
         review_status = (
             reviews.get(result_id, "unreviewed")
-            if state_kind == "transition_state"
+            if full and state_kind == "transition_state"
             else "not_required"
         )
-        if pd.isna(component["free_energy_hartree"]) or not nt_columns:
+        if pd.isna(electronic_energy) or (full and pd.isna(free_energy)) or not nt_columns:
             quality = "incomplete"
         elif failed_nt or not vibration["valid"] or review_status == "rejected":
             quality = "invalid"
-        elif state_kind == "transition_state" and (
+        elif full and state_kind == "transition_state" and (
             review_status == "unreviewed" or vibration["flags"]
         ):
             quality = "review"
@@ -319,16 +395,29 @@ def _state_rows(
                 "structure_id": row.get("structure_id"),
                 "cid": row.get("cid"),
                 "formula": _formula(row.get("atoms", [])),
-                "analysis_electronic_energy_hartree": component[
-                    "analysis_electronic_energy_hartree"
-                ],
-                "frequency_electronic_energy_hartree": component[
-                    "frequency_electronic_energy_hartree"
-                ],
-                "frequency_gibbs_energy_hartree": component["frequency_gibbs_energy_hartree"],
-                "thermal_correction_hartree": component["thermal_correction_hartree"],
-                "free_energy_hartree": component["free_energy_hartree"],
-                "thermochemistry_mode": component["thermochemistry_mode"],
+                "calculation_level": calculation_level,
+                "geometry_stage": protocol.get("geometry_stage"),
+                "energy_stage": protocol.get("analysis_stage"),
+                "energy_method": protocol.get("calculator", {}).get("method"),
+                "energy_basis": protocol.get("calculator", {}).get("basis"),
+                "solvation_model": protocol.get("calculator", {}).get(
+                    "solvation_model"
+                ),
+                "solvent": protocol.get("calculator", {}).get("solvent"),
+                "energy_protocol_fingerprint": protocol_fingerprint,
+                "electronic_energy_hartree": electronic_energy,
+                "analysis_electronic_energy_hartree": electronic_energy,
+                "frequency_electronic_energy_hartree": component.get(
+                    "frequency_electronic_energy_hartree", np.nan
+                ),
+                "frequency_gibbs_energy_hartree": component.get(
+                    "frequency_gibbs_energy_hartree", np.nan
+                ),
+                "thermal_correction_hartree": component.get(
+                    "thermal_correction_hartree", np.nan
+                ),
+                "free_energy_hartree": free_energy,
+                "thermochemistry_mode": component.get("thermochemistry_mode"),
                 "n_imag": vibration["n_imag"],
                 "imaginary_frequencies_cm1": vibration["imaginary_frequencies"],
                 "vibration_flags": ";".join(vibration["flags"]),
@@ -345,8 +434,9 @@ def _state_rows(
 def _build_barriers(states: pd.DataFrame, manifest: Mapping[str, Any]) -> pd.DataFrame:
     corrections = {
         str(key): float(value)
-        for key, value in manifest.get("corrections_kcal_mol", {}).items()
+        for key, value in manifest.get("g_corrections_kcal_mol", {}).items()
     }
+    full = manifest.get("calculation_level", "full") == "full"
     targets = manifest.get("analysis_targets", [])
     rows: list[dict[str, Any]] = []
     for target in targets:
@@ -367,20 +457,43 @@ def _build_barriers(states: pd.DataFrame, manifest: Mapping[str, Any]) -> pd.Dat
             rpos=rpos,
         )
         correction = corrections.get(ts_type, 0.0)
+        delta_e = np.nan
+        delta_g = np.nan
+        corrected_delta_g = np.nan
         if problems:
-            value = np.nan
             quality = (
                 "incomplete"
                 if any(problem.startswith("missing") for problem in problems)
                 else "invalid"
             )
         else:
-            value = sum(
-                float(selected[state]["free_energy_hartree"]) * coefficient
+            protocols = {
+                str(selected[state]["energy_protocol_fingerprint"])
+                for state in terms
+            }
+            if len(protocols) != 1:
+                problems.append("mixed_electronic_energy_protocols")
+                quality = "invalid"
+            delta_e = sum(
+                float(selected[state]["electronic_energy_hartree"]) * coefficient
                 for state, coefficient in terms.items()
             )
-            value = value * HARTREE_TO_KCAL_MOL + correction
-            quality = _combined_quality([str(selected[state]["quality_status"]) for state in terms])
+            delta_e *= HARTREE_TO_KCAL_MOL
+            if full:
+                free_energies = [selected[state]["free_energy_hartree"] for state in terms]
+                if any(pd.isna(value) for value in free_energies):
+                    problems.append("missing_free_energy")
+                    quality = "incomplete"
+                else:
+                    delta_g = sum(
+                        float(selected[state]["free_energy_hartree"]) * coefficient
+                        for state, coefficient in terms.items()
+                    ) * HARTREE_TO_KCAL_MOL
+                    corrected_delta_g = delta_g + correction
+            if not problems:
+                quality = _combined_quality(
+                    [str(selected[state]["quality_status"]) for state in terms]
+                )
         rows.append(
             {
                 "system_name": system,
@@ -388,8 +501,10 @@ def _build_barriers(states: pd.DataFrame, manifest: Mapping[str, Any]) -> pd.Dat
                 "catalyst_name": catalyst,
                 "rpos": rpos,
                 "ts_type": ts_type,
-                "barrier_kcal_mol": value,
-                "correction_kcal_mol": correction,
+                "delta_e_kcal_mol": delta_e,
+                "delta_g_kcal_mol": delta_g,
+                "g_correction_kcal_mol": correction if full else np.nan,
+                "delta_g_corrected_kcal_mol": corrected_delta_g,
                 "quality_status": quality,
                 "quality_issues": ";".join(problems),
                 "formula_id": f"frust_ts_barrier::{ts_type}::v1",
@@ -401,8 +516,9 @@ def _build_barriers(states: pd.DataFrame, manifest: Mapping[str, Any]) -> pd.Dat
 def _build_profiles(states: pd.DataFrame, manifest: Mapping[str, Any]) -> pd.DataFrame:
     corrections = {
         str(key): float(value)
-        for key, value in manifest.get("corrections_kcal_mol", {}).items()
+        for key, value in manifest.get("g_corrections_kcal_mol", {}).items()
     }
+    full = manifest.get("calculation_level", "full") == "full"
     unique_targets: dict[tuple[str, int], Mapping[str, Any]] = {}
     for target in manifest.get("analysis_targets", []):
         unique_targets[(str(target["system_name"]), int(target["rpos"]))] = target
@@ -410,7 +526,10 @@ def _build_profiles(states: pd.DataFrame, manifest: Mapping[str, Any]) -> pd.Dat
     for (system, rpos), target in unique_targets.items():
         substrate = str(target["substrate_name"])
         catalyst = str(target["catalyst_name"])
-        resolved: dict[str, tuple[float, str, Counter[str]] | None] = {}
+        resolved: dict[
+            str,
+            tuple[float, float | None, str, Counter[str]] | None,
+        ] = {}
         for label, terms in PROFILE_TERMS.items():
             selected, problems = _resolve_terms(
                 states,
@@ -423,31 +542,60 @@ def _build_profiles(states: pd.DataFrame, manifest: Mapping[str, Any]) -> pd.Dat
             if problems:
                 resolved[label] = None
                 continue
-            energy = sum(
-                float(selected[state]["free_energy_hartree"]) * coefficient
+            protocols = {
+                str(selected[state]["energy_protocol_fingerprint"])
+                for state in terms
+            }
+            if len(protocols) != 1:
+                resolved[label] = None
+                continue
+            electronic_energy = sum(
+                float(selected[state]["electronic_energy_hartree"]) * coefficient
                 for state, coefficient in terms.items()
+            )
+            free_energy = (
+                sum(
+                    float(selected[state]["free_energy_hartree"]) * coefficient
+                    for state, coefficient in terms.items()
+                )
+                if full
+                else None
             )
             quality = _combined_quality([str(selected[state]["quality_status"]) for state in terms])
             composition = Counter()
             for state, coefficient in terms.items():
                 for element, count in _parse_formula(str(selected[state]["formula"])).items():
                     composition[element] += count * coefficient
-            resolved[label] = (energy, quality, composition)
+            resolved[label] = (electronic_energy, free_energy, quality, composition)
         reference = resolved.get("Dimer")
         for order, label in enumerate(PROFILE_ORDER):
             value = resolved.get(label)
             issues: list[str] = []
             if value is None or reference is None:
-                relative = np.nan
+                relative_e = np.nan
+                relative_g = np.nan
+                corrected_relative_g = np.nan
                 quality = "incomplete"
                 issues.append("missing_profile_dependency")
             else:
-                energy, quality, composition = value
-                ref_energy, _, ref_composition = reference
+                electronic_energy, free_energy, quality, composition = value
+                ref_electronic_energy, ref_free_energy, _, ref_composition = reference
                 if not _same_composition(composition, ref_composition):
                     quality = "invalid"
                     issues.append("unbalanced_composition")
-                relative = (energy - ref_energy) * HARTREE_TO_KCAL_MOL + corrections.get(label, 0.0)
+                relative_e = (
+                    electronic_energy - ref_electronic_energy
+                ) * HARTREE_TO_KCAL_MOL
+                relative_g = (
+                    (free_energy - ref_free_energy) * HARTREE_TO_KCAL_MOL
+                    if free_energy is not None and ref_free_energy is not None
+                    else np.nan
+                )
+                corrected_relative_g = (
+                    relative_g + corrections.get(label, 0.0)
+                    if full
+                    else np.nan
+                )
             rows.append(
                 {
                     "system_name": system,
@@ -456,8 +604,12 @@ def _build_profiles(states: pd.DataFrame, manifest: Mapping[str, Any]) -> pd.Dat
                     "rpos": rpos,
                     "profile_state": label,
                     "profile_order": order,
-                    "relative_g_kcal_mol": relative,
-                    "correction_kcal_mol": corrections.get(label, 0.0),
+                    "relative_e_kcal_mol": relative_e,
+                    "relative_g_kcal_mol": relative_g,
+                    "g_correction_kcal_mol": (
+                        corrections.get(label, 0.0) if full else np.nan
+                    ),
+                    "relative_g_corrected_kcal_mol": corrected_relative_g,
                     "quality_status": quality,
                     "quality_issues": ";".join(issues),
                     "mechanism_id": "frust_balanced_cycle::v1",
@@ -545,10 +697,22 @@ def _vibration_status(row: pd.Series, state_kind: str) -> dict[str, Any]:
     }
 
 
+def _not_applicable_vibration_status() -> dict[str, Any]:
+    """Return the explicit no-frequency status for electronic-only levels."""
+    return {
+        "valid": True,
+        "n_imag": pd.NA,
+        "imaginary_frequencies": "",
+        "flags": [],
+        "issues": [],
+    }
+
+
 def _result_id(
     row: pd.Series,
     state_id: str,
-    components: pd.Series,
+    electronic_energy: Any,
+    free_energy: Any,
     vibration: Mapping[str, Any],
 ) -> str:
     payload = {
@@ -559,7 +723,8 @@ def _result_id(
         "rpos": _json_value(row.get("rpos")),
         "atoms": _json_value(row.get("atoms")),
         "coords": _json_value(_last_coords(row)),
-        "free_energy_hartree": _json_value(components["free_energy_hartree"]),
+        "electronic_energy_hartree": _json_value(electronic_energy),
+        "free_energy_hartree": _json_value(free_energy),
         "imaginary_frequencies": vibration["imaginary_frequencies"],
         "vibrations": _json_value(_last_vibrations(row)),
     }
@@ -633,9 +798,53 @@ def _empty_states() -> pd.DataFrame:
         columns=[
             "result_id", "source", "source_row", "system_name", "substrate_name",
             "catalyst_name", "rpos", "state_id", "state_kind", "structure_id",
-            "cid", "formula", "free_energy_hartree", "quality_status",
+            "cid", "formula", "electronic_energy_hartree",
+            "free_energy_hartree", "quality_status",
         ]
     )
+
+
+def _energy_protocol(
+    df: pd.DataFrame,
+    method: Mapping[str, Any],
+    calculation_level: str,
+) -> dict[str, Any]:
+    """Resolve energy and geometry provenance from a canonical result."""
+    contract = df.attrs.get("frust_results", {})
+    protocol = contract.get("energy_protocol") if isinstance(contract, Mapping) else None
+    if isinstance(protocol, Mapping):
+        return dict(protocol)
+    columns = contract.get("columns", {}) if isinstance(contract, Mapping) else {}
+    analysis_column = (
+        columns.get("analysis", {}).get("electronic_energy")
+        if isinstance(columns, Mapping)
+        else None
+    )
+    optimized_column = (
+        columns.get("optimized", {}).get("coords")
+        if isinstance(columns, Mapping)
+        else None
+    )
+    analysis_stage = str(analysis_column or "").removesuffix("-EE")
+    geometry_stage = str(optimized_column or "").removesuffix("-oc")
+    stages = method.get("stages", {}) if isinstance(method, Mapping) else {}
+    calculator = stages.get(analysis_stage, {}) if isinstance(stages, Mapping) else {}
+    return {
+        "calculation_level": calculation_level,
+        "analysis_stage": analysis_stage,
+        "geometry_stage": geometry_stage,
+        "calculator": dict(calculator) if isinstance(calculator, Mapping) else {},
+    }
+
+
+def _solvation_label(value: Any) -> str:
+    """Return a compact human-facing label for manifest solvation metadata."""
+    if isinstance(value, Mapping) and value.get("applied") is False:
+        return "not applicable"
+    if not isinstance(value, Mapping) or not value.get("solvent"):
+        return "gas"
+    model = str(value.get("model") or "implicit").upper()
+    return f"{model}({value['solvent']})"
 
 
 def _empty_reviews() -> pd.DataFrame:

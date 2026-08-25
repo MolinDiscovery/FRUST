@@ -22,11 +22,19 @@ from frust.screen.runs import ScreenRun, build_analysis
 from frust.structures import StructureTarget
 from frust.utils.dataframes import merge_dataframe_attrs
 from frust.workflows.factories import Int3Workflow, MolsWorkflow, ScreenTSWorkflow
-from frust.workflows.methods import MethodPlan, preset as method_preset
+from frust.workflows.methods import (
+    CalculationLevel,
+    MethodPlan,
+    ScreeningPlan,
+    apply_screening_plan,
+    preset as method_preset,
+    screening_preset,
+    with_ranking_solvation,
+)
 
 
 ScreenScope = Literal["barriers", "full_cycle"]
-DEFAULT_CORRECTIONS = {"TS1": -1.89, "TS3": -1.89}
+DEFAULT_G_CORRECTIONS = {"TS1": -1.89, "TS3": -1.89}
 DEFAULT_FINALIZE_RESOURCES = Resources(cpus=2, mem_gb=4, timeout_min=120)
 
 
@@ -73,9 +81,12 @@ class CatalystScreenWorkflow:
         csv_path: str | Path | None = None,
         dataframe: pd.DataFrame | None = None,
         ts_types: tuple[str, ...] | list[str] = ("TS1", "TS2", "TS3", "TS4"),
+        screening: ScreeningPlan | str = "gxtb-default",
+        level: CalculationLevel = "full",
         method: MethodPlan | str | None = None,
+        ranking_solvation: str = "method",
         scope: ScreenScope = "barriers",
-        corrections_kcal_mol: dict[str, float] | None = None,
+        g_corrections_kcal_mol: dict[str, float] | None = None,
         reference_store: str | Path | None = None,
         reuse_policy: ReusePolicy = "approved",
         n_confs: int | None = None,
@@ -88,19 +99,32 @@ class CatalystScreenWorkflow:
             raise ValueError("scope must be 'barriers' or 'full_cycle'")
         if reuse_policy not in {"approved", "auto_valid"}:
             raise ValueError("reuse_policy must be 'approved' or 'auto_valid'")
+        normalized_level = str(level).strip().lower()
+        if normalized_level not in {"low_cost", "dft_ranked", "full"}:
+            raise ValueError("level must be 'low_cost', 'dft_ranked', or 'full'")
         self.csv_path = None if csv_path is None else Path(csv_path)
         self.dataframe = None if dataframe is None else dataframe.copy()
         self.ts_types = tuple(str(value).upper() for value in ts_types)
-        self.method = _coerce_method(method)
-        if self.method.thermochemistry is None:
+        self.level: CalculationLevel = normalized_level  # type: ignore[assignment]
+        self.screening = _coerce_screening(screening)
+        composed_method = apply_screening_plan(_coerce_method(method), self.screening)
+        self.method, self.ranking_solvation = with_ranking_solvation(
+            composed_method,
+            ranking_solvation,
+        )
+        self.ranking_solvation["applied"] = self.level != "low_cost"
+        if self.level == "full" and self.method.thermochemistry is None:
             raise ValueError(
                 f"Method plan {self.method.name!r} needs a ThermochemistrySpec "
-                "for catalyst-screen analysis"
+                "for full catalyst-screen analysis"
             )
         self.scope = scope
-        self.corrections_kcal_mol = {
-            **DEFAULT_CORRECTIONS,
-            **{str(key): float(value) for key, value in (corrections_kcal_mol or {}).items()},
+        self.g_corrections_kcal_mol = {
+            **DEFAULT_G_CORRECTIONS,
+            **{
+                str(key): float(value)
+                for key, value in (g_corrections_kcal_mol or {}).items()
+            },
         }
         configured_store = reference_store or os.environ.get("FRUST_REFERENCE_STORE")
         self.reference_store = None if configured_store is None else Path(configured_store)
@@ -136,7 +160,7 @@ class CatalystScreenWorkflow:
                     method=self.method,
                     n_confs=self.n_confs,
                     top_n=self.top_n,
-                    dft=True,
+                    calculation_level=self.level,
                     prune_initial=self.prune_initial,
                 ),
                 "references": MolsWorkflow(
@@ -145,7 +169,7 @@ class CatalystScreenWorkflow:
                     method=self.method,
                     n_confs=self.n_confs,
                     top_n=self.top_n,
-                    dft=True,
+                    calculation_level=self.level,
                     prune_initial=self.prune_initial,
                 ),
             }
@@ -156,7 +180,7 @@ class CatalystScreenWorkflow:
                     method=self.method,
                     n_confs=self.n_confs,
                     top_n=self.top_n,
-                    dft=True,
+                    calculation_level=self.level,
                     prune_initial=self.prune_initial,
                 )
                 children["int3"] = Int3Workflow(
@@ -164,7 +188,7 @@ class CatalystScreenWorkflow:
                     method=self.method,
                     n_confs=self.n_confs,
                     top_n=self.top_n,
-                    dft=True,
+                    calculation_level=self.level,
                     prune_initial=self.prune_initial,
                 )
             self._children_cache = children
@@ -204,9 +228,17 @@ class CatalystScreenWorkflow:
                 }
             )
         result = pd.DataFrame(rows)
+        result.attrs["calculation_level"] = self.level
+        result.attrs["screening"] = self.screening.to_dict()
+        result.attrs["screening_fingerprint"] = self.screening.fingerprint()
         result.attrs["method"] = self.method.name
         result.attrs["method_fingerprint"] = self.method.fingerprint()
-        result.attrs["thermochemistry"] = self.method.thermochemistry.to_dict()
+        result.attrs["ranking_solvation"] = self.ranking_solvation
+        result.attrs["thermochemistry"] = (
+            None
+            if self.method.thermochemistry is None
+            else self.method.thermochemistry.to_dict()
+        )
         result.attrs["scope"] = self.scope
         return result
 
@@ -405,7 +437,10 @@ class CatalystScreenWorkflow:
 
     def _reference_protocol(self) -> dict[str, Any]:
         return {
-            "workflow": "frust.workflows.mols::v1",
+            "workflow": "frust.workflows.mols::v2",
+            "calculation_level": self.level,
+            "screening_fingerprint": self.screening.fingerprint(),
+            "ranking_solvation": self.ranking_solvation,
             "n_confs": self.n_confs,
             "top_n": self.top_n,
             "prune_initial": self.prune_initial,
@@ -429,7 +464,10 @@ class CatalystScreenWorkflow:
             target,
             self.method,
             protocol=self._reference_protocol(),
-            reuse_policy=self.reuse_policy,
+            reuse_policy=(
+                self.reuse_policy if self.level == "full" else "auto_valid"
+            ),
+            calculation_level=self.level,
         )
 
     def _snapshot_reused_references(
@@ -469,14 +507,18 @@ class CatalystScreenWorkflow:
             if item.branch == "references"
         ]
         manifest = {
-            "schema_version": 1,
+            "schema_version": 2,
             "run_type": "catalyst_screen",
             "created_at": _utc_now(),
             "scope": self.scope,
+            "calculation_level": self.level,
+            "screening": self.screening.to_dict(),
+            "screening_fingerprint": self.screening.fingerprint(),
             "method": self.method.to_dict(),
             "method_fingerprint": self.method.fingerprint(),
+            "ranking_solvation": self.ranking_solvation,
             "ts_types": list(self.ts_types),
-            "corrections_kcal_mol": self.corrections_kcal_mol,
+            "g_corrections_kcal_mol": self.g_corrections_kcal_mol,
             "mechanism_id": (
                 "frust_ts_barriers::v1"
                 if self.scope == "barriers"
@@ -515,9 +557,12 @@ class CatalystScreenWorkflow:
         }
         signature_keys = [
             "scope",
+            "calculation_level",
+            "screening_fingerprint",
             "method_fingerprint",
+            "ranking_solvation",
             "ts_types",
-            "corrections_kcal_mol",
+            "g_corrections_kcal_mol",
             "components",
             "systems",
             "reuse_policy",
@@ -550,9 +595,12 @@ def catalyst_screen(
     csv_path: str | Path | None = None,
     dataframe: pd.DataFrame | None = None,
     ts_types: tuple[str, ...] | list[str] = ("TS1", "TS2", "TS3", "TS4"),
+    screening: ScreeningPlan | str = "gxtb-default",
+    level: CalculationLevel = "full",
     method: MethodPlan | str | None = None,
+    ranking_solvation: str = "method",
     scope: ScreenScope = "barriers",
-    corrections_kcal_mol: dict[str, float] | None = None,
+    g_corrections_kcal_mol: dict[str, float] | None = None,
     reference_store: str | Path | None = None,
     reuse_policy: ReusePolicy = "approved",
     n_confs: int | None = None,
@@ -575,24 +623,40 @@ def catalyst_screen(
     ts_types : sequence of str, optional
         Transition-state families to calculate. Supported built-ins are
         ``"TS1"``, ``"TS2"``, ``"TS3"``, and ``"TS4"``.
+    screening : ScreeningPlan or str, optional
+        Inexpensive geometry-screening plan. The default ``"gxtb-default"``
+        runs GFN-FF followed by direct g-xTB ranking and optimization.
+    level : {"low_cost", "dft_ranked", "full"}, optional
+        ``"low_cost"`` reports g-xTB electronic barriers, ``"dft_ranked"``
+        reports DFT single-point electronic barriers on g-xTB geometries, and
+        ``"full"`` additionally performs DFT refinement and frequencies so
+        both electronic and Gibbs barriers are available.
     method : MethodPlan, str, or None, optional
-        One explicit calculation plan for the entire run. A string selects a
-        built-in method preset.
+        Downstream DFT calculation plan. It supplies the DFT ranking method for
+        ``"dft_ranked"`` and the complete refinement and thermochemistry plan
+        for ``"full"``.
+    ranking_solvation : str, optional
+        Solvation for DFT single points on g-xTB geometries. ``"method"``
+        inherits the method's analysis solvent, ``"gas"`` disables implicit
+        solvent, and another value selects that SMD solvent.
     scope : {"barriers", "full_cycle"}, optional
         ``"barriers"`` calculates the dependencies of the four supplied
         barrier equations. ``"full_cycle"`` adds every state needed for the
         balanced catalytic-cycle profile.
-    corrections_kcal_mol : dict or None, optional
-        Literal profile corrections in kcal/mol. Defaults to ``-1.89`` for
-        TS1 and TS3 and zero for other states.
+    g_corrections_kcal_mol : dict or None, optional
+        Gibbs-only profile corrections in kcal/mol. Defaults to ``-1.89`` for
+        TS1 and TS3. These corrections are never applied to electronic
+        barriers.
     reference_store : str, pathlib.Path, or None, optional
         Shared inspectable reference library. When omitted, use
         ``FRUST_REFERENCE_STORE`` if set. The completed run always receives a
         local snapshot of references it reused.
     reuse_policy : {"approved", "auto_valid"}, optional
-        ``"approved"`` reuses only manually approved entries.
-        ``"auto_valid"`` also permits entries that passed automatic minimum
-        checks but have not been reviewed.
+        Full thermochemical references use ``"approved"`` for manual-review
+        reuse or ``"auto_valid"`` to accept automatic minimum checks.
+        Exact-match ``"low_cost"`` and ``"dft_ranked"`` screening artifacts
+        are automatically reusable because they are stored separately and are
+        not presented as approved DFT minima.
     n_confs : int or None, optional
         Initial conformer count forwarded consistently to every child
         workflow.
@@ -621,9 +685,12 @@ def catalyst_screen(
         csv_path=csv_path,
         dataframe=dataframe,
         ts_types=ts_types,
+        screening=screening,
+        level=level,
         method=method,
+        ranking_solvation=ranking_solvation,
         scope=scope,
-        corrections_kcal_mol=corrections_kcal_mol,
+        g_corrections_kcal_mol=g_corrections_kcal_mol,
         reference_store=reference_store,
         reuse_policy=reuse_policy,
         n_confs=n_confs,
@@ -665,6 +732,7 @@ def _finalize_run(workflow: CatalystScreenWorkflow, root: Path) -> dict[str, Any
                 target,
                 workflow.method,
                 protocol=workflow._reference_protocol(),
+                calculation_level=workflow.level,
                 source_run=root,
                 source_target_dir=target_dir,
             )
@@ -681,6 +749,7 @@ def _finalize_run(workflow: CatalystScreenWorkflow, root: Path) -> dict[str, Any
                 target,
                 workflow.method,
                 protocol=workflow._reference_protocol(),
+                calculation_level=workflow.level,
                 source_run=root,
                 source_target_dir=target_dir,
             )
@@ -797,6 +866,13 @@ def _coerce_method(method: MethodPlan | str | None) -> MethodPlan:
     if isinstance(method, MethodPlan):
         return method
     return method_preset(str(method))
+
+
+def _coerce_screening(screening: ScreeningPlan | str) -> ScreeningPlan:
+    """Normalize a screening-plan object or preset name."""
+    if isinstance(screening, ScreeningPlan):
+        return screening
+    return screening_preset(str(screening))
 
 
 def _records(df: pd.DataFrame) -> list[dict[str, Any]]:

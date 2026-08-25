@@ -8,7 +8,10 @@ import frust as ft
 
 wf = ft.workflows.catalyst_screen(
     csv_path="screen.csv",
+    screening="gxtb-default",
+    level="full",
     method="r2scan-3c",
+    ranking_solvation="method",
     scope="barriers",
 )
 
@@ -26,6 +29,33 @@ wf.plan()[["branch", "state_id", "system_name", "rpos", "action"]]
 
 `plan()` is calculation-free. It shows which structures will be calculated and
 which approved scientific references can be reused.
+
+## Choose The Result Level
+
+| level | geometry | energy used for screening analysis | result |
+| --- | --- | --- | --- |
+| `low_cost` | g-xTB | g-xTB | ΔE |
+| `dft_ranked` | g-xTB | DFT SP | ΔE |
+| `full` | DFT | final DFT energy plus frequencies | ΔE and ΔG |
+
+The default `ranking_solvation="method"` applies the method's analysis solvent
+to every DFT SP on a g-xTB structure. For the current presets this normally
+means SMD chloroform. Use `ranking_solvation="gas"` to opt out, or provide a
+different SMD solvent name.
+
+```python
+ranked = ft.workflows.catalyst_screen(
+    csv_path="screen.csv",
+    level="dft_ranked",
+    method="r2scan-3c",
+)
+
+ranked.show_stages()[["branch", "stage", "solvent"]]
+```
+
+The selected level applies to TSs and every molecular dependency. A ranked TS
+is therefore combined only with equally ranked ligand, dimer, HBpin, and H2
+energies.
 
 ## Submit The Complete Run
 
@@ -77,12 +107,12 @@ barriers = run.barriers()
 barriers
 ```
 
-| substrate_name | catalyst_name | rpos | ts_type | barrier_kcal_mol | quality_status |
-| --- | --- | ---: | --- | ---: | --- |
-| pyrrole | NMe | 2 | TS1 | 21.4 | review |
-| pyrrole | NMe | 2 | TS2 | 17.8 | ready |
-| pyrrole | NMe | 2 | TS3 | 26.1 | ready |
-| pyrrole | NMe | 2 | TS4 | 24.7 | invalid |
+| substrate_name | catalyst_name | rpos | ts_type | delta_e_kcal_mol | delta_g_corrected_kcal_mol | quality_status |
+| --- | --- | ---: | --- | ---: | ---: | --- |
+| pyrrole | NMe | 2 | TS1 | 23.0 | 21.4 | review |
+| pyrrole | NMe | 2 | TS2 | 19.1 | 17.8 | ready |
+| pyrrole | NMe | 2 | TS3 | 28.0 | 26.1 | ready |
+| pyrrole | NMe | 2 | TS4 | 26.2 | 24.7 | invalid |
 
 The run directory is self-describing:
 
@@ -108,9 +138,11 @@ results/
     └── report.json
 ```
 
-`states.parquet` shows the electronic energy, frequency Gibbs energy, thermal
-correction, assembled `G`, vibration classification, result ID, and quality
-status. `barriers.parquet` is the compact table normally used for screening.
+`states.parquet` always shows the selected electronic energy, geometry and
+energy stages, method, basis, solvent, result ID, and quality status. Full runs
+also contain frequency Gibbs energy, thermal correction, assembled `G`, and
+vibration classification. `barriers.parquet` contains `delta_e_kcal_mol` for
+every level and Gibbs columns only for full runs.
 Within `calculations/references/`, `computed.parquet` contains references made
 for this run, `reused.parquet` contains snapshots from the shared library, and
 `merged.parquet` is their analysis-ready union. `entries/` is the inspectable
@@ -131,6 +163,9 @@ For solvent-inclusive frequency calculations, it uses `G = G_freq`. The
 resolved expression and all contributing columns are recorded in the run.
 
 ## Review Every TS Mode Once
+
+TS-mode review applies to `level="full"`. The two electronic-only levels have
+no frequencies and return an empty review queue.
 
 ```python
 queue = run.review_queue()
@@ -157,7 +192,7 @@ geometry produces a new result ID and therefore requires a new review.
 Set a shared library once on the cluster:
 
 ```bash
-export FRUST_REFERENCE_STORE=/groups/kemi/jmni/frust_reference_library
+export FRUST_REFERENCE_STORE=/groups/kemi/jmni/grow/frust_reference_library
 ```
 
 The default production reuse policy is `"approved"`. A new reference is
@@ -167,7 +202,7 @@ it:
 
 ```python
 library = ft.screen.open_reference_library(
-    "/groups/kemi/jmni/frust_reference_library"
+    "/groups/kemi/jmni/grow/frust_reference_library"
 )
 
 library.review_queue()
@@ -194,7 +229,19 @@ depends on the continued existence or contents of the shared library.
 
     `reference.reject(...)` preserves the audit trail and prevents future
     reuse. A recalculation becomes a new immutable entry with a new reference
-    ID; old runs retain their original snapshots.
+ID; old runs retain their original snapshots.
+
+The store separates automatically reusable screening artifacts from reviewed
+thermochemical references:
+
+```text
+entries/
+├── screening/
+│   ├── low_cost/
+│   └── dft_ranked/
+└── references/
+    └── full/
+```
 
 Use `reuse_policy="auto_valid"` only when automatic minimum checks are an
 acceptable substitute for manual structure approval.
@@ -204,6 +251,7 @@ acceptable substitute for manual structure approval.
 ```python
 wf = ft.workflows.catalyst_screen(
     csv_path="screen.csv",
+    level="full",
     method="r2scan-3c",
     scope="full_cycle",
 )
@@ -221,8 +269,9 @@ FRUST balances every profile state to the same overall composition:
 | TS3, INT3, TS4 | state + H2 |
 | Product | catalyst + HBpin-ligand + H2 |
 
-The Dimer row is zero. The literal `-1.89 kcal/mol` correction is applied only
-to TS1 and TS3 and is recorded in `manifest.json`.
+The Dimer row is zero. The literal `-1.89 kcal/mol` Gibbs correction is applied
+only to TS1 and TS3 and is recorded separately in `manifest.json`. Electronic
+profiles never receive that correction.
 
 ```python
 profile = run.profile(system_name="pyrrole__NMe", rpos=2)

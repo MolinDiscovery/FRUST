@@ -50,7 +50,7 @@ References are ordinary scientific files rather than an opaque cache. Choose a
 shared directory visible from the cluster:
 
 ```bash
-export FRUST_REFERENCE_STORE=/groups/kemi/jmni/frust_reference_library
+export FRUST_REFERENCE_STORE=/groups/kemi/jmni/grow/frust_reference_library
 ```
 
 Alternatively, pass the path explicitly when constructing the workflow. The
@@ -64,15 +64,15 @@ frust_reference_library/
 ├── index.parquet
 ├── reviews.csv
 └── entries/
-    └── r2scan_3c/
-        └── dimer/
-            └── tmp_bcat/
-                └── ref_<content-id>/
-                    ├── metadata.json
-                    ├── metadata.sha256
-                    ├── result.parquet
-                    ├── optimized.xyz
-                    └── calculator_files/
+    ├── screening/
+    │   ├── low_cost/
+    │   └── dft_ranked/
+    └── references/
+        └── full/
+            └── r2scan_3c/
+                └── dimer/
+                    └── tmp_bcat/
+                        └── ref_<content-id>/
 ```
 
 The compatibility key represents the molecule, method, and calculation
@@ -87,10 +87,41 @@ import frust as ft
 
 wf = ft.workflows.catalyst_screen(
     csv_path="screen.csv",
+    screening="gxtb-default",
+    level="full",
     method="r2scan-3c",
+    ranking_solvation="method",
     scope="barriers",
 )
 ```
+
+The three calculation levels answer different questions:
+
+| level | final geometry | analysis energy | available result |
+| --- | --- | --- | --- |
+| `low_cost` | g-xTB | g-xTB | ΔE |
+| `dft_ranked` | g-xTB | solvent DFT SP | ΔE |
+| `full` | DFT | final DFT electronic energy plus frequencies | ΔE and ΔG |
+
+`ranking_solvation="method"` is the default. It gives the DFT ranking SP the
+same solvent as the method's final analysis energy; the current production
+presets resolve this to SMD chloroform. Use `ranking_solvation="gas"` for an
+explicit gas-phase ranking SP, or provide another SMD solvent name such as
+`"toluene"`.
+
+For example, a quick solvent-ranked screen is:
+
+```python
+ranked = ft.workflows.catalyst_screen(
+    csv_path="screen.csv",
+    level="dft_ranked",
+    method="r2scan-3c",
+)
+```
+
+FRUST performs the same solvent DFT SP for every equation term: TS, ligand,
+dimer, HBpin, and H2. It will not combine DFT-ranked TS energies with g-xTB
+reference energies.
 
 The `r2scan-3c` preset performs gas-phase frequencies followed by a solvent
 single point. Its recorded molecular free-energy expression is:
@@ -227,7 +258,10 @@ states[[
     "state_id",
     "system_name",
     "rpos",
-    "free_energy_hartree",
+    "electronic_energy_hartree",
+    "free_energy_hartree",  # present only for level="full"
+    "energy_method",
+    "solvent",
     "n_imag",
     "review_status",
     "quality_status",
@@ -247,13 +281,23 @@ barriers[[
     "catalyst_name",
     "rpos",
     "ts_type",
-    "barrier_kcal_mol",
-    "correction_kcal_mol",
+    "delta_e_kcal_mol",
+    "delta_g_kcal_mol",
+    "g_correction_kcal_mol",
+    "delta_g_corrected_kcal_mol",
     "quality_status",
 ]]
 ```
 
-FRUST evaluates the four supplied expressions exactly:
+FRUST evaluates the same stoichiometric expressions for electronic and Gibbs
+energies. Electronic barriers are available at every level:
+
+```text
+TS1/TS2 ΔE = (2 × (E_TS - E_ligand) - E_dimer) / 2
+TS3/TS4 ΔE = (2 × (E_TS - E_ligand - E_HBpin + E_H2) - E_dimer) / 2
+```
+
+The full level additionally evaluates:
 
 ```text
 TS1 = -1.89 + (2 × (G_TS - G_ligand) - G_dimer) / 2
@@ -263,10 +307,14 @@ TS4 =         (2 × (G_TS - G_ligand - G_HBpin + G_H2) - G_dimer) / 2
 ```
 
 All energy differences are converted from Hartree to kcal/mol. The literal
-`-1.89 kcal/mol` correction is recorded in `manifest.json` and in each relevant
-barrier row.
+`-1.89 kcal/mol` correction is Gibbs-only: it is recorded separately and is
+never silently added to `delta_e_kcal_mol`.
 
 ## 8. Review Transition-State Modes
+
+This section applies only to `level="full"`. Electronic-only runs have no
+frequency calculation, so `run.review_queue()` is empty and ΔE quality is
+based on calculation completion and protocol consistency instead.
 
 List results awaiting manual review:
 
@@ -309,9 +357,22 @@ again.
 
 ## 9. Inspect And Approve Molecular References
 
-New references pass automatic checks before publication: normal termination,
+Full references pass automatic checks before publication: normal termination,
 complete thermochemistry, and zero imaginary frequencies. They are not reused
 by the default `reuse_policy="approved"` until you inspect them once.
+
+`low_cost` and `dft_ranked` entries are stored separately as screening
+artifacts. Exact protocol matches can be reused automatically because they are
+not presented as approved DFT minima or thermochemical references. Their XYZ,
+result parquet, metadata, and retained calculator evidence remain inspectable.
+
+```python
+library.search(calculation_level="dft_ranked")[[
+    "reference_id",
+    "state_id",
+    "electronic_energy_hartree",
+]]
+```
 
 ```python
 import os
@@ -375,6 +436,7 @@ After approving the references, construct the next workflow normally:
 ```python
 next_wf = ft.workflows.catalyst_screen(
     csv_path="screen.csv",
+    level="full",
     method="r2scan-3c",
     scope="barriers",
 )
@@ -433,6 +495,7 @@ Use a new output directory and change the scope:
 ```python
 cycle_wf = ft.workflows.catalyst_screen(
     csv_path="screen.csv",
+    level="full",
     method="r2scan-3c",
     scope="full_cycle",
 )
@@ -465,7 +528,12 @@ profile = cycle.profile(
     rpos=2,
     include_invalid=True,
 )
-profile[["profile_state", "relative_g_kcal_mol", "quality_status"]]
+profile[[
+    "profile_state",
+    "relative_e_kcal_mol",
+    "relative_g_corrected_kcal_mol",
+    "quality_status",
+]]
 
 cycle.plot_profile(
     system_name="n_methyl_pyrrole__tmp_bcat",

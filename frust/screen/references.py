@@ -20,10 +20,10 @@ import pandas as pd
 from rdkit import Chem
 from tooltoad.chemutils import ac2xyz
 
-from frust.results import free_energy_components, result_column
+from frust.results import free_energy_components, get_result, result_column
 from frust.schema import normal_termination_columns
 from frust.structures import StructureTarget
-from frust.workflows.methods import MethodPlan
+from frust.workflows.methods import CalculationLevel, MethodPlan
 
 
 ReviewDecision = Literal["approved", "rejected", "unreviewed"]
@@ -36,9 +36,11 @@ INDEX_COLUMNS = [
     "formula",
     "charge",
     "multiplicity",
+    "calculation_level",
     "method",
     "method_fingerprint",
     "thermochemistry_mode",
+    "electronic_energy_hartree",
     "free_energy_hartree",
     "created_at",
     "source_run",
@@ -80,7 +82,9 @@ class ReferenceRecord:
             "state_id",
             "compound_name",
             "formula",
+            "calculation_level",
             "method",
+            "electronic_energy_hartree",
             "thermochemistry_mode",
             "free_energy_hartree",
             "auto_validation",
@@ -169,6 +173,13 @@ class ReferenceLibrary:
                     pd.DataFrame(columns=INDEX_COLUMNS),
                     self.index_path,
                 )
+            else:
+                index = pd.read_parquet(self.index_path)
+                missing = [column for column in INDEX_COLUMNS if column not in index]
+                if missing:
+                    for column in missing:
+                        index[column] = pd.NA
+                    _atomic_write_parquet(index[INDEX_COLUMNS], self.index_path)
             if not self.reviews_path.exists():
                 _atomic_write_csv(
                     pd.DataFrame(
@@ -202,12 +213,17 @@ class ReferenceLibrary:
         return index
 
     def summary(self) -> pd.DataFrame:
-        """Return counts grouped by method, state, and review decision."""
+        """Return counts grouped by level, method, state, and review decision."""
         index = self.index()
         if index.empty:
-            return pd.DataFrame(columns=["method", "state_id", "review", "count"])
+            return pd.DataFrame(
+                columns=["calculation_level", "method", "state_id", "review", "count"]
+            )
         return (
-            index.groupby(["method", "state_id", "review"], dropna=False)
+            index.groupby(
+                ["calculation_level", "method", "state_id", "review"],
+                dropna=False,
+            )
             .size()
             .rename("count")
             .reset_index()
@@ -216,15 +232,32 @@ class ReferenceLibrary:
     def search(
         self,
         *,
+        calculation_level: CalculationLevel | None = None,
         state_id: str | None = None,
         compound_name: str | None = None,
         method: str | None = None,
         formula: str | None = None,
         review: ReviewDecision | None = None,
     ) -> pd.DataFrame:
-        """Search entries by common scientific labels."""
+        """Search entries by common scientific labels.
+
+        Parameters
+        ----------
+        calculation_level : {"low_cost", "dft_ranked", "full"} or None, optional
+            Restrict results to one scientific result level.
+        state_id, compound_name, method, formula : str or None, optional
+            Exact case-insensitive metadata filters.
+        review : {"approved", "rejected", "unreviewed"} or None, optional
+            Restrict results to the current review decision.
+
+        Returns
+        -------
+        pandas.DataFrame
+            Matching inspectable reference and screening-artifact entries.
+        """
         result = self.index()
         filters = {
+            "calculation_level": calculation_level,
             "state_id": state_id,
             "compound_name": compound_name,
             "method": method,
@@ -255,11 +288,38 @@ class ReferenceLibrary:
         *,
         protocol: Mapping[str, Any] | None = None,
         reuse_policy: ReusePolicy = "approved",
+        calculation_level: CalculationLevel = "full",
     ) -> ReferenceRecord | None:
-        """Return the newest compatible reusable entry, if one exists."""
+        """Return the newest compatible reusable entry, if one exists.
+
+        Parameters
+        ----------
+        target : StructureTarget
+            Molecular reference target.
+        method : MethodPlan
+            Composed calculator plan.
+        protocol : mapping or None, optional
+            Structure-generation and conformer-selection settings.
+        reuse_policy : {"approved", "auto_valid"}, optional
+            Review requirement for full thermochemical references. Exact
+            low-cost and DFT-ranked screening artifacts are reusable after
+            automatic validation.
+        calculation_level : {"low_cost", "dft_ranked", "full"}, optional
+            Scientific result tier to match.
+
+        Returns
+        -------
+        ReferenceRecord or None
+            Newest checksum-valid compatible entry.
+        """
         if reuse_policy not in {"approved", "auto_valid"}:
             raise ValueError("reuse_policy must be 'approved' or 'auto_valid'")
-        cache_key, _ = reference_identity(target, method, protocol=protocol)
+        cache_key, _ = reference_identity(
+            target,
+            method,
+            protocol=protocol,
+            calculation_level=calculation_level,
+        )
         candidates = self.index()
         candidates = candidates[candidates["cache_key"].eq(cache_key)].iloc[::-1]
         for _, candidate in candidates.iterrows():
@@ -267,7 +327,11 @@ class ReferenceLibrary:
             decision = str(candidate["review"])
             if decision == "rejected":
                 continue
-            if reuse_policy == "approved" and decision != "approved":
+            if (
+                calculation_level == "full"
+                and reuse_policy == "approved"
+                and decision != "approved"
+            ):
                 continue
             try:
                 return self.get(reference_id)
@@ -282,16 +346,44 @@ class ReferenceLibrary:
         method: MethodPlan,
         *,
         protocol: Mapping[str, Any] | None = None,
+        calculation_level: CalculationLevel = "full",
         source_run: str | Path | None = None,
         source_target_dir: str | Path | None = None,
     ) -> ReferenceRecord:
-        """Publish one complete minimum result as an immutable entry."""
+        """Publish one selected molecular result as an immutable entry.
+
+        Parameters
+        ----------
+        df : pandas.DataFrame
+            One canonical selected result row.
+        target : StructureTarget
+            Molecular state represented by the row.
+        method : MethodPlan
+            Composed calculator plan used to produce the result.
+        protocol : mapping or None, optional
+            Structure-generation and conformer-selection settings.
+        calculation_level : {"low_cost", "dft_ranked", "full"}, optional
+            Validation and storage tier. Only ``"full"`` requires frequencies
+            and assembled thermochemistry.
+        source_run, source_target_dir : str, pathlib.Path, or None, optional
+            Provenance and calculator-file source locations.
+
+        Returns
+        -------
+        ReferenceRecord
+            Immutable checksum-protected entry.
+        """
         self.initialize()
         if len(df) != 1:
             raise ValueError("reference publication requires exactly one selected result row")
-        validation = _validate_reference_result(df, method)
-        cache_key, identity = reference_identity(target, method, protocol=protocol)
-        result_content = _reference_result_content(df, method)
+        validation = _validate_reference_result(df, method, calculation_level)
+        cache_key, identity = reference_identity(
+            target,
+            method,
+            protocol=protocol,
+            calculation_level=calculation_level,
+        )
+        result_content = _reference_result_content(df, method, calculation_level)
         reference_id = "ref_" + _content_hash(
             {"identity": identity, "result": result_content}
         )[:16]
@@ -299,7 +391,19 @@ class ReferenceLibrary:
         method_slug = _slug(method.name)
         state_slug = _slug(target.state_id)
         compound_slug = _slug(compound_name)
-        entry_rel = Path("entries") / method_slug / state_slug / compound_slug / reference_id
+        namespace = (
+            Path("references") / "full"
+            if calculation_level == "full"
+            else Path("screening") / calculation_level
+        )
+        entry_rel = (
+            Path("entries")
+            / namespace
+            / method_slug
+            / state_slug
+            / compound_slug
+            / reference_id
+        )
         entry_path = self.root / entry_rel
         if entry_path.exists():
             self._validate_checksums(entry_path)
@@ -317,12 +421,19 @@ class ReferenceLibrary:
             row = df.iloc[0]
             (temp_path / "optimized.xyz").write_text(ac2xyz(row["atoms"], row[coords_col]))
             _copy_scientific_calculator_files(source_target_dir, temp_path / "calculator_files")
-            energy = free_energy_components(
-                df,
-                thermochemistry=method.thermochemistry,
-            ).iloc[0]
+            electronic_energy = float(
+                get_result(df, "electronic_energy", purpose="analysis").iloc[0]
+            )
+            energy = (
+                free_energy_components(
+                    df,
+                    thermochemistry=method.thermochemistry,
+                ).iloc[0]
+                if calculation_level == "full"
+                else None
+            )
             metadata = {
-                "schema_version": 1,
+                "schema_version": 2,
                 "reference_id": reference_id,
                 "cache_key": cache_key,
                 "result_fingerprint": _content_hash(result_content),
@@ -332,11 +443,17 @@ class ReferenceLibrary:
                 "formula": _formula(row["atoms"]),
                 "charge": int(row.get("charge", 0) or 0),
                 "multiplicity": int(row.get("multiplicity", 1) or 1),
+                "calculation_level": calculation_level,
                 "method": method.name,
-                "method_fingerprint": method.fingerprint(),
+                "method_fingerprint": str(identity["method_fingerprint"]),
                 "method_plan": method.to_dict(),
-                "thermochemistry_mode": str(energy["thermochemistry_mode"]),
-                "free_energy_hartree": float(energy["free_energy_hartree"]),
+                "thermochemistry_mode": (
+                    None if energy is None else str(energy["thermochemistry_mode"])
+                ),
+                "electronic_energy_hartree": electronic_energy,
+                "free_energy_hartree": (
+                    None if energy is None else float(energy["free_energy_hartree"])
+                ),
                 "auto_validation": validation,
                 "identity": identity,
                 "source_run": None if source_run is None else str(source_run),
@@ -384,8 +501,15 @@ class ReferenceLibrary:
         method_slug = _slug(str(source_metadata["method"]))
         state_slug = _slug(str(source_metadata["state_id"]))
         compound_slug = _slug(str(source_metadata["compound_name"]))
+        calculation_level = str(source_metadata.get("calculation_level") or "full")
+        namespace = (
+            Path("references") / "full"
+            if calculation_level == "full"
+            else Path("screening") / calculation_level
+        )
         entry_rel = (
             Path("entries")
+            / namespace
             / method_slug
             / state_slug
             / compound_slug
@@ -423,8 +547,12 @@ class ReferenceLibrary:
         return str(matches.iloc[-1]["decision"])  # type: ignore[return-value]
 
     def review_queue(self) -> pd.DataFrame:
-        """Return auto-valid entries that have not been manually reviewed."""
-        return self.index().query("review == 'unreviewed'").reset_index(drop=True)
+        """Return full thermochemical references needing manual review."""
+        index = self.index()
+        return index[
+            index["review"].eq("unreviewed")
+            & index["calculation_level"].fillna("full").eq("full")
+        ].reset_index(drop=True)
 
     def set_review(
         self,
@@ -531,14 +659,19 @@ def reference_identity(
     method: MethodPlan,
     *,
     protocol: Mapping[str, Any] | None = None,
+    calculation_level: CalculationLevel = "full",
 ) -> tuple[str, dict[str, Any]]:
     """Return a stable compatibility key and its scientific identity."""
-    if method.thermochemistry is None:
+    if calculation_level not in {"low_cost", "dft_ranked", "full"}:
+        raise ValueError("calculation_level must be 'low_cost', 'dft_ranked', or 'full'")
+    if calculation_level == "full" and method.thermochemistry is None:
         raise ValueError(
             f"Method plan {method.name!r} has no thermochemistry specification"
         )
+    active_plan = _active_reference_method(method, calculation_level)
+    method_fingerprint = _content_hash(active_plan)
     identity = {
-        "schema_version": 1,
+        "schema_version": 2,
         "state_id": target.state_id,
         "state_kind": target.state_kind,
         "scope": target.scope,
@@ -547,11 +680,41 @@ def reference_identity(
         "chemical_identity": _target_chemical_identity(target),
         "charge": int(target.builder_options.get("charge", 0)),
         "multiplicity": int(target.builder_options.get("multiplicity", 1)),
-        "method_fingerprint": method.fingerprint(),
-        "thermochemistry": method.thermochemistry.to_dict(),
+        "calculation_level": calculation_level,
+        "method_fingerprint": method_fingerprint,
+        "active_method": active_plan,
+        "thermochemistry": (
+            method.thermochemistry.to_dict()
+            if calculation_level == "full" and method.thermochemistry is not None
+            else None
+        ),
         "protocol": _json_compatible(dict(protocol or {})),
     }
     return f"key_{_content_hash(identity)[:16]}", identity
+
+
+def _active_reference_method(
+    method: MethodPlan,
+    calculation_level: CalculationLevel,
+) -> dict[str, Any]:
+    """Return only calculator stages that can affect a molecular reference."""
+    stages = ["xtb_preopt", "xtb_sp", "xtb_opt"]
+    if calculation_level in {"dft_ranked", "full"}:
+        stages.append("dft_rank_sp")
+    if calculation_level == "full":
+        stages.extend(["dft_opt", "dft_freq"])
+        if method.include_terminal_solv_sp:
+            stages.append("dft_solv_sp")
+    return {
+        "schema_version": 1,
+        "stages": {
+            stage_id: method.for_stage(stage_id).to_dict()
+            for stage_id in stages
+        },
+        "include_terminal_solv_sp": (
+            method.include_terminal_solv_sp if calculation_level == "full" else False
+        ),
+    }
 
 
 def _target_chemical_identity(target: StructureTarget) -> dict[str, Any]:
@@ -577,6 +740,7 @@ def _canonical_smiles(smiles: str) -> str:
 def _validate_reference_result(
     df: pd.DataFrame,
     method: MethodPlan,
+    calculation_level: CalculationLevel,
 ) -> dict[str, Any]:
     nt_columns = normal_termination_columns(df)
     if not nt_columns:
@@ -584,10 +748,19 @@ def _validate_reference_result(
     failed_nt = [column for column in nt_columns if not bool(df[column].fillna(False).all())]
     if failed_nt:
         raise ValueError(f"Reference has non-normal termination columns: {failed_nt}")
-    components = free_energy_components(
-        df,
-        thermochemistry=method.thermochemistry,
-    )
+    electronic = get_result(df, "electronic_energy", purpose="analysis")
+    if electronic.isna().any():
+        raise ValueError("Reference has missing analysis electronic energy")
+    coords_column = result_column(df, "coords", purpose="optimized")
+    if df[coords_column].isna().any():
+        raise ValueError("Reference has missing selected geometry")
+    if calculation_level != "full":
+        return {
+            "status": "auto_valid",
+            "normal_termination_columns": nt_columns,
+            "n_imag": None,
+        }
+    components = free_energy_components(df, thermochemistry=method.thermochemistry)
     if components["free_energy_hartree"].isna().any():
         raise ValueError("Reference has missing assembled free energy")
     vibration_columns = [column for column in df.columns if str(column).endswith("-vibs")]
@@ -616,6 +789,7 @@ def _validate_reference_result(
 def _reference_result_content(
     df: pd.DataFrame,
     method: MethodPlan,
+    calculation_level: CalculationLevel,
 ) -> dict[str, Any]:
     """Return the scientific result content used for immutable entry IDs."""
     row = df.iloc[0]
@@ -629,15 +803,23 @@ def _reference_result_content(
         ),
         None,
     )
-    energies = free_energy_components(
-        df,
-        thermochemistry=method.thermochemistry,
-    ).iloc[0]
+    electronic_energy = float(
+        get_result(df, "electronic_energy", purpose="analysis").iloc[0]
+    )
+    energies = (
+        free_energy_components(
+            df,
+            thermochemistry=method.thermochemistry,
+        ).iloc[0].to_dict()
+        if calculation_level == "full"
+        else {"analysis_electronic_energy_hartree": electronic_energy}
+    )
     return _json_compatible(
         {
             "atoms": row["atoms"],
             "optimized_coords": row[coords_column],
-            "energies": energies.to_dict(),
+            "calculation_level": calculation_level,
+            "energies": energies,
             "vibrations": None if vibration_column is None else row[vibration_column],
             "normal_termination": {
                 column: row[column]
@@ -660,12 +842,30 @@ def _copy_scientific_calculator_files(
     source = Path(source_target_dir)
     if not source.is_dir():
         return
-    stage_names = {"dft_opt", "dft_freq", "dft_solv_sp"}
+    stage_names = {
+        "xtb_preopt",
+        "xtb_sp",
+        "xtb_opt",
+        "dft_rank_sp",
+        "dft_opt",
+        "dft_freq",
+        "dft_solv_sp",
+    }
     candidates = [
         path
         for path in source.rglob("*")
         if path.is_file()
-        and path.name.lower() in {"orca.out", "orca.inp", "input.inp", "output.out"}
+        and path.name.lower()
+        in {
+            "orca.out",
+            "orca.inp",
+            "gxtb.out",
+            "gxtb.inp",
+            "xtb.out",
+            "xtb.inp",
+            "input.inp",
+            "output.out",
+        }
         and any(stage in path.parts for stage in stage_names)
     ]
     for path in candidates:

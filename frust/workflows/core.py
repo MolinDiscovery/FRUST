@@ -2080,17 +2080,39 @@ def _attach_workflow_attrs(
             "workflow": workflow.workflow_name,
             "method": workflow.method.name,
             "method_fingerprint": workflow.method.fingerprint(),
+            "calculation_level": getattr(
+                workflow,
+                "calculation_level",
+                "full" if workflow.dft else "low_cost",
+            ),
             "target": target.tag,
             "result_profile": workflow.result_profile,
         }
     )
     if workflow.result_profile is not None:
+        calculation_level = getattr(
+            workflow,
+            "calculation_level",
+            "full" if workflow.dft else None,
+        )
         attach_result_contract(
             df,
             workflow.result_profile,
             dft=workflow.dft,
+            calculation_level=calculation_level,
             include_terminal_solv_sp=workflow.method.include_terminal_solv_sp,
             thermochemistry=workflow.method.thermochemistry,
         )
+        contract = df.attrs["frust_results"]
+        analysis_column = str(contract["columns"]["analysis"]["electronic_energy"])
+        analysis_stage = analysis_column.removesuffix("-EE")
+        optimized_column = str(contract["columns"]["optimized"]["coords"])
+        optimized_stage = optimized_column.removesuffix("-oc")
+        contract["energy_protocol"] = {
+            "calculation_level": contract["calculation_level"],
+            "analysis_stage": analysis_stage,
+            "geometry_stage": optimized_stage,
+            "calculator": workflow.method.for_stage(analysis_stage).to_dict(),
+        }
     stamp_schema(df)
     return df

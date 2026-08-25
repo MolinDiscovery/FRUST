@@ -16,6 +16,7 @@ def result_contract(
     profile: ResultProfile,
     *,
     dft: bool,
+    calculation_level: str | None = None,
     include_terminal_solv_sp: bool = True,
     thermochemistry: Any | None = None,
 ) -> dict[str, object]:
@@ -27,6 +28,11 @@ def result_contract(
         Workflow chemistry/result profile.
     dft : bool
         Whether the workflow includes DFT refinement.
+    calculation_level : {"low_cost", "dft_ranked", "full"} or None, optional
+        Explicit workflow depth. ``"low_cost"`` resolves analysis to the
+        g-xTB optimization energy, ``"dft_ranked"`` to the DFT single point
+        on the g-xTB geometry, and ``"full"`` to the final DFT analysis
+        energy and exposes frequency results.
     include_terminal_solv_sp : bool, optional
         Whether the DFT workflow includes a final solvent single point. When
         ``False``, the final DFT frequency-stage electronic energy is the
@@ -40,22 +46,36 @@ def result_contract(
     dict
         Versioned mapping from semantic purposes to canonical columns.
     """
+    if calculation_level is None:
+        calculation_level = (
+            "full"
+            if dft
+            else "dft_ranked"
+            if profile in {"transition_state", "constrained_minimum"}
+            else "low_cost"
+        )
+    calculation_level = str(calculation_level).strip().lower()
+    if calculation_level not in {"low_cost", "dft_ranked", "full"}:
+        raise ValueError(
+            "calculation_level must be 'low_cost', 'dft_ranked', or 'full'"
+        )
+    has_full_dft = calculation_level == "full"
+    ranking_stage = (
+        "dft_rank_sp" if calculation_level in {"dft_ranked", "full"} else "xtb_opt"
+    )
     if profile == "minimum":
-        ranking_stage = "xtb_opt"
-        optimized_stage = "dft_opt" if dft else "xtb_opt"
+        optimized_stage = "dft_opt" if has_full_dft else "xtb_opt"
     elif profile == "transition_state":
-        ranking_stage = "dft_rank_sp"
-        optimized_stage = "dft_ts_opt" if dft else "xtb_opt"
+        optimized_stage = "dft_ts_opt" if has_full_dft else "xtb_opt"
     elif profile == "constrained_minimum":
-        ranking_stage = "dft_rank_sp"
-        optimized_stage = "dft_opt" if dft else "xtb_opt"
+        optimized_stage = "dft_opt" if has_full_dft else "xtb_opt"
     else:
         raise ValueError(f"Unknown result profile {profile!r}")
     analysis_stage = (
         "dft_solv_sp"
-        if dft and include_terminal_solv_sp
+        if has_full_dft and include_terminal_solv_sp
         else "dft_freq"
-        if dft
+        if has_full_dft
         else ranking_stage
     )
     columns: dict[str, dict[str, str]] = {
@@ -67,15 +87,16 @@ def result_contract(
         },
         "optimized": {"coords": output_column(optimized_stage, "opt_coords")},
     }
-    if dft:
+    if has_full_dft:
         columns["frequency"] = {
             "gibbs_energy": output_column("dft_freq", "gibbs_energy"),
             "electronic_energy": output_column("dft_freq", "electronic_energy"),
         }
     contract = {
-        "schema_version": 2,
+        "schema_version": 4,
         "profile": profile,
-        "dft": bool(dft),
+        "dft": has_full_dft,
+        "calculation_level": calculation_level,
         "columns": columns,
     }
     if thermochemistry is not None:
@@ -83,7 +104,6 @@ def result_contract(
         if not callable(to_dict):
             raise TypeError("thermochemistry must provide to_dict()")
         contract["thermochemistry"] = to_dict()
-        contract["schema_version"] = 3
     return contract
 
 
@@ -92,6 +112,7 @@ def attach_result_contract(
     profile: ResultProfile,
     *,
     dft: bool,
+    calculation_level: str | None = None,
     include_terminal_solv_sp: bool = True,
     thermochemistry: Any | None = None,
 ) -> pd.DataFrame:
@@ -105,6 +126,8 @@ def attach_result_contract(
         Workflow chemistry/result profile.
     dft : bool
         Whether the workflow includes DFT refinement.
+    calculation_level : {"low_cost", "dft_ranked", "full"} or None, optional
+        Explicit workflow depth recorded in the canonical contract.
     include_terminal_solv_sp : bool, optional
         Whether a separate final solvent single point was calculated.
     thermochemistry : ThermochemistrySpec or None, optional
@@ -118,6 +141,7 @@ def attach_result_contract(
     df.attrs["frust_results"] = result_contract(
         profile,
         dft=dft,
+        calculation_level=calculation_level,
         include_terminal_solv_sp=include_terminal_solv_sp,
         thermochemistry=thermochemistry,
     )

@@ -32,7 +32,7 @@ from frust.structures import (
 from frust.utils.mols import create_mol_per_rpos
 from frust.utils.pruning import normalize_pruning_options
 from frust.workflows.core import BaseWorkflow, ExecutionOptions, StageDef, WorkflowTarget
-from frust.workflows.methods import MethodPlan
+from frust.workflows.methods import CalculationLevel, MethodPlan
 from frust.workflows.spec_profiles import profile_for_geometry_stage
 
 
@@ -104,7 +104,7 @@ def _with_initial_prune(
 def _molecule_stage_defs(
     *,
     top_n: int,
-    dft: bool,
+    calculation_level: CalculationLevel,
     include_terminal_solv_sp: bool = True,
     prune_initial: bool | dict[str, Any] | None = False,
 ) -> list[StageDef]:
@@ -115,10 +115,11 @@ def _molecule_stage_defs(
         StageDef("xtb_sp", "xtb_sp", n_cores=2),
         StageDef("xtb_opt", "xTB optimization", lowest=top_n, rank_by="xtb_opt", n_cores=2),
     ]
-    if dft:
+    if calculation_level in {"dft_ranked", "full"}:
+        stages.append(StageDef("dft_rank_sp", "DFT ranking single point"))
+    if calculation_level == "full":
         stages.extend(
             [
-                StageDef("dft_rank_sp", "DFT ranking single point"),
                 StageDef("dft_opt", "DFT minimum optimization", lowest=1, rank_by="dft_opt"),
                 StageDef("dft_freq", "DFT frequencies"),
             ]
@@ -126,8 +127,24 @@ def _molecule_stage_defs(
         if include_terminal_solv_sp:
             stages.append(StageDef("dft_solv_sp", "DFT solvent single point"))
     else:
-        stages.append(StageDef("filter", "filter", kind="filter", lowest=1, rank_by="xtb_opt"))
+        rank_by = "dft_rank_sp" if calculation_level == "dft_ranked" else "xtb_opt"
+        stages.append(StageDef("filter", "filter", kind="filter", lowest=1, rank_by=rank_by))
     return _with_initial_prune(stages, prune_initial)
+
+
+def _calculation_level(
+    value: CalculationLevel | None,
+    *,
+    dft: bool,
+    non_dft_level: CalculationLevel,
+) -> CalculationLevel:
+    """Resolve an explicit calculation level or a legacy ``dft`` switch."""
+    if value is None:
+        return "full" if dft else non_dft_level
+    normalized = str(value).strip().lower()
+    if normalized not in {"low_cost", "dft_ranked", "full"}:
+        raise ValueError("calculation_level must be 'low_cost', 'dft_ranked', or 'full'")
+    return normalized  # type: ignore[return-value]
 
 
 class MolsWorkflow(BaseWorkflow):
@@ -207,9 +224,20 @@ class MolsWorkflow(BaseWorkflow):
         n_confs: int | None = None,
         top_n: int = 20,
         dft: bool = True,
+        calculation_level: CalculationLevel | None = None,
         prune_initial: bool | dict[str, Any] = True,
     ) -> None:
-        super().__init__(method=method, n_confs=n_confs, top_n=top_n, dft=dft)
+        self.calculation_level = _calculation_level(
+            calculation_level,
+            dft=dft,
+            non_dft_level="low_cost",
+        )
+        super().__init__(
+            method=method,
+            n_confs=n_confs,
+            top_n=top_n,
+            dft=self.calculation_level == "full",
+        )
         self.csv_path = csv_path
         self.dataframe = dataframe
         self.smiles = smiles
@@ -337,7 +365,7 @@ class MolsWorkflow(BaseWorkflow):
         """Return molecule workflow stages."""
         return _molecule_stage_defs(
             top_n=self.top_n,
-            dft=self.dft,
+            calculation_level=self.calculation_level,
             include_terminal_solv_sp=self.method.include_terminal_solv_sp,
             prune_initial=self.prune_initial,
         )
@@ -403,9 +431,20 @@ class RawMolsWorkflow(BaseWorkflow):
         n_confs: int | None = None,
         top_n: int = 10,
         dft: bool = False,
+        calculation_level: CalculationLevel | None = None,
         prune_initial: bool | dict[str, Any] = False,
     ) -> None:
-        super().__init__(method=method, n_confs=n_confs, top_n=top_n, dft=dft)
+        self.calculation_level = _calculation_level(
+            calculation_level,
+            dft=dft,
+            non_dft_level="low_cost",
+        )
+        super().__init__(
+            method=method,
+            n_confs=n_confs,
+            top_n=top_n,
+            dft=self.calculation_level == "full",
+        )
         self.csv_path = csv_path
         self.dataframe = dataframe
         self.smiles = smiles
@@ -504,7 +543,7 @@ class RawMolsWorkflow(BaseWorkflow):
         """Return raw molecule workflow stages."""
         return _molecule_stage_defs(
             top_n=self.top_n,
-            dft=self.dft,
+            calculation_level=self.calculation_level,
             include_terminal_solv_sp=self.method.include_terminal_solv_sp,
             prune_initial=self.prune_initial,
         )
@@ -533,9 +572,20 @@ class ScreenTSWorkflow(BaseWorkflow):
         n_confs: int | None = None,
         top_n: int = 20,
         dft: bool = True,
+        calculation_level: CalculationLevel | None = None,
         prune_initial: bool | dict[str, Any] = True,
     ) -> None:
-        super().__init__(method=method, n_confs=n_confs, top_n=top_n, dft=dft)
+        self.calculation_level = _calculation_level(
+            calculation_level,
+            dft=dft,
+            non_dft_level="dft_ranked",
+        )
+        super().__init__(
+            method=method,
+            n_confs=n_confs,
+            top_n=top_n,
+            dft=self.calculation_level == "full",
+        )
         self.csv_path = csv_path
         self.dataframe = dataframe
         self.ts_types = tuple(str(ts_type).upper() for ts_type in ts_types)
@@ -693,18 +743,24 @@ class ScreenTSWorkflow(BaseWorkflow):
     def _stage_defs(self) -> list[StageDef]:
         """Return screen TS workflow stages."""
         stages = _ts_screening_stages(self.top_n, prune_initial=self.prune_initial)
-        stages.append(_dft_rank_sp_stage())
-        if self.dft:
+        if self.calculation_level in {"dft_ranked", "full"}:
+            stages.append(_dft_rank_sp_stage())
+        if self.calculation_level == "full":
             stages.extend(
                 _ts_dft_refinement_stages(
                     include_terminal_solv_sp=self.method.include_terminal_solv_sp,
                 )
             )
         else:
+            rank_by = (
+                "dft_rank_sp"
+                if self.calculation_level == "dft_ranked"
+                else "xtb_opt"
+            )
             stages.append(
                 StageDef(
                     "filter", "filter", kind="filter",
-                    lowest=1, rank_by="dft_rank_sp",
+                    lowest=1, rank_by=rank_by,
                 )
             )
         return stages
@@ -732,9 +788,20 @@ class Int3Workflow(BaseWorkflow):
         n_confs: int | None = None,
         top_n: int = 20,
         dft: bool = True,
+        calculation_level: CalculationLevel | None = None,
         prune_initial: bool | dict[str, Any] = True,
     ) -> None:
-        super().__init__(method=method, n_confs=n_confs, top_n=top_n, dft=dft)
+        self.calculation_level = _calculation_level(
+            calculation_level,
+            dft=dft,
+            non_dft_level="dft_ranked",
+        )
+        super().__init__(
+            method=method,
+            n_confs=n_confs,
+            top_n=top_n,
+            dft=self.calculation_level == "full",
+        )
         self.csv_path = csv_path
         self.dataframe = dataframe
         self.spec_profile = str(spec_profile).strip().lower()
@@ -806,21 +873,27 @@ class Int3Workflow(BaseWorkflow):
     def _stage_defs(self) -> list[StageDef]:
         """Return the dedicated INT3 screening and refinement graph."""
         stages = _ts_screening_stages(self.top_n, prune_initial=self.prune_initial)
-        stages.append(_dft_rank_sp_stage())
-        if self.dft:
+        if self.calculation_level in {"dft_ranked", "full"}:
+            stages.append(_dft_rank_sp_stage())
+        if self.calculation_level == "full":
             stages.extend(
                 _int3_dft_refinement_stages(
                     include_terminal_solv_sp=self.method.include_terminal_solv_sp,
                 )
             )
         else:
+            rank_by = (
+                "dft_rank_sp"
+                if self.calculation_level == "dft_ranked"
+                else "xtb_opt"
+            )
             stages.append(
                 StageDef(
                     "filter",
                     "filter",
                     kind="filter",
                     lowest=1,
-                    rank_by="dft_rank_sp",
+                    rank_by=rank_by,
                 )
             )
         return stages
