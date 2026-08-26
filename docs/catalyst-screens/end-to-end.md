@@ -85,6 +85,15 @@ submission = wf.submit(
 )
 ```
 
+!!! note "ORCA memory fraction in composed screens"
+
+    `CatalystScreenWorkflow.submit()` currently uses the underlying child
+    workflow default `orca_memory_fraction=0.8` and does not expose an override.
+    Slurm receives the complete `Resources.mem_gb` request, while ORCA receives
+    80% of it. Thus, `mem_gb=20` allocates 20 GB to the job and approximately
+    16 GB to ORCA. The setting is irrelevant for `level="low_cost"` and applies
+    to ORCA calculations in `dft_ranked` and `full` runs.
+
 The TS and minimum workflows retain their own chemically homogeneous stage
 graphs. Their collectors run independently, followed by one lightweight
 finalizer that creates the portable analysis tables.

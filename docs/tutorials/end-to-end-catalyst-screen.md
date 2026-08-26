@@ -215,6 +215,16 @@ submission.finalization_job_id
 submission.child_submissions
 ```
 
+!!! note "ORCA receives 80% of the requested job memory"
+
+    The composed `catalyst_screen` submission currently uses the child
+    workflow default `orca_memory_fraction=0.8`; it does not expose that
+    setting as an argument. For example, `Resources(mem_gb=20)` requests 20 GB
+    from Slurm and makes approximately 16 GB available to ORCA, leaving the
+    remainder for Python and job overhead. This has no effect on
+    `level="low_cost"`, because that level does not run ORCA. It applies to the
+    ORCA stages in `dft_ranked` and `full` runs.
+
 FRUST submits chemically homogeneous child workflows:
 
 ```text

@@ -355,7 +355,128 @@ class CatalystScreenWorkflow:
         finalize_resources: Resources | None = None,
         target_retention: str = "compact_success",
     ) -> ScreenSubmissionResult:
-        """Submit all required branches and one portable-analysis finalizer."""
+        """Submit the complete catalyst screen and its analysis finalizer.
+
+        The method submits one calculation chain per target in each child
+        branch. Barrier runs contain ``transition_states`` and ``references``;
+        full-cycle runs additionally contain ``cycle_molecules`` and ``int3``.
+        Every branch receives a collector, followed by one ``afterany``
+        finalizer that snapshots references and builds the portable state,
+        barrier, profile, quality, and report artifacts.
+
+        Parameters
+        ----------
+        out_dir : str or pathlib.Path
+            Portable run directory. It receives ``manifest.json``, calculation
+            branches, collected parquets, local reference snapshots,
+            ``analysis/``, and ``run_report.json``. An existing directory is
+            accepted only when its recorded scientific signature matches this
+            workflow.
+        cluster : ClusterConfig
+            Scheduler configuration, including backend, partition, log
+            directory, and optional default scratch directory.
+        execution : {"single_job", "dft_staged", "fully_staged"} or None, optional
+            Scheduler grouping used by every child workflow:
+
+            - ``"single_job"`` runs the complete target pipeline in one job.
+            - ``"dft_staged"`` groups structure preparation, GFN-FF, g-xTB,
+              and DFT ranking together, then separates the expensive DFT
+              refinement stages.
+            - ``"fully_staged"`` submits one dependent job per stage.
+
+            When omitted, ``low_cost`` and ``dft_ranked`` use
+            ``"single_job"``; ``full`` uses ``"dft_staged"``.
+        stage_resources : dict of str to Resources or None, optional
+            Resource overrides keyed by the group names returned by
+            ``wf.show_stages(execution=...)``. Use ``"single_job"`` for the
+            default electronic-only submission. Full staged runs commonly use
+            ``"init"``, ``"dft_opt"``, ``"dft_hessian"``, ``"dft_ts_opt"``,
+            ``"dft_freq"``, and ``"dft_solv_sp"``. Missing groups use the
+            child workflow defaults.
+        debug : bool, optional
+            Forward debugging output to structure generation and calculator
+            stages.
+        save_output_dir : bool, optional
+            Retain calculator output directories. This composed workflow
+            requires ``True`` so reference evidence can be copied into the
+            portable run and shared reference store.
+        work_dir : str, pathlib.Path, or None, optional
+            Scratch directory for calculator execution. When omitted, use
+            ``cluster.work_dir`` if configured.
+        collect_require_normal_termination : bool, optional
+            If ``True``, branch collectors exclude target results with failed
+            normal-termination columns. Excluded and failed targets remain
+            listed in collection and finalization reports.
+        collect_resources : Resources or None, optional
+            Resources for each child branch's collection job. The underlying
+            default is ``Resources(cpus=2, mem_gb=4, timeout_min=120)``.
+        finalize_resources : Resources or None, optional
+            Resources for the final reference-snapshot and analysis job. The
+            default is ``Resources(cpus=2, mem_gb=4, timeout_min=120)``.
+        target_retention : {"compact_success", "all"}, optional
+            ``"compact_success"`` removes intermediate target parquets after
+            successful collection while retaining the final parquet, timing,
+            and required scientific evidence. Failed, skipped, or incomplete
+            targets remain unmodified. ``"all"`` retains every intermediate
+            parquet.
+
+        Returns
+        -------
+        ScreenSubmissionResult
+            Run directory, child submission records, finalization job ID, and
+            scheduler backend. Use ``finalization_job_id`` to identify the job
+            after which ``ft.screen.open_run(out_dir)`` is ready for analysis.
+
+        Raises
+        ------
+        ValueError
+            If calculator evidence is disabled or an execution/retention
+            option is invalid in a child workflow.
+        FileExistsError
+            If ``out_dir`` already contains a different scientific run.
+
+        Examples
+        --------
+        Submit a g-xTB-only screen as one job per target:
+
+        >>> from frust.cluster import ClusterConfig, Resources
+        >>> cluster = ClusterConfig(
+        ...     backend="slurm",
+        ...     partition="kemi1",
+        ...     log_dir="logs",
+        ... )
+        >>> submission = wf.submit(
+        ...     out_dir="results_low_cost",
+        ...     cluster=cluster,
+        ...     execution="single_job",
+        ...     stage_resources={
+        ...         "single_job": Resources(
+        ...             cpus=12,
+        ...             mem_gb=12,
+        ...             timeout_min=7200,
+        ...         )
+        ...     },
+        ... )
+
+        Inspect the exact resource keys before submitting a full DFT run:
+
+        >>> wf.show_stages(execution="dft_staged")[
+        ...     ["branch", "group", "stage", "engine", "solvent"]
+        ... ]
+
+        Notes
+        -----
+        The finalizer uses an ``afterany`` dependency so a partial portable
+        report is still produced when an upstream branch fails. Wait for the
+        finalization job—not merely the target jobs—before opening the result
+        bundle.
+
+        Child workflows currently use their default
+        ``orca_memory_fraction=0.8``. The complete ``Resources.mem_gb`` value
+        is requested from the scheduler and 80 percent is forwarded to ORCA,
+        leaving the remainder for job overhead. This has no effect on
+        ``level="low_cost"`` because that level does not run ORCA.
+        """
         if not save_output_dir:
             raise ValueError(
                 "catalyst_screen requires save_output_dir=True so reference "
