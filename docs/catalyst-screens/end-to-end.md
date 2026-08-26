@@ -276,11 +276,15 @@ FRUST balances every profile state to the same overall composition:
 | TS1, int1, TS2 | state + HBpin |
 | int2 | int2 + H2 + HBpin |
 | TS3, INT3, TS4 | state + H2 |
-| Product | catalyst + HBpin-ligand + H2 |
+| Product | 1/2 dimer + HBpin-ligand + H2 |
 
 The Dimer row is zero. The literal `-1.89 kcal/mol` Gibbs correction is applied
 only to TS1 and TS3 and is recorded separately in `manifest.json`. Electronic
 profiles never receive that correction.
+
+Consequently, the Product energy is the balanced borylation energy
+`E(HBpin-ligand) + E(H2) - E(ligand) - E(HBpin)`. Catalyst activation is not
+added to the Product a second time.
 
 ```python
 profile = run.profile(system_name="pyrrole__NMe", rpos=2)

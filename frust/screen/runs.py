@@ -30,7 +30,7 @@ PROFILE_TERMS: dict[str, dict[str, float]] = {
     "TS3": {"TS3": 1.0, "HH": 1.0},
     "INT3": {"INT3": 1.0, "HH": 1.0},
     "TS4": {"TS4": 1.0, "HH": 1.0},
-    "Product": {"catalyst": 1.0, "HBpin-ligand": 1.0, "HH": 1.0},
+    "Product": {"dimer": 0.5, "HBpin-ligand": 1.0, "HH": 1.0},
 }
 
 
@@ -612,7 +612,7 @@ def _build_profiles(states: pd.DataFrame, manifest: Mapping[str, Any]) -> pd.Dat
                     "relative_g_corrected_kcal_mol": corrected_relative_g,
                     "quality_status": quality,
                     "quality_issues": ";".join(issues),
-                    "mechanism_id": "frust_balanced_cycle::v1",
+                    "mechanism_id": "frust_balanced_cycle::v2",
                 }
             )
     return pd.DataFrame(rows)

@@ -203,7 +203,7 @@ def _write_barrier_bundle(root: Path, *, scope: str = "barriers") -> None:
 
     if scope == "full_cycle":
         cycle = [
-            _row("catalyst", -20.0, {"C": 8, "H": 12, "B": 1, "N": 1}),
+            _row("catalyst", -19.8, {"C": 8, "H": 12, "B": 1, "N": 1}),
             _row("int1", -29.7, ts_formulas["TS1"], rpos=2),
             _row("int2", -29.6, {"C": 13, "H": 17, "B": 1, "N": 2}, rpos=2),
             _row("HBpin-ligand", -14.5, {"C": 11, "H": 18, "B": 1, "N": 1, "O": 2}, rpos=2),
@@ -577,6 +577,17 @@ def test_full_cycle_is_balanced_and_review_persists(tmp_path):
     ]
     assert "unbalanced_composition" not in ";".join(profile["quality_issues"])
     assert profile.iloc[0]["relative_g_kcal_mol"] == pytest.approx(0.0)
+    indexed_profile = profile.set_index("profile_state")
+    assert indexed_profile.loc["Cat", "relative_g_kcal_mol"] == pytest.approx(
+        0.2 * 627.5094740631
+    )
+    assert indexed_profile.loc["Product", "relative_e_kcal_mol"] == pytest.approx(
+        -0.5 * 627.5094740631
+    )
+    assert indexed_profile.loc["Product", "relative_g_kcal_mol"] == pytest.approx(
+        -0.5 * 627.5094740631
+    )
+    assert indexed_profile.loc["Product", "mechanism_id"] == "frust_balanced_cycle::v2"
 
     ts1 = run.states().query("state_id == 'TS1'").iloc[0]
     run.set_review(ts1["result_id"], "approved", note="Correct reactive mode")
