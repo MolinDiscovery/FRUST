@@ -197,7 +197,46 @@ class ScreenRun:
         note: str = "",
         reviewer: str = "",
     ) -> None:
-        """Persist a TS-mode review and refresh dependent analysis."""
+        """Record a scientific review of a transition state's imaginary mode.
+
+        A transition state with one imaginary frequency is not necessarily the
+        intended reaction coordinate. Use this method after inspecting its
+        normal mode with :meth:`plot_vibration`.
+
+        An ``"approved"`` decision records that the mode represents the
+        intended reaction. The state becomes ``"ready"`` when it has no other
+        vibration flags; otherwise it remains ``"review"`` for further
+        inspection. A ``"rejected"`` decision marks the state and dependent
+        barriers or profile states as ``"invalid"``. This method records a
+        decision only: it does not alter the calculated geometry, energy, or
+        frequencies.
+
+        Reviews are tied to the immutable ``result_id``, which includes the
+        result geometry, energy, frequencies, and normal-mode content. A
+        recalculation therefore receives a new ID and requires a new review.
+
+        Parameters
+        ----------
+        result_id : str
+            Identifier of the full-level transition-state result to review.
+        decision : {"approved", "rejected"}
+            ``"approved"`` confirms that the imaginary mode follows the
+            intended reaction coordinate. ``"rejected"`` records that it does
+            not.
+        note : str, optional
+            Scientific rationale for the decision, for example ``"Mode follows
+            the B-H/C-H transfer coordinate."``.
+        reviewer : str, optional
+            Name or initials of the person who made the decision.
+
+        Raises
+        ------
+        ValueError
+            If the run is not full-level, the decision is unsupported, or the
+            result is not a transition state.
+        KeyError
+            If ``result_id`` is not part of this run.
+        """
         if self.manifest.get("calculation_level", "full") != "full":
             raise ValueError("TS vibration review requires level='full'")
         if decision not in {"approved", "rejected"}:
