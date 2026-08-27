@@ -325,6 +325,49 @@ def test_reference_library_keeps_inspectable_structure_and_review(tmp_path):
     assert library.find(target, method, protocol={"n_confs": 10}) is None
 
 
+def test_weak_minimum_reference_requires_approval_before_reuse(tmp_path):
+    method = ft.workflows.methods.preset("r2scan-3c-solv")
+    system = ChemicalSystem("pyrrole__NMe", "pyrrole", "NMe", "CN1C=CC=C1", CATALYST)
+    target = StructureTarget(
+        target_id="dimer:NMe",
+        tag="dimer__NMe",
+        system=system,
+        state_id="dimer",
+        state_kind="minimum",
+        builder_spec="cycle::dimer::v2",
+        scope="catalyst",
+    )
+    df = pd.DataFrame([_row("dimer", -40.0, {"H": 2})])
+    vibrations = deepcopy(list(df.at[0, "dft_freq-vibs"]))
+    vibrations[0]["frequency"] = -8.14
+    df.at[0, "dft_freq-vibs"] = vibrations
+    attach_result_contract(
+        df,
+        "minimum",
+        dft=True,
+        include_terminal_solv_sp=False,
+        thermochemistry=method.thermochemistry,
+    )
+    library = ReferenceLibrary(tmp_path / "library").initialize()
+
+    record = library.publish(df, target, method)
+
+    assert record.metadata["validation_status"] == "review"
+    assert record.metadata["auto_validation"]["flags"] == ["weak_minimum_imag"]
+    assert library.index().iloc[0]["validation_status"] == "review"
+    assert library.find(target, method, reuse_policy="auto_valid") is None
+    assert library.find(target, method, reuse_policy="approved") is None
+
+    record.approve(note="Inspected the weak, peripheral mode")
+
+    assert library.find(
+        target,
+        method,
+        reuse_policy="approved",
+    ).reference_id == record.reference_id
+    assert library.find(target, method, reuse_policy="auto_valid") is None
+
+
 def test_reference_identity_uses_level_and_only_active_reference_stages(tmp_path):
     method = ft.workflows.methods.preset("r2scan-3c-solv")
     system = ChemicalSystem("pyrrole__NMe", "pyrrole", "NMe", "CN1C=CC=C1", CATALYST)
@@ -609,6 +652,29 @@ def test_full_cycle_is_balanced_and_review_persists(tmp_path):
     assert changed["quality_status"] == "review"
 
 
+def test_weak_dimer_quality_propagates_to_full_profile(tmp_path):
+    root = tmp_path / "full"
+    _write_barrier_bundle(root, scope="full_cycle")
+    references_path = root / "calculations/references/merged.parquet"
+    references = pd.read_parquet(references_path)
+    dimer_index = references.index[references["state_id"].eq("dimer")][0]
+    vibrations = deepcopy(list(references.at[dimer_index, "dft_freq-vibs"]))
+    vibrations[0]["frequency"] = -8.14
+    references.at[dimer_index, "dft_freq-vibs"] = vibrations
+    references.to_parquet(references_path, index=False)
+
+    run = ft.screen.open_run(root).refresh_analysis()
+    profile = run.profile(system_name="pyrrole__NMe", rpos=2)
+
+    assert profile["relative_e_kcal_mol"].notna().all()
+    assert profile["relative_g_kcal_mol"].notna().all()
+    assert set(profile["quality_status"]) == {"review"}
+    assert profile["quality_issues"].str.contains(
+        "dependency_review:dimer",
+        regex=False,
+    ).all()
+
+
 def test_balanced_profile_compositions_match_standard_molecule_builders():
     molecules = transformer_mols(
         "CN1C=CC=C1",
@@ -835,7 +901,112 @@ def test_finalizer_publishes_and_future_workflow_reuses_approved_references(tmp_
         pd.read_parquet(reused_references / "merged.parquet").attrs.get("frust_results"),
         dict,
     )
+    reuse_publication = json.loads(
+        (reused_references / "publication_report.json").read_text()
+    )
+    assert reuse_publication["n_reused"] == 4
+    assert reuse_publication["n_missing_results"] == 0
     assert len(ft.screen.open_run(reused_root).states()) == 8
+
+
+@pytest.mark.parametrize(
+    (
+        "imaginary_frequency",
+        "expected_state_quality",
+        "expected_publication_status",
+        "expected_published",
+    ),
+    [
+        (-8.14, "review", "published", 4),
+        (-80.0, "invalid", "not_published", 3),
+    ],
+)
+def test_finalizer_retains_flagged_reference_results(
+    tmp_path,
+    imaginary_frequency,
+    expected_state_quality,
+    expected_publication_status,
+    expected_published,
+):
+    root = tmp_path / "run"
+    workflow = ft.workflows.catalyst_screen(
+        dataframe=_components(),
+        method="r2scan-3c-solv",
+    )
+    root.mkdir()
+    workflow._write_manifest(root)
+    reference_dir = root / "calculations" / "references"
+    formulas = {
+        "ligand": {"C": 5, "H": 7, "N": 1},
+        "dimer": {"C": 16, "H": 24, "B": 2, "N": 2},
+        "HBpin-mol": {"C": 6, "H": 13, "B": 1, "O": 2},
+        "HH": {"H": 2},
+    }
+    for index, target in enumerate(workflow.children()["references"].targets()):
+        frame = pd.DataFrame(
+            [_row(target.state_id, -10.0 - index, formulas[target.state_id])]
+        )
+        if target.state_id == "dimer":
+            vibrations = deepcopy(list(frame.at[0, "dft_freq-vibs"]))
+            vibrations[0]["frequency"] = imaginary_frequency
+            frame.at[0, "dft_freq-vibs"] = vibrations
+        attach_result_contract(
+            frame,
+            "minimum",
+            dft=True,
+            include_terminal_solv_sp=False,
+            thermochemistry=workflow.method.thermochemistry,
+        )
+        target_dir = reference_dir / target.tag
+        target_dir.mkdir(parents=True)
+        frame.to_parquet(target_dir / "final.parquet", index=False)
+    _write_result(
+        root / "calculations/transition_states/merged.parquet",
+        [
+            _row(
+                state,
+                -30.0 - index,
+                {"C": 13, "H": 19, "B": 1, "N": 2}
+                if state in {"TS1", "TS2"}
+                else {"C": 19, "H": 30, "B": 2, "N": 2, "O": 2},
+                state_kind="transition_state",
+                rpos=2,
+            )
+            for index, state in enumerate(("TS1", "TS2", "TS3", "TS4"))
+        ],
+        "transition_state",
+    )
+
+    report = _finalize_run(workflow, root)
+    computed = pd.read_parquet(reference_dir / "computed.parquet")
+    merged = pd.read_parquet(reference_dir / "merged.parquet")
+    run = ft.screen.open_run(root)
+    dimer = run.states().query("state_id == 'dimer'").iloc[0]
+    barriers = run.barriers()
+    publication = json.loads(
+        (reference_dir / "publication_report.json").read_text()
+    )
+    dimer_publication = next(
+        entry for entry in publication["entries"] if entry["state_id"] == "dimer"
+    )
+
+    assert len(computed) == 4
+    assert len(merged) == 4
+    assert set(computed["state_id"]) == {"ligand", "dimer", "HBpin-mol", "HH"}
+    assert dimer["quality_status"] == expected_state_quality
+    assert dimer["n_imag"] == 1
+    assert barriers["delta_e_kcal_mol"].notna().all()
+    assert barriers["delta_g_kcal_mol"].notna().all()
+    assert set(barriers["quality_status"]) == {expected_state_quality}
+    assert barriers["quality_issues"].str.contains(
+        f"dependency_{expected_state_quality}:dimer",
+        regex=False,
+    ).all()
+    assert dimer_publication["status"] == expected_publication_status
+    assert dimer_publication["validation_status"] == expected_state_quality
+    assert publication["n_published"] == expected_published
+    assert report["n_references_calculated"] == 4
+    assert report["n_references_published"] == expected_published
 
 
 def test_composed_slurm_submission_finishes_with_afterany_finalizer(tmp_path):

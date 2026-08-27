@@ -256,7 +256,7 @@ The four quality states mean:
 | quality status | Meaning |
 | --- | --- |
 | `ready` | Automatic checks passed and no manual decision remains. |
-| `review` | The result is usable for inspection but needs TS-mode review or carries a low-frequency warning. |
+| `review` | The result is usable for inspection but needs TS-mode review or has one weak imaginary minimum mode (`abs(frequency) < 50 cm^-1`). |
 | `invalid` | Termination, vibration, composition, or manual-review checks failed. |
 | `incomplete` | A required result or free-energy component is missing. |
 
@@ -281,6 +281,28 @@ states[[
 
 This table retains flagged rows. Nothing is silently removed from the
 scientific audit trail.
+
+For example, a dimer with one small imaginary frequency remains available:
+
+```python
+states.query("state_id == 'dimer'")[[
+    "n_imag",
+    "imaginary_frequencies_cm1",
+    "vibration_flags",
+    "quality_status",
+]]
+```
+
+| n_imag | imaginary_frequencies_cm1 | vibration_flags | quality_status |
+| ---: | ---: | --- | --- |
+| 1 | -8.14 | weak_minimum_imag | review |
+
+!!! note "Retention is not acceptance"
+
+    FRUST keeps completed `review` and `invalid` calculations so their energies
+    and evidence remain auditable. Their status is propagated to dependent
+    barriers and profiles; it does not mean the structure has passed scientific
+    validation.
 
 ## 7. Read The Barrier Table
 
@@ -367,9 +389,17 @@ again.
 
 ## 9. Inspect And Approve Molecular References
 
-Full references pass automatic checks before publication: normal termination,
-complete thermochemistry, and zero imaginary frequencies. They are not reused
-by the default `reuse_policy="approved"` until you inspect them once.
+Full references are checked for normal termination, complete thermochemistry,
+and their vibration pattern before publication. A minimum with zero imaginary
+frequencies receives `validation_status="auto_valid"`. A minimum with exactly
+one weak imaginary frequency (`abs(frequency) < 50 cm^-1`) is published with
+`validation_status="review"`, while stronger or multiple imaginary frequencies
+are retained in the run but not published to the reference library.
+
+Neither `auto_valid` nor `review` full references are reused by the default
+`reuse_policy="approved"` until you inspect and approve them. A review-quality
+reference remains ineligible for `reuse_policy="auto_valid"`, even after manual
+approval.
 
 `low_cost` and `dft_ranked` entries are stored separately as screening
 artifacts. Exact protocol matches can be reused automatically because they are
@@ -398,6 +428,7 @@ reference_queue[[
     "compound_name",
     "formula",
     "method",
+    "validation_status",
     "free_energy_hartree",
 ]]
 ```
@@ -438,6 +469,9 @@ geometry."`.
 
     A newly calculated reference is already part of the run that produced it.
     Approval controls whether future workflows may reuse that shared entry.
+    Inspect a `validation_status="review"` entry particularly carefully before
+    approving it; reoptimization is often preferable when the mode is chemically
+    meaningful rather than a weak peripheral motion.
 
 ## 10. Confirm Reuse Before The Next Submission
 
@@ -488,6 +522,7 @@ results/
 │       ├── computed.parquet
 │       ├── reused.parquet
 │       ├── merged.parquet
+│       ├── publication_report.json
 │       ├── index.parquet
 │       ├── reviews.csv
 │       └── entries/
@@ -562,6 +597,8 @@ incomplete states by default.
 | Reference plan still says `calculate` | No compatible approved entry exists | Check method/protocol fingerprints and approve the intended entry |
 | Barrier is `incomplete` | At least one equation term is missing | Inspect `run.states()` and child collection reports |
 | Barrier is `invalid` | A dependency failed termination, vibration, composition, or review checks | Read `quality_issues` and inspect the raw result |
+| Dimer and barriers are `review` | The dimer has one weak imaginary mode below 50 cm^-1 | Inspect the dimer mode; approve the library entry only if scientifically acceptable, otherwise reoptimize |
+| Reference row exists but was not published | Automatic reference validation rejected it | Read `calculations/references/publication_report.json` for the explicit reason |
 | TS remains `review` after approval | A low-frequency flag remains or a different result ID was approved | Compare the queue and approved `result_id` |
 | `FileExistsError` for `out_dir` | Existing manifest has a different scientific signature | Choose a new directory for the changed run |
 | Reference checksum failure | An entry file changed after publication | Preserve it for diagnosis and publish a clean recalculation |

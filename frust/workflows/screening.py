@@ -838,15 +838,52 @@ def _finalize_run(workflow: CatalystScreenWorkflow, root: Path) -> dict[str, Any
     shared_library = workflow._shared_library(initialize=True)
     computed_path = reference_dir / "computed.parquet"
     computed = pd.read_parquet(computed_path) if computed_path.exists() else pd.DataFrame()
+    reused_path = reference_dir / "reused.parquet"
+    reused = pd.read_parquet(reused_path) if reused_path.exists() else pd.DataFrame()
+    reused_ids = set(reused.get("reference_id", pd.Series(dtype=str)).dropna().astype(str))
+    manifest = json.loads((root / "manifest.json").read_text())
+    reference_plan = {
+        str(entry["target_id"]): entry
+        for entry in manifest.get("reference_plan", [])
+    }
     computed_frames: list[pd.DataFrame] = []
     computed_sources: list[Path] = []
+    publication_entries: list[dict[str, Any]] = []
     reference_targets = workflow.children()["references"].targets()
     for target in reference_targets:
         target_dir = reference_dir / target.tag
         result_path = _deepest_parquet(target_dir)
         if result_path is None:
+            planned = reference_plan.get(target.target_id, {})
+            planned_reference_id = planned.get("reference_id")
+            reused_as_planned = (
+                planned.get("action") == "reuse"
+                and str(planned_reference_id) in reused_ids
+            )
+            publication_entries.append(
+                {
+                    "target_id": target.target_id,
+                    "state_id": target.state_id,
+                    "target": target.tag,
+                    "result_path": None,
+                    "status": "reused" if reused_as_planned else "missing_result",
+                    "validation_status": None,
+                    "reference_id": (
+                        str(planned_reference_id) if reused_as_planned else None
+                    ),
+                    "issue": (
+                        ""
+                        if reused_as_planned
+                        else "No completed or snapshotted reused result was found"
+                    ),
+                }
+            )
             continue
-        frame = pd.read_parquet(result_path)
+        frame = pd.read_parquet(result_path).copy()
+        reference_id: str | None = None
+        validation_status: str | None = None
+        publication_status = "published"
+        publication_issue = ""
         try:
             local_record = local_library.publish(
                 frame,
@@ -857,31 +894,73 @@ def _finalize_run(workflow: CatalystScreenWorkflow, root: Path) -> dict[str, Any
                 source_run=root,
                 source_target_dir=target_dir,
             )
-        except ValueError:
-            continue
-        frame = local_record.dataframe().copy()
-        frame["reference_id"] = local_record.reference_id
+        except ValueError as exc:
+            publication_status = "not_published"
+            validation_status = "invalid"
+            publication_issue = str(exc)
+        else:
+            reference_id = local_record.reference_id
+            metadata = local_record.metadata
+            validation_status = str(
+                metadata.get("validation_status")
+                or metadata.get("auto_validation", {}).get("status")
+                or "auto_valid"
+            )
+            if shared_library is not None:
+                shared_library.publish(
+                    frame,
+                    target,
+                    workflow.method,
+                    protocol=workflow._reference_protocol(),
+                    calculation_level=workflow.level,
+                    source_run=root,
+                    source_target_dir=target_dir,
+                )
+        frame["reference_id"] = reference_id
         frame["reference_source"] = "calculated"
         computed_frames.append(frame)
-        computed_sources.append(local_record.path / "result.parquet")
-        if shared_library is not None:
-            shared_library.publish(
-                frame.drop(columns=["reference_id", "reference_source"], errors="ignore"),
-                target,
-                workflow.method,
-                protocol=workflow._reference_protocol(),
-                calculation_level=workflow.level,
-                source_run=root,
-                source_target_dir=target_dir,
-            )
+        computed_sources.append(result_path)
+        publication_entries.append(
+            {
+                "target_id": target.target_id,
+                "state_id": target.state_id,
+                "target": target.tag,
+                "result_path": str(result_path.relative_to(root)),
+                "status": publication_status,
+                "validation_status": validation_status,
+                "reference_id": reference_id,
+                "issue": publication_issue,
+            }
+        )
     if computed_frames:
         computed = _concat_reference_results(
             computed_frames,
             source_files=computed_sources,
         )
         computed.to_parquet(computed_path, index=False)
-    reused_path = reference_dir / "reused.parquet"
-    reused = pd.read_parquet(reused_path) if reused_path.exists() else pd.DataFrame()
+    publication_report = {
+        "schema_version": 1,
+        "generated_at": _utc_now(),
+        "n_targets": len(reference_targets),
+        "n_results": int(len(computed)),
+        "n_published": sum(
+            entry["status"] == "published" for entry in publication_entries
+        ),
+        "n_not_published": sum(
+            entry["status"] == "not_published" for entry in publication_entries
+        ),
+        "n_reused": sum(
+            entry["status"] == "reused" for entry in publication_entries
+        ),
+        "n_missing_results": sum(
+            entry["status"] == "missing_result" for entry in publication_entries
+        ),
+        "entries": publication_entries,
+    }
+    publication_report_path = reference_dir / "publication_report.json"
+    publication_report_path.write_text(
+        json.dumps(publication_report, indent=2, sort_keys=True, default=str) + "\n"
+    )
     available = [frame for frame in (computed, reused) if not frame.empty]
     available_paths = [
         path
@@ -906,7 +985,14 @@ def _finalize_run(workflow: CatalystScreenWorkflow, root: Path) -> dict[str, Any
         "analysis": analysis_report,
         "branches": branch_reports,
         "n_references_calculated": int(len(computed)),
+        "n_references_published": int(publication_report["n_published"]),
+        "n_references_not_published": int(
+            publication_report["n_not_published"]
+        ),
         "n_references_reused": int(len(reused)),
+        "reference_publication_report": str(
+            publication_report_path.relative_to(root)
+        ),
     }
     (root / "run_report.json").write_text(
         json.dumps(report, indent=2, sort_keys=True, default=str) + "\n"

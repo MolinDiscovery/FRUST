@@ -136,6 +136,7 @@ results/
 │       ├── computed.parquet
 │       ├── reused.parquet
 │       ├── merged.parquet
+│       ├── publication_report.json
 │       ├── index.parquet
 │       ├── reviews.csv
 │       └── entries/
@@ -155,8 +156,26 @@ every level and Gibbs columns only for full runs.
 Within `calculations/references/`, `computed.parquet` contains references made
 for this run, `reused.parquet` contains snapshots from the shared library, and
 `merged.parquet` is their analysis-ready union. `entries/` is the inspectable
-scientific evidence behind those rows. `run_report.json` summarizes child-job
-collection and finalization; it does not contain a second copy of the energies.
+scientific evidence behind published rows. Completed calculations are retained
+in `computed.parquet` even when they fail publication validation.
+`publication_report.json` records every target as `published`, `not_published`,
+`reused`, or `missing_result`, together with the validation status or failure
+reason.
+`run_report.json` summarizes child-job collection and finalization; it does not
+contain a second copy of the energies.
+
+For minima, vibration handling is lossless and explicit:
+
+| vibration result | run quality | reference-library behavior |
+| --- | --- | --- |
+| Zero imaginary modes | `ready` | Published as `validation_status="auto_valid"` |
+| One mode with `abs(frequency) < 50 cm^-1` | `review` | Published as `validation_status="review"`; requires approval for reuse |
+| Stronger or multiple imaginary modes | `invalid` | Retained in the run, but not published |
+
+When a dimer is `review` or `invalid`, FRUST still calculates numerical barriers
+from the available energies. Each dependent row inherits the dimer status and
+records `dependency_review:dimer` or `dependency_invalid:dimer` in
+`quality_issues`. Full-cycle profile rows inherit the same baseline quality.
 
 Reusing an existing run directory is allowed only when its scientific run
 signature matches. A changed input, method, correction, or conformer protocol
@@ -205,9 +224,10 @@ export FRUST_REFERENCE_STORE=/groups/kemi/jmni/grow/frust_reference_library
 ```
 
 The default production reuse policy is `"approved"`. A new reference is
-automatically checked for termination, required thermochemistry, and zero
-imaginary frequencies, but it must be inspected once before future runs reuse
-it:
+automatically checked for termination, required thermochemistry, and its
+vibrations, but it must be inspected once before future runs reuse it. A weak
+single imaginary minimum is queued with `validation_status="review"`; it is
+never eligible for `reuse_policy="auto_valid"`, even if later approved:
 
 ```python
 library = ft.screen.open_reference_library(

@@ -15,6 +15,7 @@ import pandas as pd
 
 from frust.results import free_energy_components, get_result
 from frust.schema import normal_termination_columns
+from frust.screen._quality import minimum_vibration_status
 
 
 HARTREE_TO_KCAL_MOL = 627.5094740631
@@ -414,8 +415,12 @@ def _state_rows(
             quality = "incomplete"
         elif failed_nt or not vibration["valid"] or review_status == "rejected":
             quality = "invalid"
-        elif full and state_kind == "transition_state" and (
-            review_status == "unreviewed" or vibration["flags"]
+        elif full and (
+            "weak_minimum_imag" in vibration["flags"]
+            or (
+                state_kind == "transition_state"
+                and (review_status == "unreviewed" or vibration["flags"])
+            )
         ):
             quality = "review"
         else:
@@ -495,6 +500,7 @@ def _build_barriers(states: pd.DataFrame, manifest: Mapping[str, Any]) -> pd.Dat
             catalyst_name=catalyst,
             rpos=rpos,
         )
+        dependency_issues: list[str] = []
         correction = corrections.get(ts_type, 0.0)
         delta_e = np.nan
         delta_g = np.nan
@@ -533,6 +539,7 @@ def _build_barriers(states: pd.DataFrame, manifest: Mapping[str, Any]) -> pd.Dat
                 quality = _combined_quality(
                     [str(selected[state]["quality_status"]) for state in terms]
                 )
+            dependency_issues = _dependency_quality_issues(selected, terms)
         rows.append(
             {
                 "system_name": system,
@@ -545,7 +552,9 @@ def _build_barriers(states: pd.DataFrame, manifest: Mapping[str, Any]) -> pd.Dat
                 "g_correction_kcal_mol": correction if full else np.nan,
                 "delta_g_corrected_kcal_mol": corrected_delta_g,
                 "quality_status": quality,
-                "quality_issues": ";".join(problems),
+                "quality_issues": ";".join(
+                    dict.fromkeys([*problems, *dependency_issues])
+                ),
                 "formula_id": f"frust_ts_barrier::{ts_type}::v1",
             }
         )
@@ -567,7 +576,7 @@ def _build_profiles(states: pd.DataFrame, manifest: Mapping[str, Any]) -> pd.Dat
         catalyst = str(target["catalyst_name"])
         resolved: dict[
             str,
-            tuple[float, float | None, str, Counter[str]] | None,
+            tuple[float, float | None, str, Counter[str], list[str]] | None,
         ] = {}
         for label, terms in PROFILE_TERMS.items():
             selected, problems = _resolve_terms(
@@ -601,11 +610,18 @@ def _build_profiles(states: pd.DataFrame, manifest: Mapping[str, Any]) -> pd.Dat
                 else None
             )
             quality = _combined_quality([str(selected[state]["quality_status"]) for state in terms])
+            dependency_issues = _dependency_quality_issues(selected, terms)
             composition = Counter()
             for state, coefficient in terms.items():
                 for element, count in _parse_formula(str(selected[state]["formula"])).items():
                     composition[element] += count * coefficient
-            resolved[label] = (electronic_energy, free_energy, quality, composition)
+            resolved[label] = (
+                electronic_energy,
+                free_energy,
+                quality,
+                composition,
+                dependency_issues,
+            )
         reference = resolved.get("Dimer")
         for order, label in enumerate(PROFILE_ORDER):
             value = resolved.get(label)
@@ -617,8 +633,23 @@ def _build_profiles(states: pd.DataFrame, manifest: Mapping[str, Any]) -> pd.Dat
                 quality = "incomplete"
                 issues.append("missing_profile_dependency")
             else:
-                electronic_energy, free_energy, quality, composition = value
-                ref_electronic_energy, ref_free_energy, _, ref_composition = reference
+                (
+                    electronic_energy,
+                    free_energy,
+                    value_quality,
+                    composition,
+                    value_issues,
+                ) = value
+                (
+                    ref_electronic_energy,
+                    ref_free_energy,
+                    ref_quality,
+                    ref_composition,
+                    ref_issues,
+                ) = reference
+                quality = _combined_quality([value_quality, ref_quality])
+                issues.extend(value_issues)
+                issues.extend(ref_issues)
                 if not _same_composition(composition, ref_composition):
                     quality = "invalid"
                     issues.append("unbalanced_composition")
@@ -650,7 +681,7 @@ def _build_profiles(states: pd.DataFrame, manifest: Mapping[str, Any]) -> pd.Dat
                     ),
                     "relative_g_corrected_kcal_mol": corrected_relative_g,
                     "quality_status": quality,
-                    "quality_issues": ";".join(issues),
+                    "quality_issues": ";".join(dict.fromkeys(issues)),
                     "mechanism_id": "frust_balanced_cycle::v2",
                 }
             )
@@ -695,6 +726,22 @@ def _resolve_terms(
     return selected, problems
 
 
+def _dependency_quality_issues(
+    selected: Mapping[str, pd.Series],
+    state_ids: Mapping[str, float],
+) -> list[str]:
+    """Return compact quality provenance for non-ready dependencies."""
+    issues: list[str] = []
+    for state_id in state_ids:
+        row = selected.get(state_id)
+        if row is None:
+            continue
+        quality = str(row.get("quality_status", "incomplete"))
+        if quality != "ready":
+            issues.append(f"dependency_{quality}:{state_id}")
+    return issues
+
+
 def _vibration_status(row: pd.Series, state_kind: str) -> dict[str, Any]:
     columns = [column for column in row.index if str(column).endswith("-vibs")]
     vibrations = next(
@@ -717,6 +764,21 @@ def _vibration_status(row: pd.Series, state_kind: str) -> dict[str, Any]:
     negative = [frequency for frequency in frequencies if frequency < 0]
     positive = [frequency for frequency in frequencies if frequency >= 0]
     expected = 1 if state_kind == "transition_state" else 0
+    if expected == 0:
+        minimum = minimum_vibration_status(frequencies)
+        flags = list(minimum["flags"])
+        if positive and min(positive) < 10.0:
+            flags.append("very_low_pos")
+        return {
+            "valid": minimum["valid"],
+            "n_imag": minimum["n_imag"],
+            "imaginary_frequencies": ",".join(
+                f"{frequency:.2f}"
+                for frequency in minimum["negative_frequencies_cm1"]
+            ),
+            "flags": flags,
+            "issues": minimum["issues"],
+        }
     flags: list[str] = []
     if expected == 1 and len(negative) == 1 and abs(negative[0]) < 50.0:
         flags.append("weak_imag")

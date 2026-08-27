@@ -22,6 +22,7 @@ from tooltoad.chemutils import ac2xyz
 
 from frust.results import free_energy_components, get_result, result_column
 from frust.schema import normal_termination_columns
+from frust.screen._quality import minimum_vibration_status
 from frust.structures import StructureTarget
 from frust.workflows.methods import CalculationLevel, MethodPlan
 
@@ -39,6 +40,7 @@ INDEX_COLUMNS = [
     "calculation_level",
     "method",
     "method_fingerprint",
+    "validation_status",
     "thermochemistry_mode",
     "electronic_energy_hartree",
     "free_energy_hartree",
@@ -84,6 +86,7 @@ class ReferenceRecord:
             "formula",
             "calculation_level",
             "method",
+            "validation_status",
             "electronic_energy_hartree",
             "thermochemistry_mode",
             "free_energy_hartree",
@@ -178,7 +181,9 @@ class ReferenceLibrary:
                 missing = [column for column in INDEX_COLUMNS if column not in index]
                 if missing:
                     for column in missing:
-                        index[column] = pd.NA
+                        index[column] = (
+                            "auto_valid" if column == "validation_status" else pd.NA
+                        )
                     _atomic_write_parquet(index[INDEX_COLUMNS], self.index_path)
             if not self.reviews_path.exists():
                 _atomic_write_csv(
@@ -325,7 +330,17 @@ class ReferenceLibrary:
         for _, candidate in candidates.iterrows():
             reference_id = str(candidate["reference_id"])
             decision = str(candidate["review"])
+            validation_value = candidate.get("validation_status", "auto_valid")
+            validation_status = (
+                "auto_valid" if pd.isna(validation_value) else str(validation_value)
+            )
             if decision == "rejected":
+                continue
+            if (
+                calculation_level == "full"
+                and reuse_policy == "auto_valid"
+                and validation_status != "auto_valid"
+            ):
                 continue
             if (
                 calculation_level == "full"
@@ -446,6 +461,7 @@ class ReferenceLibrary:
                 "calculation_level": calculation_level,
                 "method": method.name,
                 "method_fingerprint": str(identity["method_fingerprint"]),
+                "validation_status": str(validation["status"]),
                 "method_plan": method.to_dict(),
                 "thermochemistry_mode": (
                     None if energy is None else str(energy["thermochemistry_mode"])
@@ -588,6 +604,16 @@ class ReferenceLibrary:
             for column in INDEX_COLUMNS
             if column != "entry_path"
         }
+        auto_validation = metadata.get("auto_validation", {})
+        row["validation_status"] = (
+            metadata.get("validation_status")
+            or (
+                auto_validation.get("status")
+                if isinstance(auto_validation, Mapping)
+                else None
+            )
+            or "auto_valid"
+        )
         row["entry_path"] = str(entry_rel)
         with self._locked():
             index = pd.read_parquet(self.index_path)
@@ -776,13 +802,27 @@ def _validate_reference_result(
     )
     if vibrations is None:
         raise ValueError("Reference has no usable vibration data")
-    negative = [float(mode["frequency"]) for mode in vibrations if float(mode["frequency"]) < 0]
-    if negative:
-        raise ValueError(f"Reference minimum has {len(negative)} imaginary frequencies")
+    minimum = minimum_vibration_status(
+        float(mode["frequency"])
+        for mode in vibrations
+    )
+    if minimum["status"] == "invalid":
+        frequencies = ", ".join(
+            f"{frequency:.2f}"
+            for frequency in minimum["negative_frequencies_cm1"]
+        )
+        raise ValueError(
+            f"Reference minimum has {minimum['n_imag']} imaginary frequencies: "
+            f"{frequencies} cm^-1"
+        )
     return {
-        "status": "auto_valid",
+        "status": minimum["status"],
         "normal_termination_columns": nt_columns,
-        "n_imag": 0,
+        "n_imag": minimum["n_imag"],
+        "imaginary_frequencies_cm1": minimum["negative_frequencies_cm1"],
+        "flags": minimum["flags"],
+        "issues": minimum["issues"],
+        "weak_imag_threshold_cm1": minimum["weak_imag_threshold_cm1"],
     }
 
 
