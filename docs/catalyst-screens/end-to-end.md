@@ -24,11 +24,50 @@ wf.plan()[["branch", "state_id", "system_name", "rpos", "action"]]
 | transition_states | TS2 | pyrrole__NMe | 2 | calculate |
 | references | ligand | pyrrole__NMe |  | reuse |
 | references | dimer | pyrrole__NMe |  | calculate |
+| references | dimer_bh_bridged | pyrrole__NMe |  | calculate |
+| references | dimer_eight_membered | pyrrole__NMe |  | calculate |
 | references | HBpin-mol | pyrrole__NMe |  | reuse |
 | references | HH | pyrrole__NMe |  | reuse |
 
 `plan()` is calculation-free. It shows which structures will be calculated and
 which approved scientific references can be reused.
+
+## Select The Dimer Reference
+
+The default `dimer_reference="lowest"` calculates all three aminoborane dimer
+topologies and selects one reference per catalyst:
+
+| state id | connectivity |
+| --- | --- |
+| `dimer` | reciprocal B-H-B bridges (the existing FRUST dimer) |
+| `dimer_bh_bridged` | one N-B contact and one B-H-B bridge |
+| `dimer_eight_membered` | two reciprocal N-B contacts |
+
+Full runs rank qualified conformers by Gibbs energy. `low_cost` and
+`dft_ranked` runs rank them by electronic energy. The selected conformer's
+electronic and Gibbs energies stay paired and are reused for every substrate
+and reactive position belonging to that catalyst.
+
+```python
+run = ft.screen.open_run("results")
+run.dimer_references()[
+    [
+        "catalyst_name",
+        "state_id",
+        "relative_energy_kcal_mol",
+        "selected",
+        "selection_quality_status",
+    ]
+]
+```
+
+!!! warning "Lowest means all candidates were checked"
+
+    If any requested topology is missing or invalid, FRUST does not silently
+    choose among the remaining structures. The selection and dependent
+    barriers are marked `incomplete` or `invalid`. Use an explicit
+    `dimer_reference="dimer"`, `"dimer_bh_bridged"`, or
+    `"dimer_eight_membered"` only when that topology is intentionally fixed.
 
 ## Choose The Result Level
 
@@ -142,6 +181,7 @@ results/
 │       └── entries/
 └── analysis/
     ├── states.parquet
+    ├── dimer_references.parquet
     ├── barriers.parquet
     ├── profiles.parquet       # full_cycle only
     ├── reviews.csv
@@ -291,12 +331,12 @@ FRUST balances every profile state to the same overall composition:
 
 | profile state | absolute combination |
 | --- | --- |
-| Dimer | 1/2 dimer + ligand + HBpin |
+| Dimer | 1/2 selected dimer + ligand + HBpin |
 | Cat | catalyst + ligand + HBpin |
 | TS1, int1, TS2 | state + HBpin |
 | int2 | int2 + H2 + HBpin |
 | TS3, INT3, TS4 | state + H2 |
-| Product | 1/2 dimer + HBpin-ligand + H2 |
+| Product | 1/2 selected dimer + HBpin-ligand + H2 |
 
 The Dimer row is zero. The literal `-1.89 kcal/mol` Gibbs correction is applied
 only to TS1 and TS3 and is recorded separately in `manifest.json`. Electronic

@@ -4,10 +4,13 @@ import json
 
 import pandas as pd
 import pytest
+from rdkit import Chem
+from rdkit.Chem.rdMolDescriptors import CalcMolFormula
 
 import frust as ft
 from frust.results import attach_result_contract
 from frust.structures.planner import molecule_states
+from frust.transformers import transformer_mols
 
 CATALYST = "CC1(C)CCCC(C)(C)N1C2=CC=CC=C2B"
 MOLECULE_STATES = (
@@ -19,6 +22,11 @@ MOLECULE_STATES = (
     "int2",
     "HBpin-ligand",
     "HBpin-mol",
+)
+DIMER_STATES = (
+    "dimer",
+    "dimer_bh_bridged",
+    "dimer_eight_membered",
 )
 
 
@@ -54,10 +62,38 @@ def test_mols_targets_are_lightweight_json_structure_plans(monkeypatch):
 def test_mols_docstring_and_shortcuts_define_the_public_state_vocabulary():
     docstring = ft.workflows.mols.__doc__ or ""
 
-    assert all(f'``"{state}"``' in docstring for state in MOLECULE_STATES)
+    assert all(
+        f'``"{state}"``' in docstring
+        for state in (*MOLECULE_STATES, *DIMER_STATES)
+    )
     assert molecule_states("all") == MOLECULE_STATES
+    assert molecule_states("dimers") == DIMER_STATES
     assert molecule_states("uniques") == ("ligand", "int1", "int2", "HBpin-ligand")
     assert molecule_states("generics") == ("dimer", "HH", "catalyst", "HBpin-mol")
+
+
+def test_dimer_variants_have_expected_formula_charge_and_interaction_ring():
+    dimers = transformer_mols(
+        ligand_smiles="CN1C=CC=C1",
+        catalyst_smiles=CATALYST,
+        select="dimers",
+    )
+    expected_largest_charged_ring = {
+        "dimer": 4,
+        "dimer_bh_bridged": 6,
+        "dimer_eight_membered": 8,
+    }
+
+    for state_id, expected_ring_size in expected_largest_charged_ring.items():
+        mol = next(value for key, value in dimers.items() if key.endswith(state_id))
+        charged_ring_sizes = [
+            len(ring)
+            for ring in Chem.GetSymmSSSR(mol)
+            if any(mol.GetAtomWithIdx(index).GetFormalCharge() for index in ring)
+        ]
+        assert CalcMolFormula(mol) == "C30H48B2N2"
+        assert Chem.GetFormalCharge(mol) == 0
+        assert max(charged_ring_sizes) == expected_ring_size
 
 
 def test_workflow_stage_tables_stay_separate_and_homogeneous():

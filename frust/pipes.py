@@ -749,6 +749,15 @@ def run_test(
             tmp = transformer_mols(ligand_smiles=smi, only_uniques=True)
         elif select_mols == "generics":
             tmp = transformer_mols(ligand_smiles=smi, only_generics=True)
+        elif select_mols == "dimers":
+            tmp = transformer_mols(
+                ligand_smiles=smi,
+                select=[
+                    "dimer",
+                    "dimer_bh_bridged",
+                    "dimer_eight_membered",
+                ],
+            )
         else:
             tmp = transformer_mols(ligand_smiles=smi, select=select_mols)
 

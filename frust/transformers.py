@@ -1,7 +1,138 @@
 from rdkit import Chem
 from rdkit.Chem.rdchem import RWMol
 
+from .tsguess.matching import match_catalyst_roles
 from .utils.mols import combine_rw_mols, get_molecule_name
+
+
+STANDARD_MOLECULE_STATES = (
+    "dimer",
+    "HH",
+    "ligand",
+    "catalyst",
+    "int1",
+    "int2",
+    "HBpin-ligand",
+    "HBpin-mol",
+)
+DIMER_VARIANT_STATES = (
+    "dimer",
+    "dimer_bh_bridged",
+    "dimer_eight_membered",
+)
+OPTIONAL_DIMER_STATES = DIMER_VARIANT_STATES[1:]
+
+
+def _prepare_aminoborane_monomer(
+    catalyst_smiles: str,
+) -> tuple[RWMol, dict[str, int | tuple[int, ...]]]:
+    """Return one editable aminoborane with explicit B-H atoms."""
+    mol = Chem.MolFromSmiles(catalyst_smiles)
+    if mol is None:
+        raise ValueError(f"Could not parse catalyst SMILES: {catalyst_smiles}")
+
+    roles = match_catalyst_roles(mol, catalyst_name=catalyst_smiles)
+    mol = Chem.AddHs(mol, onlyOnAtoms=[roles["cat_B"]])
+    cat_hs = tuple(
+        atom.GetIdx()
+        for atom in mol.GetAtomWithIdx(roles["cat_B"]).GetNeighbors()
+        if atom.GetAtomicNum() == 1
+    )
+    if len(cat_hs) != 2:
+        raise ValueError(
+            f"Expected catalyst BH2, found {len(cat_hs)} B-H hydrogens for "
+            f"{catalyst_smiles}."
+        )
+    return RWMol(mol), {
+        "cat_B": int(roles["cat_B"]),
+        "cat_N": int(roles["cat_N"]),
+        "cat_Hs": cat_hs,
+    }
+
+
+def _combine_aminoborane_monomers(
+    catalyst_smiles: str,
+) -> tuple[
+    RWMol,
+    dict[str, int | tuple[int, ...]],
+    dict[str, int | tuple[int, ...]],
+]:
+    """Combine two prepared monomers and offset the second role map."""
+    first, first_roles = _prepare_aminoborane_monomer(catalyst_smiles)
+    second, second_roles = _prepare_aminoborane_monomer(catalyst_smiles)
+    combined, offset = combine_rw_mols(first, second)
+    second_roles = {
+        "cat_B": int(second_roles["cat_B"]) + offset,
+        "cat_N": int(second_roles["cat_N"]) + offset,
+        "cat_Hs": tuple(
+            int(atom_idx) + offset for atom_idx in second_roles["cat_Hs"]
+        ),
+    }
+    return combined, first_roles, second_roles
+
+
+def _set_formal_charges(editable: RWMol, charges: dict[int, int]) -> None:
+    """Assign formal charges used to represent donor-acceptor single bonds."""
+    for atom_idx, charge in charges.items():
+        editable.GetAtomWithIdx(int(atom_idx)).SetFormalCharge(int(charge))
+
+
+def _sanitize_dimer(editable: RWMol) -> Chem.Mol:
+    """Finalize and sanitize an editable dimer graph."""
+    mol = editable.GetMol()
+    Chem.SanitizeMol(mol)
+    return mol
+
+
+def _build_double_bh_bridged_dimer(catalyst_smiles: str) -> Chem.Mol:
+    """Build the existing reciprocal B-H-B dimer graph."""
+    editable, first, second = _combine_aminoborane_monomers(catalyst_smiles)
+    first_h = int(first["cat_Hs"][0])
+    second_h = int(second["cat_Hs"][0])
+    first_b = int(first["cat_B"])
+    second_b = int(second["cat_B"])
+
+    editable.AddBond(first_h, second_b, Chem.BondType.SINGLE)
+    editable.AddBond(second_h, first_b, Chem.BondType.SINGLE)
+    _set_formal_charges(
+        editable,
+        {first_b: -1, second_b: -1, first_h: +1, second_h: +1},
+    )
+    return _sanitize_dimer(editable)
+
+
+def _build_bh_bridged_dimer(catalyst_smiles: str) -> Chem.Mol:
+    """Build the asymmetric six-membered B-H bridged dimer graph."""
+    editable, first, second = _combine_aminoborane_monomers(catalyst_smiles)
+    first_b = int(first["cat_B"])
+    first_n = int(first["cat_N"])
+    second_b = int(second["cat_B"])
+    bridge_h = int(second["cat_Hs"][0])
+
+    editable.AddBond(first_n, second_b, Chem.BondType.SINGLE)
+    editable.AddBond(bridge_h, first_b, Chem.BondType.SINGLE)
+    _set_formal_charges(
+        editable,
+        {first_n: +1, second_b: -1, bridge_h: +1, first_b: -1},
+    )
+    return _sanitize_dimer(editable)
+
+
+def _build_eight_membered_dimer(catalyst_smiles: str) -> Chem.Mol:
+    """Build the dimer graph with two reciprocal cross-monomer N-B bonds."""
+    editable, first, second = _combine_aminoborane_monomers(catalyst_smiles)
+    first_b = int(first["cat_B"])
+    first_n = int(first["cat_N"])
+    second_b = int(second["cat_B"])
+    second_n = int(second["cat_N"])
+
+    editable.AddBond(first_n, second_b, Chem.BondType.SINGLE)
+    editable.AddBond(second_n, first_b, Chem.BondType.SINGLE)
+    _set_formal_charges(
+        editable,
+        {first_n: +1, second_b: -1, second_n: +1, first_b: -1},
+    )
+    return _sanitize_dimer(editable)
 
 
 def transformer_mols(
@@ -26,10 +157,13 @@ def transformer_mols(
     show_IUPAC : bool, optional
         Resolve an IUPAC substrate name for generated keys when ``True``.
     select : str or list of str or None, optional
-        State or states to return. Accepted values are ``"dimer"``, ``"HH"``,
+        State or states to return. Accepted values are ``"dimer"``,
+        ``"dimer_bh_bridged"``, ``"dimer_eight_membered"``, ``"HH"``,
         ``"ligand"``, ``"catalyst"``, ``"int1"``, ``"int2"``,
-        ``"HBpin-ligand"``, and ``"HBpin-mol"``. The former ``"int2"`` state
-        is now ``"int1"``; the former ``"mol2"`` state is now ``"int2"``.
+        ``"HBpin-ligand"``, and ``"HBpin-mol"``. ``"dimer"`` is the
+        existing reciprocal B-H-B graph; ``"dimers"`` selects all three
+        topologies. The former ``"int2"`` state is now ``"int1"``; the
+        former ``"mol2"`` state is now ``"int2"``.
     key_prefix : str or None, optional
         Stable prefix for generated structure names.
     rpos_list : tuple of int, list of int, or None, optional
@@ -46,16 +180,9 @@ def transformer_mols(
     """
 
     # --- normalize select to a list if given ---
-    base_names = (
-        "dimer",
-        "HH",
-        "ligand",
-        "catalyst",
-        "int1",
-        "int2",
-        "HBpin-ligand",
-        "HBpin-mol",
-    )
+    base_names = (*STANDARD_MOLECULE_STATES, *OPTIONAL_DIMER_STATES)
+    if select == "dimers":
+        select = list(DIMER_VARIANT_STATES)
     if select is not None:
         if isinstance(select, str):
             select = [select]
@@ -75,34 +202,20 @@ def transformer_mols(
     catalyst_rw  = RWMol(catalyst_mol)
     ligand_rw    = RWMol(ligand_mol)
 
-    ####################
-    ### Create dimer ###
-    ####################
-    catalyst1 = Chem.MolFromSmiles(catalyst_smiles)
-    catalyst2 = Chem.MolFromSmiles(catalyst_smiles)
-    B_pattern_dimer = Chem.MolFromSmarts("[B]c1ccccc1")
-    B_match_dimer = catalyst1.GetSubstructMatches(B_pattern_dimer)
-    B_idx_1 = B_match_dimer[0][0]
-    catalyst1 = Chem.AddHs(catalyst1, onlyOnAtoms=[B_idx_1])
-    catalyst2 = Chem.AddHs(catalyst2, onlyOnAtoms=[B_idx_1])
-    catalyst1_RW = RWMol(catalyst1)
-    catalyst2_RW = RWMol(catalyst2)
-    dimer, offset = combine_rw_mols(catalyst1_RW, catalyst2_RW)
-    BHH_pattern = Chem.MolFromSmarts("B([H])([H])c1ccccc1")
-    BHH_match = catalyst1.GetSubstructMatches(BHH_pattern)
-    cat1_H1_idx, cat1_H2_idx = BHH_match[0][1], BHH_match[0][2]
-    cat2_H1_idx = cat1_H1_idx + offset
-    cat2_H2_idx = cat1_H2_idx + offset
-    cat1_B_idx  = BHH_match[0][0]
-    cat2_B_idx  = cat1_B_idx + offset
-    dimer.AddBond(cat1_H1_idx, cat2_B_idx, Chem.BondType.SINGLE)
-    dimer.AddBond(cat2_H1_idx, cat1_B_idx, Chem.BondType.SINGLE)
-    for idx, charge in [(cat1_B_idx, -1), (cat2_B_idx, -1),
-                        (cat1_H1_idx, +1), (cat2_H1_idx, +1)]:
-        atom = dimer.GetAtomWithIdx(idx)
-        atom.SetFormalCharge(charge)
-    dimer_mol = dimer.GetMol()
-    Chem.SanitizeMol(dimer_mol)
+    #####################
+    ### Create dimers ###
+    #####################
+    dimer_mol = _build_double_bh_bridged_dimer(catalyst_smiles)
+    requested_optional_dimers = set(select or ()).intersection(OPTIONAL_DIMER_STATES)
+    optional_dimers: dict[str, Chem.Mol] = {}
+    if "dimer_bh_bridged" in requested_optional_dimers:
+        optional_dimers["dimer_bh_bridged"] = _build_bh_bridged_dimer(
+            catalyst_smiles
+        )
+    if "dimer_eight_membered" in requested_optional_dimers:
+        optional_dimers["dimer_eight_membered"] = _build_eight_membered_dimer(
+            catalyst_smiles
+        )
 
     ####################
     ### Create HH  ###
@@ -151,8 +264,6 @@ def transformer_mols(
         raise ValueError("No [B] atom found in the catalyst.")
 
     catalyst_b_idx = catalyst_matches[0][0]
-    from frust.tsguess.matching import match_catalyst_roles
-
     catalyst_roles = match_catalyst_roles(
         catalyst_mol,
         catalyst_name=catalyst_smiles,
@@ -218,6 +329,8 @@ def transformer_mols(
         HBpin_ligands,
         HBpin_mol
     ]
+    names.extend(optional_dimers)
+    mols.extend(optional_dimers.values())
 
     mols_dict: dict[str, Chem.Mol] = {}
     metadata_dict: dict[str, dict] = {}

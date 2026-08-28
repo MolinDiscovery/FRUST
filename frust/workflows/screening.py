@@ -20,6 +20,7 @@ from frust.screen import read as read_screen
 from frust.screen.references import ReferenceLibrary, ReferenceRecord, ReusePolicy
 from frust.screen.runs import ScreenRun, build_analysis
 from frust.structures import StructureTarget
+from frust.structures.specs import DIMER_STATES
 from frust.utils.dataframes import merge_dataframe_attrs
 from frust.workflows.factories import Int3Workflow, MolsWorkflow, ScreenTSWorkflow
 from frust.workflows.methods import (
@@ -34,6 +35,12 @@ from frust.workflows.methods import (
 
 
 ScreenScope = Literal["barriers", "full_cycle"]
+DimerReference = Literal[
+    "lowest",
+    "dimer",
+    "dimer_bh_bridged",
+    "dimer_eight_membered",
+]
 DEFAULT_G_CORRECTIONS = {"TS1": -1.89, "TS3": -1.89}
 DEFAULT_FINALIZE_RESOURCES = Resources(cpus=2, mem_gb=4, timeout_min=120)
 
@@ -86,6 +93,7 @@ class CatalystScreenWorkflow:
         method: MethodPlan | str | None = None,
         ranking_solvation: str = "method",
         scope: ScreenScope = "barriers",
+        dimer_reference: DimerReference = "lowest",
         g_corrections_kcal_mol: dict[str, float] | None = None,
         reference_store: str | Path | None = None,
         reuse_policy: ReusePolicy = "approved",
@@ -97,6 +105,11 @@ class CatalystScreenWorkflow:
             raise ValueError("Provide exactly one of csv_path or dataframe")
         if scope not in {"barriers", "full_cycle"}:
             raise ValueError("scope must be 'barriers' or 'full_cycle'")
+        if dimer_reference not in {"lowest", *DIMER_STATES}:
+            raise ValueError(
+                "dimer_reference must be 'lowest', 'dimer', "
+                "'dimer_bh_bridged', or 'dimer_eight_membered'"
+            )
         if reuse_policy not in {"approved", "auto_valid"}:
             raise ValueError("reuse_policy must be 'approved' or 'auto_valid'")
         normalized_level = str(level).strip().lower()
@@ -119,6 +132,7 @@ class CatalystScreenWorkflow:
                 "for full catalyst-screen analysis"
             )
         self.scope = scope
+        self.dimer_reference: DimerReference = dimer_reference
         self.g_corrections_kcal_mol = {
             **DEFAULT_G_CORRECTIONS,
             **{
@@ -240,6 +254,7 @@ class CatalystScreenWorkflow:
             else self.method.thermochemistry.to_dict()
         )
         result.attrs["scope"] = self.scope
+        result.attrs["dimer_reference"] = self.dimer_reference
         return result
 
     def show_stages(self, execution: str | None = None, detail: str = "summary") -> pd.DataFrame:
@@ -551,7 +566,12 @@ class CatalystScreenWorkflow:
         )
 
     def _reference_states(self) -> list[str]:
-        states = ["ligand", "dimer", "HBpin-mol", "HH"]
+        dimer_states = (
+            list(DIMER_STATES)
+            if self.dimer_reference == "lowest"
+            else [self.dimer_reference]
+        )
+        states = ["ligand", *dimer_states, "HBpin-mol", "HH"]
         if self.scope == "full_cycle":
             states.append("catalyst")
         return states
@@ -632,6 +652,12 @@ class CatalystScreenWorkflow:
             "run_type": "catalyst_screen",
             "created_at": _utc_now(),
             "scope": self.scope,
+            "dimer_reference": self.dimer_reference,
+            "dimer_candidates": (
+                list(DIMER_STATES)
+                if self.dimer_reference == "lowest"
+                else [self.dimer_reference]
+            ),
             "calculation_level": self.level,
             "screening": self.screening.to_dict(),
             "screening_fingerprint": self.screening.fingerprint(),
@@ -641,9 +667,9 @@ class CatalystScreenWorkflow:
             "ts_types": list(self.ts_types),
             "g_corrections_kcal_mol": self.g_corrections_kcal_mol,
             "mechanism_id": (
-                "frust_ts_barriers::v1"
+                "frust_ts_barriers::v2"
                 if self.scope == "barriers"
-                else "frust_balanced_cycle::v1"
+                else "frust_balanced_cycle::v3"
             ),
             "components": _records(self.components()),
             "systems": _records(self.systems()),
@@ -678,6 +704,7 @@ class CatalystScreenWorkflow:
         }
         signature_keys = [
             "scope",
+            "dimer_reference",
             "calculation_level",
             "screening_fingerprint",
             "method_fingerprint",
@@ -721,6 +748,7 @@ def catalyst_screen(
     method: MethodPlan | str | None = None,
     ranking_solvation: str = "method",
     scope: ScreenScope = "barriers",
+    dimer_reference: DimerReference = "lowest",
     g_corrections_kcal_mol: dict[str, float] | None = None,
     reference_store: str | Path | None = None,
     reuse_policy: ReusePolicy = "approved",
@@ -730,9 +758,11 @@ def catalyst_screen(
 ) -> CatalystScreenWorkflow:
     """Create an end-to-end catalyst-screen workflow.
 
-    The default ``scope="barriers"`` calculates TS1--TS4 plus ligand, dimer,
-    HBpin, and H2 references. ``scope="full_cycle"`` additionally calculates
-    catalyst, int1, int2, HBpin-ligand, and INT3 states for a balanced profile.
+    The default ``scope="barriers"`` calculates TS1--TS4 plus ligand, all
+    three dimer topologies, HBpin, and H2 references. The lowest qualified
+    dimer is selected per catalyst. ``scope="full_cycle"`` additionally
+    calculates catalyst, int1, int2, HBpin-ligand, and INT3 states for a
+    balanced profile.
 
     Parameters
     ----------
@@ -764,6 +794,11 @@ def catalyst_screen(
         ``"barriers"`` calculates the dependencies of the four supplied
         barrier equations. ``"full_cycle"`` adds every state needed for the
         balanced catalytic-cycle profile.
+    dimer_reference : {"lowest", "dimer", "dimer_bh_bridged", "dimer_eight_membered"}, optional
+        Catalyst dimer used in barrier and profile equations. ``"lowest"``
+        calculates all three topologies and strictly selects the lowest
+        qualified result per catalyst. An explicit state calculates and uses
+        only that topology. ``"dimer"`` reproduces the former FRUST behavior.
     g_corrections_kcal_mol : dict or None, optional
         Gibbs-only profile corrections in kcal/mol. Defaults to ``-1.89`` for
         TS1 and TS3. These corrections are never applied to electronic
@@ -811,6 +846,7 @@ def catalyst_screen(
         method=method,
         ranking_solvation=ranking_solvation,
         scope=scope,
+        dimer_reference=dimer_reference,
         g_corrections_kcal_mol=g_corrections_kcal_mol,
         reference_store=reference_store,
         reuse_policy=reuse_policy,

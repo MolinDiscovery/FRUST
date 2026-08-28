@@ -474,6 +474,112 @@ def test_barrier_analysis_matches_supplied_formulas_and_survives_relocation(tmp_
     pd.testing.assert_frame_equal(run.barriers(), moved.barriers())
 
 
+def test_lowest_dimer_reference_uses_gibbs_ranking_and_one_exact_result(tmp_path):
+    root = tmp_path / "lowest-dimer"
+    _write_barrier_bundle(root)
+    manifest = json.loads((root / "manifest.json").read_text())
+    manifest["dimer_reference"] = "lowest"
+    manifest["dimer_candidates"] = list(screen_runs.DIMER_STATES)
+    (root / "manifest.json").write_text(json.dumps(manifest, indent=2))
+
+    formula = {"C": 16, "H": 24, "B": 2, "N": 2}
+    references = [
+        _row("ligand", -10.0, {"C": 5, "H": 7, "N": 1}),
+        _row("dimer", -40.0, formula),
+        _row("dimer_bh_bridged", -40.2, formula),
+        _row("dimer_eight_membered", -40.1, formula),
+        _row("HBpin-mol", -5.0, {"C": 6, "H": 13, "B": 1, "O": 2}),
+        _row("HH", -1.0, {"H": 2}),
+    ]
+    references[1]["dft_freq-EE"] = -40.2
+    references[2]["dft_freq-EE"] = -39.4
+    references[3]["dft_freq-EE"] = -41.0
+    _write_result(
+        root / "calculations/references/merged.parquet",
+        references,
+        "minimum",
+    )
+
+    run = ft.screen.open_run(root).refresh_analysis()
+    choices = run.dimer_references()
+    selected = choices.loc[choices["selected"]].iloc[0]
+    barrier = run.barriers().query("ts_type == 'TS1'").iloc[0]
+
+    assert choices["selection_quantity"].unique().tolist() == ["gibbs"]
+    assert selected["state_id"] == "dimer_bh_bridged"
+    assert selected["selection_quality_status"] == "ready"
+    assert barrier["dimer_state_id"] == "dimer_bh_bridged"
+    assert barrier["dimer_result_id"] == selected["result_id"]
+    assert barrier["delta_e_kcal_mol"] == pytest.approx(
+        (-30.0 + 10.1 + 0.5 * 39.4) * screen_runs.HARTREE_TO_KCAL_MOL
+    )
+
+
+def test_lowest_dimer_reference_is_strict_when_a_topology_is_missing(tmp_path):
+    root = tmp_path / "missing-dimer"
+    _write_barrier_bundle(root)
+    manifest = json.loads((root / "manifest.json").read_text())
+    manifest["dimer_reference"] = "lowest"
+    manifest["dimer_candidates"] = list(screen_runs.DIMER_STATES)
+    (root / "manifest.json").write_text(json.dumps(manifest, indent=2))
+    references_path = root / "calculations/references/merged.parquet"
+    references = pd.read_parquet(references_path)
+    bridged = references.query("state_id == 'dimer'").copy()
+    bridged["state_id"] = "dimer_bh_bridged"
+    references = pd.concat([references, bridged], ignore_index=True)
+    references.to_parquet(references_path, index=False)
+
+    run = ft.screen.open_run(root).refresh_analysis()
+    choices = run.dimer_references()
+
+    assert not choices["selected"].any()
+    assert set(choices["selection_quality_status"]) == {"incomplete"}
+    assert choices.iloc[0]["selection_issues"] == "missing:dimer_eight_membered"
+    assert set(run.barriers()["quality_status"]) == {"incomplete"}
+    assert run.barriers()["dimer_state_id"].isna().all()
+
+
+def test_low_cost_dimer_reference_ranks_by_electronic_energy():
+    states = pd.DataFrame(
+        {
+            "catalyst_name": ["cat", "cat", "cat"],
+            "state_id": list(screen_runs.DIMER_STATES),
+            "result_id": ["a", "b", "c"],
+            "cid": [0, 0, 0],
+            "quality_status": ["ready", "ready", "ready"],
+            "electronic_energy_hartree": [-10.0, -10.2, -10.1],
+            "free_energy_hartree": [-9.0, -8.0, -10.0],
+        }
+    )
+    manifest = {
+        "calculation_level": "low_cost",
+        "dimer_reference": "lowest",
+        "dimer_candidates": list(screen_runs.DIMER_STATES),
+        "analysis_targets": [{"catalyst_name": "cat"}],
+    }
+
+    choices = screen_runs._build_dimer_references(states, manifest)
+
+    selected = choices.loc[choices["selected"]].iloc[0]
+    assert selected["state_id"] == "dimer_bh_bridged"
+    assert selected["selection_quantity"] == "electronic"
+
+    invalid_states = states.copy()
+    invalid_states.loc[
+        invalid_states["state_id"].eq("dimer_eight_membered"),
+        "quality_status",
+    ] = "invalid"
+    invalid_choices = screen_runs._build_dimer_references(
+        invalid_states,
+        manifest,
+    )
+    assert not invalid_choices["selected"].any()
+    assert set(invalid_choices["selection_quality_status"]) == {"invalid"}
+    assert invalid_choices.iloc[0]["selection_issues"] == (
+        "invalid:dimer_eight_membered"
+    )
+
+
 @pytest.mark.parametrize(
     ("level", "energy_stage"),
     [("low_cost", "xtb_opt"), ("dft_ranked", "dft_rank_sp")],
@@ -630,7 +736,7 @@ def test_full_cycle_is_balanced_and_review_persists(tmp_path):
     assert indexed_profile.loc["Product", "relative_g_kcal_mol"] == pytest.approx(
         -0.5 * 627.5094740631
     )
-    assert indexed_profile.loc["Product", "mechanism_id"] == "frust_balanced_cycle::v2"
+    assert indexed_profile.loc["Product", "mechanism_id"] == "frust_balanced_cycle::v3"
 
     ts1 = run.states().query("state_id == 'TS1'").iloc[0]
     run.set_review(ts1["result_id"], "approved", note="Correct reactive mode")
@@ -721,10 +827,32 @@ def test_composed_workflow_plans_required_states_without_calculation(tmp_path):
         "TS1", "TS2", "TS3", "TS4",
     }
     assert set(plan.query("branch == 'references'")["state_id"]) == {
-        "ligand", "dimer", "HBpin-mol", "HH",
+        "ligand",
+        "dimer",
+        "dimer_bh_bridged",
+        "dimer_eight_membered",
+        "HBpin-mol",
+        "HH",
     }
+    assert plan.attrs["dimer_reference"] == "lowest"
     assert set(plan["action"]) == {"calculate"}
     assert not (tmp_path / "missing_library").exists()
+
+    fixed = ft.workflows.catalyst_screen(
+        dataframe=_components(),
+        method="r2scan-3c",
+        dimer_reference="dimer_eight_membered",
+    )
+    fixed_references = set(
+        fixed.plan().query("branch == 'references'")["state_id"]
+    )
+    assert fixed_references == {
+        "ligand",
+        "dimer_eight_membered",
+        "HBpin-mol",
+        "HH",
+    }
+    assert fixed._reference_protocol() == workflow._reference_protocol()
 
     run_dir = tmp_path / "signature"
     run_dir.mkdir()
@@ -745,6 +873,7 @@ def test_finalizer_publishes_and_future_workflow_reuses_approved_references(tmp_
         dataframe=_components(),
         method="r2scan-3c-solv",
         reference_store=store,
+        dimer_reference="dimer",
     )
     root.mkdir()
     workflow._write_manifest(root)
@@ -808,6 +937,7 @@ def test_finalizer_publishes_and_future_workflow_reuses_approved_references(tmp_
         dataframe=_components(),
         method="r2scan-3c-solv",
         reference_store=store,
+        dimer_reference="dimer",
     )
     mixed_plan = mixed.plan().query("branch == 'references'")
     assert set(mixed_plan["action"]) == {"calculate", "reuse"}
@@ -868,6 +998,7 @@ def test_finalizer_publishes_and_future_workflow_reuses_approved_references(tmp_
         dataframe=_components(),
         method="r2scan-3c-solv",
         reference_store=store,
+        dimer_reference="dimer",
     )
     reference_plan = repeated.plan().query("branch == 'references'")
     assert set(reference_plan["action"]) == {"reuse"}
@@ -932,6 +1063,7 @@ def test_finalizer_retains_flagged_reference_results(
     workflow = ft.workflows.catalyst_screen(
         dataframe=_components(),
         method="r2scan-3c-solv",
+        dimer_reference="dimer",
     )
     root.mkdir()
     workflow._write_manifest(root)

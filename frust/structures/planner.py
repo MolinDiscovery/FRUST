@@ -12,7 +12,7 @@ from frust.cluster.naming import sanitize_tag
 from frust.screen import expand as expand_screen
 from frust.screen import read as read_screen
 from frust.structures.models import ChemicalSystem, StructureTarget
-from frust.structures.specs import get_state_spec
+from frust.structures.specs import DIMER_STATES, STANDARD_MOLECULE_STATES, get_state_spec
 from frust.tsguess.matching import parse_rpos_value
 
 DEFAULT_CATALYST_SMILES = "CC1(C)CCCC(C)(C)N1C2=CC=CC=C2B"
@@ -90,36 +90,33 @@ def molecule_states(select_mols: str | Iterable[str]) -> tuple[str, ...]:
     Parameters
     ----------
     select_mols : str or iterable of str
-        ``"all"`` selects every state. ``"uniques"`` selects ``"ligand"``,
+        ``"all"`` selects the standard catalytic-cycle states. ``"dimers"``
+        selects ``"dimer"``, ``"dimer_bh_bridged"``, and
+        ``"dimer_eight_membered"``. ``"uniques"`` selects ``"ligand"``,
         ``"int1"``, ``"int2"``, and ``"HBpin-ligand"``. ``"generics"``
         selects ``"dimer"``, ``"HH"``, ``"catalyst"``, and ``"HBpin-mol"``.
         A single state or an explicit state collection may instead contain
-        ``"dimer"``, ``"HH"``, ``"ligand"``, ``"catalyst"``, ``"int1"``,
-        ``"int2"``, ``"HBpin-ligand"``, or ``"HBpin-mol"``.
+        ``"dimer"``, ``"dimer_bh_bridged"``, ``"dimer_eight_membered"``,
+        ``"HH"``, ``"ligand"``, ``"catalyst"``, ``"int1"``, ``"int2"``,
+        ``"HBpin-ligand"``, or ``"HBpin-mol"``.
 
     Returns
     -------
     tuple of str
         Canonical molecule state ids in construction order.
     """
-    all_states = (
-        "dimer",
-        "HH",
-        "ligand",
-        "catalyst",
-        "int1",
-        "int2",
-        "HBpin-ligand",
-        "HBpin-mol",
-    )
+    all_states = STANDARD_MOLECULE_STATES
+    accepted_states = (*all_states, *DIMER_STATES[1:])
     if select_mols == "all":
         return all_states
+    if select_mols == "dimers":
+        return DIMER_STATES
     if select_mols == "uniques":
         return ("ligand", "int1", "int2", "HBpin-ligand")
     if select_mols == "generics":
         return ("dimer", "HH", "catalyst", "HBpin-mol")
     requested = (select_mols,) if isinstance(select_mols, str) else tuple(select_mols)
-    unknown = sorted(set(requested) - set(all_states))
+    unknown = sorted(set(requested) - set(accepted_states))
     if unknown:
         migration = (
             " 'mol2' was renamed to 'int2', and the former 'int2' was renamed "
@@ -129,7 +126,8 @@ def molecule_states(select_mols: str | Iterable[str]) -> tuple[str, ...]:
         )
         raise ValueError(
             f"Unknown molecule states: {unknown}.{migration} "
-            f"Expected one of {list(all_states)}, 'all', 'uniques', or 'generics'."
+            f"Expected one of {list(accepted_states)}, 'all', 'dimers', "
+            "'uniques', or 'generics'."
         )
     return requested
 

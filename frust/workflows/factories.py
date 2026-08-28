@@ -929,12 +929,15 @@ def mols(
         expands FRUST catalytic-cycle molecule structures per reactive position.
     select_mols : str or list of str, optional
         Molecules to generate for ``per_rpos`` targets. Accepted individual
-        states are ``"dimer"``, ``"HH"``, ``"ligand"``, ``"catalyst"``,
+        states are ``"dimer"``, ``"dimer_bh_bridged"``,
+        ``"dimer_eight_membered"``, ``"HH"``, ``"ligand"``, ``"catalyst"``,
         ``"int1"``, ``"int2"``, ``"HBpin-ligand"``, and ``"HBpin-mol"``.
         ``"int1"`` is the charge-separated catalyst/substrate adduct formerly
         called ``"int2"``; ``"int2"`` is the neutral adduct formerly called
-        ``"mol2"``. ``"all"`` selects every state; ``"uniques"`` selects
-        ``"ligand"``, ``"int1"``, ``"int2"``, and ``"HBpin-ligand"``;
+        ``"mol2"``. ``"dimers"`` selects all three dimer topologies.
+        ``"all"`` selects the standard catalytic-cycle states and retains its
+        previous meaning; ``"uniques"`` selects ``"ligand"``, ``"int1"``,
+        ``"int2"``, and ``"HBpin-ligand"``;
         ``"generics"`` selects ``"dimer"``, ``"HH"``, ``"catalyst"``, and
         ``"HBpin-mol"``.
     method : MethodPlan or str or None, optional

@@ -95,6 +95,20 @@ wf = ft.workflows.catalyst_screen(
 )
 ```
 
+The default `dimer_reference="lowest"` adds `dimer`,
+`dimer_bh_bridged`, and `dimer_eight_membered` to the reference plan. FRUST
+selects one qualified topology per catalyst using Gibbs energy at `full` level
+and electronic energy at `low_cost` or `dft_ranked` level. The exact selected
+result row supplies both energies used downstream. After the run, inspect the
+decision with `run.dimer_references()`.
+
+!!! warning "Strict topology comparison"
+
+    A missing or invalid candidate prevents a `lowest` selection; dependent
+    barriers remain flagged. Pass an explicit topology such as
+    `dimer_reference="dimer_bh_bridged"` only when the reference should be
+    fixed instead of compared.
+
 The three calculation levels answer different questions:
 
 | level | final geometry | analysis energy | available result |

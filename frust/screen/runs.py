@@ -16,9 +16,11 @@ import pandas as pd
 from frust.results import free_energy_components, get_result
 from frust.schema import normal_termination_columns
 from frust.screen._quality import minimum_vibration_status
+from frust.structures.specs import DIMER_STATES
 
 
 HARTREE_TO_KCAL_MOL = 627.5094740631
+DIMER_TIE_TOLERANCE_KCAL_MOL = 0.01
 QUALITY_ORDER = {"ready": 0, "review": 1, "invalid": 2, "incomplete": 3}
 PROFILE_ORDER = ["Dimer", "Cat", "TS1", "int1", "TS2", "int2", "TS3", "INT3", "TS4", "Product"]
 PROFILE_TERMS: dict[str, dict[str, float]] = {
@@ -109,6 +111,21 @@ class ScreenRun:
         """Return one auditable row per calculated or expected state."""
         self._ensure_analysis()
         return pd.read_parquet(self.analysis_dir / "states.parquet")
+
+    def dimer_references(self) -> pd.DataFrame:
+        """Return dimer candidates and the selected reference per catalyst.
+
+        Returns
+        -------
+        pandas.DataFrame
+            One row per candidate topology and catalyst. ``selected`` marks
+            the exact result row used by barrier and profile equations.
+            ``selection_quality_status`` applies to the complete per-catalyst
+            selection and is ``"incomplete"`` or ``"invalid"`` when strict
+            ``dimer_reference="lowest"`` selection cannot be made.
+        """
+        self._ensure_analysis()
+        return pd.read_parquet(self.analysis_dir / "dimer_references.parquet")
 
     def barriers(self) -> pd.DataFrame:
         """Return the tidy TS1--TS4 barrier table, including flagged rows."""
@@ -263,7 +280,11 @@ class ScreenRun:
         self.refresh_analysis()
 
     def _ensure_analysis(self) -> None:
-        required = [self.analysis_dir / "states.parquet", self.analysis_dir / "barriers.parquet"]
+        required = [
+            self.analysis_dir / "states.parquet",
+            self.analysis_dir / "dimer_references.parquet",
+            self.analysis_dir / "barriers.parquet",
+        ]
         if any(not path.exists() for path in required):
             self.refresh_analysis()
 
@@ -311,12 +332,18 @@ def build_analysis(run_dir: str | Path) -> dict[str, Any]:
     states = pd.concat(frames, ignore_index=True) if frames else _empty_states()
     states.to_parquet(analysis_dir / "states.parquet", index=False)
 
-    barriers = _build_barriers(states, manifest)
+    dimer_references = _build_dimer_references(states, manifest)
+    dimer_references.to_parquet(
+        analysis_dir / "dimer_references.parquet",
+        index=False,
+    )
+
+    barriers = _build_barriers(states, manifest, dimer_references)
     barriers.to_parquet(analysis_dir / "barriers.parquet", index=False)
 
     profiles = pd.DataFrame()
     if manifest.get("scope") == "full_cycle":
-        profiles = _build_profiles(states, manifest)
+        profiles = _build_profiles(states, manifest, dimer_references)
         profiles.to_parquet(analysis_dir / "profiles.parquet", index=False)
 
     if not reviews_path.exists():
@@ -326,9 +353,14 @@ def build_analysis(run_dir: str | Path) -> dict[str, Any]:
         "generated_at": _utc_now(),
         "manifest_hash": _json_hash(manifest),
         "n_states": int(len(states)),
+        "n_dimer_candidates": int(len(dimer_references)),
         "n_barriers": int(len(barriers)),
         "n_profile_states": int(len(profiles)),
         "state_quality": _counts(states, "quality_status"),
+        "dimer_reference_quality": _counts(
+            dimer_references.drop_duplicates("catalyst_name"),
+            "selection_quality_status",
+        ),
         "barrier_quality": _counts(barriers, "quality_status"),
     }
     (analysis_dir / "report.json").write_text(json.dumps(report, indent=2, sort_keys=True) + "\n")
@@ -475,7 +507,164 @@ def _state_rows(
     return result
 
 
-def _build_barriers(states: pd.DataFrame, manifest: Mapping[str, Any]) -> pd.DataFrame:
+def _build_dimer_references(
+    states: pd.DataFrame,
+    manifest: Mapping[str, Any],
+) -> pd.DataFrame:
+    """Select one exact dimer result row for each catalyst."""
+    mode = str(manifest.get("dimer_reference", "dimer"))
+    candidates = tuple(
+        str(value)
+        for value in manifest.get(
+            "dimer_candidates",
+            DIMER_STATES if mode == "lowest" else (mode,),
+        )
+    )
+    full = manifest.get("calculation_level", "full") == "full"
+    energy_column = (
+        "free_energy_hartree" if full else "electronic_energy_hartree"
+    )
+    selection_quantity = "gibbs" if full else "electronic"
+    catalysts = list(
+        dict.fromkeys(
+            str(target["catalyst_name"])
+            for target in manifest.get("analysis_targets", [])
+        )
+    )
+    if not catalysts and not states.empty and "catalyst_name" in states:
+        catalysts = [
+            str(value)
+            for value in states.loc[
+                states["state_id"].isin(candidates), "catalyst_name"
+            ].dropna().unique()
+        ]
+
+    rows: list[dict[str, Any]] = []
+    for catalyst in catalysts:
+        candidate_rows: list[dict[str, Any]] = []
+        selection_problems: list[str] = []
+        for state_id in candidates:
+            matches = states[
+                states["state_id"].eq(state_id)
+                & states["catalyst_name"].eq(catalyst)
+            ]
+            energy_bearing = matches[matches[energy_column].notna()]
+            qualified = (
+                energy_bearing[
+                    energy_bearing["quality_status"].isin(["ready", "review"])
+                ]
+                if mode == "lowest"
+                else energy_bearing
+            )
+            if qualified.empty:
+                if not matches.empty and matches["quality_status"].eq("invalid").any():
+                    candidate_quality = "invalid"
+                    selection_problems.append(f"invalid:{state_id}")
+                else:
+                    candidate_quality = "incomplete"
+                    selection_problems.append(f"missing:{state_id}")
+                chosen = None
+            else:
+                chosen = qualified.sort_values(
+                    [energy_column, "result_id"],
+                    kind="stable",
+                ).iloc[0]
+                candidate_quality = str(chosen["quality_status"])
+            candidate_rows.append(
+                {
+                    "catalyst_name": catalyst,
+                    "dimer_reference": mode,
+                    "state_id": state_id,
+                    "result_id": None if chosen is None else chosen["result_id"],
+                    "cid": None if chosen is None else chosen.get("cid"),
+                    "selection_quantity": selection_quantity,
+                    "selection_energy_hartree": (
+                        np.nan if chosen is None else chosen[energy_column]
+                    ),
+                    "relative_energy_kcal_mol": np.nan,
+                    "selected": False,
+                    "candidate_quality_status": candidate_quality,
+                    "selection_quality_status": "incomplete",
+                    "selection_issues": "",
+                    "energy_gap_to_next_kcal_mol": np.nan,
+                }
+            )
+
+        complete = not selection_problems
+        if complete:
+            available = [
+                row for row in candidate_rows
+                if not pd.isna(row["selection_energy_hartree"])
+            ]
+            minimum = min(float(row["selection_energy_hartree"]) for row in available)
+            for row in available:
+                row["relative_energy_kcal_mol"] = (
+                    float(row["selection_energy_hartree"]) - minimum
+                ) * HARTREE_TO_KCAL_MOL
+            tied = [
+                row for row in available
+                if float(row["relative_energy_kcal_mol"])
+                <= DIMER_TIE_TOLERANCE_KCAL_MOL
+            ]
+            order = {state_id: index for index, state_id in enumerate(DIMER_STATES)}
+            selected_row = min(tied, key=lambda row: order.get(row["state_id"], 999))
+            selected_row["selected"] = True
+            ranked = sorted(
+                float(row["selection_energy_hartree"])
+                for row in available
+            )
+            gap = (
+                (ranked[1] - ranked[0]) * HARTREE_TO_KCAL_MOL
+                if len(ranked) > 1
+                else np.nan
+            )
+            selection_quality = _combined_quality(
+                [str(row["candidate_quality_status"]) for row in available]
+            )
+            if len(tied) > 1:
+                selection_problems.append("near_degenerate_dimer_reference")
+        else:
+            gap = np.nan
+            selection_quality = _combined_quality(
+                [str(row["candidate_quality_status"]) for row in candidate_rows]
+            )
+        issues = ";".join(dict.fromkeys(selection_problems))
+        for row in candidate_rows:
+            row["selection_quality_status"] = selection_quality
+            row["selection_issues"] = issues
+            row["energy_gap_to_next_kcal_mol"] = gap
+        rows.extend(candidate_rows)
+    return pd.DataFrame(rows, columns=_dimer_reference_columns())
+
+
+def _selected_dimer_reference(
+    dimer_references: pd.DataFrame,
+    catalyst_name: str,
+) -> tuple[str | None, str | None, str, list[str]]:
+    """Return the selected state/result and strict selection provenance."""
+    matches = dimer_references[
+        dimer_references["catalyst_name"].eq(catalyst_name)
+    ]
+    if matches.empty:
+        return None, None, "incomplete", ["missing:dimer_reference"]
+    quality = str(matches.iloc[0]["selection_quality_status"])
+    issues = [
+        issue
+        for issue in str(matches.iloc[0]["selection_issues"]).split(";")
+        if issue
+    ]
+    selected = matches[matches["selected"]]
+    if selected.empty:
+        return None, None, quality, issues or [f"{quality}:dimer_reference"]
+    row = selected.iloc[0]
+    return str(row["state_id"]), str(row["result_id"]), quality, issues
+
+
+def _build_barriers(
+    states: pd.DataFrame,
+    manifest: Mapping[str, Any],
+    dimer_references: pd.DataFrame,
+) -> pd.DataFrame:
     corrections = {
         str(key): float(value)
         for key, value in manifest.get("g_corrections_kcal_mol", {}).items()
@@ -489,7 +678,12 @@ def _build_barriers(states: pd.DataFrame, manifest: Mapping[str, Any]) -> pd.Dat
         substrate = str(target["substrate_name"])
         catalyst = str(target["catalyst_name"])
         rpos = int(target["rpos"])
-        terms = {ts_type: 1.0, "ligand": -1.0, "dimer": -0.5}
+        dimer_state, dimer_result_id, dimer_quality, dimer_issues = (
+            _selected_dimer_reference(dimer_references, catalyst)
+        )
+        terms = {ts_type: 1.0, "ligand": -1.0}
+        if dimer_state is not None:
+            terms[dimer_state] = -0.5
         if ts_type in {"TS3", "TS4"}:
             terms.update({"HBpin-mol": -1.0, "HH": 1.0})
         selected, problems = _resolve_terms(
@@ -499,8 +693,19 @@ def _build_barriers(states: pd.DataFrame, manifest: Mapping[str, Any]) -> pd.Dat
             substrate_name=substrate,
             catalyst_name=catalyst,
             rpos=rpos,
+            result_ids=(
+                {dimer_state: dimer_result_id}
+                if dimer_state is not None and dimer_result_id is not None
+                else None
+            ),
         )
-        dependency_issues: list[str] = []
+        if dimer_state is None:
+            problems.extend(dimer_issues)
+        dependency_issues: list[str] = list(dimer_issues) if dimer_state else []
+        if dimer_state and dimer_quality != "ready":
+            dependency_issues.append(
+                f"dependency_{dimer_quality}:dimer_reference"
+            )
         correction = corrections.get(ts_type, 0.0)
         delta_e = np.nan
         delta_g = np.nan
@@ -537,9 +742,12 @@ def _build_barriers(states: pd.DataFrame, manifest: Mapping[str, Any]) -> pd.Dat
                     corrected_delta_g = delta_g + correction
             if not problems:
                 quality = _combined_quality(
-                    [str(selected[state]["quality_status"]) for state in terms]
+                    [
+                        *[str(selected[state]["quality_status"]) for state in terms],
+                        dimer_quality,
+                    ]
                 )
-            dependency_issues = _dependency_quality_issues(selected, terms)
+            dependency_issues.extend(_dependency_quality_issues(selected, terms))
         rows.append(
             {
                 "system_name": system,
@@ -547,6 +755,9 @@ def _build_barriers(states: pd.DataFrame, manifest: Mapping[str, Any]) -> pd.Dat
                 "catalyst_name": catalyst,
                 "rpos": rpos,
                 "ts_type": ts_type,
+                "dimer_state_id": dimer_state,
+                "dimer_result_id": dimer_result_id,
+                "dimer_reference_quality": dimer_quality,
                 "delta_e_kcal_mol": delta_e,
                 "delta_g_kcal_mol": delta_g,
                 "g_correction_kcal_mol": correction if full else np.nan,
@@ -555,13 +766,17 @@ def _build_barriers(states: pd.DataFrame, manifest: Mapping[str, Any]) -> pd.Dat
                 "quality_issues": ";".join(
                     dict.fromkeys([*problems, *dependency_issues])
                 ),
-                "formula_id": f"frust_ts_barrier::{ts_type}::v1",
+                "formula_id": f"frust_ts_barrier::{ts_type}::v2",
             }
         )
     return pd.DataFrame(rows)
 
 
-def _build_profiles(states: pd.DataFrame, manifest: Mapping[str, Any]) -> pd.DataFrame:
+def _build_profiles(
+    states: pd.DataFrame,
+    manifest: Mapping[str, Any],
+    dimer_references: pd.DataFrame,
+) -> pd.DataFrame:
     corrections = {
         str(key): float(value)
         for key, value in manifest.get("g_corrections_kcal_mol", {}).items()
@@ -574,11 +789,22 @@ def _build_profiles(states: pd.DataFrame, manifest: Mapping[str, Any]) -> pd.Dat
     for (system, rpos), target in unique_targets.items():
         substrate = str(target["substrate_name"])
         catalyst = str(target["catalyst_name"])
+        dimer_state, dimer_result_id, dimer_quality, dimer_issues = (
+            _selected_dimer_reference(dimer_references, catalyst)
+        )
         resolved: dict[
             str,
             tuple[float, float | None, str, Counter[str], list[str]] | None,
         ] = {}
-        for label, terms in PROFILE_TERMS.items():
+        for label, base_terms in PROFILE_TERMS.items():
+            terms = dict(base_terms)
+            uses_dimer = "dimer" in terms
+            if uses_dimer:
+                coefficient = terms.pop("dimer")
+                if dimer_state is None:
+                    resolved[label] = None
+                    continue
+                terms[dimer_state] = coefficient
             selected, problems = _resolve_terms(
                 states,
                 terms,
@@ -586,6 +812,13 @@ def _build_profiles(states: pd.DataFrame, manifest: Mapping[str, Any]) -> pd.Dat
                 substrate_name=substrate,
                 catalyst_name=catalyst,
                 rpos=rpos,
+                result_ids=(
+                    {dimer_state: dimer_result_id}
+                    if uses_dimer
+                    and dimer_state is not None
+                    and dimer_result_id is not None
+                    else None
+                ),
             )
             if problems:
                 resolved[label] = None
@@ -609,8 +842,19 @@ def _build_profiles(states: pd.DataFrame, manifest: Mapping[str, Any]) -> pd.Dat
                 if full
                 else None
             )
-            quality = _combined_quality([str(selected[state]["quality_status"]) for state in terms])
+            quality_values = [
+                str(selected[state]["quality_status"]) for state in terms
+            ]
+            if uses_dimer:
+                quality_values.append(dimer_quality)
+            quality = _combined_quality(quality_values)
             dependency_issues = _dependency_quality_issues(selected, terms)
+            if uses_dimer:
+                dependency_issues.extend(dimer_issues)
+                if dimer_quality != "ready":
+                    dependency_issues.append(
+                        f"dependency_{dimer_quality}:dimer_reference"
+                    )
             composition = Counter()
             for state, coefficient in terms.items():
                 for element, count in _parse_formula(str(selected[state]["formula"])).items():
@@ -630,8 +874,13 @@ def _build_profiles(states: pd.DataFrame, manifest: Mapping[str, Any]) -> pd.Dat
                 relative_e = np.nan
                 relative_g = np.nan
                 corrected_relative_g = np.nan
-                quality = "incomplete"
+                quality = (
+                    dimer_quality
+                    if dimer_state is None
+                    else "incomplete"
+                )
                 issues.append("missing_profile_dependency")
+                issues.extend(dimer_issues)
             else:
                 (
                     electronic_energy,
@@ -672,6 +921,9 @@ def _build_profiles(states: pd.DataFrame, manifest: Mapping[str, Any]) -> pd.Dat
                     "substrate_name": substrate,
                     "catalyst_name": catalyst,
                     "rpos": rpos,
+                    "dimer_state_id": dimer_state,
+                    "dimer_result_id": dimer_result_id,
+                    "dimer_reference_quality": dimer_quality,
                     "profile_state": label,
                     "profile_order": order,
                     "relative_e_kcal_mol": relative_e,
@@ -682,7 +934,7 @@ def _build_profiles(states: pd.DataFrame, manifest: Mapping[str, Any]) -> pd.Dat
                     "relative_g_corrected_kcal_mol": corrected_relative_g,
                     "quality_status": quality,
                     "quality_issues": ";".join(dict.fromkeys(issues)),
-                    "mechanism_id": "frust_balanced_cycle::v2",
+                    "mechanism_id": "frust_balanced_cycle::v3",
                 }
             )
     return pd.DataFrame(rows)
@@ -696,16 +948,19 @@ def _resolve_terms(
     substrate_name: str,
     catalyst_name: str,
     rpos: int,
+    result_ids: Mapping[str, str] | None = None,
 ) -> tuple[dict[str, pd.Series], list[str]]:
     selected: dict[str, pd.Series] = {}
     problems: list[str] = []
     for state_id in terms:
         matches = states[states["state_id"].eq(state_id)]
+        if result_ids is not None and state_id in result_ids:
+            matches = matches[matches["result_id"].eq(result_ids[state_id])]
         if state_id in {"HH", "HBpin-mol"}:
             pass
         elif state_id == "ligand":
             matches = matches[matches["substrate_name"].eq(substrate_name)]
-        elif state_id in {"dimer", "catalyst"}:
+        elif state_id in {*DIMER_STATES, "catalyst"}:
             matches = matches[matches["catalyst_name"].eq(catalyst_name)]
         elif state_id == "HBpin-ligand":
             matches = matches[
@@ -903,6 +1158,25 @@ def _empty_states() -> pd.DataFrame:
             "free_energy_hartree", "quality_status",
         ]
     )
+
+
+def _dimer_reference_columns() -> list[str]:
+    """Return the stable dimer-reference audit-table schema."""
+    return [
+        "catalyst_name",
+        "dimer_reference",
+        "state_id",
+        "result_id",
+        "cid",
+        "selection_quantity",
+        "selection_energy_hartree",
+        "relative_energy_kcal_mol",
+        "selected",
+        "candidate_quality_status",
+        "selection_quality_status",
+        "selection_issues",
+        "energy_gap_to_next_kcal_mol",
+    ]
 
 
 def _energy_protocol(
