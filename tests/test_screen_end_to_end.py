@@ -113,6 +113,37 @@ def _write_result(path: Path, rows: list[dict], profile: str) -> None:
     df.to_parquet(path, index=False)
 
 
+def _write_reference_tier_snapshots(
+    frame: pd.DataFrame,
+    target_dir: Path,
+) -> None:
+    """Write compact synthetic nested-tier winners for cache tests."""
+    low_cost = frame.copy()
+    low_cost["xtb_opt-oc"] = low_cost["dft_opt-oc"]
+    low_cost["xtb_opt-EE"] = low_cost["dft_freq-EE"]
+    low_cost["xtb_opt-NT"] = True
+    attach_result_contract(
+        low_cost,
+        "minimum",
+        dft=False,
+        calculation_level="low_cost",
+        thermochemistry=None,
+    )
+    low_cost.to_parquet(target_dir / "tier_low_cost.parquet", index=False)
+
+    ranked = low_cost.copy()
+    ranked["dft_rank_sp-EE"] = ranked["dft_freq-EE"]
+    ranked["dft_rank_sp-NT"] = True
+    attach_result_contract(
+        ranked,
+        "minimum",
+        dft=False,
+        calculation_level="dft_ranked",
+        thermochemistry=None,
+    )
+    ranked.to_parquet(target_dir / "tier_dft_ranked.parquet", index=False)
+
+
 def _manifest(scope: str = "barriers") -> dict:
     method = ft.workflows.methods.preset("r2scan-3c-solv")
     return {
@@ -218,6 +249,53 @@ def _write_barrier_bundle(root: Path, *, scope: str = "barriers") -> None:
             [_row("INT3", -33.5, ts_formulas["TS3"], state_kind="constrained_minimum", rpos=2)],
             "constrained_minimum",
         )
+
+
+def _add_nested_barrier_tiers(root: Path) -> None:
+    """Add synthetic low-cost and DFT-ranked winners to a full bundle."""
+    manifest_path = root / "manifest.json"
+    manifest = json.loads(manifest_path.read_text())
+    tier_results: dict[str, dict[str, str | None]] = {}
+    for level, stage, shift in (
+        ("low_cost", "xtb_opt", 0.01),
+        ("dft_ranked", "dft_rank_sp", 0.02),
+    ):
+        paths: dict[str, str | None] = {
+            "transition_states": None,
+            "references": None,
+            "cycle_molecules": None,
+            "int3": None,
+        }
+        for source, profile in (
+            ("transition_states", "transition_state"),
+            ("references", "minimum"),
+        ):
+            terminal_path = root / manifest["calculation_results"][source]
+            frame = pd.read_parquet(terminal_path)
+            frame["xtb_opt-oc"] = frame[
+                "dft_ts_opt-oc" if profile == "transition_state" else "dft_opt-oc"
+            ]
+            frame[f"{stage}-EE"] = frame["dft_freq-EE"]
+            if source == "transition_states":
+                frame[f"{stage}-EE"] += shift
+            frame[f"{stage}-NT"] = True
+            attach_result_contract(
+                frame,
+                profile,
+                dft=False,
+                calculation_level=level,
+                thermochemistry=None,
+            )
+            relative = f"calculations/{source}/tiers/{level}/merged.parquet"
+            path = root / relative
+            path.parent.mkdir(parents=True, exist_ok=True)
+            frame.to_parquet(path, index=False)
+            paths[source] = relative
+        tier_results[level] = paths
+    tier_results["full"] = manifest["calculation_results"]
+    manifest["analysis_levels"] = ["low_cost", "dft_ranked", "full"]
+    manifest["tier_calculation_results"] = tier_results
+    manifest_path.write_text(json.dumps(manifest, indent=2))
 
 
 def test_thermochemistry_recipes_and_method_fingerprints():
@@ -472,6 +550,51 @@ def test_barrier_analysis_matches_supplied_formulas_and_survives_relocation(tmp_
     shutil.copytree(original, relocated)
     moved = ft.screen.open_run(relocated)
     pd.testing.assert_frame_equal(run.barriers(), moved.barriers())
+
+
+def test_full_run_compares_independently_selected_screening_and_full_barriers(
+    tmp_path,
+):
+    root = tmp_path / "nested-tiers"
+    _write_barrier_bundle(root, scope="full_cycle")
+    _add_nested_barrier_tiers(root)
+
+    run = ft.screen.open_run(root).refresh_analysis()
+
+    assert run.available_analysis_levels() == (
+        "low_cost",
+        "dft_ranked",
+        "full",
+    )
+    low_cost = run.barriers(level="low_cost").set_index("ts_type")
+    ranked = run.barriers(level="dft_ranked").set_index("ts_type")
+    full = run.barriers(level="full").set_index("ts_type")
+    comparison = run.compare_barriers().set_index("ts_type")
+
+    assert low_cost.loc["TS1", "delta_e_kcal_mol"] == pytest.approx(
+        0.16 * screen_runs.HARTREE_TO_KCAL_MOL
+    )
+    assert ranked.loc["TS1", "delta_e_kcal_mol"] == pytest.approx(
+        0.17 * screen_runs.HARTREE_TO_KCAL_MOL
+    )
+    assert full.loc["TS1", "delta_e_kcal_mol"] == pytest.approx(
+        0.15 * screen_runs.HARTREE_TO_KCAL_MOL
+    )
+    assert ranked["delta_g_kcal_mol"].isna().all()
+    assert comparison.loc["TS1", "delta_e_dft_ranked_kcal_mol"] == pytest.approx(
+        ranked.loc["TS1", "delta_e_kcal_mol"]
+    )
+    assert comparison.loc["TS1", "delta_e_full_kcal_mol"] == pytest.approx(
+        full.loc["TS1", "delta_e_kcal_mol"]
+    )
+    assert comparison.loc["TS1", "delta_g_full_kcal_mol"] == pytest.approx(
+        full.loc["TS1", "delta_g_kcal_mol"]
+    )
+    assert pd.isna(comparison.loc["TS1", "delta_g_dft_ranked_kcal_mol"])
+    pd.testing.assert_frame_equal(run.barriers(), run.barriers(level="full"))
+
+    with pytest.raises(ValueError, match="Gibbs profiles require"):
+        run.profile(level="dft_ranked", quantity="gibbs")
 
 
 def test_lowest_dimer_reference_uses_gibbs_ranking_and_one_exact_result(tmp_path):
@@ -896,6 +1019,7 @@ def test_finalizer_publishes_and_future_workflow_reuses_approved_references(tmp_
         target_dir = reference_dir / target.tag
         target_dir.mkdir(parents=True)
         frame.to_parquet(target_dir / "final.parquet", index=False)
+        _write_reference_tier_snapshots(frame, target_dir)
     _write_result(
         root / "calculations/transition_states/merged.parquet",
         [
@@ -917,9 +1041,9 @@ def test_finalizer_publishes_and_future_workflow_reuses_approved_references(tmp_
     library = ft.screen.open_reference_library(store)
 
     assert report["n_references_calculated"] == 4
-    assert len(library.index()) == 4
+    assert len(library.index()) == 12
     assert (root / "calculations/references/merged.parquet").exists()
-    assert len(list((root / "calculations/references/entries").rglob("optimized.xyz"))) == 4
+    assert len(list((root / "calculations/references/entries").rglob("optimized.xyz"))) == 12
 
     for filename in ("computed.parquet", "merged.parquet"):
         frame = pd.read_parquet(reference_dir / filename)
@@ -929,7 +1053,7 @@ def test_finalizer_publishes_and_future_workflow_reuses_approved_references(tmp_
         "artifact == 'barriers' and quality_status == 'review'"
     ).iloc[0]["count"] == 4
 
-    first_two = library.index()["reference_id"].iloc[:2]
+    first_two = library.search(calculation_level="full")["reference_id"].iloc[:2]
     for reference_id in first_two:
         library.get(reference_id).approve(note="One-time scientific structure review")
 
@@ -962,6 +1086,7 @@ def test_finalizer_publishes_and_future_workflow_reuses_approved_references(tmp_
         target_dir = mixed_root / "calculations" / "references" / item.target.tag
         target_dir.mkdir(parents=True)
         frame.to_parquet(target_dir / "final.parquet", index=False)
+        _write_reference_tier_snapshots(frame, target_dir)
     _write_result(
         mixed_root / "calculations/transition_states/merged.parquet",
         [

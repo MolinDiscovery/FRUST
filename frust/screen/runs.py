@@ -107,13 +107,36 @@ class ScreenRun:
                 )
         return pd.DataFrame(rows)
 
-    def states(self) -> pd.DataFrame:
-        """Return one auditable row per calculated or expected state."""
-        self._ensure_analysis()
-        return pd.read_parquet(self.analysis_dir / "states.parquet")
+    def available_analysis_levels(self) -> tuple[str, ...]:
+        """Return independently selected result tiers stored in this run."""
+        return tuple(
+            str(level)
+            for level in self.manifest.get(
+                "analysis_levels",
+                [self.manifest.get("calculation_level", "full")],
+            )
+        )
 
-    def dimer_references(self) -> pd.DataFrame:
+    def states(self, *, level: str | None = None) -> pd.DataFrame:
+        """Return one auditable row per calculated or expected state.
+
+        Parameters
+        ----------
+        level : {"low_cost", "dft_ranked", "full"} or None, optional
+            Nested analysis tier. ``None`` returns the terminal level requested
+            when the workflow was submitted.
+        """
+        self._ensure_analysis()
+        return self._level_table("states", level=level)
+
+    def dimer_references(self, *, level: str | None = None) -> pd.DataFrame:
         """Return dimer candidates and the selected reference per catalyst.
+
+        Parameters
+        ----------
+        level : {"low_cost", "dft_ranked", "full"} or None, optional
+            Nested analysis tier. Each tier performs its own conformer and
+            dimer-topology selection.
 
         Returns
         -------
@@ -125,12 +148,86 @@ class ScreenRun:
             ``dimer_reference="lowest"`` selection cannot be made.
         """
         self._ensure_analysis()
-        return pd.read_parquet(self.analysis_dir / "dimer_references.parquet")
+        return self._level_table("dimer_references", level=level)
 
-    def barriers(self) -> pd.DataFrame:
-        """Return the tidy TS1--TS4 barrier table, including flagged rows."""
+    def barriers(self, *, level: str | None = None) -> pd.DataFrame:
+        """Return the tidy TS1--TS4 barriers for one result tier.
+
+        Parameters
+        ----------
+        level : {"low_cost", "dft_ranked", "full"} or None, optional
+            Nested analysis tier. ``None`` preserves the historical behavior
+            and returns the terminal requested level.
+        """
         self._ensure_analysis()
-        return pd.read_parquet(self.analysis_dir / "barriers.parquet")
+        return self._level_table("barriers", level=level)
+
+    def compare_barriers(
+        self,
+        *,
+        levels: Sequence[str] | None = None,
+    ) -> pd.DataFrame:
+        """Return screening and full barriers side by side.
+
+        Parameters
+        ----------
+        levels : sequence of str or None, optional
+            Levels to compare. ``None`` uses every available tier in workflow
+            order.
+
+        Returns
+        -------
+        pandas.DataFrame
+            One row per system, reactive position, and TS type. Energy,
+            quality, and selected-dimer columns carry a level suffix, for
+            example ``delta_e_dft_ranked_kcal_mol`` and
+            ``delta_g_full_kcal_mol``.
+        """
+        requested = (
+            self.available_analysis_levels()
+            if levels is None
+            else tuple(str(level) for level in levels)
+        )
+        keys = [
+            "system_name",
+            "substrate_name",
+            "catalyst_name",
+            "rpos",
+            "ts_type",
+        ]
+        result: pd.DataFrame | None = None
+        for level in requested:
+            table = self.barriers(level=level)
+            value_columns = [
+                "delta_e_kcal_mol",
+                "delta_g_kcal_mol",
+                "delta_g_corrected_kcal_mol",
+                "quality_status",
+                "quality_issues",
+                "dimer_state_id",
+                "dimer_result_id",
+                "dimer_reference_quality",
+            ]
+            selected = table[[*keys, *value_columns]].copy()
+            selected = selected.rename(
+                columns={
+                    "delta_e_kcal_mol": f"delta_e_{level}_kcal_mol",
+                    "delta_g_kcal_mol": f"delta_g_{level}_kcal_mol",
+                    "delta_g_corrected_kcal_mol": (
+                        f"delta_g_corrected_{level}_kcal_mol"
+                    ),
+                    **{
+                        column: f"{column}_{level}"
+                        for column in value_columns[3:]
+                    },
+                }
+            )
+            result = (
+                selected
+                if result is None
+                else result.merge(selected, on=keys, how="outer", validate="one_to_one")
+            )
+        return pd.DataFrame(columns=keys) if result is None else result
 
     def profile(
         self,
@@ -139,13 +236,21 @@ class ScreenRun:
         rpos: int | None = None,
         include_invalid: bool = False,
         quantity: Literal["electronic", "gibbs"] = "gibbs",
+        level: str | None = None,
     ) -> pd.DataFrame:
         """Return one ordered balanced catalytic-cycle profile."""
         self._ensure_analysis()
-        path = self.analysis_dir / "profiles.parquet"
+        selected_level = self._resolve_analysis_level(level)
+        path = self.analysis_dir / (
+            "profiles.parquet" if level is None else "profiles_by_level.parquet"
+        )
         if not path.exists():
             raise ValueError("This run used scope='barriers'; no full-cycle profile exists")
         table = pd.read_parquet(path)
+        if level is not None:
+            table = table[table["analysis_level"].eq(selected_level)].drop(
+                columns="analysis_level"
+            )
         if system_name is not None:
             table = table[table["system_name"].eq(str(system_name))]
         if rpos is not None:
@@ -154,7 +259,7 @@ class ScreenRun:
             table = table[~table["quality_status"].isin(["invalid", "incomplete"])]
         if quantity not in {"electronic", "gibbs"}:
             raise ValueError("quantity must be 'electronic' or 'gibbs'")
-        if quantity == "gibbs" and self.manifest.get("calculation_level", "full") != "full":
+        if quantity == "gibbs" and selected_level != "full":
             raise ValueError("Gibbs profiles require level='full'; use quantity='electronic'")
         result = table.sort_values(
             ["system_name", "rpos", "profile_order"]
@@ -173,6 +278,7 @@ class ScreenRun:
         rpos: int,
         include_invalid: bool = False,
         quantity: Literal["electronic", "gibbs"] = "gibbs",
+        level: str | None = None,
         **kwargs: Any,
     ) -> Any:
         """Plot one balanced profile with FRUST's energy-profile renderer."""
@@ -183,6 +289,7 @@ class ScreenRun:
             rpos=rpos,
             include_invalid=include_invalid,
             quantity=quantity,
+            level=level,
         )
         if profile.empty:
             raise ValueError("No plottable profile states match the requested system and rpos")
@@ -284,9 +391,37 @@ class ScreenRun:
             self.analysis_dir / "states.parquet",
             self.analysis_dir / "dimer_references.parquet",
             self.analysis_dir / "barriers.parquet",
+            self.analysis_dir / "states_by_level.parquet",
+            self.analysis_dir / "dimer_references_by_level.parquet",
+            self.analysis_dir / "barriers_by_level.parquet",
         ]
         if any(not path.exists() for path in required):
             self.refresh_analysis()
+
+    def _resolve_analysis_level(self, level: str | None) -> str:
+        """Validate and resolve a requested nested analysis tier."""
+        resolved = (
+            str(self.manifest.get("calculation_level", "full"))
+            if level is None
+            else str(level)
+        )
+        available = self.available_analysis_levels()
+        if resolved not in available:
+            raise ValueError(
+                f"Analysis level {resolved!r} is unavailable; expected one of "
+                f"{list(available)}"
+            )
+        return resolved
+
+    def _level_table(self, artifact: str, *, level: str | None) -> pd.DataFrame:
+        """Load a terminal or explicitly selected by-level analysis table."""
+        if level is None:
+            return pd.read_parquet(self.analysis_dir / f"{artifact}.parquet")
+        resolved = self._resolve_analysis_level(level)
+        table = pd.read_parquet(self.analysis_dir / f"{artifact}_by_level.parquet")
+        return table[table["analysis_level"].eq(resolved)].drop(
+            columns="analysis_level"
+        ).reset_index(drop=True)
 
     def _raw_result(self, result_id: str) -> pd.DataFrame:
         manifest = self.manifest
@@ -315,36 +450,72 @@ def build_analysis(run_dir: str | Path) -> dict[str, Any]:
     analysis_dir.mkdir(parents=True, exist_ok=True)
     reviews_path = analysis_dir / "reviews.csv"
     reviews = _latest_reviews(_read_reviews(reviews_path))
-    recipe = manifest["method"].get("thermochemistry")
     calculation_level = manifest.get("calculation_level", "full")
-
-    frames = [
-        _state_rows(
-            frame,
-            source=source,
-            recipe=recipe,
-            reviews=reviews,
-            calculation_level=calculation_level,
-            method=manifest.get("method", {}),
-        )
-        for source, frame in _load_raw_frames(root, manifest)
-    ]
-    states = pd.concat(frames, ignore_index=True) if frames else _empty_states()
+    states, dimer_references, barriers, profiles = _build_level_tables(
+        root,
+        manifest,
+        calculation_level=calculation_level,
+        calculation_results=manifest.get("calculation_results", {}),
+        reviews=reviews,
+    )
     states.to_parquet(analysis_dir / "states.parquet", index=False)
-
-    dimer_references = _build_dimer_references(states, manifest)
     dimer_references.to_parquet(
         analysis_dir / "dimer_references.parquet",
         index=False,
     )
-
-    barriers = _build_barriers(states, manifest, dimer_references)
     barriers.to_parquet(analysis_dir / "barriers.parquet", index=False)
-
-    profiles = pd.DataFrame()
     if manifest.get("scope") == "full_cycle":
-        profiles = _build_profiles(states, manifest, dimer_references)
         profiles.to_parquet(analysis_dir / "profiles.parquet", index=False)
+
+    analysis_levels = tuple(
+        str(level)
+        for level in manifest.get("analysis_levels", [calculation_level])
+    )
+    level_results = manifest.get("tier_calculation_results", {})
+    states_by_level: list[pd.DataFrame] = []
+    dimers_by_level: list[pd.DataFrame] = []
+    barriers_by_level: list[pd.DataFrame] = []
+    profiles_by_level: list[pd.DataFrame] = []
+    for level in analysis_levels:
+        if level == calculation_level:
+            level_tables = (states, dimer_references, barriers, profiles)
+        else:
+            level_tables = _build_level_tables(
+                root,
+                manifest,
+                calculation_level=level,
+                calculation_results=level_results.get(level, {}),
+                reviews=reviews,
+            )
+        for table, destination in zip(
+            level_tables,
+            (
+                states_by_level,
+                dimers_by_level,
+                barriers_by_level,
+                profiles_by_level,
+            ),
+        ):
+            labelled = table.copy()
+            labelled.insert(0, "analysis_level", level)
+            destination.append(labelled)
+    _concat_level_tables(states_by_level).to_parquet(
+        analysis_dir / "states_by_level.parquet",
+        index=False,
+    )
+    _concat_level_tables(dimers_by_level).to_parquet(
+        analysis_dir / "dimer_references_by_level.parquet",
+        index=False,
+    )
+    _concat_level_tables(barriers_by_level).to_parquet(
+        analysis_dir / "barriers_by_level.parquet",
+        index=False,
+    )
+    if manifest.get("scope") == "full_cycle":
+        _concat_level_tables(profiles_by_level).to_parquet(
+            analysis_dir / "profiles_by_level.parquet",
+            index=False,
+        )
 
     if not reviews_path.exists():
         _empty_reviews().to_csv(reviews_path, index=False)
@@ -362,14 +533,76 @@ def build_analysis(run_dir: str | Path) -> dict[str, Any]:
             "selection_quality_status",
         ),
         "barrier_quality": _counts(barriers, "quality_status"),
+        "analysis_levels": list(analysis_levels),
     }
     (analysis_dir / "report.json").write_text(json.dumps(report, indent=2, sort_keys=True) + "\n")
     return report
 
 
-def _load_raw_frames(root: Path, manifest: Mapping[str, Any]) -> list[tuple[str, pd.DataFrame]]:
+def _build_level_tables(
+    root: Path,
+    manifest: Mapping[str, Any],
+    *,
+    calculation_level: str,
+    calculation_results: Mapping[str, Any],
+    reviews: Mapping[str, str],
+) -> tuple[pd.DataFrame, pd.DataFrame, pd.DataFrame, pd.DataFrame]:
+    """Build all analysis tables for one independently selected tier."""
+    level_manifest = dict(manifest)
+    level_manifest["calculation_level"] = calculation_level
+    recipe = (
+        manifest["method"].get("thermochemistry")
+        if calculation_level == "full"
+        else None
+    )
+    frames = []
+    for source, frame in _load_raw_frames(
+        root,
+        manifest,
+        calculation_results=calculation_results,
+    ):
+        state_rows = _state_rows(
+            frame,
+            source=source,
+            recipe=recipe,
+            reviews=reviews,
+            calculation_level=calculation_level,
+            method=manifest.get("method", {}),
+        )
+        if not state_rows.empty:
+            frames.append(state_rows)
+    states = pd.concat(frames, ignore_index=True) if frames else _empty_states()
+    dimer_references = _build_dimer_references(states, level_manifest)
+    barriers = _build_barriers(states, level_manifest, dimer_references)
+    profiles = (
+        _build_profiles(states, level_manifest, dimer_references)
+        if manifest.get("scope") == "full_cycle"
+        else pd.DataFrame()
+    )
+    return states, dimer_references, barriers, profiles
+
+
+def _concat_level_tables(tables: list[pd.DataFrame]) -> pd.DataFrame:
+    """Concatenate labelled analysis-level tables with stable empty behavior."""
+    populated = [table for table in tables if not table.empty]
+    if populated:
+        return pd.concat(populated, ignore_index=True)
+    return tables[0].iloc[0:0].copy() if tables else pd.DataFrame()
+
+
+def _load_raw_frames(
+    root: Path,
+    manifest: Mapping[str, Any],
+    *,
+    calculation_results: Mapping[str, Any] | None = None,
+) -> list[tuple[str, pd.DataFrame]]:
     frames: list[tuple[str, pd.DataFrame]] = []
-    for source, relative in manifest.get("calculation_results", {}).items():
+    paths = (
+        manifest.get("calculation_results", {})
+        if calculation_results is None
+        else calculation_results
+    )
+    for source, relative in paths.items():
         if not relative:
             continue
         path = root / str(relative)

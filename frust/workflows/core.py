@@ -59,6 +59,10 @@ TargetRetention = Literal["compact_success", "all"]
 DEFAULT_WORKFLOW_RESOURCES = Resources(cpus=4, mem_gb=20, timeout_min=720)
 DEFAULT_COLLECTION_RESOURCES = Resources(cpus=2, mem_gb=4, timeout_min=120)
 TARGET_TIMING_FILE = "timing.json"
+ANALYSIS_TIER_FILES = {
+    "low_cost": "tier_low_cost.parquet",
+    "dft_ranked": "tier_dft_ranked.parquet",
+}
 _LEGACY_STAGE_RESOURCE_KEYS = {
     "dft_rank_sp": "dft_pre_sp",
     "dft_preopt": "dft_pre_opt",
@@ -1117,6 +1121,13 @@ class BaseWorkflow:
                     },
                 ),
             )
+            _write_analysis_tier_snapshot(
+                self,
+                target,
+                stage,
+                df,
+                save_dir=save_dir,
+            )
         if df is None:
             raise ValueError("No workflow stages were run")
         return df
@@ -1609,7 +1620,10 @@ def _compact_successful_target(target_dir: Path, final_file: Path) -> dict[str, 
         return result
 
     for path in sorted(target_dir.glob("*.parquet")):
-        if _same_file(path, final_file):
+        if (
+            _same_file(path, final_file)
+            or path.name in ANALYSIS_TIER_FILES.values()
+        ):
             continue
         _remove_compaction_file(path, result)
 
@@ -1836,7 +1850,12 @@ def _deepest_parquet(target_dir: Path) -> Path | None:
     final_file = target_dir / "final.parquet"
     if final_file.exists():
         return final_file
-    files = sorted(target_dir.glob("*.parquet"))
+    tier_names = set(ANALYSIS_TIER_FILES.values())
+    files = sorted(
+        path
+        for path in target_dir.glob("*.parquet")
+        if path.name not in tier_names
+    )
     if not files:
         return None
     return max(files, key=lambda path: (len(path.suffixes), path.name))
@@ -2049,6 +2068,87 @@ def _run_stage_calculation(
 
     spec = workflow.method.for_stage(stage.method_stage or stage.id)
     return _apply_calculator(step, df, stage, spec)
+
+
+def _write_analysis_tier_snapshot(
+    workflow: BaseWorkflow,
+    target: WorkflowTarget,
+    stage: StageDef,
+    df: pd.DataFrame,
+    *,
+    save_dir: Path | None,
+) -> None:
+    """Persist an exact lower-tier winner without filtering the main pipeline.
+
+    Parameters
+    ----------
+    workflow : BaseWorkflow
+        Workflow whose requested depth determines the nested tiers.
+    target : WorkflowTarget
+        Scientific target represented by the dataframe.
+    stage : StageDef
+        Completed stage. Snapshots are written after ``xtb_opt`` and, for a
+        full workflow, after ``dft_rank_sp``.
+    df : pandas.DataFrame
+        Post-stage ensemble. Selection occurs on a copy so subsequent full
+        refinement still receives the complete retained ensemble.
+    save_dir : pathlib.Path or None
+        Target directory. Portable tier snapshots require an output directory.
+    """
+    if save_dir is None or workflow.result_profile is None:
+        return
+    requested_level = str(
+        getattr(
+            workflow,
+            "calculation_level",
+            "full" if workflow.dft else "low_cost",
+        )
+    )
+    tier: str | None = None
+    if stage.id == "xtb_opt" and requested_level in {"dft_ranked", "full"}:
+        tier = "low_cost"
+    elif stage.id == "dft_rank_sp" and requested_level == "full":
+        tier = "dft_ranked"
+    if tier is None:
+        return
+
+    energy_column = output_column(stage.id, "electronic_energy")
+    snapshot = lowest_energy_rows(
+        df.copy(),
+        n=1,
+        energy_col=energy_column,
+    )
+    snapshot = _attach_workflow_attrs(snapshot, workflow=workflow, target=target)
+    snapshot.attrs["frust_workflow"]["calculation_level"] = tier
+    attach_result_contract(
+        snapshot,
+        workflow.result_profile,
+        dft=False,
+        calculation_level=tier,
+        include_terminal_solv_sp=False,
+        thermochemistry=None,
+    )
+    contract = snapshot.attrs["frust_results"]
+    analysis_column = str(contract["columns"]["analysis"]["electronic_energy"])
+    analysis_stage = analysis_column.removesuffix("-EE")
+    optimized_column = str(contract["columns"]["optimized"]["coords"])
+    optimized_stage = optimized_column.removesuffix("-oc")
+    contract["energy_protocol"] = {
+        "calculation_level": tier,
+        "analysis_stage": analysis_stage,
+        "geometry_stage": optimized_stage,
+        "calculator": workflow.method.for_stage(analysis_stage).to_dict(),
+    }
+    snapshot.attrs["frust_analysis_tier"] = {
+        "schema_version": 1,
+        "analysis_level": tier,
+        "requested_level": requested_level,
+        "selection_stage": stage.id,
+        "selection_energy_column": energy_column,
+        "source_rows": int(len(df)),
+        "selected_rows": int(len(snapshot)),
+    }
+    snapshot.to_parquet(Path(save_dir) / ANALYSIS_TIER_FILES[tier], index=False)
 
 
 def _attach_workflow_attrs(

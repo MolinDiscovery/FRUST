@@ -22,6 +22,7 @@ from frust.screen.runs import ScreenRun, build_analysis
 from frust.structures import StructureTarget
 from frust.structures.specs import DIMER_STATES
 from frust.utils.dataframes import merge_dataframe_attrs
+from frust.workflows.core import ANALYSIS_TIER_FILES
 from frust.workflows.factories import Int3Workflow, MolsWorkflow, ScreenTSWorkflow
 from frust.workflows.methods import (
     CalculationLevel,
@@ -576,10 +577,23 @@ class CatalystScreenWorkflow:
             states.append("catalyst")
         return states
 
-    def _reference_protocol(self) -> dict[str, Any]:
+    def _analysis_levels(self) -> tuple[CalculationLevel, ...]:
+        """Return calculation tiers available from the requested workflow."""
+        if self.level == "full":
+            return ("low_cost", "dft_ranked", "full")
+        if self.level == "dft_ranked":
+            return ("low_cost", "dft_ranked")
+        return ("low_cost",)
+
+    def _reference_protocol(
+        self,
+        calculation_level: CalculationLevel | None = None,
+    ) -> dict[str, Any]:
+        """Return reference identity settings for one nested result tier."""
+        level = self.level if calculation_level is None else calculation_level
         return {
             "workflow": "frust.workflows.mols::v2",
-            "calculation_level": self.level,
+            "calculation_level": level,
             "screening_fingerprint": self.screening.fingerprint(),
             "ranking_solvation": self.ranking_solvation,
             "n_confs": self.n_confs,
@@ -601,15 +615,30 @@ class CatalystScreenWorkflow:
         library = self._shared_library(initialize=False)
         if library is None:
             return None
-        return library.find(
+        record = library.find(
             target,
             self.method,
-            protocol=self._reference_protocol(),
+            protocol=self._reference_protocol(self.level),
             reuse_policy=(
                 self.reuse_policy if self.level == "full" else "auto_valid"
             ),
             calculation_level=self.level,
         )
+        if record is None:
+            return None
+        for tier in self._analysis_levels():
+            if tier == self.level:
+                continue
+            nested = library.find(
+                target,
+                self.method,
+                protocol=self._reference_protocol(tier),
+                reuse_policy="auto_valid",
+                calculation_level=tier,
+            )
+            if nested is None:
+                return None
+        return record
 
     def _snapshot_reused_references(
         self,
@@ -620,6 +649,13 @@ class CatalystScreenWorkflow:
         local_library = ReferenceLibrary(branch_dir).initialize()
         frames: list[pd.DataFrame] = []
         sources: list[Path] = []
+        tier_frames: dict[str, list[pd.DataFrame]] = {
+            tier: [] for tier in self._analysis_levels() if tier != self.level
+        }
+        tier_sources: dict[str, list[Path]] = {
+            tier: [] for tier in tier_frames
+        }
+        shared_library = self._shared_library(initialize=False)
         for item in items:
             if item.action != "reuse":
                 continue
@@ -632,11 +668,46 @@ class CatalystScreenWorkflow:
             frame["reference_source"] = "shared_library"
             frames.append(frame)
             sources.append(local.path / "result.parquet")
+            if shared_library is None:
+                continue
+            for tier in tier_frames:
+                tier_record = shared_library.find(
+                    item.target,
+                    self.method,
+                    protocol=self._reference_protocol(tier),
+                    reuse_policy="auto_valid",
+                    calculation_level=tier,
+                )
+                if tier_record is None:
+                    continue
+                local_tier = local_library.import_record(tier_record)
+                tier_frame = local_tier.dataframe().copy()
+                tier_frame["reference_id"] = local_tier.reference_id
+                tier_frame["reference_source"] = "shared_library"
+                tier_frames[tier].append(tier_frame)
+                tier_sources[tier].append(local_tier.path / "result.parquet")
         reused = _concat_reference_results(frames, source_files=sources)
         reused.to_parquet(branch_dir / "reused.parquet", index=False)
+        for tier, nested_frames in tier_frames.items():
+            tier_dir = branch_dir / "tiers" / tier
+            tier_dir.mkdir(parents=True, exist_ok=True)
+            nested = _concat_reference_results(
+                nested_frames,
+                source_files=tier_sources[tier],
+            )
+            nested.to_parquet(tier_dir / "reused.parquet", index=False)
 
     def _write_manifest(self, root: Path) -> None:
         ts_targets = self.children()["transition_states"].targets()
+        terminal_results = _calculation_result_paths(self.scope)
+        level_results = {
+            level: (
+                terminal_results
+                if level == self.level
+                else _tier_calculation_result_paths(self.scope, level)
+            )
+            for level in self._analysis_levels()
+        }
         reference_plan = [
             {
                 "target_id": item.target.target_id,
@@ -659,6 +730,7 @@ class CatalystScreenWorkflow:
                 else [self.dimer_reference]
             ),
             "calculation_level": self.level,
+            "analysis_levels": list(self._analysis_levels()),
             "screening": self.screening.to_dict(),
             "screening_fingerprint": self.screening.fingerprint(),
             "method": self.method.to_dict(),
@@ -687,20 +759,8 @@ class CatalystScreenWorkflow:
                 }
                 for target in ts_targets
             ],
-            "calculation_results": {
-                "transition_states": "calculations/transition_states/merged.parquet",
-                "references": "calculations/references/merged.parquet",
-                "cycle_molecules": (
-                    "calculations/full_cycle/molecular_states/merged.parquet"
-                    if self.scope == "full_cycle"
-                    else None
-                ),
-                "int3": (
-                    "calculations/full_cycle/int3/merged.parquet"
-                    if self.scope == "full_cycle"
-                    else None
-                ),
-            },
+            "calculation_results": terminal_results,
+            "tier_calculation_results": level_results,
         }
         signature_keys = [
             "scope",
@@ -781,7 +841,10 @@ def catalyst_screen(
         ``"low_cost"`` reports g-xTB electronic barriers, ``"dft_ranked"``
         reports DFT single-point electronic barriers on g-xTB geometries, and
         ``"full"`` additionally performs DFT refinement and frequencies so
-        both electronic and Gibbs barriers are available.
+        both electronic and Gibbs barriers are available. Deeper runs retain
+        independently selected lower-tier winners: a ``"full"`` run can later
+        compare low-cost, DFT-ranked, and full barriers without a second
+        submission.
     method : MethodPlan, str, or None, optional
         Downstream DFT calculation plan. It supplies the DFT ranking method for
         ``"dft_ranked"`` and the complete refinement and thermochemistry plan
@@ -872,6 +935,12 @@ def _finalize_run(workflow: CatalystScreenWorkflow, root: Path) -> dict[str, Any
     reference_dir = _branch_dir(root, "references")
     local_library = ReferenceLibrary(reference_dir).initialize()
     shared_library = workflow._shared_library(initialize=True)
+    tier_report = _finalize_nested_tiers(
+        workflow,
+        root,
+        local_library=local_library,
+        shared_library=shared_library,
+    )
     computed_path = reference_dir / "computed.parquet"
     computed = pd.read_parquet(computed_path) if computed_path.exists() else pd.DataFrame()
     reused_path = reference_dir / "reused.parquet"
@@ -1020,6 +1089,7 @@ def _finalize_run(workflow: CatalystScreenWorkflow, root: Path) -> dict[str, Any
         "finalized_at": _utc_now(),
         "analysis": analysis_report,
         "branches": branch_reports,
+        "analysis_tiers": tier_report,
         "n_references_calculated": int(len(computed)),
         "n_references_published": int(publication_report["n_published"]),
         "n_references_not_published": int(
@@ -1034,6 +1104,110 @@ def _finalize_run(workflow: CatalystScreenWorkflow, root: Path) -> dict[str, Any
         json.dumps(report, indent=2, sort_keys=True, default=str) + "\n"
     )
     return report
+
+
+def _finalize_nested_tiers(
+    workflow: CatalystScreenWorkflow,
+    root: Path,
+    *,
+    local_library: ReferenceLibrary,
+    shared_library: ReferenceLibrary | None,
+) -> dict[str, Any]:
+    """Collect and publish exact nested-tier snapshots from a composed run."""
+    report: dict[str, Any] = {
+        "schema_version": 1,
+        "levels": {},
+    }
+    for level in workflow._analysis_levels():
+        if level == workflow.level:
+            continue
+        level_report: dict[str, Any] = {}
+        for branch, child in workflow.children().items():
+            branch_dir = _branch_dir(root, branch)
+            tier_dir = branch_dir / "tiers" / level
+            tier_dir.mkdir(parents=True, exist_ok=True)
+            frames: list[pd.DataFrame] = []
+            sources: list[Path] = []
+            for target in child.targets():
+                snapshot_path = branch_dir / target.tag / ANALYSIS_TIER_FILES[level]
+                if not snapshot_path.exists():
+                    continue
+                frame = pd.read_parquet(snapshot_path).copy()
+                if branch == "references":
+                    record = local_library.publish(
+                        frame,
+                        target,
+                        workflow.method,
+                        protocol=workflow._reference_protocol(level),
+                        calculation_level=level,
+                        source_run=root,
+                        source_target_dir=branch_dir / target.tag,
+                    )
+                    if shared_library is not None:
+                        shared_library.publish(
+                            frame,
+                            target,
+                            workflow.method,
+                            protocol=workflow._reference_protocol(level),
+                            calculation_level=level,
+                            source_run=root,
+                            source_target_dir=branch_dir / target.tag,
+                        )
+                    frame["reference_id"] = record.reference_id
+                    frame["reference_source"] = "calculated"
+                frames.append(frame)
+                sources.append(snapshot_path)
+
+            if branch == "references":
+                computed = _concat_reference_results(frames, source_files=sources)
+                computed_path = tier_dir / "computed.parquet"
+                computed.to_parquet(computed_path, index=False)
+                reused_path = tier_dir / "reused.parquet"
+                reused = (
+                    pd.read_parquet(reused_path)
+                    if reused_path.exists()
+                    else pd.DataFrame()
+                )
+                available = [value for value in (computed, reused) if not value.empty]
+                available_paths = [
+                    path
+                    for value, path in (
+                        (computed, computed_path),
+                        (reused, reused_path),
+                    )
+                    if not value.empty
+                ]
+                merged = _concat_reference_results(
+                    available,
+                    source_files=available_paths,
+                )
+            else:
+                merged = _concat_tier_results(frames, source_files=sources)
+            merged.to_parquet(tier_dir / "merged.parquet", index=False)
+            level_report[branch] = {
+                "n_targets": len(child.targets()),
+                "n_snapshots": len(frames),
+                "n_rows": int(len(merged)),
+                "path": str((tier_dir / "merged.parquet").relative_to(root)),
+            }
+        report["levels"][level] = level_report
+    return report
+
+
+def _concat_tier_results(
+    frames: list[pd.DataFrame],
+    *,
+    source_files: list[str | Path],
+) -> pd.DataFrame:
+    """Concatenate compatible non-reference tier snapshots."""
+    if not frames:
+        return pd.DataFrame()
+    merged = pd.concat(frames, ignore_index=True)
+    merged.attrs.clear()
+    merged.attrs.update(
+        merge_dataframe_attrs(frames, source_files=source_files)
+    )
+    return merged
 
 
 def _concat_reference_results(
@@ -1098,8 +1272,58 @@ def _branch_dir(root: Path, branch: str) -> Path:
     return mapping[branch]
 
 
+def _calculation_result_paths(scope: ScreenScope) -> dict[str, str | None]:
+    """Return terminal calculation-result paths for a portable run."""
+    return {
+        "transition_states": "calculations/transition_states/merged.parquet",
+        "references": "calculations/references/merged.parquet",
+        "cycle_molecules": (
+            "calculations/full_cycle/molecular_states/merged.parquet"
+            if scope == "full_cycle"
+            else None
+        ),
+        "int3": (
+            "calculations/full_cycle/int3/merged.parquet"
+            if scope == "full_cycle"
+            else None
+        ),
+    }
+
+
+def _tier_calculation_result_paths(
+    scope: ScreenScope,
+    level: CalculationLevel,
+) -> dict[str, str | None]:
+    """Return collected nested-tier result paths for a portable run."""
+    return {
+        "transition_states": (
+            f"calculations/transition_states/tiers/{level}/merged.parquet"
+        ),
+        "references": f"calculations/references/tiers/{level}/merged.parquet",
+        "cycle_molecules": (
+            f"calculations/full_cycle/molecular_states/tiers/{level}/merged.parquet"
+            if scope == "full_cycle"
+            else None
+        ),
+        "int3": (
+            f"calculations/full_cycle/int3/tiers/{level}/merged.parquet"
+            if scope == "full_cycle"
+            else None
+        ),
+    }
+
+
 def _deepest_parquet(target_dir: Path) -> Path | None:
-    files = list(target_dir.glob("*.parquet")) if target_dir.is_dir() else []
+    tier_names = set(ANALYSIS_TIER_FILES.values())
+    files = (
+        [
+            path
+            for path in target_dir.glob("*.parquet")
+            if path.name not in tier_names
+        ]
+        if target_dir.is_dir()
+        else []
+    )
     return max(files, key=lambda path: (path.stem.count("."), path.stat().st_mtime), default=None)
 
 

@@ -335,6 +335,41 @@ barriers[[
 ]]
 ```
 
+Because this was submitted with `level="full"`, the same portable run also
+contains the independently selected low-cost and DFT-ranked screening results:
+
+```python
+comparison = run.compare_barriers()
+comparison[[
+    "substrate_name",
+    "catalyst_name",
+    "rpos",
+    "ts_type",
+    "delta_e_low_cost_kcal_mol",
+    "delta_e_dft_ranked_kcal_mol",
+    "delta_e_full_kcal_mol",
+    "delta_g_full_kcal_mol",
+]]
+```
+
+The three electronic columns can differ because each level selects its own
+lowest conformer. When `dimer_reference="lowest"`, each level also chooses its
+own lowest qualified dimer topology. Inspect one tier with the same tidy API:
+
+```python
+screening_barriers = run.barriers(level="dft_ranked")
+full_barriers = run.barriers(level="full")
+```
+
+`delta_g_kcal_mol` and `delta_g_corrected_kcal_mol` are empty in the screening
+table because low-cost and DFT-ranked stages do not calculate frequencies.
+They are populated only for `level="full"`.
+
+!!! note "One full submission, three analysis tiers"
+
+    The lower-tier rows are saved when their ranking stages finish. They are
+    not approximations reconstructed from the final full-DFT conformer.
+
 FRUST evaluates the same stoichiometric expressions for electronic and Gibbs
 energies. Electronic barriers are available at every level:
 

@@ -162,6 +162,37 @@ barriers
 | pyrrole | NMe | 2 | TS3 | 28.0 | 26.1 | ready |
 | pyrrole | NMe | 2 | TS4 | 26.2 | 24.7 | invalid |
 
+A full run also preserves the independently selected winner at each cheaper
+level. This gives the screening electronic barrier, the DFT-ranked electronic
+barrier, and the final DFT electronic and Gibbs barriers from one submission:
+
+```python
+run.available_analysis_levels()
+# ('low_cost', 'dft_ranked', 'full')
+
+comparison = run.compare_barriers()
+comparison[[
+    "ts_type",
+    "delta_e_low_cost_kcal_mol",
+    "delta_e_dft_ranked_kcal_mol",
+    "delta_e_full_kcal_mol",
+    "delta_g_full_kcal_mol",
+]]
+```
+
+Use `run.barriers(level="dft_ranked")` to inspect one tier in the usual tidy
+format. Gibbs columns are intentionally empty at `low_cost` and `dft_ranked`;
+frequencies are only calculated at `full`. With
+`dimer_reference="lowest"`, FRUST selects the lowest qualified dimer again at
+each level, so a screening comparison does not silently reuse the full-DFT
+dimer choice.
+
+!!! note "These are exact checkpoints"
+
+    FRUST saves the winning structure immediately after each ranking stage.
+    It does not reconstruct a screening result from the conformer that later
+    wins full DFT refinement.
+
 The run directory is self-describing:
 
 ```text
@@ -170,11 +201,17 @@ results/
 ├── run_report.json
 ├── calculations/
 │   ├── transition_states/
-│   │   └── merged.parquet
+│   │   ├── merged.parquet
+│   │   └── tiers/
+│   │       ├── low_cost/merged.parquet
+│   │       └── dft_ranked/merged.parquet
 │   └── references/
 │       ├── computed.parquet
 │       ├── reused.parquet
 │       ├── merged.parquet
+│       ├── tiers/
+│       │   ├── low_cost/merged.parquet
+│       │   └── dft_ranked/merged.parquet
 │       ├── publication_report.json
 │       ├── index.parquet
 │       ├── reviews.csv
@@ -183,7 +220,11 @@ results/
     ├── states.parquet
     ├── dimer_references.parquet
     ├── barriers.parquet
+    ├── states_by_level.parquet
+    ├── dimer_references_by_level.parquet
+    ├── barriers_by_level.parquet
     ├── profiles.parquet       # full_cycle only
+    ├── profiles_by_level.parquet  # full_cycle only
     ├── reviews.csv
     └── report.json
 ```
