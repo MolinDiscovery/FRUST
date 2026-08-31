@@ -881,6 +881,71 @@ def test_full_cycle_is_balanced_and_review_persists(tmp_path):
     assert changed["quality_status"] == "review"
 
 
+def test_profile_and_plot_profile_can_select_an_available_dimer(tmp_path):
+    root = tmp_path / "dimer-profile"
+    _write_barrier_bundle(root, scope="full_cycle")
+    manifest_path = root / "manifest.json"
+    manifest = json.loads(manifest_path.read_text())
+    manifest["dimer_reference"] = "lowest"
+    manifest["dimer_candidates"] = list(screen_runs.DIMER_STATES)
+    manifest_path.write_text(json.dumps(manifest, indent=2))
+
+    references_path = root / "calculations/references/merged.parquet"
+    references = pd.read_parquet(references_path)
+    dimer = references.loc[references["state_id"].eq("dimer")].copy()
+    bridged = dimer.copy()
+    bridged["state_id"] = "dimer_bh_bridged"
+    bridged["structure_id"] = "dimer_bh_bridged:pyrrole__NMe:rNone"
+    bridged["dft_freq-EE"] -= 0.2
+    bridged["dft_freq-GE"] -= 0.2
+    eight_membered = dimer.copy()
+    eight_membered["state_id"] = "dimer_eight_membered"
+    eight_membered["structure_id"] = "dimer_eight_membered:pyrrole__NMe:rNone"
+    eight_membered["dft_freq-EE"] -= 0.1
+    eight_membered["dft_freq-GE"] -= 0.1
+    references = pd.concat(
+        [references, bridged, eight_membered],
+        ignore_index=True,
+    )
+    references.to_parquet(references_path, index=False)
+
+    run = ft.screen.open_run(root).refresh_analysis()
+    recorded = run.profile(system_name="pyrrole__NMe", rpos=2)
+    ordinary = run.profile(
+        system_name="pyrrole__NMe",
+        rpos=2,
+        dimer_reference="dimer",
+    )
+
+    assert set(recorded["dimer_state_id"]) == {"dimer_bh_bridged"}
+    assert set(ordinary["dimer_state_id"]) == {"dimer"}
+    assert not ordinary["relative_g_kcal_mol"].equals(
+        recorded["relative_g_kcal_mol"]
+    )
+
+    with patch("frust.vis.plot_energy_profile", return_value="profile-plot") as plot:
+        result = run.plot_profile(
+            system_name="pyrrole__NMe",
+            rpos=2,
+            dimer_reference="dimer_eight_membered",
+            ylabel="dG",
+        )
+
+    assert result == "profile-plot"
+    assert plot.call_args.kwargs["ylabel"] == "dG"
+    plotted_states = dict(plot.call_args.args[0])
+    assert plotted_states["Dimer"] == pytest.approx(0.0)
+
+
+def test_profile_rejects_a_dimer_that_was_not_calculated(tmp_path):
+    root = tmp_path / "single-dimer-profile"
+    _write_barrier_bundle(root, scope="full_cycle")
+    run = ft.screen.open_run(root).refresh_analysis()
+
+    with pytest.raises(ValueError, match=r"available dimers are \['dimer'\]"):
+        run.profile(dimer_reference="dimer_bh_bridged")
+
+
 def test_weak_dimer_quality_propagates_to_full_profile(tmp_path):
     root = tmp_path / "full"
     _write_barrier_bundle(root, scope="full_cycle")

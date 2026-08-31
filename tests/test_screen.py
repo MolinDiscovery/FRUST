@@ -366,6 +366,67 @@ class ScreenWorkflowTests(unittest.TestCase):
         with self.assertRaisesRegex(ValueError, "B-aryl-N"):
             match_catalyst_roles(bad, catalyst_name="benzene")
 
+    def test_catalyst_match_selects_the_tertiary_amine_with_n_substituents(self):
+        catalyst_smiles_values = [
+            "Bc1c([N+](=O)[O-])cccc1N(C)C",
+            "Bc1c(N)cccc1N(C)C",
+            "Bc1c(NC(C)=O)cccc1N(C)C",
+            "Bc1c(N(C)C)cccc1N(C)C",
+        ]
+
+        for catalyst_smiles in catalyst_smiles_values:
+            with self.subTest(catalyst_smiles=catalyst_smiles):
+                catalyst = mol_from_smiles(catalyst_smiles, label="substituted cat")
+                roles = match_catalyst_roles(
+                    catalyst,
+                    catalyst_name="substituted cat",
+                )
+
+                nitrogen = catalyst.GetAtomWithIdx(roles["cat_N"])
+                self.assertEqual(nitrogen.GetFormalCharge(), 0)
+                self.assertEqual(nitrogen.GetTotalNumHs(), 0)
+                self.assertEqual(nitrogen.GetDegree(), 3)
+
+    def test_boron_substituted_catalyst_builds_all_tsguess2_graphs(self):
+        catalyst_smiles = "CN(C)c1ccccc1BF"
+        substrate_smiles = "COC1=CC=CC(OC)=C1"
+
+        ts12 = ft.tsguess2.build_ts1_ts2_connected_smiles(
+            catalyst_smiles,
+            substrate_smiles,
+            rpos_list=[3],
+        )
+        ts34 = ft.tsguess2.build_ts3_ts4_connected_smiles(
+            catalyst_smiles,
+            substrate_smiles,
+            rpos_list=[3],
+        )
+
+        self.assertEqual(set(ts12), {3})
+        self.assertEqual(set(ts34), {3})
+        self.assertIsNotNone(mol_from_smiles(ts12[3], label="TS1/TS2 graph"))
+        self.assertIsNotNone(mol_from_smiles(ts34[3], label="TS3/TS4 graph"))
+
+    def test_ts1_ts2_builder_uses_scaffold_n_with_extra_tertiary_amine(self):
+        substrate_smiles = "COC1=CC=CC(OC)=C1"
+        catalysts = [
+            "Bc1cc(N(C)C)ccc1N(C)C",
+            "Bc1ccc(N(C)C)cc1N(C)C",
+        ]
+
+        for catalyst_smiles in catalysts:
+            with self.subTest(catalyst_smiles=catalyst_smiles):
+                generated = ft.tsguess2.build_ts1_ts2_connected_smiles(
+                    catalyst_smiles,
+                    substrate_smiles,
+                    rpos_list=[3],
+                )
+
+                self.assertEqual(set(generated), {3})
+                self.assertIsNotNone(
+                    mol_from_smiles(generated[3], label="TS1/TS2 graph")
+                )
+
     @pytest.mark.slow
     def test_create_ts_guesses_returns_grouped_dataframes(self):
         systems = ft.screen.expand(

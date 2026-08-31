@@ -635,6 +635,20 @@ cycle.plot_profile(
 )
 ```
 
+If all dimer topologies were calculated, compare the same profile against a
+specific stored reference without editing or copying the result bundle:
+
+```python
+cycle.plot_profile(
+    system_name="n_methyl_pyrrole__tmp_bcat",
+    rpos=2,
+    dimer_reference="dimer_eight_membered",
+)
+```
+
+The same argument works with `cycle.profile(...)`. FRUST rebuilds this view in
+memory; the recorded `dimer_reference="lowest"` result remains unchanged.
+
 Every profile row is balanced to the same total atomic composition. Missing or
 invalid dependencies remain in the table, while plots omit invalid and
 incomplete states by default.

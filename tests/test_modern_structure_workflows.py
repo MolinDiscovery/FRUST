@@ -96,6 +96,27 @@ def test_dimer_variants_have_expected_formula_charge_and_interaction_ring():
         assert max(charged_ring_sizes) == expected_ring_size
 
 
+def test_bh_catalyst_builds_dimers_and_cycle_intermediates():
+    molecules = transformer_mols(
+        ligand_smiles="COC1=CC=CC(OC)=C1",
+        catalyst_smiles="CN(C)c1ccccc1BF",
+        rpos_list=[3],
+        select=[*DIMER_STATES, "catalyst", "int1", "int2"],
+        show_IUPAC=False,
+    )
+
+    expected_states = {*DIMER_STATES, "catalyst", "int1", "int2"}
+    assert all(
+        any(
+            key.endswith(state) or f"_{state}_rpos(" in key
+            for key in molecules
+        )
+        for state in expected_states
+    )
+    for molecule in molecules.values():
+        Chem.SanitizeMol(molecule)
+
+
 def test_workflow_stage_tables_stay_separate_and_homogeneous():
     substrate = _components().iloc[[0]][["smiles", "compound_name", "rpos"]]
     workflows = {

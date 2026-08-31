@@ -96,6 +96,79 @@ The selected level applies to TSs and every molecular dependency. A ranked TS
 is therefore combined only with equally ranked ligand, dimer, HBpin, and H2
 energies.
 
+## Preview Structures Before Submission
+
+Preview one representative system across the important workflow branches before
+starting any calculators:
+
+```python
+targets = wf.targets()
+sample_system = targets[0].target.system.system_name
+
+wanted_states = {
+    "TS1",
+    "TS3",
+    "dimer",
+    "dimer_bh_bridged",
+    "dimer_eight_membered",
+    "int1",
+    "int2",
+    "INT3",
+}
+
+preview_indices = [
+    index
+    for index, item in enumerate(targets)
+    if item.target.system.system_name == sample_system
+    and item.target.state_id in wanted_states
+]
+
+preview = wf.preview(
+    targets=preview_indices,
+    n_confs=1,
+    n_cores=4,
+)
+
+preview[["state_id", "system_name", "catalyst_name", "custom_name"]]
+```
+
+Inspect the generated structures in an interactive 3D grid:
+
+```python
+ft.plot_mols(
+    preview,
+    legends=preview["custom_name"].tolist(),
+    columns=2,
+    cell_size=(520, 440),
+    show_labels=True,
+    linked=False,
+)
+```
+
+For transition states and `INT3`, inspect the role assignments and constraints
+alongside the structures:
+
+```python
+preview.loc[
+    preview["constraint_roles"].notna(),
+    ["custom_name", "constraint_roles", "constraint_spec"],
+]
+```
+
+`preview()` uses the same structure builders as `run()` and `submit()`, but stops
+after graph construction and 3D embedding. It does not run pruning, xTB, g-xTB,
+ORCA, or scheduler submission. With `scope="barriers"`, cycle-only states are
+simply absent from the selected targets; with `scope="full_cycle"`, the same
+snippet also previews `int1`, `int2`, and `INT3`.
+
+!!! tip "Choose chemically difficult examples"
+
+    For a large enumerated screen, replace `sample_system` with a system known
+    to exercise unusual chemistry, such as a catalyst substituted directly on
+    boron or one containing additional nitrogen atoms. Previewing a small,
+    deliberately difficult subset is more informative than drawing the first
+    several nearly identical targets.
+
 ## Submit The Complete Run
 
 ```python
@@ -391,6 +464,22 @@ added to the Product a second time.
 profile = run.profile(system_name="pyrrole__NMe", rpos=2)
 run.plot_profile(system_name="pyrrole__NMe", rpos=2)
 ```
+
+When the run calculated multiple dimer topologies, select any available dimer
+directly for an exploratory profile:
+
+```python
+run.plot_profile(
+    system_name="pyrrole__NMe",
+    rpos=2,
+    dimer_reference="dimer_bh_bridged",
+)
+```
+
+Accepted explicit choices are `"dimer"`, `"dimer_bh_bridged"`, and
+`"dimer_eight_membered"`; `"lowest"` repeats automatic selection. This
+rebuilds the profile in memory from stored results. It does not calculate a
+missing dimer or change the run's manifest and saved analysis tables.
 
 States with missing or invalid dependencies remain visible in the tables but
 are omitted from plots by default.

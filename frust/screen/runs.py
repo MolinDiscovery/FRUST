@@ -237,19 +237,52 @@ class ScreenRun:
         include_invalid: bool = False,
         quantity: Literal["electronic", "gibbs"] = "gibbs",
         level: str | None = None,
+        dimer_reference: str | None = None,
     ) -> pd.DataFrame:
-        """Return one ordered balanced catalytic-cycle profile."""
+        """Return one ordered balanced catalytic-cycle profile.
+
+        Parameters
+        ----------
+        system_name : str or None, optional
+            Restrict the table to one expanded catalyst/substrate system.
+        rpos : int or None, optional
+            Restrict the table to one reactive position.
+        include_invalid : bool, optional
+            Include profiles whose dependencies are invalid or incomplete.
+        quantity : {"electronic", "gibbs"}, optional
+            Energy quantity prepared for plotting. Gibbs profiles require the
+            ``"full"`` analysis level.
+        level : {"low_cost", "dft_ranked", "full"} or None, optional
+            Nested analysis tier. ``None`` uses the terminal requested level.
+        dimer_reference : {"lowest", "dimer", "dimer_bh_bridged", "dimer_eight_membered"} or None, optional
+            Dimer topology used to rebuild the profile in memory. ``None``
+            uses the selection recorded during analysis. The requested dimer
+            must already be present in the portable run; no calculation or
+            saved artifact is changed.
+
+        Returns
+        -------
+        pandas.DataFrame
+            Ordered profile rows. ``attrs["energy_column"]`` identifies the
+            column selected by ``quantity``.
+        """
         self._ensure_analysis()
         selected_level = self._resolve_analysis_level(level)
-        path = self.analysis_dir / (
-            "profiles.parquet" if level is None else "profiles_by_level.parquet"
-        )
-        if not path.exists():
+        if self.manifest.get("scope") != "full_cycle":
             raise ValueError("This run used scope='barriers'; no full-cycle profile exists")
-        table = pd.read_parquet(path)
-        if level is not None:
-            table = table[table["analysis_level"].eq(selected_level)].drop(
-                columns="analysis_level"
+        if dimer_reference is None:
+            path = self.analysis_dir / (
+                "profiles.parquet" if level is None else "profiles_by_level.parquet"
+            )
+            table = pd.read_parquet(path)
+            if level is not None:
+                table = table[table["analysis_level"].eq(selected_level)].drop(
+                    columns="analysis_level"
+                )
+        else:
+            table = self._profile_with_dimer(
+                dimer_reference,
+                level=selected_level,
             )
         if system_name is not None:
             table = table[table["system_name"].eq(str(system_name))]
@@ -279,9 +312,35 @@ class ScreenRun:
         include_invalid: bool = False,
         quantity: Literal["electronic", "gibbs"] = "gibbs",
         level: str | None = None,
+        dimer_reference: str | None = None,
         **kwargs: Any,
     ) -> Any:
-        """Plot one balanced profile with FRUST's energy-profile renderer."""
+        """Plot one balanced profile with FRUST's energy-profile renderer.
+
+        Parameters
+        ----------
+        system_name : str
+            Expanded catalyst/substrate system to plot.
+        rpos : int
+            Reactive position to plot.
+        include_invalid : bool, optional
+            Include a profile with invalid or incomplete dependencies.
+        quantity : {"electronic", "gibbs"}, optional
+            Energy quantity plotted on the vertical axis.
+        level : {"low_cost", "dft_ranked", "full"} or None, optional
+            Nested analysis tier. ``None`` uses the terminal requested level.
+        dimer_reference : {"lowest", "dimer", "dimer_bh_bridged", "dimer_eight_membered"} or None, optional
+            Select an already calculated dimer for this plot. ``None`` uses
+            the run's recorded selection.
+        **kwargs
+            Additional arguments forwarded to
+            :func:`frust.vis.plot_energy_profile`.
+
+        Returns
+        -------
+        Any
+            Plot object returned by ``plot_energy_profile``.
+        """
         from frust.vis import plot_energy_profile
 
         profile = self.profile(
@@ -290,12 +349,53 @@ class ScreenRun:
             include_invalid=include_invalid,
             quantity=quantity,
             level=level,
+            dimer_reference=dimer_reference,
         )
         if profile.empty:
             raise ValueError("No plottable profile states match the requested system and rpos")
         energy_column = str(profile.attrs["energy_column"])
         states = list(zip(profile["profile_state"], profile[energy_column]))
         return plot_energy_profile(states, **kwargs)
+
+    def _profile_with_dimer(
+        self,
+        dimer_reference: str,
+        *,
+        level: str,
+    ) -> pd.DataFrame:
+        """Build an unsaved profile table with one available dimer choice."""
+        requested = str(dimer_reference)
+        allowed = ("lowest", *DIMER_STATES)
+        if requested not in allowed:
+            raise ValueError(
+                f"dimer_reference must be one of {list(allowed)}; got {requested!r}"
+            )
+        states = self.states(level=level)
+        available = tuple(
+            state_id
+            for state_id in DIMER_STATES
+            if states["state_id"].eq(state_id).any()
+        )
+        candidates = (
+            tuple(
+                state_id
+                for state_id in self.manifest.get("dimer_candidates", DIMER_STATES)
+                if state_id in available
+            )
+            if requested == "lowest"
+            else (requested,)
+        )
+        if not candidates or any(candidate not in available for candidate in candidates):
+            raise ValueError(
+                f"Dimer reference {requested!r} is unavailable at level {level!r}; "
+                f"available dimers are {list(available)}"
+            )
+        manifest = dict(self.manifest)
+        manifest["calculation_level"] = level
+        manifest["dimer_reference"] = requested
+        manifest["dimer_candidates"] = list(candidates)
+        dimer_references = _build_dimer_references(states, manifest)
+        return _build_profiles(states, manifest, dimer_references)
 
     def review_queue(self) -> pd.DataFrame:
         """Return TS results needing manual imaginary-mode review."""

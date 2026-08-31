@@ -38,9 +38,9 @@ def _prepare_aminoborane_monomer(
         for atom in mol.GetAtomWithIdx(roles["cat_B"]).GetNeighbors()
         if atom.GetAtomicNum() == 1
     )
-    if len(cat_hs) != 2:
+    if len(cat_hs) not in {1, 2}:
         raise ValueError(
-            f"Expected catalyst BH2, found {len(cat_hs)} B-H hydrogens for "
+            f"Expected catalyst BH or BH2, found {len(cat_hs)} B-H hydrogens for "
             f"{catalyst_smiles}."
         )
     return RWMol(mol), {

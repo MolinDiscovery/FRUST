@@ -5,6 +5,8 @@ from __future__ import annotations
 from rdkit import Chem
 from rdkit.Chem import RWMol
 
+from frust.tsguess.matching import match_catalyst_roles
+
 
 def combine_rw_mols(mol1: Chem.Mol, mol2: Chem.Mol) -> tuple[RWMol, int]:
     """Combine two molecules and return an editable molecule plus offset.
@@ -59,26 +61,12 @@ def build_ts1_ts2_connected_smiles(
 
     substrate_rw = RWMol(substrate_mol)
 
-    b_pattern = Chem.MolFromSmarts("[B]")
-    catalyst_matches = catalyst_mol.GetSubstructMatches(b_pattern)
-
-    if not catalyst_matches:
-        raise ValueError("No [B] atom found in the catalyst.")
-
-    catalyst_b_idx = catalyst_matches[0][0]
-
-    # # SMARTS: N is trivalent (X3), has no H atoms (H0), is not N+ or amide N; !$(N-C=O),
-    # and is bonded to two carbons plus an aromatic carbon; ([#6])([#6])~[c]
-    amine_query = Chem.MolFromSmarts("[NX3;H0;!$([N+]);!$(N-C=O)]([#6])([#6])~[c]")
-    amine_matches = catalyst_mol.GetSubstructMatches(amine_query)
-
-    if not amine_matches:
-        raise ValueError(
-            "Could not find catalyst Lewis-base nitrogen matching "
-            "[NX3;H0;!$([N+]);!$(N-C=O)]([#6])([#6])~[c]."
-        )
-
-    catalyst_n_idx = amine_matches[0][0]
+    catalyst_roles = match_catalyst_roles(
+        catalyst_mol,
+        catalyst_name=catalyst_smiles,
+    )
+    catalyst_b_idx = catalyst_roles["cat_B"]
+    catalyst_n_idx = catalyst_roles["cat_N"]
 
     cH_patt = Chem.MolFromSmarts("[cH]")
     matches = substrate_rw.GetSubstructMatches(cH_patt)
@@ -202,6 +190,14 @@ def build_ts3_ts4_connected_smiles(
 
     catalyst_b_idx = catalyst_matches[0][0]
     hbpin_b_idx = hbpin_matches[0][0]
+    catalyst_b_h_count = int(
+        catalyst_mol.GetAtomWithIdx(catalyst_b_idx).GetTotalNumHs()
+    )
+    if catalyst_b_h_count not in {1, 2}:
+        raise ValueError(
+            "TS3/TS4 construction requires a BH or BH2 catalyst; "
+            f"found {catalyst_b_h_count} B-H hydrogens for {catalyst_smiles}."
+        )
 
     cH_patt = Chem.MolFromSmarts("[cH]")
     matches = substrate_rw.GetSubstructMatches(cH_patt)
@@ -314,12 +310,13 @@ def build_ts3_ts4_connected_smiles(
             Chem.BondType.SINGLE,
         )
 
-        cat_h_idx = combined_rw.AddAtom(Chem.Atom(1))
-        combined_rw.AddBond(
-            cat_b_idx_combined,
-            cat_h_idx,
-            Chem.BondType.SINGLE,
-        )
+        if catalyst_b_h_count == 2:
+            cat_h_idx = combined_rw.AddAtom(Chem.Atom(1))
+            combined_rw.AddBond(
+                cat_b_idx_combined,
+                cat_h_idx,
+                Chem.BondType.SINGLE,
+            )
 
         for idx, charge in [
             (cat_b_idx_combined, -1),
@@ -348,4 +345,3 @@ def build_ts3_ts4_connected_smiles(
         ts_smiles[cH] = Chem.MolToSmiles(mol, canonical=True)
 
     return ts_smiles
-
