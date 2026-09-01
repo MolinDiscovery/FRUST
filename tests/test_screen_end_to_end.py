@@ -14,14 +14,52 @@ from rdkit.Chem.rdMolDescriptors import CalcMolFormula
 
 import frust as ft
 import frust.screen.runs as screen_runs
-from frust.results import attach_result_contract, free_energy_components
+from frust.results import attach_result_contract, free_energy_components, result_contract
 from frust.screen.references import ReferenceLibrary
 from frust.structures import ChemicalSystem, StructureTarget
 from frust.transformers import transformer_mols
-from frust.workflows.screening import _finalize_run
+from frust.workflows.screening import _concat_reference_results, _finalize_run
 
 
 CATALYST = "BC1=C(N(C)C)C=CC=C1"
+
+
+def test_lower_tier_contract_omits_inert_thermochemistry():
+    contract = result_contract(
+        "minimum",
+        dft=False,
+        calculation_level="dft_ranked",
+        thermochemistry=ft.workflows.ThermochemistrySpec(
+            "electronic_plus_thermal"
+        ),
+    )
+
+    assert "thermochemistry" not in contract
+
+
+def test_reference_concat_accepts_legacy_lower_tier_thermochemistry(tmp_path):
+    current = pd.DataFrame({"dft_rank_sp-EE": [-1.0]})
+    attach_result_contract(
+        current,
+        "minimum",
+        dft=False,
+        calculation_level="dft_ranked",
+    )
+    legacy = current.copy()
+    legacy.attrs["frust_results"]["thermochemistry"] = {
+        "schema_version": 1,
+        "mode": "electronic_plus_thermal",
+        "temperature_k": 298.15,
+        "energy_unit": "hartree",
+    }
+
+    merged = _concat_reference_results(
+        [current, legacy],
+        source_files=[tmp_path / "current.parquet", tmp_path / "legacy.parquet"],
+    )
+
+    assert len(merged) == 2
+    assert "thermochemistry" not in merged.attrs["frust_results"]
 
 
 class _FakeJob:

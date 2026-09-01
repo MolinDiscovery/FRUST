@@ -38,8 +38,9 @@ def result_contract(
         ``False``, the final DFT frequency-stage electronic energy is the
         analysis energy because all DFT stages already include solvent.
     thermochemistry : ThermochemistrySpec or None, optional
-        Explicit molecular free-energy assembly recipe recorded in the result
-        contract.
+        Explicit molecular free-energy assembly recipe recorded for a
+        ``"full"`` result. Lower calculation levels have no frequency result,
+        so their contracts omit this field.
 
     Returns
     -------
@@ -99,7 +100,7 @@ def result_contract(
         "calculation_level": calculation_level,
         "columns": columns,
     }
-    if thermochemistry is not None:
+    if has_full_dft and thermochemistry is not None:
         to_dict = getattr(thermochemistry, "to_dict", None)
         if not callable(to_dict):
             raise TypeError("thermochemistry must provide to_dict()")

@@ -4,6 +4,13 @@ Use `conda activate UMA` to test things in this project. It should have most pac
 
 When making new git branches, don't use something like codex/new-feature, instead use something like feature/new-feature.
 
+## Mounted Filesystems
+
+Treat paths under `/Users/Mounts/` as inspection-only when editing the FRUST library, even when a traceback or
+notebook points to a mounted HPC checkout. Make code changes only in the local
+development repository. The user will sync or apply those changes on the HPC
+system.
+
 # Documentation Style
 
 When writing documentation, prefer "show, then explain" over abstract description. The goal is that a reader can understand the workflow by looking at the examples, tables, structures, and outputs before reading much prose.

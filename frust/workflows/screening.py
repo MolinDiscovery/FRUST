@@ -6,6 +6,7 @@ import hashlib
 import json
 import os
 import time
+from copy import deepcopy
 from dataclasses import dataclass
 from datetime import datetime, timezone
 from pathlib import Path
@@ -1251,12 +1252,28 @@ def _concat_reference_results(
             + ", ".join(missing_contract)
         )
 
-    attrs = merge_dataframe_attrs(frames, source_files=source_files)
+    compatible_frames: list[pd.DataFrame] = []
+    for frame in frames:
+        compatible = frame.copy()
+        contract = deepcopy(compatible.attrs["frust_results"])
+        if contract.get("calculation_level") != "full":
+            # Older direct low-cost and DFT-ranked runs could record the
+            # MethodPlan thermochemistry recipe while tier snapshots did not.
+            # Neither result depth has frequencies, so the field is inert and
+            # must not make otherwise identical cached references incompatible.
+            contract.pop("thermochemistry", None)
+        compatible.attrs["frust_results"] = contract
+        compatible_frames.append(compatible)
+
+    attrs = merge_dataframe_attrs(
+        compatible_frames,
+        source_files=source_files,
+    )
     if not isinstance(attrs.get("frust_results"), dict):
         raise ValueError(
             "Reference results have incompatible canonical frust_results contracts"
         )
-    merged = pd.concat(frames, ignore_index=True)
+    merged = pd.concat(compatible_frames, ignore_index=True)
     merged.attrs.clear()
     merged.attrs.update(attrs)
     return merged
