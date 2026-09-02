@@ -6,6 +6,7 @@ import hashlib
 import json
 import os
 import time
+from collections.abc import Mapping
 from copy import deepcopy
 from dataclasses import dataclass
 from datetime import datetime, timezone
@@ -289,7 +290,7 @@ class CatalystScreenWorkflow:
             for item in cached:
                 record = self._cached_reference(item.target)
                 if record is not None:
-                    frame = record.dataframe().copy()
+                    frame = record.materialize(item.target)
                     frame["preview_source"] = "reference_library"
                     frames.append(frame)
             if calculated:
@@ -664,7 +665,7 @@ class CatalystScreenWorkflow:
             if record is None:
                 continue
             local = local_library.import_record(record)
-            frame = local.dataframe().copy()
+            frame = local.materialize(item.target)
             frame["reference_id"] = local.reference_id
             frame["reference_source"] = "shared_library"
             frames.append(frame)
@@ -682,7 +683,7 @@ class CatalystScreenWorkflow:
                 if tier_record is None:
                     continue
                 local_tier = local_library.import_record(tier_record)
-                tier_frame = local_tier.dataframe().copy()
+                tier_frame = local_tier.materialize(item.target)
                 tier_frame["reference_id"] = local_tier.reference_id
                 tier_frame["reference_source"] = "shared_library"
                 tier_frames[tier].append(tier_frame)
@@ -713,6 +714,11 @@ class CatalystScreenWorkflow:
             {
                 "target_id": item.target.target_id,
                 "state_id": item.target.state_id,
+                "scope": item.target.scope,
+                "system_name": item.target.system.system_name,
+                "substrate_name": item.target.system.substrate_name,
+                "catalyst_name": item.target.system.catalyst_name,
+                "rpos": item.target.rpos,
                 "action": item.action,
                 "reference_id": item.reference_id,
             }
@@ -1274,9 +1280,35 @@ def _concat_reference_results(
             "Reference results have incompatible canonical frust_results contracts"
         )
     merged = pd.concat(compatible_frames, ignore_index=True)
+    bindings = _merged_reference_bindings(compatible_frames)
+    if bindings:
+        attrs["frust_reference_bindings"] = {
+            "schema_version": 1,
+            "bindings": bindings,
+        }
     merged.attrs.clear()
     merged.attrs.update(attrs)
     return merged
+
+
+def _merged_reference_bindings(frames: list[pd.DataFrame]) -> list[dict[str, Any]]:
+    """Collect unique target bindings across concatenated reference frames."""
+    bindings: list[dict[str, Any]] = []
+    fingerprints: set[str] = set()
+    for frame in frames:
+        metadata = frame.attrs.get("frust_reference_bindings", {})
+        if not isinstance(metadata, Mapping):
+            continue
+        for binding in metadata.get("bindings", []) or []:
+            if not isinstance(binding, Mapping):
+                continue
+            item = deepcopy(dict(binding))
+            fingerprint = _json_hash(item)
+            if fingerprint in fingerprints:
+                continue
+            fingerprints.add(fingerprint)
+            bindings.append(item)
+    return bindings
 
 
 def _branch_dir(root: Path, branch: str) -> Path:

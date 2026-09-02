@@ -429,6 +429,45 @@ entries/
 Use `reuse_policy="auto_valid"` only when automatic minimum checks are an
 acceptable substitute for manual structure approval.
 
+### Repair legacy reused-reference labels
+
+Current FRUST runs bind reused scientific references to the names in the
+current `StructureTarget`. The shared entry remains immutable, while
+`reused.parquet`, previews, and analysis use the current substrate and catalyst
+labels.
+
+For a run created before this binding was applied, inspect the proposed repair
+first:
+
+```python
+proposed = ft.screen.repair_reference_bindings("results")
+proposed[[
+    "reference_id",
+    "old_substrate_name",
+    "substrate_name",
+    "old_catalyst_name",
+    "catalyst_name",
+]]
+```
+
+Apply the repair only after checking the mapping:
+
+```python
+repaired = ft.screen.repair_reference_bindings("results", apply=True)
+print(repaired.attrs["backup_dir"])
+```
+
+The repair matches rows by checksum-protected chemical identity, creates a
+backup, updates only run-local aggregate parquets, rebuilds every stored
+analysis level, and updates `run_report.json`. It does not edit the shared
+reference library or the immutable entries copied into the run.
+
+!!! warning "Do not map legacy names by row order"
+
+    Names such as `substrate_000` are not scientific identifiers. Use the
+    repair helper, which matches canonical reference identity and refuses an
+    ambiguous target.
+
 ## Full Catalytic Cycle
 
 ```python

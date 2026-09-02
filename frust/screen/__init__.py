@@ -11,6 +11,10 @@ _LAZY_API = {
     "ReferenceLibrary": ("frust.screen.references", "ReferenceLibrary"),
     "ReferenceRecord": ("frust.screen.references", "ReferenceRecord"),
     "open_reference_library": ("frust.screen.references", "open_reference_library"),
+    "repair_reference_bindings": (
+        "frust.screen.repairs",
+        "repair_reference_bindings",
+    ),
     "ScreenRun": ("frust.screen.runs", "ScreenRun"),
     "build_analysis": ("frust.screen.runs", "build_analysis"),
     "open_run": ("frust.screen.runs", "open_run"),
@@ -26,6 +30,7 @@ __all__ = [
     "open_reference_library",
     "open_run",
     "read",
+    "repair_reference_bindings",
 ]
 
 
@@ -47,4 +52,5 @@ def __dir__() -> list[str]:
 
 if TYPE_CHECKING:
     from frust.screen.references import ReferenceLibrary, ReferenceRecord, open_reference_library
+    from frust.screen.repairs import repair_reference_bindings
     from frust.screen.runs import ScreenRun, build_analysis, open_run

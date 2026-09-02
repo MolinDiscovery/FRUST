@@ -665,6 +665,7 @@ incomplete states by default.
 | TS remains `review` after approval | A low-frequency flag remains or a different result ID was approved | Compare the queue and approved `result_id` |
 | `FileExistsError` for `out_dir` | Existing manifest has a different scientific signature | Choose a new directory for the changed run |
 | Reference checksum failure | An entry file changed after publication | Preserve it for diagnosis and publish a clean recalculation |
+| Reused ligand exists but barrier says `missing:ligand` | A legacy run snapshot retained the publishing run's component label | Dry-run `ft.screen.repair_reference_bindings("results")`, inspect the mapping, then repeat with `apply=True` |
 
 The minimal executable companion is
 [`examples/end_to_end_catalyst_screen.ipynb`](https://github.com/MolinDiscovery/FRUST/blob/main/examples/end_to_end_catalyst_screen.ipynb).

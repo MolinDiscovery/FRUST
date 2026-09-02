@@ -418,6 +418,35 @@ def test_reference_library_keeps_inspectable_structure_and_review(tmp_path):
     assert found.reference_id == record.reference_id
     assert library.search(review="approved")["reference_id"].tolist() == [record.reference_id]
 
+    renamed_system = replace(
+        system,
+        system_name="descriptive_pyrrole__renamed_NMe",
+        substrate_name="descriptive_pyrrole",
+        catalyst_name="renamed_NMe",
+    )
+    renamed_target = replace(
+        target,
+        target_id="dimer:renamed_NMe",
+        tag="dimer__renamed_NMe",
+        system=renamed_system,
+    )
+    rebound = record.materialize(renamed_target)
+    assert rebound.loc[0, "structure_id"] == "dimer:renamed_NMe"
+    assert rebound.loc[0, "system_name"] == "descriptive_pyrrole__renamed_NMe"
+    assert rebound.loc[0, "substrate_name"] == "descriptive_pyrrole"
+    assert rebound.loc[0, "catalyst_name"] == "renamed_NMe"
+    binding = rebound.attrs["frust_reference_bindings"]["bindings"][0]
+    assert binding["source_labels"]["catalyst_name"] == "NMe"
+    assert binding["target_labels"]["catalyst_name"] == "renamed_NMe"
+    assert record.dataframe().loc[0, "catalyst_name"] == "NMe"
+
+    incompatible = replace(
+        renamed_target,
+        system=replace(renamed_system, catalyst_smiles="CC"),
+    )
+    with pytest.raises(ValueError, match="chemical_identity"):
+        record.materialize(incompatible)
+
     recalculated = df.copy()
     recalculated["dft_freq-EE"] -= 0.01
     recalculated["dft_freq-GE"] -= 0.01
@@ -1222,8 +1251,13 @@ def test_finalizer_publishes_and_future_workflow_reuses_approved_references(tmp_
 
     for reference_id in library.index()["reference_id"]:
         library.get(reference_id).approve(note="One-time scientific structure review")
+    renamed_components = _components().copy()
+    renamed_components["compound_name"] = [
+        "descriptive_pyrrole",
+        "renamed_NMe",
+    ]
     repeated = ft.workflows.catalyst_screen(
-        dataframe=_components(),
+        dataframe=renamed_components,
         method="r2scan-3c-solv",
         reference_store=store,
         dimer_reference="dimer",
@@ -1231,11 +1265,41 @@ def test_finalizer_publishes_and_future_workflow_reuses_approved_references(tmp_
     reference_plan = repeated.plan().query("branch == 'references'")
     assert set(reference_plan["action"]) == {"reuse"}
 
+    repeated_items = repeated.targets()
+    ligand_index = next(
+        index
+        for index, item in enumerate(repeated_items)
+        if item.branch == "references" and item.target.state_id == "ligand"
+    )
+    cached_preview = repeated.preview(targets=[ligand_index])
+    assert cached_preview.loc[0, "substrate_name"] == "descriptive_pyrrole"
+    assert cached_preview.loc[0, "catalyst_name"] == "renamed_NMe"
+
     reused_root = tmp_path / "reused_run"
     reused_root.mkdir()
     repeated._write_manifest(reused_root)
-    reused_items = [item for item in repeated.targets() if item.branch == "references"]
+    reused_items = [item for item in repeated_items if item.branch == "references"]
     repeated._snapshot_reused_references(reused_root, reused_items)
+    rebound_references = pd.read_parquet(
+        reused_root / "calculations/references/reused.parquet"
+    )
+    assert set(rebound_references["system_name"]) == {
+        "descriptive_pyrrole__renamed_NMe"
+    }
+    assert set(rebound_references["substrate_name"]) == {"descriptive_pyrrole"}
+    assert set(rebound_references["catalyst_name"]) == {"renamed_NMe"}
+    assert len(
+        rebound_references.attrs["frust_reference_bindings"]["bindings"]
+    ) == 4
+    for level in ("low_cost", "dft_ranked"):
+        tier_reused = pd.read_parquet(
+            reused_root
+            / "calculations/references/tiers"
+            / level
+            / "reused.parquet"
+        )
+        assert set(tier_reused["substrate_name"]) == {"descriptive_pyrrole"}
+        assert set(tier_reused["catalyst_name"]) == {"renamed_NMe"}
     _write_result(
         reused_root / "calculations/transition_states/merged.parquet",
         [
@@ -1246,6 +1310,9 @@ def test_finalizer_publishes_and_future_workflow_reuses_approved_references(tmp_
                 if state in {"TS1", "TS2"}
                 else {"C": 19, "H": 30, "B": 2, "N": 2, "O": 2},
                 state_kind="transition_state",
+                system_name="descriptive_pyrrole__renamed_NMe",
+                substrate_name="descriptive_pyrrole",
+                catalyst_name="renamed_NMe",
                 rpos=2,
             )
             for index, state in enumerate(("TS1", "TS2", "TS3", "TS4"))
@@ -1265,7 +1332,58 @@ def test_finalizer_publishes_and_future_workflow_reuses_approved_references(tmp_
     )
     assert reuse_publication["n_reused"] == 4
     assert reuse_publication["n_missing_results"] == 0
-    assert len(ft.screen.open_run(reused_root).states()) == 8
+    reused_screen = ft.screen.open_run(reused_root)
+    assert len(reused_screen.states()) == 8
+    assert not reused_screen.barriers()["quality_issues"].str.contains(
+        "missing:ligand"
+    ).any()
+
+    repair_paths = [
+        reused_references / "reused.parquet",
+        reused_references / "merged.parquet",
+        reused_references / "tiers/low_cost/reused.parquet",
+        reused_references / "tiers/low_cost/merged.parquet",
+        reused_references / "tiers/dft_ranked/reused.parquet",
+        reused_references / "tiers/dft_ranked/merged.parquet",
+    ]
+    for path in repair_paths:
+        stale = pd.read_parquet(path)
+        ligand = stale["state_id"].eq("ligand")
+        stale.loc[ligand, "structure_id"] = "ligand:pyrrole"
+        stale.loc[ligand, "system_name"] = "pyrrole__NMe"
+        stale.loc[ligand, "substrate_name"] = "pyrrole"
+        stale.loc[ligand, "catalyst_name"] = "NMe"
+        stale.to_parquet(path, index=False)
+
+    proposed = ft.screen.repair_reference_bindings(reused_root)
+    assert len(proposed) == len(repair_paths)
+    assert set(proposed["old_substrate_name"]) == {"pyrrole"}
+    assert set(proposed["substrate_name"]) == {"descriptive_pyrrole"}
+    assert not proposed.attrs["applied"]
+    assert set(pd.read_parquet(repair_paths[0])["substrate_name"]) == {
+        "pyrrole",
+        "descriptive_pyrrole",
+    }
+
+    backup_dir = tmp_path / "reference_binding_backup"
+    repair = ft.screen.repair_reference_bindings(
+        reused_root,
+        apply=True,
+        backup_dir=backup_dir,
+    )
+    assert repair.attrs["applied"]
+    assert repair.attrs["backup_dir"] == str(backup_dir)
+    assert (backup_dir / repair_paths[0].relative_to(reused_root)).exists()
+    assert (reused_root / "reference_binding_repair.json").exists()
+    for path in repair_paths:
+        repaired = pd.read_parquet(path)
+        ligand = repaired["state_id"].eq("ligand")
+        assert set(repaired.loc[ligand, "substrate_name"]) == {
+            "descriptive_pyrrole"
+        }
+    assert not ft.screen.open_run(reused_root).barriers()[
+        "quality_issues"
+    ].str.contains("missing:ligand").any()
 
 
 @pytest.mark.parametrize(

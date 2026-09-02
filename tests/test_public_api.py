@@ -152,6 +152,7 @@ class PublicApiTests(unittest.TestCase):
         self.assertIs(ft.workflows.catalyst_screen, workflow_catalyst_screen)
         self.assertTrue(callable(ft.screen.open_run))
         self.assertTrue(callable(ft.screen.open_reference_library))
+        self.assertTrue(callable(ft.screen.repair_reference_bindings))
         self.assertIs(ft.workflows.inspect_failures, workflow_inspect_failures)
         self.assertNotIn("raw_mols", ft.__all__)
         self.assertIs(ft.workflows.methods, workflow_methods)

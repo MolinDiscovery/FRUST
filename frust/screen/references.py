@@ -10,6 +10,7 @@ import shutil
 import tempfile
 from collections import Counter
 from collections.abc import Mapping
+from copy import deepcopy
 from dataclasses import dataclass
 from datetime import datetime, timezone
 from pathlib import Path
@@ -99,6 +100,47 @@ class ReferenceRecord:
     def dataframe(self) -> pd.DataFrame:
         """Load the complete canonical FRUST result row."""
         return pd.read_parquet(self.path / "result.parquet")
+
+    def materialize(self, target: StructureTarget) -> pd.DataFrame:
+        """Return a run-local view bound to the current structure target.
+
+        The immutable entry retains the labels used by the run that originally
+        published it. This method validates the target's scientific identity,
+        then replaces contextual labels on a copy so downstream analysis sees
+        the names used by the current run.
+
+        Parameters
+        ----------
+        target : StructureTarget
+            Current run target that reused this scientific reference.
+
+        Returns
+        -------
+        pandas.DataFrame
+            Copy of the cached result with current target labels and compact
+            binding provenance in ``attrs["frust_reference_bindings"]``.
+
+        Raises
+        ------
+        ValueError
+            If the cached scientific identity is incompatible with ``target``.
+
+        Examples
+        --------
+        A ligand published as ``"substrate_000"`` can be reused under a more
+        descriptive current name without changing the shared entry::
+
+            rebound = record.materialize(current_target)
+            rebound.loc[0, "substrate_name"]
+            # "dimethoxybenzene_1_3"
+        """
+        metadata = self.metadata
+        _validate_reference_binding_target(metadata, target)
+        return _bind_reference_dataframe(
+            self.dataframe(),
+            target,
+            metadata=metadata,
+        )
 
     def xyz_path(self) -> Path:
         """Return the cached optimized XYZ path."""
@@ -754,6 +796,107 @@ def _target_chemical_identity(target: StructureTarget) -> dict[str, Any]:
     if scope == "global":
         identity["global_state"] = target.state_id
     return identity
+
+
+def _bind_reference_dataframe(
+    df: pd.DataFrame,
+    target: StructureTarget,
+    *,
+    metadata: Mapping[str, Any],
+) -> pd.DataFrame:
+    """Bind one immutable reference result to current run-local labels."""
+    if len(df) != 1:
+        raise ValueError("reference binding requires exactly one selected result row")
+    _validate_reference_binding_target(metadata, target)
+
+    out = df.copy()
+    out.attrs.clear()
+    out.attrs.update(deepcopy(getattr(df, "attrs", {})))
+    label_columns = (
+        "structure_id",
+        "custom_name",
+        "system_name",
+        "substrate_name",
+        "catalyst_name",
+        "state_id",
+        "state_kind",
+        "rpos",
+    )
+    source_labels = {
+        column: _json_compatible(out.iloc[0].get(column))
+        for column in label_columns
+        if column in out
+    }
+
+    out["structure_id"] = target.target_id
+    out["system_name"] = target.system.system_name
+    out["substrate_name"] = target.system.substrate_name
+    out["catalyst_name"] = target.system.catalyst_name
+    out["state_id"] = target.state_id
+    out["state_kind"] = target.state_kind
+    out["rpos"] = target.rpos
+    if "custom_name" in out:
+        custom_name = f"{target.system.system_name}_{target.state_id}"
+        if target.rpos is not None:
+            custom_name += f"_rpos({target.rpos})"
+        out["custom_name"] = custom_name
+    if "molecule_role" in out:
+        out["molecule_role"] = target.state_id
+
+    target_labels = {
+        column: _json_compatible(out.iloc[0].get(column))
+        for column in label_columns
+        if column in out
+    }
+    out.attrs["frust_reference_bindings"] = {
+        "schema_version": 1,
+        "bindings": [
+            {
+                "reference_id": str(metadata["reference_id"]),
+                "calculation_level": str(
+                    metadata.get("calculation_level") or "full"
+                ),
+                "source_compound_name": str(metadata.get("compound_name") or ""),
+                "target_id": target.target_id,
+                "scope": target.scope,
+                "source_labels": source_labels,
+                "target_labels": target_labels,
+            }
+        ],
+    }
+    return out
+
+
+def _validate_reference_binding_target(
+    metadata: Mapping[str, Any],
+    target: StructureTarget,
+) -> None:
+    """Reject attempts to relabel a scientifically incompatible reference."""
+    identity = metadata.get("identity")
+    if not isinstance(identity, Mapping):
+        raise ValueError(
+            f"Reference {metadata.get('reference_id')!r} has no scientific identity"
+        )
+    expected = {
+        "state_id": target.state_id,
+        "state_kind": target.state_kind,
+        "scope": target.scope,
+        "rpos": target.rpos,
+        "builder_spec": target.builder_spec,
+        "chemical_identity": _target_chemical_identity(target),
+        "charge": int(target.builder_options.get("charge", 0)),
+        "multiplicity": int(target.builder_options.get("multiplicity", 1)),
+    }
+    mismatches = [
+        key
+        for key, value in expected.items()
+        if _json_compatible(identity.get(key)) != _json_compatible(value)
+    ]
+    if mismatches:
+        raise ValueError(
+            f"Reference {metadata.get('reference_id')!r} is incompatible with "
+            f"target {target.target_id!r}: {', '.join(mismatches)}"
+        )
 
 
 def _canonical_smiles(smiles: str) -> str:
