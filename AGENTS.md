@@ -6,10 +6,16 @@ When making new git branches, don't use something like codex/new-feature, instea
 
 ## Mounted Filesystems
 
-Treat paths under `/Users/Mounts/` as inspection-only when editing the FRUST library, even when a traceback or
-notebook points to a mounted HPC checkout. Make code changes only in the local
-development repository. The user will sync or apply those changes on the HPC
-system.
+Do not edit FRUST library source code in a mounted HPC checkout under
+`/Users/Mounts/` or directly over SSH. Make library changes in the local
+development repository, commit and push them to GitHub, and then update the
+HPC checkout from GitHub: local edit -> GitHub -> HPC.
+
+This restriction applies to the FRUST library, not to user run artifacts.
+When the user requests it, files belonging to an HPC run—such as notebooks,
+analysis outputs, result metadata, and repair records—may be edited through
+their mounted paths. Preserve a backup before overwriting a material run
+artifact when practical.
 
 # Documentation Style
 
