@@ -5,6 +5,12 @@ from __future__ import annotations
 from frust.tsguess2.models import ConstraintDef, CoreTopology
 
 
+_HBPIN_BRIDGED_CORE_SMARTS = (
+    "[#5;!$([#5](~[#8])~[#8])]~[#1]~"
+    "[#5;$([#5](~[#8])~[#8])]~[#6]"
+)
+
+
 CORE_TOPOLOGIES: dict[str, CoreTopology] = {
     "TS1": CoreTopology(
         state="TS1",
@@ -47,7 +53,7 @@ CORE_TOPOLOGIES: dict[str, CoreTopology] = {
     "TS3": CoreTopology(
         state="TS3",
         builder_key="ts3_ts4",
-        core_smarts="[#5]~[#1]~[#5]~[#6]",
+        core_smarts=_HBPIN_BRIDGED_CORE_SMARTS,
         constraints=(
             ConstraintDef("transferH_catB", "distance", ("transfer_H", "cat_B")),
             ConstraintDef("transferH_pinB", "distance", ("transfer_H", "pin_B")),
@@ -74,7 +80,7 @@ CORE_TOPOLOGIES: dict[str, CoreTopology] = {
     "TS4": CoreTopology(
         state="TS4",
         builder_key="ts3_ts4",
-        core_smarts="[#5]~[#1]~[#5]~[#6]",
+        core_smarts=_HBPIN_BRIDGED_CORE_SMARTS,
         constraints=(
             ConstraintDef("catB_pinB", "distance", ("cat_B", "pin_B")),
             ConstraintDef("pinB_transferH", "distance", ("pin_B", "transfer_H")),
@@ -101,7 +107,7 @@ CORE_TOPOLOGIES: dict[str, CoreTopology] = {
     "INT3": CoreTopology(
         state="INT3",
         builder_key="ts3_ts4",
-        core_smarts="[#5]~[#1]~[#5]~[#6]",
+        core_smarts=_HBPIN_BRIDGED_CORE_SMARTS,
         constraints=(
             ConstraintDef("catB_transferH", "distance", ("cat_B", "transfer_H")),
             ConstraintDef("catB_substrateC", "distance", ("cat_B", "substrate_C")),
