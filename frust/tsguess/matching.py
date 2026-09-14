@@ -10,7 +10,9 @@ from rdkit import Chem
 
 from frust.utils.mols import find_ch, find_unique_ch
 
-CATALYST_SCAFFOLD = Chem.MolFromSmarts("[#5]~c1ccccc1~[#7]")
+CATALYST_SCAFFOLD = Chem.MolFromSmarts(
+    "[#5]~c1ccccc1~[N;X3;H0;+0;!$(N-C=O)]"
+)
 
 
 def mol_from_smiles(smiles: str, *, label: str) -> Chem.Mol:
@@ -50,12 +52,26 @@ def match_catalyst_roles(mol: Chem.Mol, *, catalyst_name: str) -> dict[str, int]
         Role mapping containing ``cat_B`` and ``cat_N``.
     """
     matches = mol.GetSubstructMatches(CATALYST_SCAFFOLD)
-    if len(matches) != 1:
+    if not matches:
         raise ValueError(
-            f"Catalyst {catalyst_name!r} must contain exactly one B-aryl-N scaffold; "
-            f"found {len(matches)} matches"
+            f"Catalyst {catalyst_name!r} must contain a B-aryl-N catalyst scaffold "
+            "with a neutral tertiary nitrogen; "
+            "found none"
         )
-    match = matches[0]
+
+    if len(matches) > 1:
+        ranks = Chem.CanonicalRankAtoms(mol, breakTies=False)
+        role_rank_pairs = {
+            (int(ranks[match[0]]), int(ranks[match[-1]]))
+            for match in matches
+        }
+        if len(role_rank_pairs) != 1:
+            raise ValueError(
+                f"Catalyst {catalyst_name!r} contains multiple inequivalent "
+                f"B-aryl-tertiary-N scaffolds; found {len(matches)} matches"
+            )
+
+    match = min(matches, key=lambda candidate: (candidate[0], candidate[-1]))
     return {"cat_B": int(match[0]), "cat_N": int(match[-1])}
 
 

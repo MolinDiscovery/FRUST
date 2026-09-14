@@ -7,6 +7,23 @@ from dataclasses import dataclass
 from frust.structures.models import StateKind, TargetScope
 
 
+STANDARD_MOLECULE_STATES = (
+    "dimer",
+    "HH",
+    "ligand",
+    "catalyst",
+    "int1",
+    "int2",
+    "HBpin-ligand",
+    "HBpin-mol",
+)
+DIMER_STATES = (
+    "dimer",
+    "dimer_bh_bridged",
+    "dimer_eight_membered",
+)
+
+
 @dataclass(frozen=True)
 class StateSpec:
     """Construction metadata for one canonical chemical state.
@@ -31,6 +48,18 @@ class StateSpec:
 
 STATE_SPECS: dict[str, StateSpec] = {
     "dimer": StateSpec("dimer", "minimum", "cycle::dimer::v2", "catalyst"),
+    "dimer_bh_bridged": StateSpec(
+        "dimer_bh_bridged",
+        "minimum",
+        "cycle::dimer_bh_bridged::v1",
+        "catalyst",
+    ),
+    "dimer_eight_membered": StateSpec(
+        "dimer_eight_membered",
+        "minimum",
+        "cycle::dimer_eight_membered::v1",
+        "catalyst",
+    ),
     "HH": StateSpec("HH", "minimum", "cycle::HH::v2", "global"),
     "ligand": StateSpec("ligand", "minimum", "cycle::ligand::v2", "substrate"),
     "catalyst": StateSpec("catalyst", "minimum", "cycle::catalyst::v2", "catalyst"),

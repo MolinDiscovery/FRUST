@@ -39,10 +39,12 @@ def create_mols(
         accepted by :func:`frust.screen.read`, or a compatible CSV path.
     states : str or iterable of str, optional
         Molecule states to generate. Accepted individual states are
-        ``"dimer"``, ``"HH"``, ``"ligand"``, ``"catalyst"``, ``"int1"``,
-        ``"int2"``, ``"HBpin-ligand"``, and ``"HBpin-mol"``. The shortcuts
-        ``"all"``, ``"uniques"``, and ``"generics"`` have the same meanings
-        as ``ft.workflows.mols(..., select_mols=...)``.
+        ``"dimer"``, ``"dimer_bh_bridged"``, ``"dimer_eight_membered"``,
+        ``"HH"``, ``"ligand"``, ``"catalyst"``, ``"int1"``, ``"int2"``,
+        ``"HBpin-ligand"``, and ``"HBpin-mol"``. ``"dimers"`` selects all
+        three dimer topologies. The shortcuts ``"all"``, ``"uniques"``, and
+        ``"generics"`` have the same meanings as
+        ``ft.workflows.mols(..., select_mols=...)``.
     n_confs : int or None, optional
         Number of embedded conformers per target. If ``None``, use FRUST's
         rotatable-bond heuristic.

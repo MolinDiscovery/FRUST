@@ -86,7 +86,7 @@ belongs in `_prepare_initial_df(...)`, which calls the same typed builder before
 
 `mols`, `screen_ts`, and `int3` share typed systems, target planning, deferred
 builders, identity columns, and the canonical result schema. They deliberately
-do **not** share one umbrella workflow or one mixed stage graph:
+do **not** share one mixed `BaseWorkflow` stage graph:
 
 | Factory | Result profile | Optimization stage |
 | --- | --- | --- |
@@ -97,6 +97,12 @@ do **not** share one umbrella workflow or one mixed stage graph:
 This boundary keeps `wf.show_stages()` readable. A target describes chemistry;
 the concrete workflow owns all calculation stages, so a target cannot inject a
 different profile's stages into the table.
+
+`ft.workflows.catalyst_screen(...)` is a composition layer above this boundary.
+It owns no mixed calculator graph: it delegates TSs, references, cycle minima,
+and INT3 to their existing workflows, then coordinates collectors, reference
+snapshots, and portable analysis. New end-to-end behavior should preserve this
+composition pattern instead of adding state-dependent stages to `BaseWorkflow`.
 
 ## Local Execution Flow
 

@@ -577,7 +577,12 @@ class WorkflowExecutionTests(unittest.TestCase):
                 patch("frust.workflows.core.Stepper", FakeStepper),
             ):
                 wf = ft.workflows.mols(
-                    dataframe=df, split="per_rpos", select_mols="int2", method=method, dft=True
+                    dataframe=df,
+                    split="per_rpos",
+                    select_mols="int2",
+                    method=method,
+                    dft=True,
+                    prune_initial=False,
                 )
                 out = wf.run(
                     targets=[0],
@@ -593,6 +598,18 @@ class WorkflowExecutionTests(unittest.TestCase):
             self.assertTrue(
                 (target_dir / "init.dft_opt.dft_freq.dft_solv_sp.parquet").exists()
             )
+            self.assertTrue((target_dir / "tier_low_cost.parquet").exists())
+            self.assertTrue((target_dir / "tier_dft_ranked.parquet").exists())
+            low_cost_tier = pd.read_parquet(target_dir / "tier_low_cost.parquet")
+            ranked_tier = pd.read_parquet(target_dir / "tier_dft_ranked.parquet")
+            final_tier = pd.read_parquet(
+                target_dir / "init.dft_opt.dft_freq.dft_solv_sp.parquet"
+            )
+            self.assertEqual(low_cost_tier["cid"].tolist(), [1])
+            self.assertEqual(ranked_tier["cid"].tolist(), [1])
+            self.assertEqual(final_tier["cid"].tolist(), [0])
+            self.assertEqual(ft.result_column(low_cost_tier), "xtb_opt-EE")
+            self.assertEqual(ft.result_column(ranked_tier), "dft_rank_sp-EE")
             self.assertTrue((target_dir / "timing.json").exists())
             self.assertFalse((target_dir / "init.timing.json").exists())
             timing_payload = json.loads((target_dir / "timing.json").read_text())

@@ -421,9 +421,11 @@ def create_mol_per_rpos(
         molecule names to RDKit molecules, or ``"list"`` to return a list of
         single-item dictionaries.
     select_mols : str or list[str], optional
-        Accepted states are ``"dimer"``, ``"HH"``, ``"ligand"``,
-        ``"catalyst"``, ``"int1"``, ``"int2"``, ``"HBpin-ligand"``, and
-        ``"HBpin-mol"``. ``"all"`` selects every state; ``"uniques"``
+        Accepted states are ``"dimer"``, ``"dimer_bh_bridged"``,
+        ``"dimer_eight_membered"``, ``"HH"``, ``"ligand"``, ``"catalyst"``,
+        ``"int1"``, ``"int2"``, ``"HBpin-ligand"``, and ``"HBpin-mol"``.
+        ``"dimers"`` selects all three dimer topologies. ``"all"`` selects
+        the standard catalytic-cycle states; ``"uniques"``
         selects ``"ligand"``, ``"int1"``, ``"int2"``, and
         ``"HBpin-ligand"``; ``"generics"`` selects ``"dimer"``, ``"HH"``,
         ``"catalyst"``, and ``"HBpin-mol"``. The former ``"int2"`` is now
@@ -452,7 +454,7 @@ def create_mol_per_rpos(
     if smiles_series.isna().any():
         raise ValueError("ligand_smiles_df['smiles'] contains missing values")
 
-    from frust.transformers import transformer_mols
+    from frust.transformers import DIMER_VARIANT_STATES, transformer_mols
 
     has_catalysts = "catalyst_smiles" in ligand_smiles_df.columns
     has_system_names = "system_name" in ligand_smiles_df.columns
@@ -505,6 +507,12 @@ def create_mol_per_rpos(
             tmp = transformer_mols(**transformer_kwargs, only_uniques=True, return_metadata=True)
         elif select_mols == "generics":
             tmp = transformer_mols(**transformer_kwargs, only_generics=True, return_metadata=True)
+        elif select_mols == "dimers":
+            tmp = transformer_mols(
+                **transformer_kwargs,
+                select=list(DIMER_VARIANT_STATES),
+                return_metadata=True,
+            )
         else:
             tmp = transformer_mols(**transformer_kwargs, select=select_mols, return_metadata=True)
 

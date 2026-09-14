@@ -8,6 +8,28 @@ from frust.workflows import methods
 
 
 class WorkflowMethodTests(unittest.TestCase):
+    def test_screening_plan_is_independent_and_reusable(self):
+        screening = methods.screening_preset("gxtb-default")
+        self.assertEqual(
+            set(screening.stages),
+            {"xtb_preopt", "xtb_sp", "xtb_opt"},
+        )
+        method = methods.apply_screening_plan(
+            methods.preset("r2scan-3c"),
+            screening,
+        )
+        self.assertEqual(method.for_stage("xtb_opt").engine, "gxtb")
+
+    def test_ranking_solvation_defaults_to_analysis_solvent_and_can_be_gas(self):
+        method = methods.preset("r2scan-3c")
+        solvent, resolved = methods.with_ranking_solvation(method, "method")
+        self.assertEqual(resolved["solvent"], "chloroform")
+        self.assertEqual(solvent.for_stage("dft_rank_sp").solvent, "chloroform")
+        gas, resolved_gas = methods.with_ranking_solvation(solvent, "gas")
+        self.assertIsNone(resolved_gas["solvent"])
+        self.assertIsNone(gas.for_stage("dft_rank_sp").solvent)
+        self.assertNotIn("%CPCM", gas.for_stage("dft_rank_sp").xtra_inp_str)
+
     def test_r2scan_3c_preset_uses_composite_without_basis(self):
         method = ft.workflows.methods.preset("r2SCAN-3c")
         spec = method.for_stage("dft_pre_sp")

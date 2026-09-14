@@ -121,14 +121,17 @@ print(wf_mols.show_stages(execution="dft_staged").to_markdown())
 print(wf_int3.show_stages(execution="dft_staged").to_markdown())
 ```
 
-Catalyst-dependent molecule states (`dimer`, `catalyst`, `int1`, and `int2`)
-use the catalyst SMILES in the input. Substrate-only and global states are
-deduplicated rather than recalculated for every substrate/catalyst pairing.
+Catalyst-dependent molecule states (`dimer`, `dimer_bh_bridged`,
+`dimer_eight_membered`, `catalyst`, `int1`, and `int2`) use the catalyst
+SMILES in the input. Substrate-only and global states are deduplicated rather
+than recalculated for every substrate/catalyst pairing.
 
-The accepted individual `select_mols` values are `dimer`, `HH`, `ligand`,
-`catalyst`, `int1`, `int2`, `HBpin-ligand`, and `HBpin-mol`. `all` selects all
-eight; `uniques` selects `ligand`, `int1`, `int2`, and `HBpin-ligand`;
-`generics` selects `dimer`, `HH`, `catalyst`, and `HBpin-mol`.
+The accepted individual `select_mols` values are `dimer`,
+`dimer_bh_bridged`, `dimer_eight_membered`, `HH`, `ligand`, `catalyst`,
+`int1`, `int2`, `HBpin-ligand`, and `HBpin-mol`. `dimers` selects the three
+dimer topologies. `all` retains its previous eight standard states; `uniques`
+selects `ligand`, `int1`, `int2`, and `HBpin-ligand`; `generics` selects
+`dimer`, `HH`, `catalyst`, and `HBpin-mol`.
 
 !!! warning "State-name migration"
 

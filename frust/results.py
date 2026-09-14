@@ -2,7 +2,7 @@
 
 from __future__ import annotations
 
-from typing import Literal
+from typing import Any, Literal
 
 import pandas as pd
 
@@ -16,7 +16,9 @@ def result_contract(
     profile: ResultProfile,
     *,
     dft: bool,
+    calculation_level: str | None = None,
     include_terminal_solv_sp: bool = True,
+    thermochemistry: Any | None = None,
 ) -> dict[str, object]:
     """Return the canonical semantic-column contract for a workflow profile.
 
@@ -26,32 +28,55 @@ def result_contract(
         Workflow chemistry/result profile.
     dft : bool
         Whether the workflow includes DFT refinement.
+    calculation_level : {"low_cost", "dft_ranked", "full"} or None, optional
+        Explicit workflow depth. ``"low_cost"`` resolves analysis to the
+        g-xTB optimization energy, ``"dft_ranked"`` to the DFT single point
+        on the g-xTB geometry, and ``"full"`` to the final DFT analysis
+        energy and exposes frequency results.
     include_terminal_solv_sp : bool, optional
         Whether the DFT workflow includes a final solvent single point. When
         ``False``, the final DFT frequency-stage electronic energy is the
         analysis energy because all DFT stages already include solvent.
+    thermochemistry : ThermochemistrySpec or None, optional
+        Explicit molecular free-energy assembly recipe recorded for a
+        ``"full"`` result. Lower calculation levels have no frequency result,
+        so their contracts omit this field.
 
     Returns
     -------
     dict
         Versioned mapping from semantic purposes to canonical columns.
     """
+    if calculation_level is None:
+        calculation_level = (
+            "full"
+            if dft
+            else "dft_ranked"
+            if profile in {"transition_state", "constrained_minimum"}
+            else "low_cost"
+        )
+    calculation_level = str(calculation_level).strip().lower()
+    if calculation_level not in {"low_cost", "dft_ranked", "full"}:
+        raise ValueError(
+            "calculation_level must be 'low_cost', 'dft_ranked', or 'full'"
+        )
+    has_full_dft = calculation_level == "full"
+    ranking_stage = (
+        "dft_rank_sp" if calculation_level in {"dft_ranked", "full"} else "xtb_opt"
+    )
     if profile == "minimum":
-        ranking_stage = "xtb_opt"
-        optimized_stage = "dft_opt" if dft else "xtb_opt"
+        optimized_stage = "dft_opt" if has_full_dft else "xtb_opt"
     elif profile == "transition_state":
-        ranking_stage = "dft_rank_sp"
-        optimized_stage = "dft_ts_opt" if dft else "xtb_opt"
+        optimized_stage = "dft_ts_opt" if has_full_dft else "xtb_opt"
     elif profile == "constrained_minimum":
-        ranking_stage = "dft_rank_sp"
-        optimized_stage = "dft_opt" if dft else "xtb_opt"
+        optimized_stage = "dft_opt" if has_full_dft else "xtb_opt"
     else:
         raise ValueError(f"Unknown result profile {profile!r}")
     analysis_stage = (
         "dft_solv_sp"
-        if dft and include_terminal_solv_sp
+        if has_full_dft and include_terminal_solv_sp
         else "dft_freq"
-        if dft
+        if has_full_dft
         else ranking_stage
     )
     columns: dict[str, dict[str, str]] = {
@@ -63,17 +88,24 @@ def result_contract(
         },
         "optimized": {"coords": output_column(optimized_stage, "opt_coords")},
     }
-    if dft:
+    if has_full_dft:
         columns["frequency"] = {
             "gibbs_energy": output_column("dft_freq", "gibbs_energy"),
             "electronic_energy": output_column("dft_freq", "electronic_energy"),
         }
-    return {
-        "schema_version": 2,
+    contract = {
+        "schema_version": 4,
         "profile": profile,
-        "dft": bool(dft),
+        "dft": has_full_dft,
+        "calculation_level": calculation_level,
         "columns": columns,
     }
+    if has_full_dft and thermochemistry is not None:
+        to_dict = getattr(thermochemistry, "to_dict", None)
+        if not callable(to_dict):
+            raise TypeError("thermochemistry must provide to_dict()")
+        contract["thermochemistry"] = to_dict()
+    return contract
 
 
 def attach_result_contract(
@@ -81,7 +113,9 @@ def attach_result_contract(
     profile: ResultProfile,
     *,
     dft: bool,
+    calculation_level: str | None = None,
     include_terminal_solv_sp: bool = True,
+    thermochemistry: Any | None = None,
 ) -> pd.DataFrame:
     """Attach compact semantic result metadata to a dataframe in place.
 
@@ -93,8 +127,12 @@ def attach_result_contract(
         Workflow chemistry/result profile.
     dft : bool
         Whether the workflow includes DFT refinement.
+    calculation_level : {"low_cost", "dft_ranked", "full"} or None, optional
+        Explicit workflow depth recorded in the canonical contract.
     include_terminal_solv_sp : bool, optional
         Whether a separate final solvent single point was calculated.
+    thermochemistry : ThermochemistrySpec or None, optional
+        Explicit molecular free-energy assembly recipe to record.
 
     Returns
     -------
@@ -104,7 +142,9 @@ def attach_result_contract(
     df.attrs["frust_results"] = result_contract(
         profile,
         dft=dft,
+        calculation_level=calculation_level,
         include_terminal_solv_sp=include_terminal_solv_sp,
+        thermochemistry=thermochemistry,
     )
     return df
 
@@ -177,3 +217,101 @@ def get_result(
         Resolved result values.
     """
     return df[result_column(df, key, purpose=purpose)]
+
+
+def free_energy_components(
+    df: pd.DataFrame,
+    *,
+    thermochemistry: Any | None = None,
+) -> pd.DataFrame:
+    """Return auditable free-energy components for each dataframe row.
+
+    Parameters
+    ----------
+    df : pandas.DataFrame
+        Canonical DFT workflow result.
+    thermochemistry : ThermochemistrySpec or mapping or None, optional
+        Explicit recipe. When omitted, use the recipe recorded in the
+        dataframe's ``frust_results`` contract.
+
+    Returns
+    -------
+    pandas.DataFrame
+        Component energies in Hartree. ``free_energy_hartree`` is either the
+        direct frequency Gibbs energy or the analysis electronic energy plus
+        the frequency-stage thermal correction.
+    """
+    recipe = _thermochemistry_mapping(df, thermochemistry)
+    mode = str(recipe.get("mode", "")).strip().lower()
+    frequency_ge = get_result(df, "gibbs_energy", purpose="frequency")
+    frequency_ee = get_result(df, "electronic_energy", purpose="frequency")
+    analysis_ee = get_result(df, "electronic_energy", purpose="analysis")
+    thermal = frequency_ge - frequency_ee
+    if mode == "frequency_gibbs":
+        free_energy = frequency_ge
+    elif mode == "electronic_plus_thermal":
+        free_energy = analysis_ee + thermal
+    else:
+        raise ValueError(
+            "thermochemistry mode must be 'frequency_gibbs' or "
+            "'electronic_plus_thermal'"
+        )
+    return pd.DataFrame(
+        {
+            "analysis_electronic_energy_hartree": analysis_ee,
+            "frequency_electronic_energy_hartree": frequency_ee,
+            "frequency_gibbs_energy_hartree": frequency_ge,
+            "thermal_correction_hartree": thermal,
+            "free_energy_hartree": free_energy,
+            "thermochemistry_mode": mode,
+        },
+        index=df.index,
+    )
+
+
+def get_free_energy(
+    df: pd.DataFrame,
+    *,
+    thermochemistry: Any | None = None,
+) -> pd.Series:
+    """Return assembled molecular free energies in Hartree.
+
+    Parameters
+    ----------
+    df : pandas.DataFrame
+        Canonical DFT workflow result.
+    thermochemistry : ThermochemistrySpec or mapping or None, optional
+        Explicit recipe. When omitted, use the recipe recorded in the result
+        contract.
+
+    Returns
+    -------
+    pandas.Series
+        One assembled free energy per dataframe row, in Hartree.
+    """
+    return free_energy_components(
+        df,
+        thermochemistry=thermochemistry,
+    )["free_energy_hartree"]
+
+
+def _thermochemistry_mapping(
+    df: pd.DataFrame,
+    thermochemistry: Any | None,
+) -> dict[str, Any]:
+    """Resolve an explicit or result-contract thermochemistry mapping."""
+    value = thermochemistry
+    if value is None:
+        contract = df.attrs.get("frust_results", {})
+        value = contract.get("thermochemistry") if isinstance(contract, dict) else None
+    if value is None:
+        raise ValueError(
+            "No thermochemistry recipe is recorded; use a MethodPlan with a "
+            "ThermochemistrySpec or pass thermochemistry explicitly"
+        )
+    if isinstance(value, dict):
+        return dict(value)
+    to_dict = getattr(value, "to_dict", None)
+    if callable(to_dict):
+        return dict(to_dict())
+    raise TypeError("thermochemistry must be a mapping or provide to_dict()")

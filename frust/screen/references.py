@@ -1,0 +1,1161 @@
+"""Inspectable, immutable reference calculations for catalyst screens."""
+
+from __future__ import annotations
+
+import fcntl
+import hashlib
+import json
+import os
+import shutil
+import tempfile
+from collections import Counter
+from collections.abc import Mapping
+from copy import deepcopy
+from dataclasses import dataclass
+from datetime import datetime, timezone
+from pathlib import Path
+from typing import Any, Literal
+
+import numpy as np
+import pandas as pd
+from rdkit import Chem
+from tooltoad.chemutils import ac2xyz
+
+from frust.results import free_energy_components, get_result, result_column
+from frust.schema import normal_termination_columns
+from frust.screen._quality import minimum_vibration_status
+from frust.structures import StructureTarget
+from frust.workflows.methods import CalculationLevel, MethodPlan
+
+
+ReviewDecision = Literal["approved", "rejected", "unreviewed"]
+ReusePolicy = Literal["approved", "auto_valid"]
+INDEX_COLUMNS = [
+    "reference_id",
+    "cache_key",
+    "state_id",
+    "compound_name",
+    "formula",
+    "charge",
+    "multiplicity",
+    "calculation_level",
+    "method",
+    "method_fingerprint",
+    "validation_status",
+    "thermochemistry_mode",
+    "electronic_energy_hartree",
+    "free_energy_hartree",
+    "created_at",
+    "source_run",
+    "entry_path",
+]
+
+
+@dataclass(frozen=True)
+class ReferenceRecord:
+    """One immutable scientific reference calculation.
+
+    Parameters
+    ----------
+    library : ReferenceLibrary
+        Library that owns the entry and its review sidecar.
+    reference_id : str
+        Stable content-derived reference identifier.
+    path : pathlib.Path
+        Entry directory containing metadata, dataframe, XYZ, and calculator
+        files.
+    """
+
+    library: "ReferenceLibrary"
+    reference_id: str
+    path: Path
+
+    @property
+    def metadata(self) -> dict[str, Any]:
+        """Return immutable entry metadata plus current review state."""
+        payload = json.loads((self.path / "metadata.json").read_text())
+        payload["review"] = self.library.review_status(self.reference_id)
+        return payload
+
+    def summary(self) -> pd.Series:
+        """Return a compact human-readable entry summary."""
+        metadata = self.metadata
+        fields = [
+            "reference_id",
+            "state_id",
+            "compound_name",
+            "formula",
+            "calculation_level",
+            "method",
+            "validation_status",
+            "electronic_energy_hartree",
+            "thermochemistry_mode",
+            "free_energy_hartree",
+            "auto_validation",
+            "review",
+            "source_run",
+        ]
+        return pd.Series({field: metadata.get(field) for field in fields})
+
+    def dataframe(self) -> pd.DataFrame:
+        """Load the complete canonical FRUST result row."""
+        return pd.read_parquet(self.path / "result.parquet")
+
+    def materialize(self, target: StructureTarget) -> pd.DataFrame:
+        """Return a run-local view bound to the current structure target.
+
+        The immutable entry retains the labels used by the run that originally
+        published it. This method validates the target's scientific identity,
+        then replaces contextual labels on a copy so downstream analysis sees
+        the names used by the current run.
+
+        Parameters
+        ----------
+        target : StructureTarget
+            Current run target that reused this scientific reference.
+
+        Returns
+        -------
+        pandas.DataFrame
+            Copy of the cached result with current target labels and compact
+            binding provenance in ``attrs["frust_reference_bindings"]``.
+
+        Raises
+        ------
+        ValueError
+            If the cached scientific identity is incompatible with ``target``.
+
+        Examples
+        --------
+        A ligand published as ``"substrate_000"`` can be reused under a more
+        descriptive current name without changing the shared entry::
+
+            rebound = record.materialize(current_target)
+            rebound.loc[0, "substrate_name"]
+            # "dimethoxybenzene_1_3"
+        """
+        metadata = self.metadata
+        _validate_reference_binding_target(metadata, target)
+        return _bind_reference_dataframe(
+            self.dataframe(),
+            target,
+            metadata=metadata,
+        )
+
+    def xyz_path(self) -> Path:
+        """Return the cached optimized XYZ path."""
+        return self.path / "optimized.xyz"
+
+    def write_xyz(self, path: str | Path, *, overwrite: bool = True) -> Path:
+        """Copy the optimized XYZ structure to a user-selected path."""
+        destination = Path(path)
+        if destination.exists() and not overwrite:
+            raise FileExistsError(f"XYZ file already exists: {destination}")
+        destination.parent.mkdir(parents=True, exist_ok=True)
+        shutil.copy2(self.xyz_path(), destination)
+        return destination
+
+    def files(self) -> list[Path]:
+        """Return calculator input/output files retained by this entry."""
+        root = self.path / "calculator_files"
+        return sorted(path for path in root.rglob("*") if path.is_file()) if root.exists() else []
+
+    def view(self, **kwargs: Any) -> Any:
+        """Display the optimized structure with FRUST's molecule viewer."""
+        from frust.vis import plot_row
+
+        return plot_row(self.dataframe(), 0, **kwargs)
+
+    def plot_vibrations(self, *, mode: int = 0, **kwargs: Any) -> Any:
+        """Display one cached normal mode with FRUST's vibration viewer."""
+        from frust.vis import plot_vibs
+
+        return plot_vibs(self.dataframe(), row_index=0, vId=mode, **kwargs)
+
+    def approve(self, *, note: str = "", reviewer: str = "") -> None:
+        """Approve this immutable entry for production reuse."""
+        self.library.set_review(
+            self.reference_id,
+            "approved",
+            note=note,
+            reviewer=reviewer,
+        )
+
+    def reject(self, *, note: str = "", reviewer: str = "") -> None:
+        """Reject this entry without deleting its audit record."""
+        self.library.set_review(
+            self.reference_id,
+            "rejected",
+            note=note,
+            reviewer=reviewer,
+        )
+
+
+class ReferenceLibrary:
+    """Searchable scientific library of immutable reference calculations.
+
+    Parameters
+    ----------
+    root : str or pathlib.Path
+        Library directory. Entries remain readable as ordinary JSON, parquet,
+        XYZ, and calculator input/output files.
+    """
+
+    def __init__(self, root: str | Path) -> None:
+        self.root = Path(root).expanduser().resolve()
+        self.entries_dir = self.root / "entries"
+        self.index_path = self.root / "index.parquet"
+        self.reviews_path = self.root / "reviews.csv"
+        self.lock_path = self.root / ".library.lock"
+
+    def initialize(self) -> "ReferenceLibrary":
+        """Create the library directories and empty inspection files."""
+        self.root.mkdir(parents=True, exist_ok=True)
+        with _FileLock(self.lock_path):
+            self.entries_dir.mkdir(parents=True, exist_ok=True)
+            if not self.index_path.exists():
+                _atomic_write_parquet(
+                    pd.DataFrame(columns=INDEX_COLUMNS),
+                    self.index_path,
+                )
+            else:
+                index = pd.read_parquet(self.index_path)
+                missing = [column for column in INDEX_COLUMNS if column not in index]
+                if missing:
+                    for column in missing:
+                        index[column] = (
+                            "auto_valid" if column == "validation_status" else pd.NA
+                        )
+                    _atomic_write_parquet(index[INDEX_COLUMNS], self.index_path)
+            if not self.reviews_path.exists():
+                _atomic_write_csv(
+                    pd.DataFrame(
+                        columns=[
+                            "reference_id",
+                            "decision",
+                            "note",
+                            "reviewer",
+                            "reviewed_at",
+                        ]
+                    ),
+                    self.reviews_path,
+                )
+        return self
+
+    def index(self) -> pd.DataFrame:
+        """Return the searchable library index with current review states."""
+        self.initialize()
+        index = pd.read_parquet(self.index_path)
+        reviews = self._reviews()
+        if reviews.empty:
+            index["review"] = "unreviewed"
+            return index
+        latest = reviews.drop_duplicates("reference_id", keep="last")
+        index = index.merge(
+            latest[["reference_id", "decision"]],
+            on="reference_id",
+            how="left",
+        )
+        index["review"] = index.pop("decision").fillna("unreviewed")
+        return index
+
+    def summary(self) -> pd.DataFrame:
+        """Return counts grouped by level, method, state, and review decision."""
+        index = self.index()
+        if index.empty:
+            return pd.DataFrame(
+                columns=["calculation_level", "method", "state_id", "review", "count"]
+            )
+        return (
+            index.groupby(
+                ["calculation_level", "method", "state_id", "review"],
+                dropna=False,
+            )
+            .size()
+            .rename("count")
+            .reset_index()
+        )
+
+    def search(
+        self,
+        *,
+        calculation_level: CalculationLevel | None = None,
+        state_id: str | None = None,
+        compound_name: str | None = None,
+        method: str | None = None,
+        formula: str | None = None,
+        review: ReviewDecision | None = None,
+    ) -> pd.DataFrame:
+        """Search entries by common scientific labels.
+
+        Parameters
+        ----------
+        calculation_level : {"low_cost", "dft_ranked", "full"} or None, optional
+            Restrict results to one scientific result level.
+        state_id, compound_name, method, formula : str or None, optional
+            Exact case-insensitive metadata filters.
+        review : {"approved", "rejected", "unreviewed"} or None, optional
+            Restrict results to the current review decision.
+
+        Returns
+        -------
+        pandas.DataFrame
+            Matching inspectable reference and screening-artifact entries.
+        """
+        result = self.index()
+        filters = {
+            "calculation_level": calculation_level,
+            "state_id": state_id,
+            "compound_name": compound_name,
+            "method": method,
+            "formula": formula,
+            "review": review,
+        }
+        for column, value in filters.items():
+            if value is not None:
+                result = result[result[column].astype(str).str.casefold() == str(value).casefold()]
+        return result.reset_index(drop=True)
+
+    def get(self, reference_id: str) -> ReferenceRecord:
+        """Return one entry by reference ID."""
+        matches = self.index()
+        matches = matches[matches["reference_id"].eq(str(reference_id))]
+        if matches.empty:
+            raise KeyError(f"Unknown reference ID {reference_id!r}")
+        path = self.root / str(matches.iloc[-1]["entry_path"])
+        if not path.is_dir():
+            raise FileNotFoundError(f"Reference entry directory is missing: {path}")
+        self._validate_checksums(path)
+        return ReferenceRecord(self, str(reference_id), path)
+
+    def find(
+        self,
+        target: StructureTarget,
+        method: MethodPlan,
+        *,
+        protocol: Mapping[str, Any] | None = None,
+        reuse_policy: ReusePolicy = "approved",
+        calculation_level: CalculationLevel = "full",
+    ) -> ReferenceRecord | None:
+        """Return the newest compatible reusable entry, if one exists.
+
+        Parameters
+        ----------
+        target : StructureTarget
+            Molecular reference target.
+        method : MethodPlan
+            Composed calculator plan.
+        protocol : mapping or None, optional
+            Structure-generation and conformer-selection settings.
+        reuse_policy : {"approved", "auto_valid"}, optional
+            Review requirement for full thermochemical references. Exact
+            low-cost and DFT-ranked screening artifacts are reusable after
+            automatic validation.
+        calculation_level : {"low_cost", "dft_ranked", "full"}, optional
+            Scientific result tier to match.
+
+        Returns
+        -------
+        ReferenceRecord or None
+            Newest checksum-valid compatible entry.
+        """
+        if reuse_policy not in {"approved", "auto_valid"}:
+            raise ValueError("reuse_policy must be 'approved' or 'auto_valid'")
+        cache_key, _ = reference_identity(
+            target,
+            method,
+            protocol=protocol,
+            calculation_level=calculation_level,
+        )
+        candidates = self.index()
+        candidates = candidates[candidates["cache_key"].eq(cache_key)].iloc[::-1]
+        for _, candidate in candidates.iterrows():
+            reference_id = str(candidate["reference_id"])
+            decision = str(candidate["review"])
+            validation_value = candidate.get("validation_status", "auto_valid")
+            validation_status = (
+                "auto_valid" if pd.isna(validation_value) else str(validation_value)
+            )
+            if decision == "rejected":
+                continue
+            if (
+                calculation_level == "full"
+                and reuse_policy == "auto_valid"
+                and validation_status != "auto_valid"
+            ):
+                continue
+            if (
+                calculation_level == "full"
+                and reuse_policy == "approved"
+                and decision != "approved"
+            ):
+                continue
+            try:
+                return self.get(reference_id)
+            except (KeyError, FileNotFoundError, ValueError):
+                continue
+        return None
+
+    def publish(
+        self,
+        df: pd.DataFrame,
+        target: StructureTarget,
+        method: MethodPlan,
+        *,
+        protocol: Mapping[str, Any] | None = None,
+        calculation_level: CalculationLevel = "full",
+        source_run: str | Path | None = None,
+        source_target_dir: str | Path | None = None,
+    ) -> ReferenceRecord:
+        """Publish one selected molecular result as an immutable entry.
+
+        Parameters
+        ----------
+        df : pandas.DataFrame
+            One canonical selected result row.
+        target : StructureTarget
+            Molecular state represented by the row.
+        method : MethodPlan
+            Composed calculator plan used to produce the result.
+        protocol : mapping or None, optional
+            Structure-generation and conformer-selection settings.
+        calculation_level : {"low_cost", "dft_ranked", "full"}, optional
+            Validation and storage tier. Only ``"full"`` requires frequencies
+            and assembled thermochemistry.
+        source_run, source_target_dir : str, pathlib.Path, or None, optional
+            Provenance and calculator-file source locations.
+
+        Returns
+        -------
+        ReferenceRecord
+            Immutable checksum-protected entry.
+        """
+        self.initialize()
+        if len(df) != 1:
+            raise ValueError("reference publication requires exactly one selected result row")
+        validation = _validate_reference_result(df, method, calculation_level)
+        cache_key, identity = reference_identity(
+            target,
+            method,
+            protocol=protocol,
+            calculation_level=calculation_level,
+        )
+        result_content = _reference_result_content(df, method, calculation_level)
+        reference_id = "ref_" + _content_hash(
+            {"identity": identity, "result": result_content}
+        )[:16]
+        compound_name = _compound_name(target)
+        method_slug = _slug(method.name)
+        state_slug = _slug(target.state_id)
+        compound_slug = _slug(compound_name)
+        namespace = (
+            Path("references") / "full"
+            if calculation_level == "full"
+            else Path("screening") / calculation_level
+        )
+        entry_rel = (
+            Path("entries")
+            / namespace
+            / method_slug
+            / state_slug
+            / compound_slug
+            / reference_id
+        )
+        entry_path = self.root / entry_rel
+        if entry_path.exists():
+            self._validate_checksums(entry_path)
+            metadata = json.loads((entry_path / "metadata.json").read_text())
+            self._append_index(metadata, entry_rel)
+            return ReferenceRecord(self, reference_id, entry_path)
+
+        parent = entry_path.parent
+        parent.mkdir(parents=True, exist_ok=True)
+        temp_path = Path(tempfile.mkdtemp(prefix=f".{reference_id}-", dir=parent))
+        try:
+            result_path = temp_path / "result.parquet"
+            df.to_parquet(result_path, index=False)
+            coords_col = result_column(df, "coords", purpose="optimized")
+            row = df.iloc[0]
+            (temp_path / "optimized.xyz").write_text(ac2xyz(row["atoms"], row[coords_col]))
+            _copy_scientific_calculator_files(source_target_dir, temp_path / "calculator_files")
+            electronic_energy = float(
+                get_result(df, "electronic_energy", purpose="analysis").iloc[0]
+            )
+            energy = (
+                free_energy_components(
+                    df,
+                    thermochemistry=method.thermochemistry,
+                ).iloc[0]
+                if calculation_level == "full"
+                else None
+            )
+            metadata = {
+                "schema_version": 2,
+                "reference_id": reference_id,
+                "cache_key": cache_key,
+                "result_fingerprint": _content_hash(result_content),
+                "state_id": target.state_id,
+                "state_kind": target.state_kind,
+                "compound_name": compound_name,
+                "formula": _formula(row["atoms"]),
+                "charge": int(row.get("charge", 0) or 0),
+                "multiplicity": int(row.get("multiplicity", 1) or 1),
+                "calculation_level": calculation_level,
+                "method": method.name,
+                "method_fingerprint": str(identity["method_fingerprint"]),
+                "validation_status": str(validation["status"]),
+                "method_plan": method.to_dict(),
+                "thermochemistry_mode": (
+                    None if energy is None else str(energy["thermochemistry_mode"])
+                ),
+                "electronic_energy_hartree": electronic_energy,
+                "free_energy_hartree": (
+                    None if energy is None else float(energy["free_energy_hartree"])
+                ),
+                "auto_validation": validation,
+                "identity": identity,
+                "source_run": None if source_run is None else str(source_run),
+                "created_at": _utc_now(),
+            }
+            metadata["checksums"] = _entry_checksums(temp_path)
+            metadata_path = temp_path / "metadata.json"
+            metadata_path.write_text(
+                json.dumps(metadata, indent=2, sort_keys=True, default=str) + "\n"
+            )
+            (temp_path / "metadata.sha256").write_text(
+                _file_sha256(metadata_path) + "  metadata.json\n"
+            )
+            try:
+                os.replace(temp_path, entry_path)
+            except OSError:
+                if not entry_path.exists():
+                    raise
+                shutil.rmtree(temp_path, ignore_errors=True)
+            self._append_index(metadata, entry_rel)
+        except Exception:
+            shutil.rmtree(temp_path, ignore_errors=True)
+            raise
+        return ReferenceRecord(self, reference_id, entry_path)
+
+    def import_record(self, record: ReferenceRecord) -> ReferenceRecord:
+        """Copy an immutable entry and its review into this library.
+
+        Parameters
+        ----------
+        record : ReferenceRecord
+            Entry from another library, normally a shared cluster reference
+            library being snapshotted into a portable run.
+
+        Returns
+        -------
+        ReferenceRecord
+            Equivalent entry owned by this library.
+        """
+        self.initialize()
+        metadata = record.metadata
+        source_metadata = dict(metadata)
+        source_metadata.pop("review", None)
+        source_path = record.path
+        method_slug = _slug(str(source_metadata["method"]))
+        state_slug = _slug(str(source_metadata["state_id"]))
+        compound_slug = _slug(str(source_metadata["compound_name"]))
+        calculation_level = str(source_metadata.get("calculation_level") or "full")
+        namespace = (
+            Path("references") / "full"
+            if calculation_level == "full"
+            else Path("screening") / calculation_level
+        )
+        entry_rel = (
+            Path("entries")
+            / namespace
+            / method_slug
+            / state_slug
+            / compound_slug
+            / str(source_metadata["reference_id"])
+        )
+        destination = self.root / entry_rel
+        if not destination.exists():
+            destination.parent.mkdir(parents=True, exist_ok=True)
+            temporary = Path(
+                tempfile.mkdtemp(prefix=f".{record.reference_id}-", dir=destination.parent)
+            )
+            shutil.rmtree(temporary)
+            shutil.copytree(source_path, temporary)
+            try:
+                os.replace(temporary, destination)
+            except OSError:
+                if not destination.exists():
+                    raise
+                shutil.rmtree(temporary, ignore_errors=True)
+        self._append_index(source_metadata, entry_rel)
+        decision = record.library.review_status(record.reference_id)
+        if (
+            decision in {"approved", "rejected"}
+            and self.review_status(record.reference_id) != decision
+        ):
+            self.set_review(record.reference_id, decision)
+        return ReferenceRecord(self, record.reference_id, destination)
+
+    def review_status(self, reference_id: str) -> ReviewDecision:
+        """Return the latest review decision for an entry."""
+        reviews = self._reviews()
+        matches = reviews[reviews["reference_id"].eq(str(reference_id))]
+        if matches.empty:
+            return "unreviewed"
+        return str(matches.iloc[-1]["decision"])  # type: ignore[return-value]
+
+    def review_queue(self) -> pd.DataFrame:
+        """Return full thermochemical references needing manual review."""
+        index = self.index()
+        return index[
+            index["review"].eq("unreviewed")
+            & index["calculation_level"].fillna("full").eq("full")
+        ].reset_index(drop=True)
+
+    def set_review(
+        self,
+        reference_id: str,
+        decision: Literal["approved", "rejected"],
+        *,
+        note: str = "",
+        reviewer: str = "",
+    ) -> None:
+        """Append a review decision without modifying the immutable entry."""
+        if decision not in {"approved", "rejected"}:
+            raise ValueError("decision must be 'approved' or 'rejected'")
+        self.get(reference_id)
+        row = pd.DataFrame(
+            [{
+                "reference_id": reference_id,
+                "decision": decision,
+                "note": str(note),
+                "reviewer": str(reviewer),
+                "reviewed_at": _utc_now(),
+            }]
+        )
+        with self._locked():
+            reviews = self._reviews()
+            _atomic_write_csv(
+                pd.concat([reviews, row], ignore_index=True),
+                self.reviews_path,
+            )
+
+    def _append_index(self, metadata: Mapping[str, Any], entry_rel: Path) -> None:
+        row = {
+            column: metadata.get(column)
+            for column in INDEX_COLUMNS
+            if column != "entry_path"
+        }
+        auto_validation = metadata.get("auto_validation", {})
+        row["validation_status"] = (
+            metadata.get("validation_status")
+            or (
+                auto_validation.get("status")
+                if isinstance(auto_validation, Mapping)
+                else None
+            )
+            or "auto_valid"
+        )
+        row["entry_path"] = str(entry_rel)
+        with self._locked():
+            index = pd.read_parquet(self.index_path)
+            if str(metadata["reference_id"]) in set(index.get("reference_id", [])):
+                return
+            updated = (
+                pd.DataFrame([row], columns=INDEX_COLUMNS)
+                if index.empty
+                else pd.concat([index, pd.DataFrame([row])], ignore_index=True)
+            )
+            _atomic_write_parquet(updated, self.index_path)
+
+    def _reviews(self) -> pd.DataFrame:
+        if not self.reviews_path.exists():
+            self.initialize()
+        return pd.read_csv(self.reviews_path, dtype=str).fillna("")
+
+    def _locked(self):
+        """Return an exclusive file-lock context manager."""
+        self.root.mkdir(parents=True, exist_ok=True)
+        return _FileLock(self.lock_path)
+
+    @staticmethod
+    def _validate_checksums(entry_path: Path) -> None:
+        metadata_path = entry_path / "metadata.json"
+        if not metadata_path.exists():
+            raise ValueError(f"Reference metadata is missing: {metadata_path}")
+        metadata_digest_path = entry_path / "metadata.sha256"
+        if not metadata_digest_path.exists():
+            raise ValueError(f"Reference metadata checksum is missing: {metadata_digest_path}")
+        digest_fields = metadata_digest_path.read_text().split()
+        if not digest_fields:
+            raise ValueError(f"Reference metadata checksum is empty: {metadata_digest_path}")
+        expected_metadata_digest = digest_fields[0]
+        if _file_sha256(metadata_path) != expected_metadata_digest:
+            raise ValueError(f"Reference checksum failed for {metadata_path}")
+        metadata = json.loads(metadata_path.read_text())
+        for relative, expected in metadata.get("checksums", {}).items():
+            path = entry_path / relative
+            if not path.exists() or _file_sha256(path) != expected:
+                raise ValueError(f"Reference checksum failed for {path}")
+
+
+class _FileLock:
+    """Small Unix file-lock context manager for library sidecars."""
+
+    def __init__(self, path: Path) -> None:
+        self.path = path
+        self.handle: Any | None = None
+
+    def __enter__(self) -> "_FileLock":
+        self.handle = self.path.open("a+")
+        fcntl.flock(self.handle.fileno(), fcntl.LOCK_EX)
+        return self
+
+    def __exit__(self, exc_type: Any, exc: Any, traceback: Any) -> None:
+        if self.handle is not None:
+            fcntl.flock(self.handle.fileno(), fcntl.LOCK_UN)
+            self.handle.close()
+
+
+def open_reference_library(path: str | Path) -> ReferenceLibrary:
+    """Open or initialize an inspectable reference library."""
+    return ReferenceLibrary(path).initialize()
+
+
+def reference_identity(
+    target: StructureTarget,
+    method: MethodPlan,
+    *,
+    protocol: Mapping[str, Any] | None = None,
+    calculation_level: CalculationLevel = "full",
+) -> tuple[str, dict[str, Any]]:
+    """Return a stable compatibility key and its scientific identity."""
+    if calculation_level not in {"low_cost", "dft_ranked", "full"}:
+        raise ValueError("calculation_level must be 'low_cost', 'dft_ranked', or 'full'")
+    if calculation_level == "full" and method.thermochemistry is None:
+        raise ValueError(
+            f"Method plan {method.name!r} has no thermochemistry specification"
+        )
+    active_plan = _active_reference_method(method, calculation_level)
+    method_fingerprint = _content_hash(active_plan)
+    identity = {
+        "schema_version": 2,
+        "state_id": target.state_id,
+        "state_kind": target.state_kind,
+        "scope": target.scope,
+        "rpos": target.rpos,
+        "builder_spec": target.builder_spec,
+        "chemical_identity": _target_chemical_identity(target),
+        "charge": int(target.builder_options.get("charge", 0)),
+        "multiplicity": int(target.builder_options.get("multiplicity", 1)),
+        "calculation_level": calculation_level,
+        "method_fingerprint": method_fingerprint,
+        "active_method": active_plan,
+        "thermochemistry": (
+            method.thermochemistry.to_dict()
+            if calculation_level == "full" and method.thermochemistry is not None
+            else None
+        ),
+        "protocol": _json_compatible(dict(protocol or {})),
+    }
+    return f"key_{_content_hash(identity)[:16]}", identity
+
+
+def _active_reference_method(
+    method: MethodPlan,
+    calculation_level: CalculationLevel,
+) -> dict[str, Any]:
+    """Return only calculator stages that can affect a molecular reference."""
+    stages = ["xtb_preopt", "xtb_sp", "xtb_opt"]
+    if calculation_level in {"dft_ranked", "full"}:
+        stages.append("dft_rank_sp")
+    if calculation_level == "full":
+        stages.extend(["dft_opt", "dft_freq"])
+        if method.include_terminal_solv_sp:
+            stages.append("dft_solv_sp")
+    return {
+        "schema_version": 1,
+        "stages": {
+            stage_id: method.for_stage(stage_id).to_dict()
+            for stage_id in stages
+        },
+        "include_terminal_solv_sp": (
+            method.include_terminal_solv_sp if calculation_level == "full" else False
+        ),
+    }
+
+
+def _target_chemical_identity(target: StructureTarget) -> dict[str, Any]:
+    system = target.system
+    scope = target.scope
+    identity: dict[str, Any] = {}
+    if scope in {"substrate", "substrate_rpos", "system", "system_rpos"}:
+        identity["substrate_smiles"] = _canonical_smiles(system.substrate_smiles)
+    if scope in {"catalyst", "system", "system_rpos"}:
+        identity["catalyst_smiles"] = _canonical_smiles(system.catalyst_smiles)
+    if scope == "global":
+        identity["global_state"] = target.state_id
+    return identity
+
+
+def _bind_reference_dataframe(
+    df: pd.DataFrame,
+    target: StructureTarget,
+    *,
+    metadata: Mapping[str, Any],
+) -> pd.DataFrame:
+    """Bind one immutable reference result to current run-local labels."""
+    if len(df) != 1:
+        raise ValueError("reference binding requires exactly one selected result row")
+    _validate_reference_binding_target(metadata, target)
+
+    out = df.copy()
+    out.attrs.clear()
+    out.attrs.update(deepcopy(getattr(df, "attrs", {})))
+    label_columns = (
+        "structure_id",
+        "custom_name",
+        "system_name",
+        "substrate_name",
+        "catalyst_name",
+        "state_id",
+        "state_kind",
+        "rpos",
+    )
+    source_labels = {
+        column: _json_compatible(out.iloc[0].get(column))
+        for column in label_columns
+        if column in out
+    }
+
+    out["structure_id"] = target.target_id
+    out["system_name"] = target.system.system_name
+    out["substrate_name"] = target.system.substrate_name
+    out["catalyst_name"] = target.system.catalyst_name
+    out["state_id"] = target.state_id
+    out["state_kind"] = target.state_kind
+    out["rpos"] = target.rpos
+    if "custom_name" in out:
+        custom_name = f"{target.system.system_name}_{target.state_id}"
+        if target.rpos is not None:
+            custom_name += f"_rpos({target.rpos})"
+        out["custom_name"] = custom_name
+    if "molecule_role" in out:
+        out["molecule_role"] = target.state_id
+
+    target_labels = {
+        column: _json_compatible(out.iloc[0].get(column))
+        for column in label_columns
+        if column in out
+    }
+    out.attrs["frust_reference_bindings"] = {
+        "schema_version": 1,
+        "bindings": [
+            {
+                "reference_id": str(metadata["reference_id"]),
+                "calculation_level": str(
+                    metadata.get("calculation_level") or "full"
+                ),
+                "source_compound_name": str(metadata.get("compound_name") or ""),
+                "target_id": target.target_id,
+                "scope": target.scope,
+                "source_labels": source_labels,
+                "target_labels": target_labels,
+            }
+        ],
+    }
+    return out
+
+
+def _validate_reference_binding_target(
+    metadata: Mapping[str, Any],
+    target: StructureTarget,
+) -> None:
+    """Reject attempts to relabel a scientifically incompatible reference."""
+    identity = metadata.get("identity")
+    if not isinstance(identity, Mapping):
+        raise ValueError(
+            f"Reference {metadata.get('reference_id')!r} has no scientific identity"
+        )
+    expected = {
+        "state_id": target.state_id,
+        "state_kind": target.state_kind,
+        "scope": target.scope,
+        "rpos": target.rpos,
+        "builder_spec": target.builder_spec,
+        "chemical_identity": _target_chemical_identity(target),
+        "charge": int(target.builder_options.get("charge", 0)),
+        "multiplicity": int(target.builder_options.get("multiplicity", 1)),
+    }
+    mismatches = [
+        key
+        for key, value in expected.items()
+        if _json_compatible(identity.get(key)) != _json_compatible(value)
+    ]
+    if mismatches:
+        raise ValueError(
+            f"Reference {metadata.get('reference_id')!r} is incompatible with "
+            f"target {target.target_id!r}: {', '.join(mismatches)}"
+        )
+
+
+def _canonical_smiles(smiles: str) -> str:
+    molecule = Chem.MolFromSmiles(str(smiles))
+    if molecule is None:
+        raise ValueError(f"Cannot canonicalize SMILES {smiles!r}")
+    return Chem.MolToSmiles(molecule, canonical=True, isomericSmiles=True)
+
+
+def _validate_reference_result(
+    df: pd.DataFrame,
+    method: MethodPlan,
+    calculation_level: CalculationLevel,
+) -> dict[str, Any]:
+    nt_columns = normal_termination_columns(df)
+    if not nt_columns:
+        raise ValueError("Reference has no normal-termination provenance")
+    failed_nt = [column for column in nt_columns if not bool(df[column].fillna(False).all())]
+    if failed_nt:
+        raise ValueError(f"Reference has non-normal termination columns: {failed_nt}")
+    electronic = get_result(df, "electronic_energy", purpose="analysis")
+    if electronic.isna().any():
+        raise ValueError("Reference has missing analysis electronic energy")
+    coords_column = result_column(df, "coords", purpose="optimized")
+    if df[coords_column].isna().any():
+        raise ValueError("Reference has missing selected geometry")
+    if calculation_level != "full":
+        return {
+            "status": "auto_valid",
+            "normal_termination_columns": nt_columns,
+            "n_imag": None,
+        }
+    components = free_energy_components(df, thermochemistry=method.thermochemistry)
+    if components["free_energy_hartree"].isna().any():
+        raise ValueError("Reference has missing assembled free energy")
+    vibration_columns = [column for column in df.columns if str(column).endswith("-vibs")]
+    if not vibration_columns:
+        raise ValueError("Reference has no vibration data")
+    vibrations = next(
+        (
+            df[column].iloc[0]
+            for column in reversed(vibration_columns)
+            if _usable_vibrations(df[column].iloc[0])
+        ),
+        None,
+    )
+    if vibrations is None:
+        raise ValueError("Reference has no usable vibration data")
+    minimum = minimum_vibration_status(
+        float(mode["frequency"])
+        for mode in vibrations
+    )
+    if minimum["status"] == "invalid":
+        frequencies = ", ".join(
+            f"{frequency:.2f}"
+            for frequency in minimum["negative_frequencies_cm1"]
+        )
+        raise ValueError(
+            f"Reference minimum has {minimum['n_imag']} imaginary frequencies: "
+            f"{frequencies} cm^-1"
+        )
+    return {
+        "status": minimum["status"],
+        "normal_termination_columns": nt_columns,
+        "n_imag": minimum["n_imag"],
+        "imaginary_frequencies_cm1": minimum["negative_frequencies_cm1"],
+        "flags": minimum["flags"],
+        "issues": minimum["issues"],
+        "weak_imag_threshold_cm1": minimum["weak_imag_threshold_cm1"],
+    }
+
+
+def _reference_result_content(
+    df: pd.DataFrame,
+    method: MethodPlan,
+    calculation_level: CalculationLevel,
+) -> dict[str, Any]:
+    """Return the scientific result content used for immutable entry IDs."""
+    row = df.iloc[0]
+    coords_column = result_column(df, "coords", purpose="optimized")
+    vibration_columns = [column for column in df.columns if str(column).endswith("-vibs")]
+    vibration_column = next(
+        (
+            column
+            for column in reversed(vibration_columns)
+            if _usable_vibrations(row[column])
+        ),
+        None,
+    )
+    electronic_energy = float(
+        get_result(df, "electronic_energy", purpose="analysis").iloc[0]
+    )
+    energies = (
+        free_energy_components(
+            df,
+            thermochemistry=method.thermochemistry,
+        ).iloc[0].to_dict()
+        if calculation_level == "full"
+        else {"analysis_electronic_energy_hartree": electronic_energy}
+    )
+    return _json_compatible(
+        {
+            "atoms": row["atoms"],
+            "optimized_coords": row[coords_column],
+            "calculation_level": calculation_level,
+            "energies": energies,
+            "vibrations": None if vibration_column is None else row[vibration_column],
+            "normal_termination": {
+                column: row[column]
+                for column in normal_termination_columns(df)
+            },
+        }
+    )
+
+
+def _usable_vibrations(value: Any) -> bool:
+    return isinstance(value, (list, tuple, np.ndarray)) and len(value) > 0
+
+
+def _copy_scientific_calculator_files(
+    source_target_dir: str | Path | None,
+    destination: Path,
+) -> None:
+    if source_target_dir is None:
+        return
+    source = Path(source_target_dir)
+    if not source.is_dir():
+        return
+    stage_names = {
+        "xtb_preopt",
+        "xtb_sp",
+        "xtb_opt",
+        "dft_rank_sp",
+        "dft_opt",
+        "dft_freq",
+        "dft_solv_sp",
+    }
+    candidates = [
+        path
+        for path in source.rglob("*")
+        if path.is_file()
+        and path.name.lower()
+        in {
+            "orca.out",
+            "orca.inp",
+            "gxtb.out",
+            "gxtb.inp",
+            "xtb.out",
+            "xtb.inp",
+            "input.inp",
+            "output.out",
+        }
+        and any(stage in path.parts for stage in stage_names)
+    ]
+    for path in candidates:
+        stage = next(stage for stage in stage_names if stage in path.parts)
+        target = destination / stage / path.name
+        target.parent.mkdir(parents=True, exist_ok=True)
+        if target.exists():
+            target = target.with_name(f"{path.parent.name}_{path.name}")
+        shutil.copy2(path, target)
+
+
+def _entry_checksums(entry_path: Path) -> dict[str, str]:
+    checksums: dict[str, str] = {}
+    for path in sorted(entry_path.rglob("*")):
+        if path.is_file() and path.name != "metadata.json":
+            checksums[str(path.relative_to(entry_path))] = _file_sha256(path)
+    return checksums
+
+
+def _file_sha256(path: Path) -> str:
+    digest = hashlib.sha256()
+    with path.open("rb") as handle:
+        for chunk in iter(lambda: handle.read(1024 * 1024), b""):
+            digest.update(chunk)
+    return digest.hexdigest()
+
+
+def _atomic_write_parquet(df: pd.DataFrame, path: Path) -> None:
+    """Atomically replace a parquet sidecar after writing it completely."""
+    descriptor, name = tempfile.mkstemp(prefix=f".{path.name}.", dir=path.parent)
+    os.close(descriptor)
+    temporary = Path(name)
+    try:
+        df.to_parquet(temporary, index=False)
+        os.replace(temporary, path)
+    finally:
+        temporary.unlink(missing_ok=True)
+
+
+def _atomic_write_csv(df: pd.DataFrame, path: Path) -> None:
+    """Atomically replace a CSV sidecar after writing it completely."""
+    descriptor, name = tempfile.mkstemp(prefix=f".{path.name}.", dir=path.parent)
+    os.close(descriptor)
+    temporary = Path(name)
+    try:
+        df.to_csv(temporary, index=False)
+        os.replace(temporary, path)
+    finally:
+        temporary.unlink(missing_ok=True)
+
+
+def _content_hash(value: Any) -> str:
+    encoded = json.dumps(
+        _json_compatible(value),
+        sort_keys=True,
+        separators=(",", ":"),
+    ).encode("utf-8")
+    return hashlib.sha256(encoded).hexdigest()
+
+
+def _compound_name(target: StructureTarget) -> str:
+    if target.scope == "global":
+        return {"HH": "H2", "HBpin-mol": "HBpin"}.get(target.state_id, target.state_id)
+    if target.scope.startswith("substrate"):
+        return target.system.substrate_name
+    if target.scope == "catalyst":
+        return target.system.catalyst_name
+    return target.system.system_name
+
+
+def _formula(atoms: Any) -> str:
+    counts = Counter(str(atom) for atom in atoms)
+    order = ["C", "H"] + sorted(element for element in counts if element not in {"C", "H"})
+    return "".join(
+        element + (str(counts[element]) if counts[element] != 1 else "")
+        for element in order
+        if counts.get(element)
+    )
+
+
+def _slug(value: str) -> str:
+    text = "".join(character if character.isalnum() else "_" for character in str(value))
+    return text.strip("_").lower() or "reference"
+
+
+def _utc_now() -> str:
+    return datetime.now(timezone.utc).replace(microsecond=0).isoformat().replace("+00:00", "Z")
+
+
+def _json_compatible(value: Any) -> Any:
+    if value is pd.NA:
+        return None
+    if value is None or isinstance(value, (str, int, bool)):
+        return value
+    if isinstance(value, np.bool_):
+        return bool(value)
+    if isinstance(value, (float, np.floating)):
+        return None if pd.isna(value) else float(value)
+    if isinstance(value, np.integer):
+        return int(value)
+    if isinstance(value, np.ndarray):
+        return [_json_compatible(item) for item in value.tolist()]
+    if isinstance(value, Mapping):
+        return {
+            str(key): _json_compatible(item)
+            for key, item in sorted(value.items(), key=lambda pair: str(pair[0]))
+        }
+    if isinstance(value, (list, tuple)):
+        return [_json_compatible(item) for item in value]
+    raise TypeError(f"Reference value {value!r} is not JSON-compatible")

@@ -272,9 +272,16 @@ def _generated_smiles_for_system_rpos(system: pd.Series, spec: TSGuess2Spec, rpo
 
 def _role_mapping_from_mol(mol: Chem.Mol, spec: TSGuess2Spec) -> dict[str, int]:
     query = Chem.MolFromSmarts(spec.core_smarts)
+    if query is None:
+        raise ValueError(f"Invalid {spec.name} core SMARTS: {spec.core_smarts}")
     matches = mol.GetSubstructMatches(query)
     if not matches:
         raise ValueError(f"Could not match {spec.name} core SMARTS: {spec.core_smarts}")
+    if spec.name in {"TS3", "TS4", "INT3"} and len(matches) != 1:
+        raise ValueError(
+            f"Expected one chemically directed {spec.name} core SMARTS match; "
+            f"found {len(matches)}"
+        )
     match = matches[0]
 
     if spec.name == "TS1":
@@ -297,15 +304,70 @@ def _role_mapping_from_mol(mol: Chem.Mol, spec: TSGuess2Spec) -> dict[str, int]:
             "B_transfer_H": int(b_hydrogens[0]),
         }
     if spec.name in {"TS3", "TS4", "INT3"}:
-        cat_b = int(match[0])
-        transfer_h = int(match[1])
-        return {
-            "cat_B": cat_b,
-            "transfer_H": transfer_h,
+        roles = {
+            "cat_B": int(match[0]),
+            "transfer_H": int(match[1]),
             "pin_B": int(match[2]),
             "substrate_C": int(match[3]),
         }
+        _validate_hbpin_bridged_roles(mol, roles, state=spec.name)
+        return roles
     raise ValueError(f"Unsupported tsguess2 spec: {spec.name}")
+
+
+def _validate_hbpin_bridged_roles(
+    mol: Chem.Mol,
+    roles: dict[str, int],
+    *,
+    state: str,
+) -> None:
+    """Validate chemically directed TS3/TS4/INT3 role assignments.
+
+    Parameters
+    ----------
+    mol : rdkit.Chem.Mol
+        Hydrogen-explicit connected TS molecule.
+    roles : dict
+        Candidate mapping for catalyst B, HBpin B, bridge H, and substrate C.
+    state : str
+        State name used in diagnostic messages.
+    """
+    expected_atomic_numbers = {
+        "cat_B": 5,
+        "pin_B": 5,
+        "transfer_H": 1,
+        "substrate_C": 6,
+    }
+    for role, atomic_number in expected_atomic_numbers.items():
+        atom = mol.GetAtomWithIdx(roles[role])
+        if atom.GetAtomicNum() != atomic_number:
+            raise ValueError(
+                f"Invalid {state} role mapping: {role} is not atomic number "
+                f"{atomic_number}"
+            )
+
+    pin_b = roles["pin_B"]
+    pin_oxygen_count = sum(
+        neighbor.GetAtomicNum() == 8
+        for neighbor in mol.GetAtomWithIdx(pin_b).GetNeighbors()
+    )
+    if pin_oxygen_count != 2:
+        raise ValueError(
+            f"Invalid {state} role mapping: pin_B must be bonded to two oxygens; "
+            f"found {pin_oxygen_count}"
+        )
+
+    cat_b = roles["cat_B"]
+    for role in ("transfer_H", "substrate_C"):
+        role_idx = roles[role]
+        if (
+            mol.GetBondBetweenAtoms(cat_b, role_idx) is None
+            or mol.GetBondBetweenAtoms(pin_b, role_idx) is None
+        ):
+            raise ValueError(
+                f"Invalid {state} role mapping: {role} must connect catalyst B "
+                "and HBpin B"
+            )
 
 
 def _hydrogen_neighbors(mol: Chem.Mol, atom_idx: int) -> list[int]:
