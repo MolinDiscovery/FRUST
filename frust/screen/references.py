@@ -21,7 +21,17 @@ import pandas as pd
 from rdkit import Chem
 from tooltoad.chemutils import ac2xyz
 
-from frust.results import free_energy_components, get_result, result_column
+from frust.artifacts import (
+    ArtifactPolicy,
+    compact_result_dataframe,
+    validate_artifact_policy,
+)
+from frust.results import (
+    free_energy_components,
+    frequency_values,
+    get_result,
+    result_column,
+)
 from frust.schema import normal_termination_columns
 from frust.screen._quality import minimum_vibration_status
 from frust.structures import StructureTarget
@@ -42,6 +52,8 @@ INDEX_COLUMNS = [
     "method",
     "method_fingerprint",
     "validation_status",
+    "evidence_level",
+    "scientific_result_fingerprint",
     "thermochemistry_mode",
     "electronic_energy_hartree",
     "free_energy_hartree",
@@ -223,9 +235,12 @@ class ReferenceLibrary:
                 missing = [column for column in INDEX_COLUMNS if column not in index]
                 if missing:
                     for column in missing:
-                        index[column] = (
-                            "auto_valid" if column == "validation_status" else pd.NA
-                        )
+                        if column == "validation_status":
+                            index[column] = "auto_valid"
+                        elif column == "evidence_level":
+                            index[column] = "full"
+                        else:
+                            index[column] = pd.NA
                     _atomic_write_parquet(index[INDEX_COLUMNS], self.index_path)
             if not self.reviews_path.exists():
                 _atomic_write_csv(
@@ -368,7 +383,14 @@ class ReferenceLibrary:
             calculation_level=calculation_level,
         )
         candidates = self.index()
-        candidates = candidates[candidates["cache_key"].eq(cache_key)].iloc[::-1]
+        candidates = candidates[candidates["cache_key"].eq(cache_key)]
+        evidence = candidates.get(
+            "evidence_level",
+            pd.Series("full", index=candidates.index),
+        ).fillna("full")
+        full = candidates[evidence.eq("full")].iloc[::-1]
+        compact = candidates[~evidence.eq("full")].iloc[::-1]
+        candidates = pd.concat([full, compact])
         for _, candidate in candidates.iterrows():
             reference_id = str(candidate["reference_id"])
             decision = str(candidate["review"])
@@ -406,6 +428,7 @@ class ReferenceLibrary:
         calculation_level: CalculationLevel = "full",
         source_run: str | Path | None = None,
         source_target_dir: str | Path | None = None,
+        artifact_policy: ArtifactPolicy = "standard",
     ) -> ReferenceRecord:
         """Publish one selected molecular result as an immutable entry.
 
@@ -424,6 +447,10 @@ class ReferenceLibrary:
             and assembled thermochemistry.
         source_run, source_target_dir : str, pathlib.Path, or None, optional
             Provenance and calculator-file source locations.
+        artifact_policy : {"standard", "screening"}, optional
+            ``"screening"`` stores compact result values and optimized XYZ
+            without ``calculator_files/``. ``"standard"`` stores selected
+            calculator evidence for the requested calculation level.
 
         Returns
         -------
@@ -431,9 +458,12 @@ class ReferenceLibrary:
             Immutable checksum-protected entry.
         """
         self.initialize()
+        artifact_policy = validate_artifact_policy(artifact_policy)
         if len(df) != 1:
             raise ValueError("reference publication requires exactly one selected result row")
         validation = _validate_reference_result(df, method, calculation_level)
+        if artifact_policy == "screening":
+            df = compact_result_dataframe(df)
         cache_key, identity = reference_identity(
             target,
             method,
@@ -441,8 +471,14 @@ class ReferenceLibrary:
             calculation_level=calculation_level,
         )
         result_content = _reference_result_content(df, method, calculation_level)
+        result_fingerprint = _content_hash(result_content)
+        evidence_level = "compact" if artifact_policy == "screening" else "full"
         reference_id = "ref_" + _content_hash(
-            {"identity": identity, "result": result_content}
+            {
+                "identity": identity,
+                "result": result_content,
+                "evidence_level": evidence_level,
+            }
         )[:16]
         compound_name = _compound_name(target)
         method_slug = _slug(method.name)
@@ -477,7 +513,13 @@ class ReferenceLibrary:
             coords_col = result_column(df, "coords", purpose="optimized")
             row = df.iloc[0]
             (temp_path / "optimized.xyz").write_text(ac2xyz(row["atoms"], row[coords_col]))
-            _copy_scientific_calculator_files(source_target_dir, temp_path / "calculator_files")
+            if artifact_policy == "standard":
+                _copy_scientific_calculator_files(
+                    source_target_dir,
+                    temp_path / "calculator_files",
+                    selected_cid=row.get("cid"),
+                    calculation_level=calculation_level,
+                )
             electronic_energy = float(
                 get_result(df, "electronic_energy", purpose="analysis").iloc[0]
             )
@@ -490,10 +532,12 @@ class ReferenceLibrary:
                 else None
             )
             metadata = {
-                "schema_version": 2,
+                "schema_version": 3,
                 "reference_id": reference_id,
                 "cache_key": cache_key,
-                "result_fingerprint": _content_hash(result_content),
+                "result_fingerprint": result_fingerprint,
+                "scientific_result_fingerprint": result_fingerprint,
+                "evidence_level": evidence_level,
                 "state_id": target.state_id,
                 "state_kind": target.state_kind,
                 "compound_name": compound_name,
@@ -932,23 +976,10 @@ def _validate_reference_result(
     components = free_energy_components(df, thermochemistry=method.thermochemistry)
     if components["free_energy_hartree"].isna().any():
         raise ValueError("Reference has missing assembled free energy")
-    vibration_columns = [column for column in df.columns if str(column).endswith("-vibs")]
-    if not vibration_columns:
+    frequencies = frequency_values(df.iloc[0])
+    if not frequencies:
         raise ValueError("Reference has no vibration data")
-    vibrations = next(
-        (
-            df[column].iloc[0]
-            for column in reversed(vibration_columns)
-            if _usable_vibrations(df[column].iloc[0])
-        ),
-        None,
-    )
-    if vibrations is None:
-        raise ValueError("Reference has no usable vibration data")
-    minimum = minimum_vibration_status(
-        float(mode["frequency"])
-        for mode in vibrations
-    )
+    minimum = minimum_vibration_status(frequencies)
     if minimum["status"] == "invalid":
         frequencies = ", ".join(
             f"{frequency:.2f}"
@@ -977,15 +1008,6 @@ def _reference_result_content(
     """Return the scientific result content used for immutable entry IDs."""
     row = df.iloc[0]
     coords_column = result_column(df, "coords", purpose="optimized")
-    vibration_columns = [column for column in df.columns if str(column).endswith("-vibs")]
-    vibration_column = next(
-        (
-            column
-            for column in reversed(vibration_columns)
-            if _usable_vibrations(row[column])
-        ),
-        None,
-    )
     electronic_energy = float(
         get_result(df, "electronic_energy", purpose="analysis").iloc[0]
     )
@@ -1003,7 +1025,7 @@ def _reference_result_content(
             "optimized_coords": row[coords_column],
             "calculation_level": calculation_level,
             "energies": energies,
-            "vibrations": None if vibration_column is None else row[vibration_column],
+            "frequencies_cm1": frequency_values(row),
             "normal_termination": {
                 column: row[column]
                 for column in normal_termination_columns(df)
@@ -1012,28 +1034,24 @@ def _reference_result_content(
     )
 
 
-def _usable_vibrations(value: Any) -> bool:
-    return isinstance(value, (list, tuple, np.ndarray)) and len(value) > 0
-
-
 def _copy_scientific_calculator_files(
     source_target_dir: str | Path | None,
     destination: Path,
+    *,
+    selected_cid: Any = None,
+    calculation_level: CalculationLevel = "full",
 ) -> None:
     if source_target_dir is None:
         return
     source = Path(source_target_dir)
     if not source.is_dir():
         return
-    stage_names = {
-        "xtb_preopt",
-        "xtb_sp",
-        "xtb_opt",
-        "dft_rank_sp",
-        "dft_opt",
-        "dft_freq",
-        "dft_solv_sp",
-    }
+    stage_names = {"xtb_preopt", "xtb_sp", "xtb_opt"}
+    if calculation_level in {"dft_ranked", "full"}:
+        stage_names.add("dft_rank_sp")
+    if calculation_level == "full":
+        stage_names.update({"dft_opt", "dft_freq", "dft_solv_sp"})
+    cid_suffix = None if pd.isna(selected_cid) else f"_{selected_cid}"
     candidates = [
         path
         for path in source.rglob("*")
@@ -1050,6 +1068,7 @@ def _copy_scientific_calculator_files(
             "output.out",
         }
         and any(stage in path.parts for stage in stage_names)
+        and (cid_suffix is None or path.parent.name.endswith(cid_suffix))
     ]
     for path in candidates:
         stage = next(stage for stage in stage_names if stage in path.parts)

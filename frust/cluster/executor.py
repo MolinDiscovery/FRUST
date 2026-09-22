@@ -60,6 +60,7 @@ def update_executor(executor, cluster: ClusterConfig, resources: Resources, *, j
         "cpus_per_task": resources.cpus,
         "mem_gb": resources.mem_gb,
         "timeout_min": resources.timeout_min,
+        "stderr_to_stdout": bool(cluster.stderr_to_stdout),
     }
     if cluster.backend == "slurm":
         params["slurm_job_name"] = job_name
@@ -143,6 +144,7 @@ def update_executor_with_dependencies(
         "cpus_per_task": resources.cpus,
         "mem_gb": resources.mem_gb,
         "timeout_min": resources.timeout_min,
+        "stderr_to_stdout": bool(cluster.stderr_to_stdout),
     }
     if cluster.backend == "slurm":
         params["slurm_job_name"] = job_name

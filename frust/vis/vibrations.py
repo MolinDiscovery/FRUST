@@ -93,6 +93,19 @@ def plot_vibs(
         Rendered viewer.
     """
 
+    compact_frequency_columns = [
+        column for column in df.columns if str(column).endswith("-frequencies_cm1")
+    ]
+    full_mode_columns = [
+        column for column in df.columns if str(column).endswith("-vibs")
+    ]
+    if compact_frequency_columns and not full_mode_columns:
+        raise ValueError(
+            "This screening result retains frequency values but deliberately "
+            "omits vibration displacement vectors. Recalculate the selected "
+            "structure with artifact_policy='standard' to use ft.plot_vibs."
+        )
+
     if legend_screen_offset is not None:
         print("legend_screen_offset is not yet supported by the scene renderer.")
 

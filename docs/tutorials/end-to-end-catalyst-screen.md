@@ -223,11 +223,64 @@ submission = wf.submit(
     cluster=cluster,
     execution="dft_staged",
     stage_resources=resources,
+    artifact_policy="screening",
 )
 
 submission.finalization_job_id
 submission.child_submissions
 ```
+
+For hundreds or thousands of systems, `artifact_policy="screening"` keeps the
+final geometry and scientific values but removes successful calculator files,
+per-target parquets, and bulk Submitit bookkeeping after final validation. The
+default remains `"standard"`.
+
+A full TS row in the collected screening result is compact:
+
+| Data kept | Example column |
+| --- | --- |
+| identity | `structure_id`, `system_name`, `state_id`, `rpos`, `cid` |
+| selected structure | `atoms`, `dft_ts_opt-oc`, `connectivity_bonds` |
+| TS definition | `constraint_roles`, `constraint_spec` |
+| energies | `dft_freq-EE`, `dft_freq-GE`, `dft_solv_sp-EE` |
+| frequencies | `dft_freq-frequencies_cm1` |
+| completion | `dft_ts_opt-NT`, `dft_freq-NT`, `dft_solv_sp-NT` |
+
+The frequency column contains every frequency value, so quality classification
+and thermochemistry are unchanged. It does not contain displacement vectors;
+`ft.plot_vibs(...)` explains that the selected structure must be recalculated
+with `artifact_policy="standard"` when an animation is needed.
+
+After a successful screening run, the portable bundle looks like:
+
+```text
+results/
+├── .submitit/
+│   ├── ownership.json
+│   └── control/              # small finalizer record
+├── calculations/
+│   ├── transition_states/merged.parquet
+│   └── references/merged.parquet
+├── analysis/
+├── manifest.json
+└── run_report.json
+```
+
+During execution, target and collector logs live in `results/.submitit/jobs/`,
+not in `ClusterConfig.log_dir`. Stderr is merged into stdout. The finalizer
+deletes `jobs/` only when every required collection, reference, and analysis
+artifact validates. Failed runs retain both logs and failed-stage evidence.
+No separate scratch filesystem is required.
+
+The finalizer cannot safely delete its own active control files. Remove that
+small remainder after the job has exited with:
+
+```python
+ft.screen.cleanup_submitit("results")
+```
+
+Use `allow_incomplete=True` only for deliberate cleanup after debugging a
+failed run. FRUST refuses unowned or out-of-run paths.
 
 !!! note "ORCA receives 80% of the requested job memory"
 
@@ -247,8 +300,10 @@ transition-state jobs ──> TS collector ───────┐
 minimum-reference jobs ─> reference collector ┘
 ```
 
-The finalizer uses an `afterany` dependency. It therefore produces a report and
-partial analysis even when an upstream branch contains failed calculations.
+The finalizer uses an `afterany` dependency. It therefore records a failed or
+partial `run_report.json` even when an upstream branch fails. It refuses to
+mark the run successful—or remove logs—when a required collection report is
+missing or incomplete.
 
 !!! warning "Use a deliberate results directory"
 

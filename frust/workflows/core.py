@@ -9,8 +9,11 @@ collected parquet outputs.
 
 from __future__ import annotations
 
+import copy
 import json
 import os
+import shutil
+import tempfile
 from collections.abc import Mapping
 from dataclasses import dataclass
 from pathlib import Path
@@ -18,6 +21,11 @@ from typing import Any, Iterable, Literal
 
 import pandas as pd
 
+from frust.artifacts import (
+    ArtifactPolicy,
+    compact_result_dataframe,
+    validate_artifact_policy,
+)
 from frust.cluster.config import (
     DEFAULT_ORCA_MEMORY_FRACTION,
     ClusterConfig,
@@ -174,6 +182,8 @@ class ExecutionOptions:
         Whether calculator output directories should be retained by Stepper.
     work_dir : str, optional
         Scratch/work directory used by calculator backends.
+    artifact_policy : {"standard", "screening"}, optional
+        Scientific artifact retention policy.
     """
 
     n_cores: int = 4
@@ -181,6 +191,27 @@ class ExecutionOptions:
     debug: bool = False
     save_output_dir: bool = True
     work_dir: str | None = None
+    artifact_policy: ArtifactPolicy = "standard"
+
+
+@dataclass(frozen=True)
+class WorkflowJobResult:
+    """Small Submitit result for a completed target or stage group."""
+
+    target_id: str
+    output_path: str
+    row_count: int
+    status: str
+
+
+@dataclass(frozen=True)
+class CollectionJobResult:
+    """Small Submitit result for a completed collection job."""
+
+    output_path: str
+    report_path: str
+    row_count: int
+    status: str
 
 
 class BaseWorkflow:
@@ -461,6 +492,7 @@ class BaseWorkflow:
         save_output_dir: bool = True,
         work_dir: str | Path | None = None,
         target_retention: TargetRetention = "compact_success",
+        artifact_policy: ArtifactPolicy = "standard",
     ) -> pd.DataFrame:
         """Run selected workflow targets locally.
 
@@ -494,6 +526,10 @@ class BaseWorkflow:
             provided. ``"compact_success"`` keeps only the final target parquet
             and ``timing.json`` after a target completes successfully.
             ``"all"`` keeps all intermediate parquet checkpoints.
+        artifact_policy : {"standard", "screening"}, optional
+            ``"screening"`` retains final structure, scalar energies, and
+            frequency values while omitting displacement vectors and consumed
+            intermediate data. ``"standard"`` remains the default.
 
         Returns
         -------
@@ -509,6 +545,8 @@ class BaseWorkflow:
         >>> df = wf.run(targets=[0], out_dir="debug/screen_ts", execution="dft_staged")
         """
         _validate_target_retention(target_retention)
+        artifact_policy = validate_artifact_policy(artifact_policy)
+        _validate_screening_retention(artifact_policy, target_retention)
         selected = self._select_targets(targets)
         options = ExecutionOptions(
             n_cores=n_cores,
@@ -516,6 +554,7 @@ class BaseWorkflow:
             debug=debug,
             save_output_dir=save_output_dir,
             work_dir=None if work_dir is None else str(work_dir),
+            artifact_policy=artifact_policy,
         )
         frames: list[pd.DataFrame] = []
         root = Path(out_dir) if out_dir is not None else None
@@ -538,7 +577,7 @@ class BaseWorkflow:
                 else:
                     current_parquet: str | None = None
                     df = pd.DataFrame()
-                    for group in groups:
+                    for group_index, group in enumerate(groups):
                         output_parquet = _next_parquet(current_parquet, self._group_name(group))
                         df = _run_stage_group_job(
                             self,
@@ -548,11 +587,16 @@ class BaseWorkflow:
                             output_parquet,
                             save_dir,
                             options,
+                            is_final_group=group_index == len(groups) - 1,
                         )
                         current_parquet = output_parquet
                     if current_parquet is not None:
                         final_parquet = save_dir / current_parquet
-                if target_retention == "compact_success" and final_parquet is not None:
+                if (
+                    artifact_policy != "screening"
+                    and target_retention == "compact_success"
+                    and final_parquet is not None
+                ):
                     _compact_successful_target(save_dir, final_parquet)
             frames.append(df)
 
@@ -585,6 +629,8 @@ class BaseWorkflow:
         collect_resources: Resources | None = None,
         target_retention: TargetRetention = "compact_success",
         orca_memory_fraction: float = DEFAULT_ORCA_MEMORY_FRACTION,
+        artifact_policy: ArtifactPolicy = "standard",
+        _defer_screening_cleanup: bool = False,
     ) -> JobSubmissionResult:
         """Submit selected workflow targets to a submitit cluster executor.
 
@@ -651,6 +697,10 @@ class BaseWorkflow:
             ORCA through Stepper. The default, ``0.8``, reserves 20 percent
             of the requested allocation for job overhead. Slurm still receives
             the full ``Resources.mem_gb`` value.
+        artifact_policy : {"standard", "screening"}, optional
+            ``"screening"`` projects normally terminated target results onto
+            the compact scientific schema. It requires
+            ``target_retention="compact_success"``.
 
         Returns
         -------
@@ -660,12 +710,22 @@ class BaseWorkflow:
             when ``collect=True``.
         """
         _validate_target_retention(target_retention)
+        artifact_policy = validate_artifact_policy(artifact_policy)
+        _validate_screening_retention(artifact_policy, target_retention)
         selected = self._select_targets(targets)
         mode = execution or ("dft_staged" if self.dft else "single_job")
         groups = self._stage_groups(mode)
         root = Path(out_dir)
         root.mkdir(parents=True, exist_ok=True)
         executor = create_executor(cluster)
+        submitted_workflow = copy.copy(self)
+        submitted_workflow._target_cache = None
+        if hasattr(submitted_workflow, "dataframe"):
+            submitted_workflow.dataframe = None
+        if hasattr(submitted_workflow, "csv_path"):
+            submitted_workflow.csv_path = None
+        if hasattr(submitted_workflow, "smiles"):
+            submitted_workflow.smiles = None
 
         job_ids: list[str | int] = []
         tags: list[str] = []
@@ -702,11 +762,12 @@ class BaseWorkflow:
                     debug=debug,
                     save_output_dir=save_output_dir,
                     work_dir=str(work_dir or cluster.work_dir) if (work_dir or cluster.work_dir) else None,
+                    artifact_policy=artifact_policy,
                 )
                 submitted_at = utc_timestamp()
                 job = executor.submit(
-                    _run_target_job,
-                    self,
+                    _run_target_submitted_job,
+                    submitted_workflow,
                     target,
                     target_dir,
                     options,
@@ -719,7 +780,7 @@ class BaseWorkflow:
                 expected_parquets[target.tag] = "final.parquet"
                 continue
 
-            for group in groups:
+            for group_index, group in enumerate(groups):
                 group_name = self._group_name(group)
                 resources = _resource_for_group(
                     group_name,
@@ -741,11 +802,12 @@ class BaseWorkflow:
                     debug=debug,
                     save_output_dir=save_output_dir,
                     work_dir=str(work_dir or cluster.work_dir) if (work_dir or cluster.work_dir) else None,
+                    artifact_policy=artifact_policy,
                 )
                 submitted_at = utc_timestamp()
                 job = executor.submit(
-                    _run_stage_group_job,
-                    self,
+                    _run_stage_group_submitted_job,
+                    submitted_workflow,
                     target,
                     [stage.id for stage in group],
                     current_parquet,
@@ -753,6 +815,7 @@ class BaseWorkflow:
                     target_dir,
                     options,
                     submitted_at,
+                    group_index == len(groups) - 1,
                 )
                 job_id = getattr(job, "job_id", f"{target.tag}_{group_name}")
                 job_ids.append(job_id)
@@ -783,8 +846,8 @@ class BaseWorkflow:
             )
             wait_jobs = final_jobs if cluster.backend == "local" else None
             collection_job = executor.submit(
-                _collect_expected_outputs,
-                self,
+                _collect_expected_outputs_submitted,
+                submitted_workflow,
                 selected,
                 root,
                 expected_parquets,
@@ -793,6 +856,8 @@ class BaseWorkflow:
                 collect_require_normal_termination,
                 wait_jobs,
                 target_retention,
+                artifact_policy,
+                _defer_screening_cleanup,
             )
             collection_job_id = getattr(collection_job, "job_id", f"{self.workflow_name}_collect")
 
@@ -1127,7 +1192,20 @@ class BaseWorkflow:
                 stage,
                 df,
                 save_dir=save_dir,
+                artifact_policy=options.artifact_policy,
             )
+            if (
+                options.artifact_policy == "screening"
+                and stage.id == "dft_ts_opt"
+                and save_dir is not None
+                and _all_normal_terminated(df)
+            ):
+                hessian_columns = [
+                    column for column in df.columns if str(column).endswith(".hess")
+                ]
+                if hessian_columns:
+                    df = df.drop(columns=hessian_columns)
+                _remove_consumed_hessians(save_dir)
         if df is None:
             raise ValueError("No workflow stages were run")
         return df
@@ -1183,8 +1261,10 @@ def _run_target_job(
         resources=_options_resources(options),
     )
     append_workflow_timing(df.attrs, group_record)
+    if options.artifact_policy == "screening" and _all_normal_terminated(df):
+        df = compact_result_dataframe(df)
     if target_dir is not None:
-        df.to_parquet(target_dir / "final.parquet")
+        _atomic_write_parquet(df, target_dir / "final.parquet")
         _write_target_timing(
             target_dir,
             df,
@@ -1199,6 +1279,30 @@ def _run_target_job(
     return df
 
 
+def _run_target_submitted_job(
+    workflow: BaseWorkflow,
+    target: WorkflowTarget,
+    save_dir: str | Path,
+    options: ExecutionOptions,
+    submitted_at: str | None = None,
+) -> WorkflowJobResult:
+    """Run one submitted target and return only compact status metadata."""
+    df = _run_target_job(
+        workflow,
+        target,
+        save_dir,
+        options,
+        submitted_at,
+    )
+    output = Path(save_dir) / "final.parquet"
+    return WorkflowJobResult(
+        target_id=target.tag,
+        output_path=str(output),
+        row_count=int(len(df)),
+        status="success",
+    )
+
+
 def _run_stage_group_job(
     workflow: BaseWorkflow,
     target: WorkflowTarget,
@@ -1208,6 +1312,8 @@ def _run_stage_group_job(
     save_dir: str | Path,
     options: ExecutionOptions,
     submitted_at: str | None = None,
+    *,
+    is_final_group: bool = False,
 ) -> pd.DataFrame:
     """Run one submitted or staged-local stage group.
 
@@ -1263,7 +1369,13 @@ def _run_stage_group_job(
         resources=_options_resources(options),
     )
     append_workflow_timing(df.attrs, group_record)
-    df.to_parquet(target_dir / output_parquet)
+    if (
+        is_final_group
+        and options.artifact_policy == "screening"
+        and _all_normal_terminated(df)
+    ):
+        df = compact_result_dataframe(df)
+    _atomic_write_parquet(df, target_dir / output_parquet)
     _write_target_timing(
         target_dir,
         df,
@@ -1275,7 +1387,45 @@ def _run_stage_group_job(
         input_parquet=input_parquet,
         output_parquet=output_parquet,
     )
+    if (
+        options.artifact_policy == "screening"
+        and "dft_ts_opt" in stage_ids
+        and input_parquet is not None
+        and _all_normal_terminated(df)
+    ):
+        (target_dir / input_parquet).unlink(missing_ok=True)
     return df
+
+
+def _run_stage_group_submitted_job(
+    workflow: BaseWorkflow,
+    target: WorkflowTarget,
+    stage_ids: list[str],
+    input_parquet: str | None,
+    output_parquet: str,
+    save_dir: str | Path,
+    options: ExecutionOptions,
+    submitted_at: str | None = None,
+    is_final_group: bool = False,
+) -> WorkflowJobResult:
+    """Run one submitted stage group and return only compact status metadata."""
+    df = _run_stage_group_job(
+        workflow,
+        target,
+        stage_ids,
+        input_parquet,
+        output_parquet,
+        save_dir,
+        options,
+        submitted_at,
+        is_final_group=is_final_group,
+    )
+    return WorkflowJobResult(
+        target_id=target.tag,
+        output_path=str(Path(save_dir) / output_parquet),
+        row_count=int(len(df)),
+        status="success",
+    )
 
 
 def _collect_expected_outputs(
@@ -1288,6 +1438,9 @@ def _collect_expected_outputs(
     require_normal_termination: bool,
     wait_jobs: list[Any] | None = None,
     target_retention: TargetRetention = "compact_success",
+    artifact_policy: ArtifactPolicy = "standard",
+    return_dataframe: bool = True,
+    defer_screening_cleanup: bool = False,
 ) -> pd.DataFrame:
     """Collect exact expected workflow outputs and write a JSON report.
 
@@ -1328,11 +1481,13 @@ def _collect_expected_outputs(
     for job in wait_jobs or []:
         job.wait()
     _validate_target_retention(target_retention)
+    artifact_policy = validate_artifact_policy(artifact_policy)
 
     root = Path(out_dir)
     output_path = Path(output)
     report_path = Path(report)
-    frames: list[pd.DataFrame] = []
+    attr_frames: list[pd.DataFrame] = []
+    row_count = 0
     collected_files: list[str] = []
     skipped_files: list[str] = []
     missing_files: list[str] = []
@@ -1354,7 +1509,13 @@ def _collect_expected_outputs(
         if require_normal_termination and not _all_normal_terminated(df):
             skipped_files.append(str(final_file))
             continue
-        frames.append(df)
+        if artifact_policy == "screening":
+            df = compact_result_dataframe(df)
+            _atomic_write_parquet(df, final_file)
+        attr_frame = pd.DataFrame()
+        attr_frame.attrs = copy.deepcopy(df.attrs)
+        attr_frames.append(attr_frame)
+        row_count += int(len(df))
         collected_files.append(str(final_file))
 
     timing_report = _collect_timing_sidecars(root, targets)
@@ -1367,6 +1528,7 @@ def _collect_expected_outputs(
         "n_skipped": len(skipped_files),
         "n_missing": len(missing_files),
         "n_errored": len(errored_files),
+        "n_rows": row_count,
         "collected_files": collected_files,
         "skipped_files": skipped_files,
         "missing_files": missing_files,
@@ -1383,20 +1545,37 @@ def _collect_expected_outputs(
     report_payload["n_failures"] = len(failure_summary)
     report_payload["failure_summary"] = failure_summary
 
-    if frames:
-        merged = pd.concat(frames, ignore_index=True)
-        merged.attrs.update(
-            merge_dataframe_attrs(
-                frames,
-                source_files=collected_files,
-                skipped_files=[*skipped_files, *missing_files, *errored_files],
-            )
+    if attr_frames:
+        merged_attrs = merge_dataframe_attrs(
+            attr_frames,
+            source_files=collected_files,
+            skipped_files=[*skipped_files, *missing_files, *errored_files],
         )
-        output_path.parent.mkdir(parents=True, exist_ok=True)
-        merged.to_parquet(output_path)
+        _stream_parquet_files(
+            [Path(path) for path in collected_files],
+            output_path,
+            attrs=merged_attrs,
+            expected_rows=row_count,
+        )
+        merged = pd.read_parquet(output_path) if return_dataframe else pd.DataFrame()
     else:
         merged = pd.DataFrame()
-    compaction_report = _compact_collected_targets(collected_files) if target_retention == "compact_success" else _empty_compaction_report()
+    if artifact_policy == "screening":
+        if (
+            not defer_screening_cleanup
+            and not failure_summary
+            and len(collected_files) == len(targets)
+        ):
+            compaction_report = _remove_collected_target_directories(
+                root,
+                collected_files,
+            )
+        else:
+            compaction_report = _empty_compaction_report()
+    elif target_retention == "compact_success":
+        compaction_report = _compact_collected_targets(collected_files)
+    else:
+        compaction_report = _empty_compaction_report()
     report_payload["target_retention"] = target_retention
     report_payload["compaction"] = compaction_report
 
@@ -1413,12 +1592,49 @@ def _collect_expected_outputs(
             f"See {report_path}."
         )
 
-    if not frames:
+    if not attr_frames:
         raise FileNotFoundError(
             f"No usable workflow outputs collected under {root}. "
             f"See collection report: {report_path}"
         )
     return merged
+
+
+def _collect_expected_outputs_submitted(
+    workflow: BaseWorkflow,
+    targets: list[WorkflowTarget],
+    out_dir: str | Path,
+    expected_parquets: dict[str, str],
+    output: str | Path,
+    report: str | Path,
+    require_normal_termination: bool,
+    wait_jobs: list[Any] | None = None,
+    target_retention: TargetRetention = "compact_success",
+    artifact_policy: ArtifactPolicy = "standard",
+    defer_screening_cleanup: bool = False,
+) -> CollectionJobResult:
+    """Collect outputs while keeping the Submitit result pickle small."""
+    merged = _collect_expected_outputs(
+        workflow,
+        targets,
+        out_dir,
+        expected_parquets,
+        output,
+        report,
+        require_normal_termination,
+        wait_jobs,
+        target_retention,
+        artifact_policy,
+        False,
+        defer_screening_cleanup,
+    )
+    payload = json.loads(Path(report).read_text())
+    return CollectionJobResult(
+        output_path=str(output),
+        report_path=str(report),
+        row_count=int(payload.get("n_rows", 0)),
+        status="success",
+    )
 
 
 def _collect_timing_sidecars(
@@ -1590,6 +1806,43 @@ def _compact_collected_targets(collected_files: list[str]) -> dict[str, Any]:
     return report
 
 
+def _remove_collected_target_directories(
+    root: Path,
+    collected_files: list[str],
+) -> dict[str, Any]:
+    """Remove successful standalone screening targets after durable collection."""
+    report = _empty_compaction_report()
+    resolved_root = root.resolve()
+    for file_name in collected_files:
+        target_dir = Path(file_name).parent
+        target_result: dict[str, Any] = {
+            "target_dir": str(target_dir),
+            "kept_parquet": None,
+            "removed_files": [],
+            "removed_bytes": 0,
+            "errors": [],
+        }
+        try:
+            resolved_target = target_dir.resolve()
+            resolved_target.relative_to(resolved_root)
+            if target_dir.is_symlink():
+                raise ValueError("target directory is a symlink")
+            files = [path for path in target_dir.rglob("*") if path.is_file()]
+            target_result["removed_files"] = [str(path) for path in files]
+            target_result["removed_bytes"] = sum(path.stat().st_size for path in files)
+            shutil.rmtree(target_dir)
+        except Exception as exc:
+            target_result["errors"].append(
+                {"file": str(target_dir), "error": str(exc)}
+            )
+        report["targets"].append(target_result)
+        report["n_targets"] += 1
+        report["n_removed_files"] += len(target_result["removed_files"])
+        report["removed_bytes"] += int(target_result["removed_bytes"])
+        report["errors"].extend(target_result["errors"])
+    return report
+
+
 def _empty_compaction_report() -> dict[str, Any]:
     """Return an empty target compaction report."""
     return {
@@ -1658,6 +1911,109 @@ def _validate_target_retention(value: str) -> None:
     """Validate a workflow target retention policy."""
     if value not in {"compact_success", "all"}:
         raise ValueError("target_retention must be 'compact_success' or 'all'")
+
+
+def _validate_screening_retention(
+    artifact_policy: ArtifactPolicy,
+    target_retention: TargetRetention,
+) -> None:
+    """Require safe collection compaction for screening runs."""
+    if artifact_policy == "screening" and target_retention != "compact_success":
+        raise ValueError(
+            "artifact_policy='screening' requires target_retention='compact_success'"
+        )
+
+
+def _atomic_write_parquet(df: pd.DataFrame, path: str | Path) -> None:
+    """Write a parquet through a sibling temporary file and publish atomically."""
+    destination = Path(path)
+    destination.parent.mkdir(parents=True, exist_ok=True)
+    handle = tempfile.NamedTemporaryFile(
+        prefix=f".{destination.name}.",
+        suffix=".tmp",
+        dir=destination.parent,
+        delete=False,
+    )
+    temporary = Path(handle.name)
+    handle.close()
+    try:
+        df.to_parquet(temporary, index=False)
+        check = pd.read_parquet(temporary)
+        if len(check) != len(df) or list(check.columns) != list(df.columns):
+            raise ValueError(f"Parquet verification failed for {destination}")
+        os.replace(temporary, destination)
+    finally:
+        temporary.unlink(missing_ok=True)
+
+
+def _stream_parquet_files(
+    files: list[Path],
+    destination: Path,
+    *,
+    attrs: Mapping[str, Any],
+    expected_rows: int,
+) -> None:
+    """Stream compatible target parquets into one atomically published file."""
+    import pyarrow as pa
+    import pyarrow.parquet as pq
+
+    destination.parent.mkdir(parents=True, exist_ok=True)
+    handle = tempfile.NamedTemporaryFile(
+        prefix=f".{destination.name}.",
+        suffix=".tmp",
+        dir=destination.parent,
+        delete=False,
+    )
+    temporary = Path(handle.name)
+    handle.close()
+    writer = None
+    source_schemas = [pq.read_schema(path).remove_metadata() for path in files]
+    unified_schema = pa.unify_schemas(
+        source_schemas,
+        promote_options="permissive",
+    )
+    columns = list(unified_schema.names)
+    first_metadata = dict(pq.read_schema(files[0]).metadata or {})
+    first_metadata[b"PANDAS_ATTRS"] = json.dumps(
+        dict(attrs),
+        default=str,
+        sort_keys=True,
+    ).encode("utf-8")
+    schema = unified_schema.with_metadata(first_metadata)
+    try:
+        writer = pq.ParquetWriter(temporary, schema)
+        for path in files:
+            frame = pd.read_parquet(path)
+            frame = frame.reindex(columns=columns)
+            table = pa.Table.from_pandas(
+                frame,
+                schema=unified_schema,
+                preserve_index=False,
+                safe=False,
+            )
+            writer.write_table(table.replace_schema_metadata(schema.metadata))
+        writer.close()
+        writer = None
+        parquet = pq.ParquetFile(temporary)
+        if parquet.metadata.num_rows != expected_rows:
+            raise ValueError(
+                f"Collected row count mismatch: expected {expected_rows}, "
+                f"found {parquet.metadata.num_rows}"
+            )
+        if list(parquet.schema_arrow.names) != columns:
+            raise ValueError("Collected parquet schema verification failed")
+        os.replace(temporary, destination)
+    finally:
+        if writer is not None:
+            writer.close()
+        temporary.unlink(missing_ok=True)
+
+
+def _remove_consumed_hessians(target_dir: Path) -> None:
+    """Remove Hessians only after the dependent TS optimization succeeds."""
+    for path in Path(target_dir).rglob("*.hess"):
+        if path.is_file():
+            path.unlink(missing_ok=True)
 
 
 def _stage_engine(stage: StageDef, spec: CalculatorSpec | None) -> str | None:
@@ -2077,6 +2433,7 @@ def _write_analysis_tier_snapshot(
     df: pd.DataFrame,
     *,
     save_dir: Path | None,
+    artifact_policy: ArtifactPolicy = "standard",
 ) -> None:
     """Persist an exact lower-tier winner without filtering the main pipeline.
 
@@ -2148,7 +2505,9 @@ def _write_analysis_tier_snapshot(
         "source_rows": int(len(df)),
         "selected_rows": int(len(snapshot)),
     }
-    snapshot.to_parquet(Path(save_dir) / ANALYSIS_TIER_FILES[tier], index=False)
+    if artifact_policy == "screening":
+        snapshot = compact_result_dataframe(snapshot)
+    _atomic_write_parquet(snapshot, Path(save_dir) / ANALYSIS_TIER_FILES[tier])
 
 
 def _attach_workflow_attrs(
