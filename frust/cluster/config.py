@@ -52,6 +52,9 @@ class ClusterConfig:
     extra_slurm_parameters : dict[str, str] or None, optional
         Additional scheduler parameters forwarded as
         ``slurm_additional_parameters``.
+    stderr_to_stdout : bool, optional
+        Merge stderr into stdout. Screening submissions enable this for fewer
+        per-job log files; standard submissions keep separate streams.
     """
 
     backend: str = "slurm"
@@ -59,6 +62,7 @@ class ClusterConfig:
     log_dir: str | Path = "logs"
     work_dir: str | Path | None = None
     extra_slurm_parameters: dict[str, str] | None = None
+    stderr_to_stdout: bool = False
 
 
 @dataclass(frozen=True)

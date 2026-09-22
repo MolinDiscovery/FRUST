@@ -14,6 +14,7 @@ from rdkit.Chem.rdMolDescriptors import CalcMolFormula
 
 import frust as ft
 import frust.screen.runs as screen_runs
+from frust.artifacts import compact_result_dataframe
 from frust.results import attach_result_contract, free_energy_components, result_contract
 from frust.screen.references import ReferenceLibrary
 from frust.structures import ChemicalSystem, StructureTarget
@@ -470,6 +471,61 @@ def test_reference_library_keeps_inspectable_structure_and_review(tmp_path):
     assert library.find(target, method, protocol={"n_confs": 10}) is None
 
 
+def test_compact_reference_omits_calculator_files_and_full_evidence_is_preferred(tmp_path):
+    method = ft.workflows.methods.preset("r2scan-3c-solv")
+    system = ChemicalSystem("pyrrole__NMe", "pyrrole", "NMe", "CN1C=CC=C1", CATALYST)
+    target = StructureTarget(
+        target_id="dimer:NMe",
+        tag="dimer__NMe",
+        system=system,
+        state_id="dimer",
+        state_kind="minimum",
+        builder_spec="cycle::dimer::v2",
+        scope="catalyst",
+    )
+    frame = pd.DataFrame([_row("dimer", -40.0, {"H": 2})])
+    attach_result_contract(
+        frame,
+        "minimum",
+        dft=True,
+        include_terminal_solv_sp=False,
+        thermochemistry=method.thermochemistry,
+    )
+    source = tmp_path / "source/FRUST_results/dft_freq"
+    (source / "pyrrole_0").mkdir(parents=True)
+    (source / "pyrrole_1").mkdir(parents=True)
+    (source / "pyrrole_0/orca.out").write_text("selected")
+    (source / "pyrrole_1/orca.out").write_text("other conformer")
+
+    library = ReferenceLibrary(tmp_path / "library").initialize()
+    full = library.publish(
+        frame,
+        target,
+        method,
+        source_target_dir=tmp_path / "source",
+    )
+    compact = library.publish(
+        frame,
+        target,
+        method,
+        source_target_dir=tmp_path / "source",
+        artifact_policy="screening",
+    )
+    full.approve(note="full evidence")
+    compact.approve(note="compact evidence")
+
+    assert full.metadata["evidence_level"] == "full"
+    assert compact.metadata["evidence_level"] == "compact"
+    assert full.metadata["scientific_result_fingerprint"] == compact.metadata[
+        "scientific_result_fingerprint"
+    ]
+    assert [path.read_text() for path in full.files()] == ["selected"]
+    assert compact.files() == []
+    assert "dft_freq-vibs" not in compact.dataframe()
+    assert "dft_freq-frequencies_cm1" in compact.dataframe()
+    assert library.find(target, method).reference_id == full.reference_id
+
+
 def test_weak_minimum_reference_requires_approval_before_reuse(tmp_path):
     method = ft.workflows.methods.preset("r2scan-3c-solv")
     system = ChemicalSystem("pyrrole__NMe", "pyrrole", "NMe", "CN1C=CC=C1", CATALYST)
@@ -617,6 +673,39 @@ def test_barrier_analysis_matches_supplied_formulas_and_survives_relocation(tmp_
     shutil.copytree(original, relocated)
     moved = ft.screen.open_run(relocated)
     pd.testing.assert_frame_equal(run.barriers(), moved.barriers())
+
+
+def test_screening_projection_preserves_states_barriers_profiles_and_quality(tmp_path):
+    root = tmp_path / "screening-parity"
+    _write_barrier_bundle(root, scope="full_cycle")
+    run = ft.screen.open_run(root).refresh_analysis()
+    states_before = run.states().sort_values("structure_id").reset_index(drop=True)
+    barriers_before = run.barriers().sort_values("ts_type").reset_index(drop=True)
+    profile_before = run.profile(
+        system_name="pyrrole__NMe",
+        rpos=2,
+        include_invalid=True,
+    ).reset_index(drop=True)
+
+    for relative_path in run.manifest["calculation_results"].values():
+        if relative_path is None:
+            continue
+        path = root / relative_path
+        frame = compact_result_dataframe(pd.read_parquet(path))
+        frame.to_parquet(path, index=False)
+
+    run.refresh_analysis()
+    states_after = run.states().sort_values("structure_id").reset_index(drop=True)
+    barriers_after = run.barriers().sort_values("ts_type").reset_index(drop=True)
+    profile_after = run.profile(
+        system_name="pyrrole__NMe",
+        rpos=2,
+        include_invalid=True,
+    ).reset_index(drop=True)
+
+    pd.testing.assert_frame_equal(states_before, states_after)
+    pd.testing.assert_frame_equal(barriers_before, barriers_after)
+    pd.testing.assert_frame_equal(profile_before, profile_after)
 
 
 def test_full_run_compares_independently_selected_screening_and_full_barriers(
@@ -943,9 +1032,9 @@ def test_full_cycle_is_balanced_and_review_persists(tmp_path):
     transition_states.to_parquet(transition_path, index=False)
     run.refresh_analysis()
     changed = run.states().query("state_id == 'TS1'").iloc[0]
-    assert changed["result_id"] != ts1["result_id"]
-    assert changed["review_status"] == "unreviewed"
-    assert changed["quality_status"] == "review"
+    assert changed["result_id"] == ts1["result_id"]
+    assert changed["review_status"] == "approved"
+    assert changed["quality_status"] == "ready"
 
 
 def test_profile_and_plot_profile_can_select_an_available_dimer(tmp_path):
@@ -1509,3 +1598,43 @@ def test_composed_slurm_submission_finishes_with_afterany_finalizer(tmp_path):
     dependency = fake.parameters[-1]["slurm_additional_parameters"]["dependency"]
     assert dependency.startswith("afterany:")
     assert (tmp_path / "results" / "manifest.json").exists()
+
+
+def test_screening_submission_uses_owned_submitit_directory_and_light_jobs(tmp_path):
+    workflow = ft.workflows.catalyst_screen(
+        dataframe=_components(),
+        method="r2scan-3c-solv",
+    )
+    fake = _FakeExecutor()
+    cluster = ft.ClusterConfig(
+        backend="slurm",
+        partition="kemi1",
+        log_dir=tmp_path / "login-node-logs",
+    )
+    root = tmp_path / "results"
+
+    with (
+        patch("frust.workflows.core.create_executor", return_value=fake),
+        patch("frust.workflows.screening.create_executor", return_value=fake),
+    ):
+        submission = workflow.submit(
+            out_dir=root,
+            cluster=cluster,
+            artifact_policy="screening",
+        )
+
+    assert submission.submitit_dir == str(root / ".submitit")
+    marker = json.loads((root / ".submitit/ownership.json").read_text())
+    assert marker["managed_by"] == "frust-screening"
+    assert (root / ".submitit/jobs").is_dir()
+    assert (root / ".submitit/control").is_dir()
+    assert all(params.get("stderr_to_stdout") is True for params in fake.parameters)
+
+    target_submission = next(
+        entry
+        for entry in fake.submissions
+        if entry[0].__name__ in {"_run_target_submitted_job", "_run_stage_group_submitted_job"}
+    )
+    submitted_workflow = target_submission[1][0]
+    assert submitted_workflow._target_cache is None
+    assert submitted_workflow.dataframe is None

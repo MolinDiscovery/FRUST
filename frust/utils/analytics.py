@@ -16,6 +16,7 @@ try:
 except ImportError:
     cairosvg = None
 from frust.schema import normal_termination_columns, normalize_dataframe
+from frust.results import frequency_values
 from frust.utils.dataframes import merge_dataframe_attrs
 
 def summarize_ts_vibrations(
@@ -61,7 +62,7 @@ def summarize_ts_vibrations(
             rows.append(row_data)
             continue
 
-        freqs = [entry.get('frequency') for entry in vibs]
+        freqs = frequency_values(row)
         neg_freqs = [f for f in freqs if f < 0]
         pos_freqs = [f for f in freqs if f >= 0]
 
@@ -342,11 +343,7 @@ def _vibration_report_row(
             "flags": "",
         }
 
-    freqs = [
-        float(entry.get("frequency"))
-        for entry in vibs
-        if isinstance(entry, Mapping) and entry.get("frequency") is not None
-    ]
+    freqs = frequency_values(row)
     neg_freqs = sorted([freq for freq in freqs if freq < 0.0])
     pos_freqs = sorted([freq for freq in freqs if freq >= 0.0])
     n_imag = len(neg_freqs)
@@ -407,7 +404,9 @@ def _vibration_columns(df: pd.DataFrame) -> list[str]:
     return [
         str(col)
         for col in df.columns
-        if str(col).lower() == "vibs" or str(col).lower().endswith("-vibs")
+        if str(col).lower() == "vibs"
+        or str(col).lower().endswith("-vibs")
+        or str(col).lower().endswith("-frequencies_cm1")
     ]
 
 

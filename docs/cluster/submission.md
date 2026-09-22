@@ -53,6 +53,35 @@ result = wf.submit(
 )
 ```
 
+## High-Throughput Catalyst Screens
+
+Use the opt-in screening artifact policy on the composed catalyst-screen
+workflow:
+
+```python
+screen = ft.workflows.catalyst_screen(
+    csv_path="screen.csv",
+    level="full",
+)
+submission = screen.submit(
+    out_dir="results/screen_1000",
+    cluster=cluster,
+    artifact_policy="screening",
+)
+```
+
+Screening mode keeps final coordinates, scalar energies, full frequency
+values, termination flags, compact lower tiers, references, analysis tables,
+and provenance. Successful ORCA directories, displacement vectors,
+per-target results, and bulk Submitit files are deleted only after validated
+aggregation. Failed targets and their logs are left untouched.
+
+Submitit uses `results/screen_1000/.submitit/jobs/` while the run is active.
+After success only the small `.submitit/control/` finalizer record remains;
+remove it after the finalizer exits with
+`ft.screen.cleanup_submitit("results/screen_1000")`. Standard mode continues
+to use `ClusterConfig.log_dir` and retains logs as before.
+
 ## Resource Groups
 
 Inspect resource-group names with `wf.show_stages()` before overriding them:

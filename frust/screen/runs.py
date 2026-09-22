@@ -13,7 +13,7 @@ from typing import Any, Literal
 import numpy as np
 import pandas as pd
 
-from frust.results import free_energy_components, get_result
+from frust.results import free_energy_components, frequency_values, get_result
 from frust.schema import normal_termination_columns
 from frust.screen._quality import minimum_vibration_status
 from frust.structures.specs import DIMER_STATES
@@ -1331,16 +1331,8 @@ def _dependency_quality_issues(
 
 
 def _vibration_status(row: pd.Series, state_kind: str) -> dict[str, Any]:
-    columns = [column for column in row.index if str(column).endswith("-vibs")]
-    vibrations = next(
-        (
-            row[column]
-            for column in reversed(columns)
-            if isinstance(row[column], (list, tuple, np.ndarray)) and len(row[column]) > 0
-        ),
-        None,
-    )
-    if vibrations is None:
+    frequencies = frequency_values(row)
+    if not frequencies:
         return {
             "valid": False,
             "n_imag": pd.NA,
@@ -1348,7 +1340,6 @@ def _vibration_status(row: pd.Series, state_kind: str) -> dict[str, Any]:
             "flags": [],
             "issues": ["missing_vibrations"],
         }
-    frequencies = [float(mode["frequency"]) for mode in vibrations]
     negative = [frequency for frequency in frequencies if frequency < 0]
     positive = [frequency for frequency in frequencies if frequency >= 0]
     expected = 1 if state_kind == "transition_state" else 0
@@ -1415,7 +1406,7 @@ def _result_id(
         "electronic_energy_hartree": _json_value(electronic_energy),
         "free_energy_hartree": _json_value(free_energy),
         "imaginary_frequencies": vibration["imaginary_frequencies"],
-        "vibrations": _json_value(_last_vibrations(row)),
+        "frequencies_cm1": frequency_values(row),
     }
     return "result_" + _json_hash(payload)[:16]
 
@@ -1429,15 +1420,6 @@ def _last_coords(row: pd.Series) -> Any:
     for column in reversed(columns):
         value = row[column]
         if value is not None and not (isinstance(value, float) and np.isnan(value)):
-            return value
-    return None
-
-
-def _last_vibrations(row: pd.Series) -> Any:
-    columns = [column for column in row.index if str(column).endswith("-vibs")]
-    for column in reversed(columns):
-        value = row[column]
-        if isinstance(value, (list, tuple, np.ndarray)) and len(value) > 0:
             return value
     return None
 

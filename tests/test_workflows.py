@@ -808,7 +808,7 @@ class WorkflowExecutionTests(unittest.TestCase):
         ]
         self.assertEqual(dependencies[-1], "afterany:job-4:job-8")
         collector_fn, collector_args, _ = fake.submissions[-1]
-        self.assertEqual(collector_fn.__name__, "_collect_expected_outputs")
+        self.assertEqual(collector_fn.__name__, "_collect_expected_outputs_submitted")
         self.assertEqual(
             collector_args[3],
             {

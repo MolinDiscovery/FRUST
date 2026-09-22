@@ -5,22 +5,31 @@ from __future__ import annotations
 import hashlib
 import json
 import os
+import shutil
+import tempfile
 import time
 from collections.abc import Mapping
-from copy import deepcopy
-from dataclasses import dataclass
+from copy import copy, deepcopy
+from dataclasses import dataclass, replace
 from datetime import datetime, timezone
 from pathlib import Path
 from typing import Any, Literal
 
 import pandas as pd
 
+from frust.artifacts import (
+    ArtifactPolicy,
+    compact_result_dataframe,
+    validate_artifact_policy,
+)
 from frust.cluster.config import ClusterConfig, JobSubmissionResult, Resources
 from frust.cluster.executor import create_executor, update_executor_with_dependencies
 from frust.screen import expand as expand_screen
 from frust.screen import read as read_screen
+from frust.screen.cleanup import cleanup_submitit_jobs, initialize_submitit_directory
 from frust.screen.references import ReferenceLibrary, ReferenceRecord, ReusePolicy
 from frust.screen.runs import ScreenRun, build_analysis
+from frust.schema import normal_termination_columns
 from frust.structures import StructureTarget
 from frust.structures.specs import DIMER_STATES
 from frust.utils.dataframes import merge_dataframe_attrs
@@ -72,12 +81,25 @@ class ScreenSubmissionResult:
         Job that snapshots references and generates portable analysis.
     backend : str
         Cluster backend name.
+    submitit_dir : str or None
+        Managed screening-mode bookkeeping directory. Standard mode returns
+        ``None`` and continues to use ``ClusterConfig.log_dir``.
     """
 
     run_dir: str
     child_submissions: dict[str, JobSubmissionResult]
     finalization_job_id: str | int | None
     backend: str
+    submitit_dir: str | None = None
+
+
+@dataclass(frozen=True)
+class FinalizationJobResult:
+    """Small Submitit result returned by the screening finalizer."""
+
+    run_dir: str
+    report_path: str
+    status: str
 
 
 class CatalystScreenWorkflow:
@@ -314,8 +336,14 @@ class CatalystScreenWorkflow:
         save_output_dir: bool = True,
         work_dir: str | Path | None = None,
         target_retention: str = "compact_success",
+        artifact_policy: ArtifactPolicy = "standard",
     ) -> ScreenRun:
         """Run all required child workflows locally and build analysis."""
+        artifact_policy = validate_artifact_policy(artifact_policy)
+        if artifact_policy == "screening" and target_retention != "compact_success":
+            raise ValueError(
+                "artifact_policy='screening' requires target_retention='compact_success'"
+            )
         if not save_output_dir:
             raise ValueError(
                 "catalyst_screen requires save_output_dir=True so reference "
@@ -323,10 +351,14 @@ class CatalystScreenWorkflow:
             )
         root = Path(out_dir)
         root.mkdir(parents=True, exist_ok=True)
-        self._write_manifest(root)
+        self._write_manifest(root, artifact_policy=artifact_policy)
         children = self.children()
         reference_items = [item for item in self.targets() if item.branch == "references"]
-        self._snapshot_reused_references(root, reference_items)
+        self._snapshot_reused_references(
+            root,
+            reference_items,
+            artifact_policy=artifact_policy,
+        )
 
         for branch, workflow in children.items():
             branch_dir = _branch_dir(root, branch)
@@ -341,7 +373,7 @@ class CatalystScreenWorkflow:
                 ]
                 output_name = "computed.parquet"
                 if not branch_targets:
-                    pd.DataFrame().to_parquet(branch_dir / output_name, index=False)
+                    _write_verified_parquet(pd.DataFrame(), branch_dir / output_name)
                     continue
             frame = workflow.run(
                 targets=branch_targets,
@@ -353,9 +385,10 @@ class CatalystScreenWorkflow:
                 save_output_dir=save_output_dir,
                 work_dir=work_dir,
                 target_retention=target_retention,
+                artifact_policy=artifact_policy,
             )
-            frame.to_parquet(branch_dir / output_name, index=False)
-        _finalize_run(self, root)
+            _write_verified_parquet(frame, branch_dir / output_name)
+        _finalize_run(self, root, artifact_policy=artifact_policy)
         return ScreenRun(root)
 
     def submit(
@@ -372,6 +405,7 @@ class CatalystScreenWorkflow:
         collect_resources: Resources | None = None,
         finalize_resources: Resources | None = None,
         target_retention: str = "compact_success",
+        artifact_policy: ArtifactPolicy = "standard",
     ) -> ScreenSubmissionResult:
         """Submit the complete catalyst screen and its analysis finalizer.
 
@@ -437,6 +471,10 @@ class CatalystScreenWorkflow:
             and required scientific evidence. Failed, skipped, or incomplete
             targets remain unmodified. ``"all"`` retains every intermediate
             parquet.
+        artifact_policy : {"standard", "screening"}, optional
+            ``"screening"`` keeps compact scientific results, uses a managed
+            ``.submitit`` directory, and cleans successful artifacts only after
+            final validation. ``"standard"`` preserves existing behavior.
 
         Returns
         -------
@@ -495,6 +533,11 @@ class CatalystScreenWorkflow:
         leaving the remainder for job overhead. This has no effect on
         ``level="low_cost"`` because that level does not run ORCA.
         """
+        artifact_policy = validate_artifact_policy(artifact_policy)
+        if artifact_policy == "screening" and target_retention != "compact_success":
+            raise ValueError(
+                "artifact_policy='screening' requires target_retention='compact_success'"
+            )
         if not save_output_dir:
             raise ValueError(
                 "catalyst_screen requires save_output_dir=True so reference "
@@ -502,10 +545,28 @@ class CatalystScreenWorkflow:
             )
         root = Path(out_dir)
         root.mkdir(parents=True, exist_ok=True)
-        self._write_manifest(root)
+        self._write_manifest(root, artifact_policy=artifact_policy)
+        submit_cluster = cluster
+        finalize_cluster = cluster
+        if artifact_policy == "screening":
+            submitit_dir = initialize_submitit_directory(root)
+            submit_cluster = replace(
+                cluster,
+                log_dir=submitit_dir / "jobs",
+                stderr_to_stdout=True,
+            )
+            finalize_cluster = replace(
+                cluster,
+                log_dir=submitit_dir / "control",
+                stderr_to_stdout=True,
+            )
         children = self.children()
         reference_items = [item for item in self.targets() if item.branch == "references"]
-        self._snapshot_reused_references(root, reference_items)
+        self._snapshot_reused_references(
+            root,
+            reference_items,
+            artifact_policy=artifact_policy,
+        )
         submissions: dict[str, JobSubmissionResult] = {}
         dependency_ids: list[str | int] = []
         wait_paths: list[str] = []
@@ -523,12 +584,12 @@ class CatalystScreenWorkflow:
                 collect_output = branch_dir / "computed.parquet"
                 if not branch_targets:
                     branch_dir.mkdir(parents=True, exist_ok=True)
-                    pd.DataFrame().to_parquet(collect_output, index=False)
+                    _write_verified_parquet(pd.DataFrame(), collect_output)
                     continue
             collect_report = branch_dir / "collection_report.json"
             submission = workflow.submit(
                 out_dir=branch_dir,
-                cluster=cluster,
+                cluster=submit_cluster,
                 execution=execution,
                 stage_resources=stage_resources,
                 targets=branch_targets,
@@ -541,31 +602,53 @@ class CatalystScreenWorkflow:
                 collect_require_normal_termination=collect_require_normal_termination,
                 collect_resources=collect_resources,
                 target_retention=target_retention,
+                artifact_policy=artifact_policy,
+                _defer_screening_cleanup=artifact_policy == "screening",
             )
             submissions[branch] = submission
             dependency_ids.append(submission.collection_job_id or submission.job_ids[-1])
             wait_paths.append(str(collect_report))
 
-        executor = create_executor(cluster)
+        executor = create_executor(finalize_cluster)
         update_executor_with_dependencies(
             executor,
-            cluster,
+            finalize_cluster,
             finalize_resources or DEFAULT_FINALIZE_RESOURCES,
             job_name="catalyst_screen_finalize",
             dependency_job_ids=dependency_ids,
             dependency_type="afterany",
         )
+        finalizer_workflow = copy(self)
+        finalizer_workflow._components_cache = None
+        finalizer_workflow._systems_cache = None
+        finalizer_workflow._children_cache = None
         final_job = executor.submit(
             _finalize_submitted_run,
-            self,
+            finalizer_workflow,
             root,
             wait_paths if cluster.backend == "local" else None,
+            wait_paths,
+            artifact_policy,
+            {
+                branch: {
+                    "job_ids": list(submission.job_ids),
+                    "collection_job_id": submission.collection_job_id,
+                    "collection_output": submission.collection_output,
+                    "collection_report": submission.collection_report,
+                }
+                for branch, submission in submissions.items()
+            },
         )
         return ScreenSubmissionResult(
             run_dir=str(root),
             child_submissions=submissions,
             finalization_job_id=getattr(final_job, "job_id", None),
             backend=cluster.backend,
+            submitit_dir=(
+                str(root / ".submitit")
+                if artifact_policy == "screening"
+                else None
+            ),
         )
 
     def _reference_states(self) -> list[str]:
@@ -646,6 +729,8 @@ class CatalystScreenWorkflow:
         self,
         root: Path,
         items: list[CatalystScreenTarget],
+        *,
+        artifact_policy: ArtifactPolicy = "standard",
     ) -> None:
         branch_dir = _branch_dir(root, "references")
         local_library = ReferenceLibrary(branch_dir).initialize()
@@ -666,6 +751,8 @@ class CatalystScreenWorkflow:
                 continue
             local = local_library.import_record(record)
             frame = local.materialize(item.target)
+            if artifact_policy == "screening":
+                frame = compact_result_dataframe(frame)
             frame["reference_id"] = local.reference_id
             frame["reference_source"] = "shared_library"
             frames.append(frame)
@@ -684,12 +771,14 @@ class CatalystScreenWorkflow:
                     continue
                 local_tier = local_library.import_record(tier_record)
                 tier_frame = local_tier.materialize(item.target)
+                if artifact_policy == "screening":
+                    tier_frame = compact_result_dataframe(tier_frame)
                 tier_frame["reference_id"] = local_tier.reference_id
                 tier_frame["reference_source"] = "shared_library"
                 tier_frames[tier].append(tier_frame)
                 tier_sources[tier].append(local_tier.path / "result.parquet")
         reused = _concat_reference_results(frames, source_files=sources)
-        reused.to_parquet(branch_dir / "reused.parquet", index=False)
+        _write_verified_parquet(reused, branch_dir / "reused.parquet")
         for tier, nested_frames in tier_frames.items():
             tier_dir = branch_dir / "tiers" / tier
             tier_dir.mkdir(parents=True, exist_ok=True)
@@ -697,9 +786,14 @@ class CatalystScreenWorkflow:
                 nested_frames,
                 source_files=tier_sources[tier],
             )
-            nested.to_parquet(tier_dir / "reused.parquet", index=False)
+            _write_verified_parquet(nested, tier_dir / "reused.parquet")
 
-    def _write_manifest(self, root: Path) -> None:
+    def _write_manifest(
+        self,
+        root: Path,
+        *,
+        artifact_policy: ArtifactPolicy = "standard",
+    ) -> None:
         ts_targets = self.children()["transition_states"].targets()
         terminal_results = _calculation_result_paths(self.scope)
         level_results = {
@@ -726,7 +820,7 @@ class CatalystScreenWorkflow:
             if item.branch == "references"
         ]
         manifest = {
-            "schema_version": 2,
+            "schema_version": 3,
             "run_type": "catalyst_screen",
             "created_at": _utc_now(),
             "scope": self.scope,
@@ -737,6 +831,7 @@ class CatalystScreenWorkflow:
                 else [self.dimer_reference]
             ),
             "calculation_level": self.level,
+            "artifact_policy": artifact_policy,
             "analysis_levels": list(self._analysis_levels()),
             "screening": self.screening.to_dict(),
             "screening_fingerprint": self.screening.fingerprint(),
@@ -783,6 +878,7 @@ class CatalystScreenWorkflow:
             "reuse_policy",
             "reference_protocol",
             "analysis_targets",
+            "artifact_policy",
         ]
         manifest["run_signature"] = _json_hash(
             {key: manifest[key] for key in signature_keys}
@@ -930,15 +1026,67 @@ def _finalize_submitted_run(
     workflow: CatalystScreenWorkflow,
     root: Path,
     wait_paths: list[str] | None,
-) -> dict[str, Any]:
+    expected_report_paths: list[str] | None = None,
+    artifact_policy: ArtifactPolicy = "standard",
+    submission_status: Mapping[str, Any] | None = None,
+) -> FinalizationJobResult:
     if wait_paths:
         deadline = time.monotonic() + 3600
         while not all(Path(path).exists() for path in wait_paths) and time.monotonic() < deadline:
             time.sleep(1)
-    return _finalize_run(workflow, root)
+    report = _finalize_run(
+        workflow,
+        root,
+        expected_report_paths=expected_report_paths,
+        artifact_policy=artifact_policy,
+        submission_status=submission_status,
+    )
+    return FinalizationJobResult(
+        run_dir=str(root),
+        report_path=str(root / "run_report.json"),
+        status=str(report["overall_status"]),
+    )
 
 
-def _finalize_run(workflow: CatalystScreenWorkflow, root: Path) -> dict[str, Any]:
+def _finalize_run(
+    workflow: CatalystScreenWorkflow,
+    root: Path,
+    *,
+    expected_report_paths: list[str] | None = None,
+    artifact_policy: ArtifactPolicy = "standard",
+    submission_status: Mapping[str, Any] | None = None,
+) -> dict[str, Any]:
+    artifact_policy = validate_artifact_policy(artifact_policy)
+    branch_reports, incomplete_reports = _validate_collection_reports(
+        root,
+        expected_report_paths or [],
+    )
+    if incomplete_reports:
+        status = (
+            "failed"
+            if any(item["reason"] == "missing" for item in incomplete_reports)
+            else "partial"
+        )
+        report = {
+            "schema_version": 2,
+            "finalized_at": _utc_now(),
+            "overall_status": status,
+            "artifact_policy": artifact_policy,
+            "branches": {
+                branch: _collection_report_summary(payload)
+                for branch, payload in branch_reports.items()
+            },
+            "incomplete_collections": incomplete_reports,
+            "submission": dict(submission_status or {}),
+        }
+        (root / "run_report.json").write_text(
+            json.dumps(report, indent=2, sort_keys=True, default=str) + "\n"
+        )
+        raise RuntimeError(
+            "Catalyst-screen finalization requires complete collection reports; "
+            f"see {root / 'run_report.json'}"
+        )
+
     reference_dir = _branch_dir(root, "references")
     local_library = ReferenceLibrary(reference_dir).initialize()
     shared_library = workflow._shared_library(initialize=True)
@@ -947,6 +1095,7 @@ def _finalize_run(workflow: CatalystScreenWorkflow, root: Path) -> dict[str, Any
         root,
         local_library=local_library,
         shared_library=shared_library,
+        artifact_policy=artifact_policy,
     )
     computed_path = reference_dir / "computed.parquet"
     computed = pd.read_parquet(computed_path) if computed_path.exists() else pd.DataFrame()
@@ -1005,6 +1154,7 @@ def _finalize_run(workflow: CatalystScreenWorkflow, root: Path) -> dict[str, Any
                 calculation_level=workflow.level,
                 source_run=root,
                 source_target_dir=target_dir,
+                artifact_policy=artifact_policy,
             )
         except ValueError as exc:
             publication_status = "not_published"
@@ -1027,6 +1177,7 @@ def _finalize_run(workflow: CatalystScreenWorkflow, root: Path) -> dict[str, Any
                     calculation_level=workflow.level,
                     source_run=root,
                     source_target_dir=target_dir,
+                    artifact_policy=artifact_policy,
                 )
         frame["reference_id"] = reference_id
         frame["reference_source"] = "calculated"
@@ -1049,7 +1200,7 @@ def _finalize_run(workflow: CatalystScreenWorkflow, root: Path) -> dict[str, Any
             computed_frames,
             source_files=computed_sources,
         )
-        computed.to_parquet(computed_path, index=False)
+        _write_verified_parquet(computed, computed_path)
     publication_report = {
         "schema_version": 1,
         "generated_at": _utc_now(),
@@ -1083,19 +1234,40 @@ def _finalize_run(workflow: CatalystScreenWorkflow, root: Path) -> dict[str, Any
         available,
         source_files=available_paths,
     )
-    combined.to_parquet(reference_dir / "merged.parquet", index=False)
+    _write_verified_parquet(combined, reference_dir / "merged.parquet")
 
     analysis_report = build_analysis(root)
-    branch_reports: dict[str, Any] = {}
+    discovered_branch_reports: dict[str, Any] = {}
     for branch in workflow.children():
         report_path = _branch_dir(root, branch) / "collection_report.json"
         if report_path.exists():
-            branch_reports[branch] = json.loads(report_path.read_text())
+            discovered_branch_reports[branch] = json.loads(report_path.read_text())
+    branch_reports.update(discovered_branch_reports)
+    reference_complete = (
+        int(publication_report["n_not_published"]) == 0
+        and int(publication_report["n_missing_results"]) == 0
+        and (
+            int(publication_report["n_published"])
+            + int(publication_report["n_reused"])
+            == int(publication_report["n_targets"])
+        )
+    )
+    tiers_complete = all(
+        bool(branch_report.get("complete", False))
+        for level_report in tier_report.get("levels", {}).values()
+        for branch_report in level_report.values()
+    )
+    overall_success = reference_complete and tiers_complete
     report = {
-        "schema_version": 1,
+        "schema_version": 2,
         "finalized_at": _utc_now(),
+        "overall_status": "success" if overall_success else "partial",
+        "artifact_policy": artifact_policy,
         "analysis": analysis_report,
-        "branches": branch_reports,
+        "branches": {
+            branch: _collection_report_summary(payload)
+            for branch, payload in branch_reports.items()
+        },
         "analysis_tiers": tier_report,
         "n_references_calculated": int(len(computed)),
         "n_references_published": int(publication_report["n_published"]),
@@ -1106,11 +1278,182 @@ def _finalize_run(workflow: CatalystScreenWorkflow, root: Path) -> dict[str, Any
         "reference_publication_report": str(
             publication_report_path.relative_to(root)
         ),
+        "submission": dict(submission_status or {}),
     }
     (root / "run_report.json").write_text(
         json.dumps(report, indent=2, sort_keys=True, default=str) + "\n"
     )
+    if artifact_policy == "screening" and report["overall_status"] == "success":
+        report["artifact_cleanup"] = _cleanup_screening_targets(workflow, root)
+        if report["artifact_cleanup"]["errors"]:
+            report["overall_status"] = "partial"
+        elif (root / ".submitit" / "ownership.json").exists():
+            try:
+                report["submitit_cleanup"] = cleanup_submitit_jobs(root)
+            except Exception as exc:
+                report["overall_status"] = "partial"
+                report["submitit_cleanup"] = {"error": str(exc)}
+        (root / "run_report.json").write_text(
+            json.dumps(report, indent=2, sort_keys=True, default=str) + "\n"
+        )
     return report
+
+
+def _validate_collection_reports(
+    root: Path,
+    expected_report_paths: list[str],
+) -> tuple[dict[str, Any], list[dict[str, Any]]]:
+    """Validate required branch reports before scientific finalization."""
+    reports: dict[str, Any] = {}
+    incomplete: list[dict[str, Any]] = []
+    branch_paths = {
+        str(_branch_dir(root, branch).resolve()): branch
+        for branch in ("transition_states", "references", "cycle_molecules", "int3")
+    }
+    for raw_path in expected_report_paths:
+        path = Path(raw_path)
+        branch = branch_paths.get(str(path.parent.resolve()), path.parent.name)
+        if not path.exists():
+            incomplete.append(
+                {"branch": branch, "report": str(path), "reason": "missing"}
+            )
+            continue
+        try:
+            payload = json.loads(path.read_text())
+        except Exception as exc:
+            incomplete.append(
+                {
+                    "branch": branch,
+                    "report": str(path),
+                    "reason": "invalid_json",
+                    "error": str(exc),
+                }
+            )
+            continue
+        reports[branch] = payload
+        expected = int(payload.get("n_targets", 0))
+        collected = int(payload.get("n_collected", 0))
+        failures = int(payload.get("n_failures", 0))
+        output = Path(str(payload.get("output", "")))
+        if failures or collected != expected:
+            incomplete.append(
+                {
+                    "branch": branch,
+                    "report": str(path),
+                    "reason": "incomplete",
+                    "n_targets": expected,
+                    "n_collected": collected,
+                    "n_failures": failures,
+                }
+            )
+            continue
+        try:
+            merged = pd.read_parquet(output)
+        except Exception as exc:
+            incomplete.append(
+                {
+                    "branch": branch,
+                    "report": str(path),
+                    "reason": "invalid_output",
+                    "output": str(output),
+                    "error": str(exc),
+                }
+            )
+            continue
+        if expected and merged.empty:
+            incomplete.append(
+                {
+                    "branch": branch,
+                    "report": str(path),
+                    "reason": "empty_output",
+                    "output": str(output),
+                }
+            )
+    return reports, incomplete
+
+
+def _collection_report_summary(payload: Mapping[str, Any]) -> dict[str, Any]:
+    """Return compact collection status for the top-level run report."""
+    keys = (
+        "workflow",
+        "output",
+        "n_targets",
+        "n_collected",
+        "n_rows",
+        "n_failures",
+        "n_skipped",
+        "n_missing",
+        "n_errored",
+        "target_retention",
+    )
+    summary = {key: payload.get(key) for key in keys if key in payload}
+    timing = payload.get("timing")
+    if isinstance(timing, Mapping):
+        summary["timing"] = {
+            key: timing.get(key)
+            for key in (
+                "n_timing_files",
+                "n_timing_groups",
+                "total_elapsed_s",
+                "total_core_hours",
+            )
+            if key in timing
+        }
+    return summary
+
+
+def _cleanup_screening_targets(
+    workflow: CatalystScreenWorkflow,
+    root: Path,
+) -> dict[str, Any]:
+    """Delete only normally terminated per-target directories after finalization."""
+    result: dict[str, Any] = {
+        "n_removed_targets": 0,
+        "removed_bytes": 0,
+        "removed_targets": [],
+        "retained_targets": [],
+        "errors": [],
+    }
+    for branch, child in workflow.children().items():
+        branch_dir = _branch_dir(root, branch)
+        for target in child.targets():
+            target_dir = branch_dir / target.tag
+            try:
+                target_dir.resolve().relative_to(branch_dir.resolve())
+                if target_dir.is_symlink():
+                    raise ValueError("target directory is a symlink")
+            except Exception as exc:
+                result["errors"].append(
+                    {"target": str(target_dir), "error": str(exc)}
+                )
+                continue
+            final_path = _deepest_parquet(target_dir)
+            if final_path is None:
+                if target_dir.exists():
+                    result["retained_targets"].append(str(target_dir))
+                continue
+            try:
+                frame = pd.read_parquet(final_path)
+                nt_columns = normal_termination_columns(frame)
+                normal = not nt_columns or bool(frame[nt_columns].fillna(False).all().all())
+                if not normal:
+                    result["retained_targets"].append(str(target_dir))
+                    continue
+                size = sum(
+                    path.stat().st_size
+                    for path in target_dir.rglob("*")
+                    if path.is_file()
+                )
+                shutil.rmtree(target_dir)
+            except Exception as exc:
+                result["errors"].append(
+                    {"target": str(target_dir), "error": str(exc)}
+                )
+                continue
+            result["n_removed_targets"] += 1
+            result["removed_bytes"] += int(size)
+            result["removed_targets"].append(str(target_dir))
+    return result
 
 
 def _finalize_nested_tiers(
@@ -1119,6 +1462,7 @@ def _finalize_nested_tiers(
     *,
     local_library: ReferenceLibrary,
     shared_library: ReferenceLibrary | None,
+    artifact_policy: ArtifactPolicy = "standard",
 ) -> dict[str, Any]:
     """Collect and publish exact nested-tier snapshots from a composed run."""
     report: dict[str, Any] = {
@@ -1149,6 +1493,7 @@ def _finalize_nested_tiers(
                         calculation_level=level,
                         source_run=root,
                         source_target_dir=branch_dir / target.tag,
+                        artifact_policy=artifact_policy,
                     )
                     if shared_library is not None:
                         shared_library.publish(
@@ -1159,6 +1504,7 @@ def _finalize_nested_tiers(
                             calculation_level=level,
                             source_run=root,
                             source_target_dir=branch_dir / target.tag,
+                            artifact_policy=artifact_policy,
                         )
                     frame["reference_id"] = record.reference_id
                     frame["reference_source"] = "calculated"
@@ -1168,7 +1514,7 @@ def _finalize_nested_tiers(
             if branch == "references":
                 computed = _concat_reference_results(frames, source_files=sources)
                 computed_path = tier_dir / "computed.parquet"
-                computed.to_parquet(computed_path, index=False)
+                _write_verified_parquet(computed, computed_path)
                 reused_path = tier_dir / "reused.parquet"
                 reused = (
                     pd.read_parquet(reused_path)
@@ -1190,11 +1536,12 @@ def _finalize_nested_tiers(
                 )
             else:
                 merged = _concat_tier_results(frames, source_files=sources)
-            merged.to_parquet(tier_dir / "merged.parquet", index=False)
+            _write_verified_parquet(merged, tier_dir / "merged.parquet")
             level_report[branch] = {
                 "n_targets": len(child.targets()),
                 "n_snapshots": len(frames),
                 "n_rows": int(len(merged)),
+                "complete": int(len(merged)) == len(child.targets()),
                 "path": str((tier_dir / "merged.parquet").relative_to(root)),
             }
         report["levels"][level] = level_report
@@ -1262,6 +1609,7 @@ def _concat_reference_results(
     for frame in frames:
         compatible = frame.copy()
         contract = deepcopy(compatible.attrs["frust_results"])
+        contract.pop("artifact_policy", None)
         if contract.get("calculation_level") != "full":
             # Older direct low-cost and DFT-ranked runs could record the
             # MethodPlan thermochemistry recipe while tier snapshots did not.
@@ -1319,6 +1667,27 @@ def _branch_dir(root: Path, branch: str) -> Path:
         "int3": root / "calculations" / "full_cycle" / "int3",
     }
     return mapping[branch]
+
+
+def _write_verified_parquet(df: pd.DataFrame, destination: Path) -> None:
+    """Atomically publish a dataframe after schema and row-count validation."""
+    destination.parent.mkdir(parents=True, exist_ok=True)
+    handle = tempfile.NamedTemporaryFile(
+        prefix=f".{destination.name}.",
+        suffix=".tmp",
+        dir=destination.parent,
+        delete=False,
+    )
+    temporary = Path(handle.name)
+    handle.close()
+    try:
+        df.to_parquet(temporary, index=False)
+        check = pd.read_parquet(temporary)
+        if len(check) != len(df) or list(check.columns) != list(df.columns):
+            raise ValueError(f"Parquet verification failed for {destination}")
+        os.replace(temporary, destination)
+    finally:
+        temporary.unlink(missing_ok=True)
 
 
 def _calculation_result_paths(scope: ScreenScope) -> dict[str, str | None]:

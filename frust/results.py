@@ -2,7 +2,10 @@
 
 from __future__ import annotations
 
+from collections.abc import Mapping
 from typing import Any, Literal
+
+import numpy as np
 
 import pandas as pd
 
@@ -10,6 +13,7 @@ from frust.schema import output_column
 
 ResultProfile = Literal["minimum", "transition_state", "constrained_minimum"]
 ResultPurpose = Literal["analysis", "ranking", "optimized", "frequency"]
+COMPACT_FREQUENCY_COLUMN = "dft_freq-frequencies_cm1"
 
 
 def result_contract(
@@ -92,9 +96,10 @@ def result_contract(
         columns["frequency"] = {
             "gibbs_energy": output_column("dft_freq", "gibbs_energy"),
             "electronic_energy": output_column("dft_freq", "electronic_energy"),
+            "frequencies": COMPACT_FREQUENCY_COLUMN,
         }
     contract = {
-        "schema_version": 4,
+        "schema_version": 5,
         "profile": profile,
         "dft": has_full_dft,
         "calculation_level": calculation_level,
@@ -217,6 +222,46 @@ def get_result(
         Resolved result values.
     """
     return df[result_column(df, key, purpose=purpose)]
+
+
+def frequency_values(row: Mapping[str, Any] | pd.Series) -> list[float]:
+    """Return vibration frequencies without requiring displacement vectors.
+
+    Parameters
+    ----------
+    row : mapping or pandas.Series
+        One result row. Screening rows use
+        ``dft_freq-frequencies_cm1``; standard rows may instead contain a
+        full ``*-vibs`` normal-mode column.
+
+    Returns
+    -------
+    list of float
+        Frequencies in inverse centimetres, preserving dataframe order.
+    """
+    compact_columns = [
+        column
+        for column in row.keys()
+        if str(column) == COMPACT_FREQUENCY_COLUMN
+        or str(column).endswith("-frequencies_cm1")
+    ]
+    for column in reversed(compact_columns):
+        value = row[column]
+        if isinstance(value, (list, tuple, np.ndarray)):
+            return [float(item) for item in value]
+
+    vibration_columns = [column for column in row.keys() if str(column).endswith("-vibs")]
+    for column in reversed(vibration_columns):
+        value = row[column]
+        if not isinstance(value, (list, tuple, np.ndarray)):
+            continue
+        frequencies: list[float] = []
+        for mode in value:
+            if isinstance(mode, Mapping) and mode.get("frequency") is not None:
+                frequencies.append(float(mode["frequency"]))
+        if frequencies:
+            return frequencies
+    return []
 
 
 def free_energy_components(
