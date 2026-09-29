@@ -1,0 +1,28 @@
+host=node066.cluster
+job=65658476
+node_list=node066
+frust_checkout=/lustre/hpc/kemi/jmni/dev/FRUST
+839777d
+orca_exe=/groups/kemi/jmni/software/orca_6_1_0_generic/orca
+                         Program Version 6.1.0  -  RELEASE   -
+xtb_exe=/groups/kemi/jmni/miniconda3/envs/UMA/bin/xtb
+   * xtb version 6.7.1 (edcfbbe) compiled by 'conda@3ef47c1a292c' on 2024-11-25
+gxtb_exe=/lustre/hpc/kemi/jmni/software/g-xtb/bin/xtb
+   * xtb version 6.7.1 (26dd68d) compiled by 'froitzheim@fs7' on 2026-05-14
+oet_tools=/lustre/hpc/kemi/jmni/software/orca-external-tools
+oet_python=3.12.8
+oet_source=/lustre/hpc/kemi/jmni/software/orca-external-tools-src/src/oet/__init__.py
+oet=2.0.1.dev8+gc13336b4b
+fairchem-core=2.20.0
+torch=2.8.0
+ase=3.28.0
+huggingface-hub=1.15.0
+uma_python=3.12.8
+frust_source=/lustre/hpc/kemi/jmni/dev/FRUST/frust/__init__.py
+UMA_env_frust=0.1.0
+UMA_env_fairchem-core=2.3.0
+UMA_env_torch=2.6.0
+UMA_env_ase=3.26.0
+UMA_env_huggingface-hub=0.34.4
+                        The UMA base model. Options: uma-s-1p2, uma-s-1p1,
+                        odac25. Default: uma-s-1p1.

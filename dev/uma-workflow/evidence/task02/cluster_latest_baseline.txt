@@ -1,0 +1,44 @@
+srun: job 65665353 queued and waiting for resources
+srun: job 65665353 has been allocated resources
+host=node066.cluster
+job=65665353
+node_list=node066
+runtime=/lustre/hpc/kemi/jmni/software/oet-uma-2p23-cpu
+xtb=/groups/kemi/jmni/miniconda3/envs/UMA/bin/xtb
+Warp CUDA warning: Could not find or load the NVIDIA CUDA driver. GPU execution will not be available.
+#
+# Number of atoms
+#
+3
+#
+# Total energy [Eh]
+#
+-7.643041676122e+01
+#
+# Gradient [Eh/Bohr] A1X, A1Y, A1Z, A2X, ...
+#
+ 4.666640455229e-09
+ 2.585488888865e-09
+ 8.039737473575e-02
+-4.389088799379e-02
+-1.962662661952e-09
+-4.019868736788e-02
+ 4.389087681792e-02
+-6.228263934465e-10
+-4.019868736788e-02
+{
+  "task": "omol",
+  "uma_model": "uma-s-1p2p1",
+  "inference_settings": "batch",
+  "xtb_method": "GFN2-xTB",
+  "solvent_model": "ALPB",
+  "solvent": "chloroform",
+  "xtb_executable": "/lustre/hpc/kemi/jmni/miniconda3/envs/UMA/bin/xtb",
+  "energy_components_Eh": {
+    "uma": -76.42749338806888,
+    "xtb_alpb": -5.068696341452,
+    "xtb_gas": -5.065772968305
+  },
+  "total_energy_Eh": -76.43041676121588,
+  "gradient_components": 9
+}

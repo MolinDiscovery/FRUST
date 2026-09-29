@@ -1946,6 +1946,9 @@ class Stepper:
         uma_memory_per_thread_mib: int = 500,
         uma_keep_logs: bool | str = "on_failure",
         uma_log_dir: str | None = None,
+        uma_xtb_alpb: str | None = None,
+        uma_xtb_exe: str | None = None,
+        uma_inference_settings: str | None = None,
         ts_mode: tuple[str, ...] | list[str] | None = None,
         ts_active_atoms: tuple[str, ...] | list[str] | None = None,
         ts_active_atoms_factor: float | None = None,
@@ -2023,6 +2026,15 @@ class Stepper:
             uma_log_dir (str or None, optional): Directory for preserved UMA
                 server logs. If omitted, transient logs are written to a temp
                 directory and preserved failures are copied to ``UMA-logs``.
+            uma_xtb_alpb (str or None, optional): Add the GFN2-xTB ALPB solvent
+                correction to UMA energies and gradients. Currently accepts
+                ``"chloroform"``; ``None`` keeps gas-phase UMA.
+            uma_xtb_exe (str or None, optional): Normal xTB executable used
+                for the UMA solvent correction. Requires ``uma_xtb_alpb``.
+                If omitted, OET uses ``XTB_EXE`` or ``xtb`` on its path.
+            uma_inference_settings (str or None, optional): FairChem inference
+                mode: ``"default"`` or ``"turbo"`` use model compilation;
+                ``"batch"`` avoids it. ``None`` uses OET's ``"batch"`` default.
             ts_mode (sequence of str or None, optional): Chemical roles defining
                 the ORCA internal coordinate followed during ``OptTS``. Two
                 roles select a bond, three an angle, and four a dihedral. For
@@ -2307,6 +2319,9 @@ class Stepper:
             device=uma_device,
             cache_dir=uma_cache_dir,
             offline=uma_offline,
+            xtb_alpb=uma_xtb_alpb,
+            xtb_exe=uma_xtb_exe,
+            inference_settings=uma_inference_settings,
         )
 
         def uma_calculator(
@@ -2334,6 +2349,11 @@ class Stepper:
                     "cache_dir": spec.cache_dir,
                     "offline": spec.offline,
                     "server": server,
+                    "xtb_method": "GFN2-xTB" if spec.xtb_alpb else None,
+                    "solvent_model": "ALPB" if spec.xtb_alpb else None,
+                    "solvent": spec.xtb_alpb,
+                    "xtb_exe": spec.xtb_exe,
+                    "inference_settings": spec.inference_settings or "batch",
                 },
             )
 
@@ -2363,6 +2383,9 @@ class Stepper:
                 "uma_memory_per_thread_mib": int(uma_memory_per_thread_mib),
                 "uma_keep_logs": uma_keep_logs,
                 "uma_log_dir": _metadata_text(uma_log_dir),
+                "uma_xtb_alpb": spec.xtb_alpb,
+                "uma_xtb_exe": _metadata_text(spec.xtb_exe),
+                "uma_inference_settings": spec.inference_settings or "batch",
             }
             uma_input.update(input_extra or {})
             result.attrs.setdefault("frust_steps", {}).setdefault(prefix, {}).update(
@@ -2373,6 +2396,7 @@ class Stepper:
                     "uma_task": spec.task,
                     "uma_model": spec.model,
                     "uma_server": uma_server,
+                    "uma_xtb_alpb": spec.xtb_alpb,
                     "input": build_input_metadata(**uma_input),
                     "calculator": calculator,
                 }

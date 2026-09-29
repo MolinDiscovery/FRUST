@@ -1,0 +1,16 @@
+/orca-opt/
+/orca-scratch/
+/orca-opt-result.pkl
+/oet-venv-before.txt
+/cluster_runtime_install.log
+/uma-latest-gas/baseline.stdout
+/xtb-gas/*.charges
+/xtb-gas/*.engrad
+/xtb-gas/*.wbo
+/xtb-gas/*.xtbrestart
+/xtb-gas/*.mol
+/xtb-alpb/*.charges
+/xtb-alpb/*.engrad
+/xtb-alpb/*.wbo
+/xtb-alpb/*.xtbrestart
+/xtb-alpb/*.mol

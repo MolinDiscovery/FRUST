@@ -1,0 +1,16 @@
+{
+  "task": "omol",
+  "uma_model": "uma-s-1p2p1",
+  "inference_settings": "batch",
+  "xtb_method": "GFN2-xTB",
+  "solvent_model": "ALPB",
+  "solvent": "chloroform",
+  "xtb_executable": "/opt/homebrew/Caskroom/miniconda/base/envs/UMA/bin/xtb",
+  "energy_components_Eh": {
+    "uma": -76.42749337447343,
+    "xtb_alpb": -5.068696341452,
+    "xtb_gas": -5.065772968305
+  },
+  "total_energy_Eh": -76.43041674762043,
+  "gradient_components": 9
+}

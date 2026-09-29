@@ -1,0 +1,9 @@
+2026-09-29 15:58:55 INFO  frust.stepper.GENERIC.local: Working dir: /Users/jacobmolinnielsen/Developer/FrustActivationProject/FRUST/dev/uma-workflow/evidence/task02/orca-scratch
+2026-09-29 15:58:59 INFO  frust.stepper.GENERIC.local: [uma_alpb_opt] starting 1 row(s)
+2026-09-29 15:58:59 INFO  frust.stepper.GENERIC.local: [uma_alpb_opt] row 0 (water)…
+2026-09-29 15:59:07 WARNING frust.stepper.GENERIC.local: No calc dir named 'water_0' found under /Users/jacobmolinnielsen/Developer/FrustActivationProject/FRUST/dev/uma-workflow/evidence/task02/orca-scratch
+2026-09-29 15:59:07 INFO  frust.stepper.GENERIC.local: [uma_alpb_opt] row 1/1 (water) done in 8.1s; elapsed 8.1s; ETA 0.0s
+2026-09-29 15:59:07 INFO  frust.stepper.GENERIC.local: [uma_alpb_opt] finished 1 row(s) in 8.1s; failed=0, skipped=0
+normal_termination=True
+energy_Eh=-76.437169050600
+saved_input=/Users/jacobmolinnielsen/Developer/FrustActivationProject/FRUST/dev/uma-workflow/evidence/task02/orca-smoke/input.inp

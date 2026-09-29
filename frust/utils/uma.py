@@ -19,11 +19,37 @@ LOCAL_BIND_HOST = "127.0.0.1"
 
 @dataclass(frozen=True)
 class UmaSpec:
+    """OET UMA settings passed through an ORCA external-method input.
+
+    Attributes
+    ----------
+    task : str
+        FairChem domain task, normally ``"omol"`` for molecules.
+    model : str
+        UMA checkpoint name such as ``"uma-s-1p2p1"``.
+    device : str
+        Inference device, ``"cpu"`` or ``"cuda"``.
+    cache_dir : str or None
+        Optional checkpoint cache directory.
+    offline : bool
+        Whether OET must use locally cached model files.
+    xtb_alpb : str or None
+        ``"chloroform"`` adds GFN2-xTB ALPB minus gas energies and gradients;
+        ``None`` keeps gas-phase UMA.
+    xtb_exe : str or None
+        Optional normal xTB executable for the solvent correction.
+    inference_settings : str or None
+        FairChem inference mode. ``None`` uses OET's ``"batch"`` default.
+    """
+
     task: str
     model: str = DEFAULT_UMA_MODEL
     device: str = "cpu"
     cache_dir: str | None = None
     offline: bool = False
+    xtb_alpb: str | None = None
+    xtb_exe: str | None = None
+    inference_settings: str | None = None
 
 
 @dataclass
@@ -64,8 +90,37 @@ def parse_uma_spec(
     device: str = "cpu",
     cache_dir: str | None = None,
     offline: bool = False,
+    xtb_alpb: str | None = None,
+    xtb_exe: str | None = None,
+    inference_settings: str | None = None,
 ) -> UmaSpec:
-    """Parse FRUST's ``task`` or ``task@model`` UMA shorthand."""
+    """Parse FRUST's ``task`` or ``task@model`` UMA shorthand.
+
+    Parameters
+    ----------
+    uma : str
+        Domain task with an optional checkpoint, for example
+        ``"omol@uma-s-1p2p1"``.
+    device : str, default ``"cpu"``
+        Inference device.
+    cache_dir : str or None, optional
+        Checkpoint cache directory.
+    offline : bool, default ``False``
+        Request cached model files only.
+    xtb_alpb : str or None, optional
+        ``"chloroform"`` adds the xTB ALPB correction; ``None`` keeps gas
+        phase UMA.
+    xtb_exe : str or None, optional
+        xTB executable for the correction. Requires ``xtb_alpb``.
+    inference_settings : str or None, optional
+        ``"batch"`` avoids model compilation, while ``"default"`` and
+        ``"turbo"`` use it. ``None`` uses OET's default.
+
+    Returns
+    -------
+    UmaSpec
+        Validated UMA and optional solvent settings.
+    """
     value = uma.strip() if isinstance(uma, str) else ""
     if not value:
         raise ValueError("UMA spec must be a non-empty string")
@@ -82,6 +137,12 @@ def parse_uma_spec(
         raise ValueError(f"UMA spec {uma!r} is missing a task before '@'")
     if not model:
         raise ValueError(f"UMA spec {uma!r} is missing a model after '@'")
+    if xtb_alpb not in {None, "chloroform"}:
+        raise ValueError("uma_xtb_alpb currently supports only 'chloroform'")
+    if xtb_exe and not xtb_alpb:
+        raise ValueError("uma_xtb_exe requires uma_xtb_alpb")
+    if inference_settings not in {None, "default", "batch", "turbo"}:
+        raise ValueError("uma_inference_settings must be 'default', 'batch', or 'turbo'")
 
     return UmaSpec(
         task=task,
@@ -89,6 +150,9 @@ def parse_uma_spec(
         device=device,
         cache_dir=cache_dir,
         offline=offline,
+        xtb_alpb=xtb_alpb,
+        xtb_exe=xtb_exe,
+        inference_settings=inference_settings,
     )
 
 
@@ -107,6 +171,12 @@ def uma_ext_args(spec: UmaSpec) -> list[str]:
         args.extend(["-c", spec.cache_dir])
     if spec.offline:
         args.extend(["-o", "True"])
+    if spec.xtb_alpb:
+        args.extend(["--xtb-alpb", spec.xtb_alpb])
+    if spec.xtb_exe:
+        args.extend(["--xtb-exe", spec.xtb_exe])
+    if spec.inference_settings:
+        args.extend(["--inference-settings", spec.inference_settings])
     return args
 
 

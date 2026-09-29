@@ -1,0 +1,28 @@
+# Automatically generated ORCA input
+
+# Number of cores
+%pal nprocs 1 end
+# RAM per core
+%maxcore 2048
+
+! ExtOpt
+! Opt
+
+%method
+ProgExt "/Users/jacobmolinnielsen/Library/orca-external-tools/bin/oet_client"
+Ext_Params "-b 127.0.0.1:56971 -t omol -m uma-s-1p2p1 -d cpu -o True --xtb-alpb chloroform --xtb-exe /opt/homebrew/Caskroom/miniconda/base/envs/UMA/bin/xtb --inference-settings batch"
+end
+%output
+Print[P_EXT_OUT] 1
+Print[P_EXT_GRAD] 1
+end
+%Output
+  JSONPropFile True
+End
+
+
+*xyz 0 1
+O         0.00000000      0.00000000      0.00000000
+H         0.75860200      0.00000000      0.50428400
+H        -0.75860200      0.00000000      0.50428400
+*
