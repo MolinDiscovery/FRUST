@@ -1,0 +1,20 @@
+submitit INFO (2026-09-29 23:00:12,010) - Starting with JobEnvironment(job_id=65678046, hostname=node066.cluster, local_rank=0(1), node=0(1), global_rank=0(1))
+submitit INFO (2026-09-29 23:00:12,010) - Loading pickle: /lustre/hpc/kemi/jmni/results/uma-task03-lifecycle-20260929-c/submitit/65678046_submitted.pkl
+2026-09-29 23:00:12 INFO  frust.stepper.GENERIC.job65678046: [prepare] prepared 1 row(s)
+2026-09-29 23:00:14 INFO  frust.stepper.GENERIC.job65678046: Working dir: /scratch/65678046
+2026-09-29 23:00:27 INFO  frust.stepper.GENERIC.job65678046: [uma_sp] starting 1 row(s)
+2026-09-29 23:00:27 INFO  frust.stepper.GENERIC.job65678046: [uma_sp] row 0 (water)…
+2026-09-29 23:00:42 INFO  frust.stepper.GENERIC.job65678046: [uma_sp] row 1/1 (water) done in 15.4s; elapsed 15.4s; ETA 0.0s
+2026-09-29 23:00:42 INFO  frust.stepper.GENERIC.job65678046: [uma_sp] finished 1 row(s) in 15.4s; failed=0, skipped=0
+2026-09-29 23:00:42 INFO  frust.stepper.GENERIC.job65678046: Working dir: /scratch/65678046
+2026-09-29 23:00:42 INFO  frust.stepper.GENERIC.job65678046: [uma_opt] starting 1 row(s)
+2026-09-29 23:00:42 INFO  frust.stepper.GENERIC.job65678046: [uma_opt] row 0 (water)…
+2026-09-29 23:00:46 INFO  frust.stepper.GENERIC.job65678046: [uma_opt] row 1/1 (water) done in 3.2s; elapsed 3.2s; ETA 0.0s
+2026-09-29 23:00:46 INFO  frust.stepper.GENERIC.job65678046: [uma_opt] finished 1 row(s) in 3.2s; failed=0, skipped=0
+2026-09-29 23:00:46 INFO  frust.stepper.GENERIC.job65678046: Working dir: /scratch/65678046
+2026-09-29 23:00:46 INFO  frust.stepper.GENERIC.job65678046: [uma_numfreq] starting 1 row(s)
+2026-09-29 23:00:46 INFO  frust.stepper.GENERIC.job65678046: [uma_numfreq] row 0 (water)…
+2026-09-29 23:01:04 INFO  frust.stepper.GENERIC.job65678046: [uma_numfreq] row 1/1 (water) done in 18.4s; elapsed 18.4s; ETA 0.0s
+2026-09-29 23:01:04 INFO  frust.stepper.GENERIC.job65678046: [uma_numfreq] finished 1 row(s) in 18.4s; failed=0, skipped=0
+submitit INFO (2026-09-29 23:01:05,996) - Job completed successfully
+submitit INFO (2026-09-29 23:01:05,998) - Exiting after successful completion

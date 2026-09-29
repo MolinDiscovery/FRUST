@@ -1,0 +1,15 @@
+{
+  "submission_host": "fend05.cluster",
+  "job_ids": [
+    "65678046"
+  ],
+  "target_tags": [
+    "water"
+  ],
+  "target_directories": [
+    "/lustre/hpc/kemi/jmni/results/uma-task03-lifecycle-20260929-c/workflow/water"
+  ],
+  "oet_runtime": "/lustre/hpc/kemi/jmni/software/oet-uma-2p23-cpu",
+  "oet_audit_root": "/lustre/hpc/kemi/jmni/results/uma-task03-lifecycle-20260929-c/oet-audit",
+  "frust_revision": "3aebf43"
+}

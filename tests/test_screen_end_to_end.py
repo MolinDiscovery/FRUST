@@ -19,6 +19,7 @@ from frust.results import attach_result_contract, free_energy_components, result
 from frust.screen.references import ReferenceLibrary
 from frust.structures import ChemicalSystem, StructureTarget
 from frust.transformers import transformer_mols
+from frust.workflows.core import ExecutionOptions
 from frust.workflows.screening import _concat_reference_results, _finalize_run
 
 
@@ -1598,6 +1599,38 @@ def test_composed_slurm_submission_finishes_with_afterany_finalizer(tmp_path):
     dependency = fake.parameters[-1]["slurm_additional_parameters"]["dependency"]
     assert dependency.startswith("afterany:")
     assert (tmp_path / "results" / "manifest.json").exists()
+
+
+def test_composed_submission_forwards_pinned_uma_runtime_to_target_jobs(tmp_path):
+    workflow = ft.workflows.catalyst_screen(
+        dataframe=_components(),
+        method="r2scan-3c-solv",
+    )
+    fake = _FakeExecutor()
+    cluster = ft.ClusterConfig(backend="slurm", partition="kemi1", log_dir=tmp_path / "logs")
+    pinned = "/lustre/hpc/kemi/jmni/software/oet-uma-2p23-cpu"
+
+    with (
+        patch("frust.workflows.core.create_executor", return_value=fake),
+        patch("frust.workflows.screening.create_executor", return_value=fake),
+    ):
+        workflow.submit(
+            out_dir=tmp_path / "results",
+            cluster=cluster,
+            uma_oet_tools=pinned,
+        )
+
+    jobs = [
+        args
+        for fn, args, _ in fake.submissions
+        if fn.__name__ in {"_run_target_submitted_job", "_run_stage_group_submitted_job"}
+    ]
+    assert jobs
+    assert all(
+        next(arg for arg in args if isinstance(arg, ExecutionOptions)).uma_oet_tools
+        == pinned
+        for args in jobs
+    )
 
 
 def test_screening_submission_uses_owned_submitit_directory_and_light_jobs(tmp_path):

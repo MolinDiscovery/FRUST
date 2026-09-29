@@ -337,8 +337,17 @@ class CatalystScreenWorkflow:
         work_dir: str | Path | None = None,
         target_retention: str = "compact_success",
         artifact_policy: ArtifactPolicy = "standard",
+        uma_oet_tools: str | Path | None = None,
     ) -> ScreenRun:
-        """Run all required child workflows locally and build analysis."""
+        """Run child workflows locally and build the screen analysis.
+
+        Parameters
+        ----------
+        uma_oet_tools : str, pathlib.Path, or None, optional
+            OET runtime selected inside each child workflow group containing
+            UMA stages. Other arguments control the child workflows and run
+            artifacts as described by :meth:`submit`.
+        """
         artifact_policy = validate_artifact_policy(artifact_policy)
         if artifact_policy == "screening" and target_retention != "compact_success":
             raise ValueError(
@@ -386,6 +395,7 @@ class CatalystScreenWorkflow:
                 work_dir=work_dir,
                 target_retention=target_retention,
                 artifact_policy=artifact_policy,
+                uma_oet_tools=uma_oet_tools,
             )
             _write_verified_parquet(frame, branch_dir / output_name)
         _finalize_run(self, root, artifact_policy=artifact_policy)
@@ -406,6 +416,7 @@ class CatalystScreenWorkflow:
         finalize_resources: Resources | None = None,
         target_retention: str = "compact_success",
         artifact_policy: ArtifactPolicy = "standard",
+        uma_oet_tools: str | Path | None = None,
     ) -> ScreenSubmissionResult:
         """Submit the complete catalyst screen and its analysis finalizer.
 
@@ -475,6 +486,9 @@ class CatalystScreenWorkflow:
             ``"screening"`` keeps compact scientific results, uses a managed
             ``.submitit`` directory, and cleans successful artifacts only after
             final validation. ``"standard"`` preserves existing behavior.
+        uma_oet_tools : str, pathlib.Path, or None, optional
+            OET runtime selected inside child jobs containing UMA stages.
+            For example, point to a pinned FairChem 2.23 CPU runtime.
 
         Returns
         -------
@@ -603,6 +617,7 @@ class CatalystScreenWorkflow:
                 collect_resources=collect_resources,
                 target_retention=target_retention,
                 artifact_policy=artifact_policy,
+                uma_oet_tools=uma_oet_tools,
                 _defer_screening_cleanup=artifact_policy == "screening",
             )
             submissions[branch] = submission

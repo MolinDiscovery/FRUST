@@ -39,7 +39,7 @@ settles the public switch name and its UMA default before implementation.
 | --- | --- | --- | --- |
 | [01 — Audit](01-audit.md) | Complete | None | Version and behavior baseline, including the OET fork decision |
 | [02 — Solvent correction](02-solvent-correction.md) | Complete | 01 | OET UMA energy/gradient correction with an explicit input option |
-| [03 — Server lifecycle](03-server-lifecycle.md) | Pending | 01–02 | One reusable UMA server per submitted target job |
+| [03 — Server lifecycle](03-server-lifecycle.md) | Complete | 01–02 | One reusable UMA server per submitted target job |
 | [04 — Geometry profiles](04-geometry-profile.md) | Pending | 02–03 | Separate reviewed UMA gas and ALPB(chloroform) TS-guess profiles |
 | [05 — Workflow integration](05-workflow-integration.md) | Pending | 02–04 | Named UMA screening stages and ωB97 validation path |
 | [06 — Final smoke test and docs](06-smoke-and-docs.md) | Pending | 01–05 | Small cluster end-to-end run and user-facing guidance |

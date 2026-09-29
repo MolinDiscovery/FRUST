@@ -1,0 +1,80 @@
+{
+  "frust_revision": "3aebf43",
+  "job_id": "65678046",
+  "submission_hostname": "fend05.cluster",
+  "oet_runtime": "/lustre/hpc/kemi/jmni/software/oet-uma-2p23-cpu",
+  "stages": {
+    "uma_sp": {
+      "normal_termination": true,
+      "energy_Eh": -76.43041675754,
+      "server_pid": 700314,
+      "server_hostname": "node066.cluster",
+      "server_bind": "127.0.0.1:51363"
+    },
+    "uma_opt": {
+      "normal_termination": true,
+      "energy_Eh": -76.43716906544,
+      "server_pid": 700314,
+      "server_hostname": "node066.cluster",
+      "server_bind": "127.0.0.1:51363"
+    },
+    "uma_numfreq": {
+      "normal_termination": true,
+      "energy_Eh": -76.43716906755,
+      "server_pid": 700314,
+      "server_hostname": "node066.cluster",
+      "server_bind": "127.0.0.1:51363",
+      "frequencies_cm1": [
+        1602.09,
+        3795.16,
+        3885.71
+      ]
+    }
+  },
+  "server_events": [
+    {
+      "event": "started",
+      "pid": 700314,
+      "hostname": "node066.cluster",
+      "log": "/lustre/hpc/kemi/jmni/results/uma-task03-lifecycle-20260929-c/server-logs/oet_uma_server_51363.log"
+    },
+    {
+      "event": "stopped",
+      "pid": 700314,
+      "hostname": "node066.cluster",
+      "log": "/lustre/hpc/kemi/jmni/results/uma-task03-lifecycle-20260929-c/server-logs/oet_uma_server_51363.log"
+    }
+  ],
+  "peak_live_servers": 1,
+  "servers_remaining_after_job": [],
+  "client_call_count": 21,
+  "client_hostnames": [
+    "node066.cluster"
+  ],
+  "client_binds": [
+    "127.0.0.1:51363"
+  ],
+  "client_pids": [
+    700337,
+    700380,
+    700401,
+    700422,
+    700443,
+    700464,
+    700484,
+    700521,
+    700528,
+    700537,
+    700539,
+    700552,
+    700555,
+    700562,
+    700569,
+    700576,
+    700583,
+    700590,
+    700598,
+    700605,
+    700612
+  ]
+}
