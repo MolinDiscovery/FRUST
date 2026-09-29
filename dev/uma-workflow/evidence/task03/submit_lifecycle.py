@@ -26,8 +26,8 @@ def main() -> None:
     client.write_text(
         "#!/usr/bin/env bash\n"
         "printf 'host=%s pid=%s ppid=%s bind=%s\\n' "
-        '"$(hostname)" "$$" "$PPID" "$2" '
-        '>> "$FRUST_UMA_TASK03_OUT/client_calls.log"\n'
+        '"$(hostname)" "$$" "$PPID" "$3" '
+        f'>> "{root / "client_calls.log"}"\n'
         f'exec "{runtime / "bin" / "oet_client"}" "$@"\n'
     )
     client.chmod(0o755)
@@ -56,6 +56,7 @@ def main() -> None:
         "target_directories": submission.save_dirs,
         "oet_runtime": str(runtime),
         "oet_audit_root": str(audit_root),
+        "frust_revision": os.environ.get("FRUST_TASK03_REVISION"),
     }
     (root / "submission.json").write_text(json.dumps(summary, indent=2) + "\n")
     print(json.dumps(summary, indent=2), flush=True)
