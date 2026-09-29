@@ -466,7 +466,8 @@ def uma_server(
     startup_failed = False
     try:
         ready = False
-        for _ in range(120):
+        deadline = time.monotonic() + 600
+        while time.monotonic() < deadline:
             if p.poll() is not None:
                 break
             try:
@@ -474,7 +475,8 @@ def uma_server(
                     ready = True
                     break
             except Exception:
-                time.sleep(1)
+                pass
+            time.sleep(1)
 
         if not ready:
             startup_failed = True
