@@ -36,12 +36,14 @@ animated mode before accepting a reference.
 
 ## Work
 
-1. Start by inspecting the original optimized ωB97 structures in
+1. Start by inspecting the original ωB97 profile-source structures in
    `structures/ts1.xyz`, `structures/ts2.xyz`, `structures/ts3_TMP.xyz`,
    `structures/ts4_TMP.xyz`, and `structures/int3_TMP.xyz`. Their reactive-role
    coordinates match the corresponding built-in ωB97 profile entries exactly.
    Verify each complete structure's chemical identity, atom/role mapping, and
-   associated ωB97 calculation before selecting it as a UMA starting geometry.
+   optimization provenance before treating it as an optimized ωB97 reference.
+   An XYZ that lacks that provenance may still seed a new UMA optimization,
+   but it cannot by itself supply a matched ωB97 frequency comparison.
    In particular, the TS3/TS4/INT3 TMP XYZ atom inventories are incompatible
    with the profile's migrated `1-methylpyrrole` provenance label; resolve that
    discrepancy before treating their frequencies as matched references. The

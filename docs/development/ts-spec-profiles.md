@@ -121,6 +121,24 @@ The extractor reads these final columns:
 | `TS1`--`TS4` | `dft_ts_opt-oc` | `dft_freq-vibs` |
 | `INT3` | `dft_opt-oc` | `dft_freq-vibs` |
 
+For a reference calculation with different stage names, pass the actual
+coordinate and vibration columns to the extractor. For example, a UMA
+reference workflow may save `uma_ts_opt-oc`, `uma_opt-oc`, and
+`uma_freq-vibs`:
+
+```bash
+conda run -n UMA python scripts/extract_tsguess2_profile.py \
+  runs/uma_gas_TSs.parquet runs/uma_gas_INT3.parquet \
+  --method uma-s-1p2p1 \
+  --ts-coordinates-column uma_ts_opt-oc \
+  --minimum-coordinates-column uma_opt-oc \
+  --vibrations-column uma_freq-vibs \
+  --output profile_candidates/uma_gas.json
+```
+
+Use the same potential for the optimization and frequency columns; do not
+extract an ALPB profile from gas-phase optimized coordinates.
+
 The final solvent single-point stage does not change geometry. A gas-phase
 result may contain `dft_solv_sp-*` columns, but the gas profile still comes from
 the gas-phase optimization coordinates above.
