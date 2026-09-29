@@ -15,6 +15,7 @@ import os
 import shutil
 import tempfile
 from collections.abc import Mapping
+from contextlib import nullcontext
 from dataclasses import dataclass
 from pathlib import Path
 from typing import Any, Iterable, Literal
@@ -58,6 +59,7 @@ from frust.utils.timing import (
     write_timing_sidecar,
 )
 from frust.utils.stage_summaries import conformer_generation_summary, filter_summary
+from frust.utils.uma import uma_job_server_scope
 from frust.workflows.diagnostics import _collection_failure_summary
 from frust.workflows.methods import CalculatorSpec, MethodPlan, preset as method_preset
 
@@ -184,6 +186,10 @@ class ExecutionOptions:
         Scratch/work directory used by calculator backends.
     artifact_policy : {"standard", "screening"}, optional
         Scientific artifact retention policy.
+    uma_oet_tools : str or None, optional
+        OET runtime selected inside a job that contains UMA stages. This lets
+        the submitted job use a pinned runtime without changing the login
+        process or the user's global ``OET_TOOLS`` setting.
     """
 
     n_cores: int = 4
@@ -192,6 +198,7 @@ class ExecutionOptions:
     save_output_dir: bool = True
     work_dir: str | None = None
     artifact_policy: ArtifactPolicy = "standard"
+    uma_oet_tools: str | None = None
 
 
 @dataclass(frozen=True)
@@ -493,6 +500,7 @@ class BaseWorkflow:
         work_dir: str | Path | None = None,
         target_retention: TargetRetention = "compact_success",
         artifact_policy: ArtifactPolicy = "standard",
+        uma_oet_tools: str | Path | None = None,
     ) -> pd.DataFrame:
         """Run selected workflow targets locally.
 
@@ -530,6 +538,9 @@ class BaseWorkflow:
             ``"screening"`` retains final structure, scalar energies, and
             frequency values while omitting displacement vectors and consumed
             intermediate data. ``"standard"`` remains the default.
+        uma_oet_tools : str or pathlib.Path or None, optional
+            OET runtime used for UMA stages within each local target or stage
+            group. For example, pass a dedicated FairChem 2.23 runtime here.
 
         Returns
         -------
@@ -555,6 +566,7 @@ class BaseWorkflow:
             save_output_dir=save_output_dir,
             work_dir=None if work_dir is None else str(work_dir),
             artifact_policy=artifact_policy,
+            uma_oet_tools=None if uma_oet_tools is None else str(uma_oet_tools),
         )
         frames: list[pd.DataFrame] = []
         root = Path(out_dir) if out_dir is not None else None
@@ -630,6 +642,7 @@ class BaseWorkflow:
         target_retention: TargetRetention = "compact_success",
         orca_memory_fraction: float = DEFAULT_ORCA_MEMORY_FRACTION,
         artifact_policy: ArtifactPolicy = "standard",
+        uma_oet_tools: str | Path | None = None,
         _defer_screening_cleanup: bool = False,
     ) -> JobSubmissionResult:
         """Submit selected workflow targets to a submitit cluster executor.
@@ -701,6 +714,10 @@ class BaseWorkflow:
             ``"screening"`` projects normally terminated target results onto
             the compact scientific schema. It requires
             ``target_retention="compact_success"``.
+        uma_oet_tools : str or pathlib.Path or None, optional
+            OET runtime selected inside each submitted UMA job. For example,
+            ``"/lustre/hpc/kemi/jmni/software/oet-uma-2p23-cpu"`` selects the
+            pinned cluster runtime without starting a server on the login node.
 
         Returns
         -------
@@ -763,6 +780,7 @@ class BaseWorkflow:
                     save_output_dir=save_output_dir,
                     work_dir=str(work_dir or cluster.work_dir) if (work_dir or cluster.work_dir) else None,
                     artifact_policy=artifact_policy,
+                    uma_oet_tools=None if uma_oet_tools is None else str(uma_oet_tools),
                 )
                 submitted_at = utc_timestamp()
                 job = executor.submit(
@@ -803,6 +821,7 @@ class BaseWorkflow:
                     save_output_dir=save_output_dir,
                     work_dir=str(work_dir or cluster.work_dir) if (work_dir or cluster.work_dir) else None,
                     artifact_policy=artifact_policy,
+                    uma_oet_tools=None if uma_oet_tools is None else str(uma_oet_tools),
                 )
                 submitted_at = utc_timestamp()
                 job = executor.submit(
@@ -1211,6 +1230,39 @@ class BaseWorkflow:
         return df
 
 
+def _uma_scope_for_stages(
+    workflow: BaseWorkflow,
+    stages: list[StageDef],
+    options: ExecutionOptions,
+):
+    """Return a job-local UMA scope only when a stage needs its server.
+
+    Parameters
+    ----------
+    workflow : BaseWorkflow
+        Workflow whose method plan provides calculator specifications.
+    stages : list of StageDef
+        Stages executed serially in this job or local group.
+    options : ExecutionOptions
+        Runtime options, including an optional pinned OET runtime.
+
+    Returns
+    -------
+    context manager
+        A lazy UMA server scope or an inert context for non-UMA groups.
+    """
+    uses_uma = any(
+        stage.kind == "calc"
+        and (spec := workflow.method.for_stage(stage.method_stage or stage.id)).engine == "orca"
+        and spec.kwargs.get("uma") is not None
+        and spec.kwargs.get("uma_server", True)
+        for stage in stages
+    )
+    if not uses_uma:
+        return nullcontext()
+    return uma_job_server_scope(oet_tools=options.uma_oet_tools)
+
+
 def _run_target_job(
     workflow: BaseWorkflow,
     target: WorkflowTarget,
@@ -1239,13 +1291,15 @@ def _run_target_job(
     target_dir = None if save_dir is None else Path(save_dir)
     group_started_at = utc_timestamp()
     group_start = monotonic_seconds()
-    df = workflow._run_stage_group(
-        target,
-        workflow._stage_defs(),
-        input_df=None,
-        save_dir=target_dir,
-        options=options,
-    )
+    stages = workflow._stage_defs()
+    with _uma_scope_for_stages(workflow, stages, options):
+        df = workflow._run_stage_group(
+            target,
+            stages,
+            input_df=None,
+            save_dir=target_dir,
+            options=options,
+        )
     group_record = build_workflow_timing_record(
         workflow=workflow.workflow_name,
         target=target.tag,
@@ -1272,7 +1326,7 @@ def _run_target_job(
             target=target.tag,
             submitted_at=submitted_at,
             group_record=group_record,
-            stage_ids=[stage.id for stage in workflow._stage_defs()],
+            stage_ids=[stage.id for stage in stages],
             input_parquet=None,
             output_parquet="final.parquet",
         )
@@ -1347,13 +1401,14 @@ def _run_stage_group_job(
     stages_by_id = {stage.id: stage for stage in workflow._stage_defs()}
     stages = [stages_by_id[stage_id] for stage_id in stage_ids]
     group_name = workflow._group_name(stages)
-    df = workflow._run_stage_group(
-        target,
-        stages,
-        input_df=input_df,
-        save_dir=target_dir,
-        options=options,
-    )
+    with _uma_scope_for_stages(workflow, stages, options):
+        df = workflow._run_stage_group(
+            target,
+            stages,
+            input_df=input_df,
+            save_dir=target_dir,
+            options=options,
+        )
     group_record = build_workflow_timing_record(
         workflow=workflow.workflow_name,
         target=target.tag,

@@ -2312,7 +2312,12 @@ class Stepper:
             result.attrs["frust_steps"][prefix]["gxtb_exe_source"] = calc_gxtb["source"]
             return result
         
-        from frust.utils.uma import parse_uma_spec, uma_orca_block, uma_server as run_uma_server
+        from frust.utils.uma import (
+            current_uma_job_scope,
+            parse_uma_spec,
+            uma_orca_block,
+            uma_server as run_uma_server,
+        )
 
         spec = parse_uma_spec(
             uma,
@@ -2417,13 +2422,8 @@ class Stepper:
             return run_with_uma_block(client_block, uma_calculator(server=False))
 
         server_cores = uma_server_cores if uma_server_cores is not None else effective_n_cores
-        with run_uma_server(
-            log_dir=uma_log_dir,
-            keep_logs=uma_keep_logs,
-            use_gpu=uma_device == "cuda",
-            server_cores=server_cores,
-            memory_per_thread_mib=uma_memory_per_thread_mib,
-        ) as server_handle:
+
+        def run_on_server(server_handle):
             client_block = uma_orca_block(spec, server=True, bind=server_handle.bind)
             result = run_with_uma_block(
                 client_block,
@@ -2434,8 +2434,33 @@ class Stepper:
                         "uma_memory_per_thread_mib": int(uma_memory_per_thread_mib),
                     },
                 ),
-                input_extra={"uma_server_cores": int(server_cores)},
+                input_extra={
+                    "uma_server_cores": int(server_cores),
+                    "uma_server_pid": getattr(server_handle, "pid", None),
+                    "uma_server_hostname": getattr(server_handle, "hostname", None),
+                    "uma_server_bind": server_handle.bind,
+                },
             )
             if uma_keep_logs == "on_failure" and uma_result_failed(result):
                 server_handle.preserve()
             return result
+
+        job_scope = current_uma_job_scope()
+        if job_scope is not None:
+            server_handle = job_scope.acquire(
+                log_dir=uma_log_dir,
+                keep_logs=uma_keep_logs,
+                use_gpu=uma_device == "cuda",
+                server_cores=server_cores,
+                memory_per_thread_mib=uma_memory_per_thread_mib,
+            )
+            return run_on_server(server_handle)
+
+        with run_uma_server(
+            log_dir=uma_log_dir,
+            keep_logs=uma_keep_logs,
+            use_gpu=uma_device == "cuda",
+            server_cores=server_cores,
+            memory_per_thread_mib=uma_memory_per_thread_mib,
+        ) as server_handle:
+            return run_on_server(server_handle)

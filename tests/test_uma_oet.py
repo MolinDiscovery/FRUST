@@ -130,6 +130,27 @@ class UmaOetTests(unittest.TestCase):
             )
             self.assertEqual(result.stdout.strip(), str(oet_root))
 
+    def test_explicit_oet_tools_overrides_dotenv_in_new_process(self):
+        with tempfile.TemporaryDirectory() as td:
+            tmp = Path(td)
+            configured = tmp / "configured"
+            pinned = tmp / "pinned"
+            configured.mkdir()
+            pinned.mkdir()
+            env_file = tmp / "frust.env"
+            env_file.write_text(f"OET_TOOLS={configured}\n", encoding="utf-8")
+            env = dict(os.environ)
+            env.update({"OET_TOOLS": str(pinned), "TOOLTOAD_DOTENV_PATH": str(env_file)})
+            result = subprocess.run(
+                [sys.executable, "-c", "from frust.config import get_oet_tools; print(get_oet_tools())"],
+                cwd=Path(__file__).resolve().parents[1],
+                env=env,
+                text=True,
+                capture_output=True,
+                check=True,
+            )
+            self.assertEqual(result.stdout.strip(), str(pinned))
+
     def test_get_oet_tools_missing_is_lazy_failure(self):
         env = dict(os.environ)
         env.pop("OET_TOOLS", None)
