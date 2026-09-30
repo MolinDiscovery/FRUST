@@ -18,8 +18,10 @@ benchmark is separate.
    the solvent flag. Keep TS3/TS4 ALPB outside this bounded check; their
    shallow modes are a separate chemistry problem.
 3. Submit a small g-xTB → UMA SP → ωB97 path to confirm the hybrid selection
-   handoff. Use `kemi1` and node066 when available; record actual allocation
-   rather than assuming it. Avoid a broad screen or long benchmark.
+   handoff. Include one bounded optional ωB97 comparison on an UMA-selected
+   candidate to check that method-specific barriers remain separate. Use
+   `kemi1` and node066 when available; record actual allocation rather than
+   assuming it. Avoid a broad screen or long benchmark.
 4. Inspect early scheduler and process logs. Confirm each submitted job starts
    at most one UMA server on its compute node, all UMA client calls originate
    there and target that node's loopback address, and the saved ORCA files
@@ -44,8 +46,9 @@ benchmark is separate.
 
 ## Acceptance
 
-- Both UMA environments and the hybrid stage handoff are evidenced by saved
-  ORCA inputs, outputs, manifests, and correctly labelled result tiers.
+- Both UMA environments, the hybrid stage handoff, and the optional comparison
+  are evidenced by saved ORCA inputs, outputs, manifests, and correctly
+  labelled result tiers.
 - UMA TS/reference results and ΔE‡/ΔG‡ are produced where frequencies and
   quality permit; failures and unresolved mode review are explicit.
 - One server per job serves all its UMA stages and NumFreq calls on the

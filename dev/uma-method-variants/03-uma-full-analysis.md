@@ -86,3 +86,8 @@ restart, submitted stage plans, reference publication, missing data, bad
 frequencies, mixed protocols, and balance checks passed with mocked
 calculations. The fast UMA suite passed: 392 tests; 13 slow tests were
 deselected. Live ORCA/UMA compatibility remains for Task 05.
+
+The later four-workflow clarification adds a separate [Task 03a](03a-uma-candidate-barriers.md):
+this task's `run.barriers()` selects one UMA TS candidate, while users also
+need an inspectable barrier for each retained candidate. The optional ωB97
+comparison is specified in [Task 04a](04a-optional-wb97-comparison.md).

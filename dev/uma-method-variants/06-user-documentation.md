@@ -2,14 +2,13 @@
 
 ## Goal
 
-Teach users when to choose UMA final characterization, UMA ranking after
-g-xTB, or a focused multi-candidate UMA TS search. Base examples on the
-implemented public API and the verified functional checks.
+Teach users the four workflow choices and the optional ωB97 comparison. Base
+examples on the implemented public API and the verified functional checks.
 
 ## Work
 
 1. Update the relevant workflow, catalyst-screen, UMA, and vibration guides.
-   Start with a compact input and the three stage flows, then explain the
+   Start with a compact input and the four stage flows, then explain the
    method choices. Show focused calls using `import frust as ft` and current
    `ft.workflows` names.
 2. Give a small result table showing representative stage columns, energy
@@ -18,7 +17,9 @@ implemented public API and the verified functional checks.
    ωB97 barrier. Show how to inspect mode review and missing thermochemistry.
 3. Explain gas and ALPB choices, the separate guess/constraint profile,
    candidate limits before and after ranking, and why the focused TS path
-   retains `UMA Opt [C]` before releasing constraints.
+   retains `UMA Opt [C]` before releasing constraints. Show how to inspect
+   each candidate's barrier and quality, and how optional ωB97 comparison
+   pairs independently calculated results.
 4. Keep cluster job IDs, node names, repository revisions, repair history,
    and test anecdotes in this development plan. The user guide should show
    inputs, expected outputs, and scientific interpretation. Do not imply that

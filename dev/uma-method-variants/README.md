@@ -5,11 +5,24 @@ pending task before editing code. Record concrete results in that task's
 **Completion record**, then update the status table here. This table is the
 progress log; no separate running diary is needed.
 
-## The three agreed paths
+## The four workflow choices
 
 `[C]` means that the TS reactive core is constrained. The constraints come
 from an explicitly selected, reviewed TS-guess profile. They are released for
 the final `OptTS` search.
+
+| Choice | Screening and selection | Final barrier |
+| --- | --- | --- |
+| 1. Existing UMA screening | UMA SP and constrained UMA Opt select one candidate | ωB97 TS and reference calculations |
+| 2. UMA final, one candidate | UMA SP and constrained UMA Opt select one candidate | UMA TS and reference calculations |
+| 3. g-xTB then UMA ranking | g-xTB SP and constrained Opt, then UMA SP reranks those geometries | ωB97 TS and reference calculations; no UMA Opt |
+| 4. UMA final, several candidates | UMA SP and constrained UMA Opt retain several distinct candidates | UMA TS and reference calculations, with a barrier for each acceptable candidate |
+
+An optional ωB97 calculation on selected candidates and corresponding
+references can compare final UMA and ωB97 barriers. It is a separate method
+result; energies from the two methods must not be mixed in one barrier.
+
+The new UMA stage blocks behind choices 2–4 are:
 
 ```text
 A. UMA full result
@@ -45,8 +58,10 @@ rename gas constraints as an ALPB profile.
 | [01 — Stage and result contracts](01-stage-and-result-contracts.md) | Complete | Existing UMA screening workflow | Public choices, stage labels, tier semantics, provenance, and minimal stage-plan scaffold |
 | [02 — UMA TS refinement](02-uma-ts-refinement.md) | Complete | 01 | Constrained UMA Opt → released UMA OptTS → NumFreq with mode controls |
 | [03 — UMA full references and analysis](03-uma-full-analysis.md) | Complete | 02 | UMA minima, thermochemistry, balanced ΔE‡/ΔG‡, and portable result quality |
-| [04 — g-xTB then UMA ranking](04-gxtb-uma-ranking.md) | Pending | 01–03 | UMA SP reranking on g-xTB optimized candidates; ωB97 path preserved |
-| [05 — Bounded compute-node checks](05-compute-node-checks.md) | Pending | 01–04 | Real gas/ALPB UMA checks and hybrid ranking check; submit then return control |
+| [03a — Per-candidate UMA barriers](03a-uma-candidate-barriers.md) | Pending | 03 | Portable barrier and quality for each retained TS candidate |
+| [04 — g-xTB then UMA ranking](04-gxtb-uma-ranking.md) | Pending | 03a | UMA SP reranking on g-xTB optimized candidates; ωB97 path preserved |
+| [04a — Optional ωB97 comparison](04a-optional-wb97-comparison.md) | Pending | 04 | Separate ωB97 characterization of selected UMA candidates and references |
+| [05 — Bounded compute-node checks](05-compute-node-checks.md) | Pending | 04a | Real gas/ALPB UMA checks, hybrid ranking, and a small comparison; submit then return control |
 | [06 — User documentation](06-user-documentation.md) | Pending | 05 | Reader-facing examples verified against the completed checks |
 
 The larger accuracy and candidate-recovery benchmark is **outside this
