@@ -56,8 +56,9 @@ agent turn open to poll a long-running calculation.
 
 ## Completion record
 
-**Completed 2026-09-30 as a functional integration check; the full scientific
-barrier remains invalid.** The HPC checkout was updated from
+**Completed 2026-09-30 as a functional integration check. The original
+finalization had an invalid full barrier; the run-local ligand repair below
+leaves the full barrier at `review` pending TS1 review.** The HPC checkout was updated from
 GitHub to FRUST `21d0346` on `feature/uma-screening`. The pinned OET fork is
 `1b4fcda`, using
 `/lustre/hpc/kemi/jmni/software/oet-uma-2p23-cpu`. Both runs use the
@@ -144,5 +145,26 @@ The compact [review evidence](evidence/task06/run-review/) contains the
 analysis reports, four saved UMA ORCA input examples, client/server logs, and
 the small analysis tables. Full calculator outputs and all checkpoint parquets
 remain in the cluster run root. Task 07 must present this as a successful
-workflow execution with an invalid full scientific barrier, not as a validated
-barrier result.
+workflow execution whose original finalization had an invalid full scientific
+barrier, not as a validated barrier result.
+
+### Run-local ligand repair
+
+After the integration review, the free N-methylpyrrole ligand was recalculated
+on the Mac with 10 ORCA cores. The seed displaced the original ωB97 geometry
+by 0.30 Å along its −65.61 cm⁻¹ methyl torsion. The same ωB97 optimization,
+analytic frequency, and chloroform SMD single-point stages all terminated
+normally. The lowest frequency is now **+24.97 cm⁻¹**; the optimized energy is
+−249.415200659364 Eh, 0.080 kcal/mol below the original stationary point.
+
+The corrected DFT values and their Mac calculator provenance were merged into
+the run-local ligand checkpoints and the reference aggregate tables. Original
+files were backed up under `workflow/repair_backups/ligand_methyl_torsion_mac_20260930/`
+before replacement. The shared reference library was not changed. Rebuilt
+analysis now classifies the ligand `ready`, all four reference states `ready`,
+TS1 `review`, the low-cost barrier `ready`, and the full barrier `review`.
+This is still not a validated full barrier until TS1 is reviewed. The
+[post-repair report](evidence/task06/run-review/post-repair/repair_report.json)
+and [analysis report](evidence/task06/run-review/post-repair/analysis_report.json)
+record the change; the preceding snapshot remains as evidence of the original
+cluster finalization.

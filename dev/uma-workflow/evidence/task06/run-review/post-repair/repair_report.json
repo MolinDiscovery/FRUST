@@ -1,0 +1,23 @@
+{
+  "applied_at": "2026-09-30T14:00:15.204330+00:00",
+  "backup": "/Users/Mounts/HPC3/results/uma-task06-smoke-20260930/alpb_full/workflow/repair_backups/ligand_methyl_torsion_mac_20260930",
+  "barrier_quality": {
+    "review": 1
+  },
+  "compute_host": "local Mac",
+  "id": "ligand_methyl_torsion_mac_20260930",
+  "lowest_frequency_cm1": 24.97,
+  "n_cores": 10,
+  "new_dft_opt_energy_hartree": -249.415200659364,
+  "new_smd_single_point_energy_hartree": -249.436126874205,
+  "old_dft_opt_energy_hartree": -249.415073112332,
+  "publication_status": "Run-local repair only; shared reference library not modified",
+  "reason": "Remove a -65.61 cm-1 methyl torsion in the free ligand reference",
+  "schema_version": 1,
+  "seed": "Original DFT geometry plus 0.30 Angstrom along the imaginary mode",
+  "source": "/Users/jacobmolinnielsen/Developer/FrustActivationProject/fruits/results-2026/uma-task06-ligand-repair-mac-20260930/ligand_repaired_final.parquet",
+  "state_quality": {
+    "ready": 4,
+    "review": 1
+  }
+}

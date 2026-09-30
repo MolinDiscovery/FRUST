@@ -1,0 +1,23 @@
+{
+  "analysis_levels": [
+    "low_cost",
+    "full"
+  ],
+  "barrier_quality": {
+    "review": 1
+  },
+  "dimer_reference_quality": {
+    "ready": 1
+  },
+  "generated_at": "2026-09-30T14:00:17Z",
+  "manifest_hash": "931b412166dbfc452785baaa8796fbb14c9ab15a3f40e71f8df07fe6adc78a24",
+  "n_barriers": 1,
+  "n_dimer_candidates": 1,
+  "n_profile_states": 0,
+  "n_states": 5,
+  "schema_version": 1,
+  "state_quality": {
+    "ready": 4,
+    "review": 1
+  }
+}
