@@ -1,18 +1,17 @@
-# 04 — Build gas-phase and ALPB UMA TS-guess profiles
+# 04 — Build reviewed UMA TS-guess profiles
 
 > **Scope update, 2026-09-30:** ALPB profile construction is deferred. The
 > screening workflow can use an existing ωB97 `tsguess2` profile for its initial
 > structures and constrained screening stages, even when UMA performs the
 > screening calculations. A UMA-specific profile is useful for calibration,
-> but is not required to run screening. The remaining reference effort is one
-> final **gas-phase TS3** optimization and frequency check. Its result must be
-> reviewed in `evidence/task04/ts3_gas_review.ipynb`; if it fails, leave TS3
-> quarantined and seek user input before further reference calculations.
+> but is not required to run screening. This task now completes the **gas**
+> profile only. The ALPB profile is a later scientific investigation.
 
 ## Goal
 
-Provide two separately calculated and reviewed `tsguess2` geometry profiles
-for the selected OMol UMA model:
+Provide a calculated and reviewed gas-phase `tsguess2` geometry profile for
+the selected OMol UMA model. A separately calculated ALPB profile remains
+deferred:
 
 | Profile | Potential used for reference calculations |
 | --- | --- |
@@ -59,13 +58,13 @@ animated mode before accepting a reference.
    later r012 NMe structures are a different chemical system and may only be
    used as separately identified alternative seeds, not mixed into the same
    reference set without review.
-2. From the selected, identified starting structures, run separate gas-phase
-   and ALPB-corrected UMA reference calculations for TS1–TS4 and required
-   intermediates. These are new UMA optimizations, not copied ωB97 geometry
-   values. Keep calculation inputs, method/version metadata, and structure
-   identifiers for both sets.
-3. Run the appropriate frequency calculation on every candidate reference in
-   both environments. Require exactly one imaginary frequency for each TS and
+2. From the selected, identified starting structures, run gas-phase UMA
+   reference calculations for TS1–TS4 and required intermediates. These are
+   new UMA optimizations, not copied ωB97 geometry values. Keep calculation
+   inputs, method/version metadata, and structure identifiers. Repeat this
+   review independently if ALPB profile work resumes later.
+3. Run the appropriate frequency calculation on every candidate reference.
+   Require exactly one imaginary frequency for each TS and
    none for a minimum. Record the full negative-frequency list, the selected
    reactive mode index, and its frequency; do not assume the reactive mode is
    always mode zero.
@@ -80,7 +79,7 @@ animated mode before accepting a reference.
    automatic rejection based on a fixed cutoff. In particular, check the
    expected large TS1 imaginary mode against its recorded ωB97 value rather
    than relying on an approximate remembered number.
-6. Prepare a compact review table and saved mode viewers for gas and ALPB
+6. Prepare a compact review table and saved mode viewers for the gas
    candidates. If the reactive-mode assignment or a large frequency
    difference remains ambiguous, present the evidence to the user for
    chemical review before accepting that reference. Quarantine a rejected
@@ -89,41 +88,54 @@ animated mode before accepting a reference.
    columns (or create an explicit, audited conversion) before extracting
    candidate JSON. Review the calculated role coordinates and distances/angles
    against the final UMA geometries; do not copy source-row constraints.
-8. Create separate UMA gas and ALPB profile modules in
-   `frust/tsguess2/profiles/` and register both in that package's
-   `__init__.py`, using the existing profile conventions. Choose filenames
-   for the UMA model revision pinned in task 02. Add focused regression
-   checks for profile resolution, required-state coverage, and generated-guess
-   geometry for each environment.
-9. Make workflow profile selection follow its selected UMA environment. If a
-   state cannot be covered, report it explicitly before the workflow starts;
-   do not silently substitute gas for ALPB or vice versa.
+8. Create and register the UMA gas profile using the model revision pinned in
+   task 02. Add focused regression checks for profile resolution, required-state
+   coverage, and generated-guess geometry. Do not register an unreviewed ALPB
+   profile.
+9. In task 05, make workflow profile selection explicit. An ALPB calculation
+   may use a separately chosen initial guess profile, but must not describe a
+   gas geometry as an ALPB reference.
 
 ## Acceptance
 
-- Every required state in each environment has a reviewed reference or an
-  explicit documented limitation; no silent cross-method or cross-environment
-  fallback occurs.
+- Every required gas state has a reviewed reference. ALPB is explicitly
+  deferred and has no registered UMA profile.
 - Every accepted TS has exactly one imaginary frequency and a visually
   confirmed reactive mode. Every accepted minimum has no imaginary modes.
   Review records contain the mode index, frequency, viewer path, and matched
-  ωB97 comparison for each TS; unresolved cases receive user review.
-- Two registered profile files exist in `frust/tsguess2/profiles/`. Each
-  records the UMA model and whether its source geometries used gas-phase UMA
-  or the xTB ALPB(chloroform) correction.
+  ωB97 comparison where available. Unmatched chemistry and unresolved cases
+  are identified explicitly and receive user review.
+- A registered gas profile records the UMA model and gas-phase source method.
 - Focused geometry and profile tests pass in the UMA environment.
 
 ## Completion record
 
-Pending. The initial gas TS3 result has two shallow imaginary frequencies
-(−27.81 and −13.02 cm⁻¹), neither assigned confidently to the reactive mode.
-The first Hessian-guided retries failed before OptTS because ORCA could not
-find `private_input.hess`; their redundant subsequent frequency calculations
-were cancelled. The final gas attempt uses direct OptTS from the ALPB-optimized
-TS3 geometry displaced along its two shallow peripheral modes, followed by
-gas-phase NumFreq. Job `65685852` completed with one imaginary mode at
-−94.46 cm⁻¹, but its optimized reactive distances and mode agree closely with
-the separately optimized gas TS4. The [review finding](evidence/task04/ts3_gas_final_review.md)
-and executed [review notebook](evidence/task04/ts3_gas_review.ipynb) therefore
-leave TS3 quarantined pending user chemical review. No UMA gas TS3 profile is
-active; no ALPB profile work is planned in the present scope.
+Complete for the agreed gas-only scope. The initial gas TS3 result had two
+shallow imaginary frequencies (−27.81 and −13.02 cm⁻¹). The final direct
+gas-phase OptTS/NumFreq job `65685852` converged with one imaginary mode,
+mode 0 at −94.46 cm⁻¹. Its reactive distances and mode resemble gas TS4,
+as expected for these closely related structures. After reviewing the
+[executed notebook](evidence/task04/ts3_gas_review.ipynb) and rotating the
+py3Dmol viewers, the user accepted its TS3 assignment. The
+[review record](evidence/task04/ts3_gas_final_review.md) preserves the numeric
+comparison and the limitation that a matched ωB97 frequency for this exact
+TMP/thiophene system is unavailable.
+
+The reviewed [candidate JSON](evidence/task04/uma_gas_reviewed_candidates.json)
+provides five gas states: TS1 −944.65, TS2 −278.92, TS3 −94.46, and TS4
+−65.68 cm⁻¹, each with exactly one imaginary mode, plus INT3 with none. The
+registered `omol-uma-s-1p2p1/gas` profile contains those five references.
+The profile tests cover exact resolution, constraints against role coordinates,
+and a generated TS3 guess. ALPB profile construction remains deferred; the
+workflow task must handle this choice explicitly.
+
+Verification on the local development checkout in the `UMA` environment:
+
+```text
+conda run -n UMA python -m pytest tests/test_method_aware_ts_specs.py tests/test_workflow_methods.py tests/test_tsguess2_role_mapping.py -q
+25 passed
+conda run -n UMA mkdocs build --strict
+Documentation built successfully
+git diff --check
+No whitespace errors
+```

@@ -1,4 +1,4 @@
-# Final gas UMA TS3 candidate: review finding
+# Final gas UMA TS3 candidate: accepted review
 
 Job `65685852` on `node066` completed normally in 11 min 57 sec with FRUST
 revision `ed58fe1`, OET runtime `oet-uma-2p23-cpu`, and
@@ -11,7 +11,7 @@ The saved result is
 The optimization and final numerical frequency calculation terminated
 normally. Exactly one imaginary mode remains, mode 0 at **−94.46 cm⁻¹**; the
 next frequency is +26.02 cm⁻¹. That satisfies the numerical first-order
-saddle criterion, but not yet the TS3 identity criterion.
+saddle criterion.
 
 | Geometry | Bcat–H (Å) | Bpin–H (Å) | Bcat–Csub (Å) | Bpin–Csub (Å) |
 | --- | ---: | ---: | ---: | ---: |
@@ -20,19 +20,23 @@ saddle criterion, but not yet the TS3 identity criterion.
 | Existing gas TS4 | 1.236 | 1.536 | 1.847 | 1.639 |
 
 The new gas geometry lies much closer to the separately optimized gas TS4
-reactive core than to the TS3 seed. The signed changes in five reactive
-distances across ±0.25 of mode 0 have a cosine of **−0.9978** against the gas
+reactive core than to the TS3 seed. TS3 and TS4 are closely related, so these
+distances alone do not distinguish their chemical assignments. The signed
+changes in five reactive distances across ±0.25 of mode 0 have a cosine of
+**−0.9978** against the gas
 TS4 imaginary-mode distance-change vector. Mode sign is arbitrary, so the
 magnitudes and directions of the underlying motions closely agree. Visual
 inspection of the `ft.plot_vibs` animation and its two displaced endpoint
 structures likewise shows Bpin/substrate/catalyst-core movement.
 The local result directory contains `ts3_gas_reactive_mode.html`,
 `ts3_gas_mode_endpoints_compact.html`, and `ts3_vs_ts4_modes.html` for direct
-visual review.
+visual review. The py3Dmol viewers were also rotated interactively to inspect
+the three-dimensional arrangement and mode from more than one direction.
 
-**Decision: quarantine pending user chemical review.** The result is a
-first-order saddle, but appears TS4-like. Do not activate it as the UMA gas
-TS3 profile reference solely from its one imaginary frequency. A matched
+**Decision: accept as the UMA gas TS3 profile reference.** The user reviewed
+the notebook and found the TS3 structure and reactive motion chemically right.
+The numerical saddle and mode checks support that assessment. Similarity to
+TS4 remains an observation, not evidence of a wrong assignment. A matched
 ωB97 frequency for this exact TMP/thiophene source remains unavailable, so
 the broader ωB97 TS3 distribution is context only.
 

@@ -22,12 +22,15 @@ from frust.tsguess2.profiles.r2scan3c_smd_chloroform import (
     GEOMETRY_KEY as R2SCAN3C_SMD_KEY,
     QUARANTINED_STATES as R2SCAN3C_SMD_QUARANTINED,
 )
+from frust.tsguess2.profiles.uma_omol_s_1p2p1_gas import (
+    GEOMETRIES as UMA_GAS_GEOMETRIES,
+    GEOMETRY_KEY as UMA_GAS_KEY,
+)
 from frust.tsguess2.profiles.wb97xd3_631g_gas import (
     GEOMETRIES as WB97_GAS_GEOMETRIES,
     GEOMETRY_KEY as WB97_GAS_KEY,
 )
 from frust.tsguess2.topologies import CORE_TOPOLOGIES
-
 
 WB97_SMD_KEY = GeometryKey(
     method="wb97xd3-631g",
@@ -38,13 +41,20 @@ WB97_SMD_KEY = GeometryKey(
 
 PROFILE_KEYS: dict[str, GeometryKey] = {
     key.profile_id: key
-    for key in (WB97_GAS_KEY, WB97_SMD_KEY, R2SCAN3C_GAS_KEY, R2SCAN3C_SMD_KEY)
+    for key in (
+        WB97_GAS_KEY,
+        WB97_SMD_KEY,
+        R2SCAN3C_GAS_KEY,
+        R2SCAN3C_SMD_KEY,
+        UMA_GAS_KEY,
+    )
 }
 
 _GEOMETRIES: dict[str, dict[str, StateGeometrySpec]] = {
     WB97_GAS_KEY.profile_id: WB97_GAS_GEOMETRIES,
     R2SCAN3C_GAS_KEY.profile_id: R2SCAN3C_GAS_GEOMETRIES,
     R2SCAN3C_SMD_KEY.profile_id: R2SCAN3C_SMD_GEOMETRIES,
+    UMA_GAS_KEY.profile_id: UMA_GAS_GEOMETRIES,
 }
 _QUARANTINED: dict[str, dict[str, str]] = {
     R2SCAN3C_SMD_KEY.profile_id: R2SCAN3C_SMD_QUARANTINED,
@@ -93,7 +103,10 @@ def resolve_profile_spec(
     if match == "prefer-exact":
         requested_key = PROFILE_KEYS[profile_id]
         for candidate_id, candidate_key in PROFILE_KEYS.items():
-            if candidate_id == profile_id or candidate_key.method != requested_key.method:
+            if (
+                candidate_id == profile_id
+                or candidate_key.method != requested_key.method
+            ):
                 continue
             geometry = _active_geometry(candidate_id, state_key)
             if geometry is not None:
@@ -136,13 +149,16 @@ def normalize_profile_id(profile: str) -> str:
         "r2scan3c-solv": R2SCAN3C_SMD_KEY.profile_id,
         "r2scan-3c": R2SCAN3C_GAS_KEY.profile_id,
         "r2scan-3c-solv": R2SCAN3C_SMD_KEY.profile_id,
+        "uma-gas": UMA_GAS_KEY.profile_id,
         "wb97xd3-631g/smd(chloroform)": WB97_SMD_KEY.profile_id,
         "r2scan-3c/smd(chloroform)": R2SCAN3C_SMD_KEY.profile_id,
     }
     value = aliases.get(value, value)
     if value not in PROFILE_KEYS:
         available = ", ".join(sorted(PROFILE_KEYS))
-        raise ValueError(f"Unknown tsguess2 profile {profile!r}; expected one of {available}")
+        raise ValueError(
+            f"Unknown tsguess2 profile {profile!r}; expected one of {available}"
+        )
     return value
 
 
@@ -186,7 +202,8 @@ def show_spec_profiles() -> pd.DataFrame:
                     "environment": key.environment,
                     "state": state,
                     "status": status,
-                    "selectable_prefer_exact": status == "active" or fallback_profile is not None,
+                    "selectable_prefer_exact": status == "active"
+                    or fallback_profile is not None,
                     "fallback_profile": fallback_profile,
                     "spec_id": spec_id,
                     "reference_catalyst": reference_catalyst,

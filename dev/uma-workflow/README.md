@@ -15,7 +15,8 @@ are the work requests; this page is the only progress record.
 
 The proposed default UMA screen uses the OMol task and an xTB implicit solvent
 correction for chloroform. Gas-phase UMA is also a selectable screen, with its
-own geometry profile, so the solvent correction can be evaluated separately.
+own reviewed geometry profile. An ALPB-specific profile remains deferred; task
+05 must choose the initial-guess profile explicitly for corrected screening.
 The corrected potential applies the difference to both energies and gradients:
 
 ```text
@@ -25,7 +26,8 @@ E = E_UMA + E_GFN2-xTB,ALPB(chloroform) - E_GFN2-xTB,gas
 For a corrected run, the same composite potential must be used for UMA single
 points, optimization, and numerical-frequency displacements. The ORCA input
 and saved result metadata must identify the UMA model and whether gas phase or
-ALPB(chloroform) was used. Select the corresponding geometry profile.
+ALPB(chloroform) was used. Record the initial-guess profile separately from
+the calculation environment.
 
 For an UMA screen, `level="dft_ranked"` runs the ωB97 ranking single point.
 With `level="full"`, the ranking single point is independently configurable:
@@ -40,7 +42,7 @@ settles the public switch name and its UMA default before implementation.
 | [01 — Audit](01-audit.md) | Complete | None | Version and behavior baseline, including the OET fork decision |
 | [02 — Solvent correction](02-solvent-correction.md) | Complete | 01 | OET UMA energy/gradient correction with an explicit input option |
 | [03 — Server lifecycle](03-server-lifecycle.md) | Complete | 01–02 | One reusable UMA server per submitted target job |
-| [04 — Geometry profiles](04-geometry-profile.md) | Pending | 02–03 | Separate reviewed UMA gas and ALPB(chloroform) TS-guess profiles |
+| [04 — Geometry profiles](04-geometry-profile.md) | Complete for gas; ALPB deferred | 02–03 | Reviewed UMA gas TS-guess profile for TS1–TS4 and INT3 |
 | [05 — Workflow integration](05-workflow-integration.md) | Pending | 02–04 | Named UMA screening stages and ωB97 validation path |
 | [06 — Final smoke test and docs](06-smoke-and-docs.md) | Pending | 01–05 | Small cluster end-to-end run and user-facing guidance |
 
@@ -71,7 +73,7 @@ a screening benchmark.
 | --- | --- |
 | UMA is the screening method; ωB97 is the main full-validation method | Earlier r2SCAN-3c results showed problems; its existing workflow remains supported. |
 | Use an xTB ALPB chloroform difference on top of UMA | UMA's current OET wrapper has no built-in solvent flag; the correction must supply matching energy and gradient changes. |
-| Build separate UMA gas and ALPB(chloroform) profiles | The ALPB result may be unsuitable; each potential needs its own calculated and reviewed geometry references. The proposed workflow uses ALPB by default, with gas phase selectable. |
+| Build the UMA gas profile now; defer ALPB geometry calibration | The ALPB potential may be unsuitable for low-frequency TS3/TS4 references. Corrected screening may start from an explicitly selected gas or ωB97 guess profile without labelling it as an ALPB reference. |
 | One UMA server per submitted target job | Reuse the loaded model across the job's UMA stages and numerical-frequency calls; stop it at job exit. |
 | Use explicit UMA stage names and result labels | `xtb_sp` and `xtb_opt` would misdescribe UMA results. |
 | Make DFT ranking SP optional in UMA `full` runs | Keep `dft_ranked` available and allow a full run both with and without the ranking SP. The UMA default is still to be decided. |

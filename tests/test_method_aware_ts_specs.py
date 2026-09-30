@@ -25,7 +25,7 @@ def _components() -> pd.DataFrame:
     )
 
 
-def test_profile_catalog_exposes_all_four_method_environment_slots():
+def test_profile_catalog_exposes_reviewed_method_environment_slots():
     profiles = ft.show_spec_profiles()
 
     assert set(profiles["profile"]) == {
@@ -33,6 +33,7 @@ def test_profile_catalog_exposes_all_four_method_environment_slots():
         "wb97xd3-631g/smd-chloroform",
         "r2scan-3c/gas",
         "r2scan-3c/smd-chloroform",
+        "omol-uma-s-1p2p1/gas",
     }
     r2_solv = profiles[profiles["profile"].eq("r2scan-3c/smd-chloroform")]
     assert set(r2_solv.loc[r2_solv["status"].eq("active"), "state"]) == {
@@ -64,6 +65,19 @@ def test_profile_catalog_exposes_all_four_method_environment_slots():
         "d316deaefc39d41683a99df28819dabbc9e194c012688f2fe264c5016d43e3ee"
     )
 
+    uma_gas = profiles[profiles["profile"].eq("omol-uma-s-1p2p1/gas")]
+    assert set(uma_gas.loc[uma_gas["status"].eq("active"), "state"]) == {
+        "TS1",
+        "TS2",
+        "TS3",
+        "TS4",
+        "INT3",
+    }
+    assert uma_gas["mode_reviewed"].eq(True).all()  # noqa: E712
+    uma_by_state = uma_gas.set_index("state")
+    assert uma_by_state.loc["TS3", "negative_frequencies"] == (-94.46,)
+    assert uma_by_state.loc["INT3", "negative_frequencies"] == ()
+
 
 def test_profile_resolution_falls_back_only_within_method_family():
     r2 = resolve_profile_spec("TS4", "r2scan-3c/gas")
@@ -73,11 +87,14 @@ def test_profile_resolution_falls_back_only_within_method_family():
     assert r2.match == "exact"
     assert wb97.resolved_profile == "wb97xd3-631g/gas"
     assert wb97.spec.spec_id.startswith("TS4::tsguess2-v2::wb97xd3-631g")
-    assert resolve_profile_spec(
-        "TS4",
-        "r2scan-3c/gas",
-        match="exact",
-    ).spec.spec_id == "TS4::tsguess2-v2::r2scan-3c::gas::r1"
+    assert (
+        resolve_profile_spec(
+            "TS4",
+            "r2scan-3c/gas",
+            match="exact",
+        ).spec.spec_id
+        == "TS4::tsguess2-v2::r2scan-3c::gas::r1"
+    )
 
 
 def test_quarantined_smd_ts3_falls_back_to_reviewed_gas_reference():
@@ -94,7 +111,9 @@ def test_r2scan_gas_constraints_match_stored_role_coordinates():
     for state in ("TS1", "TS2", "TS3", "TS4", "INT3"):
         spec = resolve_profile_spec(state, "r2scan-3c/gas", match="exact").spec
         for constraint in spec.constraints:
-            points = [np.asarray(spec.role_coordinates[role]) for role in constraint.roles]
+            points = [
+                np.asarray(spec.role_coordinates[role]) for role in constraint.roles
+            ]
             if constraint.kind == "distance":
                 measured = float(np.linalg.norm(points[0] - points[1]))
             else:
@@ -105,6 +124,63 @@ def test_r2scan_gas_constraints_match_stored_role_coordinates():
                 )
                 measured = degrees(acos(np.clip(cosine, -1.0, 1.0)))
             assert constraint.value == pytest.approx(measured, abs=1e-9)
+
+
+def test_uma_gas_profile_resolves_exactly_and_matches_role_coordinates():
+    for state in ("TS1", "TS2", "TS3", "TS4", "INT3"):
+        selection = resolve_profile_spec(state, "omol-uma-s-1p2p1/gas", match="exact")
+        assert selection.match == "exact"
+        assert selection.resolved_profile == "omol-uma-s-1p2p1/gas"
+        assert selection.spec.spec_id == (
+            f"{state}::tsguess2-v2::omol-uma-s-1p2p1::gas::r1"
+        )
+        for constraint in selection.spec.constraints:
+            points = [
+                np.asarray(selection.spec.role_coordinates[role])
+                for role in constraint.roles
+            ]
+            if constraint.kind == "distance":
+                measured = float(np.linalg.norm(points[0] - points[1]))
+                tolerance = 1e-5
+            else:
+                left = points[0] - points[1]
+                right = points[2] - points[1]
+                cosine = float(
+                    np.dot(left, right) / (np.linalg.norm(left) * np.linalg.norm(right))
+                )
+                measured = degrees(acos(np.clip(cosine, -1.0, 1.0)))
+                tolerance = 1e-4
+            assert constraint.value == pytest.approx(measured, abs=tolerance)
+
+    with pytest.raises(ValueError, match="Unknown tsguess2 profile"):
+        resolve_profile_spec("TS3", "omol-uma-s-1p2p1/alpb-chloroform")
+
+
+def test_uma_gas_ts3_guess_records_resolved_geometry_and_constraints():
+    systems = ft.screen.expand(_components())
+    guesses = ft.screen.create_ts_guesses(
+        systems,
+        ts_types=["TS3"],
+        n_confs=1,
+        spec_profile="omol-uma-s-1p2p1/gas",
+        spec_match="exact",
+    )
+    row = guesses["TS3"].iloc[0]
+    spec = resolve_profile_spec("TS3", "omol-uma-s-1p2p1/gas", match="exact").spec
+
+    assert row["ts_spec_id"] == spec.spec_id
+    assert row["constraint_spec"] == spec.constraint_dicts()
+    assert set(spec.role_coordinates).issubset(row["constraint_roles"])
+    assert len(row["coords_embedded"]) == len(row["atoms"])
+    assert np.isfinite(np.asarray(row["coords_embedded"])).all()
+    for role, element in {
+        "cat_B": "B",
+        "pin_B": "B",
+        "substrate_C": "C",
+        "transfer_H": "H",
+    }.items():
+        assert row["atoms"][row["constraint_roles"][role]] == element
+    assert guesses["TS3"].attrs["frust_tsguess2"]["spec_selection"]["match"] == "exact"
 
 
 def test_workflow_method_plan_selects_geometry_profile_upstream():
