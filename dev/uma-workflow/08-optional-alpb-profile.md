@@ -1,9 +1,9 @@
-# Post-task 07 — Optional UMA ALPB(chloroform) geometry profile
+# Post-task 08 — Optional UMA ALPB(chloroform) geometry profile
 
-> **Optional, after Task 06.** This task is a later attempt to complete an
+> **Optional, after Task 07.** This task is a later attempt to complete an
 > ALPB-specific `tsguess2` reference profile. It does not block UMA screening,
 > full ωB97 validation, or the functional smoke test. Do not start these
-> calculations as part of Tasks 05–06.
+> calculations as part of Tasks 05–07.
 
 ## Starting point
 
@@ -71,6 +71,6 @@ include the later scientific screening benchmark.
 
 ## Completion record
 
-Pending. Start only after Task 06 and a separate decision to pursue this
+Pending. Start only after Task 07 and a separate decision to pursue this
 optional calculation work. Record job IDs, source parquets, review viewers,
 accepted mode indices and frequencies, profile status, and focused tests here.

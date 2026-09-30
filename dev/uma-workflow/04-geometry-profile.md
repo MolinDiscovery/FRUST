@@ -128,7 +128,7 @@ registered `omol-uma-s-1p2p1/gas` profile contains those five references.
 The profile tests cover exact resolution, constraints against role coordinates,
 and a generated TS3 guess. ALPB profile construction remains deferred; the
 workflow task must handle this choice explicitly. A bounded follow-up is
-described in [Post-task 07](07-optional-alpb-profile.md).
+described in [Post-task 08](08-optional-alpb-profile.md).
 
 Verification on the local development checkout in the `UMA` environment:
 

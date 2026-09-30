@@ -100,5 +100,5 @@ coordinator stage graph including molecule references and INT3.
 Checks: `conda run -n UMA python -m pytest tests/test_uma_screening_workflow.py -q`
 (7 passed); `conda run -n UMA python -m pytest -q` (363 passed, 13 deselected);
 `conda run -n UMA mkdocs build --strict` (passed). A real compute-node
-end-to-end run and final user guide review remain in Task 06. The scientific
-screening benchmark remains outside this task sequence.
+end-to-end run remains in Task 06, and the final user guide review is Task 07.
+The scientific screening benchmark remains outside this task sequence.
