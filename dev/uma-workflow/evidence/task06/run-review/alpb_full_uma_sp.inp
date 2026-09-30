@@ -1,0 +1,38 @@
+# Automatically generated ORCA input
+
+# Number of cores
+%pal nprocs 2 end
+# RAM per core
+%maxcore 13107
+
+! ExtOpt 
+
+%method
+ProgExt "/lustre/hpc/kemi/jmni/results/uma-task06-smoke-20260930/alpb_full/oet-audit/bin/oet_client"
+Ext_Params "-b 127.0.0.1:57333 -t omol -m uma-s-1p2p1 -d cpu -o True --xtb-alpb chloroform --inference-settings batch"
+end
+%output
+Print[P_EXT_OUT] 1
+Print[P_EXT_GRAD] 1
+end
+%Output
+  JSONPropFile True
+End
+
+
+*xyz 0 1 
+C        -1.89710520      0.13542929      0.05714193
+N        -0.44012255      0.02770905      0.01393572
+C         0.43697814      1.08259011     -0.11063099
+C         1.71201277      0.57905416     -0.11255695
+C         1.61982759     -0.81461106      0.01266318
+C         0.28994398     -1.13865115      0.08893483
+H        -2.19764464      0.80009447      0.86473148
+H        -2.34447204     -0.84262461      0.22376297
+H        -2.26842034      0.53438191     -0.88482579
+H         0.14940714      2.11821052     -0.19090507
+H         2.62305294      1.15103449     -0.19534309
+H         2.44692976     -1.50667298      0.04292590
+H        -0.13038754     -2.12594420      0.19016585
+*
+

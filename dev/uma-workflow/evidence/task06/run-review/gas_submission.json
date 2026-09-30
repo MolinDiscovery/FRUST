@@ -1,0 +1,25 @@
+{
+  "mode": "gas_low_cost",
+  "submission_host": "fend05.cluster",
+  "frust_revision": "21d03466d922941efc4117be73ef8a460275d649",
+  "oet_revision": "1b4fcda928e7374bb72212f296a8821f99a78323",
+  "oet_runtime": "/lustre/hpc/kemi/jmni/software/oet-uma-2p23-cpu",
+  "input": "/lustre/hpc/kemi/jmni/results/uma-task06-smoke-20260930/gas_low_cost/screen.csv",
+  "guess_profile": "wb97xd3-631g/gas",
+  "include_dft_rank_sp": false,
+  "jobs": {
+    "transition_states": {
+      "job_ids": [
+        "65689189"
+      ],
+      "targets": [
+        "TS1__n_methyl_pyrrole__tmp_bcat__r2"
+      ],
+      "directories": [
+        "/lustre/hpc/kemi/jmni/results/uma-task06-smoke-20260930/gas_low_cost/workflow/TS1__n_methyl_pyrrole__tmp_bcat__r2"
+      ],
+      "collection_job_id": "65689191"
+    }
+  },
+  "finalization_job_id": null
+}

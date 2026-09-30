@@ -1,0 +1,131 @@
+{
+  "analysis": {
+    "analysis_levels": [
+      "low_cost",
+      "full"
+    ],
+    "barrier_quality": {
+      "invalid": 1
+    },
+    "dimer_reference_quality": {
+      "ready": 1
+    },
+    "generated_at": "2026-09-30T12:47:31Z",
+    "manifest_hash": "931b412166dbfc452785baaa8796fbb14c9ab15a3f40e71f8df07fe6adc78a24",
+    "n_barriers": 1,
+    "n_dimer_candidates": 1,
+    "n_profile_states": 0,
+    "n_states": 5,
+    "schema_version": 1,
+    "state_quality": {
+      "invalid": 1,
+      "ready": 3,
+      "review": 1
+    }
+  },
+  "analysis_tiers": {
+    "levels": {
+      "low_cost": {
+        "references": {
+          "complete": true,
+          "n_rows": 4,
+          "n_snapshots": 4,
+          "n_targets": 4,
+          "path": "calculations/references/tiers/low_cost/merged.parquet"
+        },
+        "transition_states": {
+          "complete": true,
+          "n_rows": 1,
+          "n_snapshots": 1,
+          "n_targets": 1,
+          "path": "calculations/transition_states/tiers/low_cost/merged.parquet"
+        }
+      }
+    },
+    "schema_version": 1
+  },
+  "artifact_policy": "standard",
+  "branches": {
+    "references": {
+      "n_collected": 4,
+      "n_errored": 0,
+      "n_failures": 0,
+      "n_missing": 0,
+      "n_rows": 4,
+      "n_skipped": 0,
+      "n_targets": 4,
+      "output": "/lustre/hpc/kemi/jmni/results/uma-task06-smoke-20260930/alpb_full/workflow/calculations/references/computed.parquet",
+      "target_retention": "all",
+      "timing": {
+        "n_timing_files": 4,
+        "n_timing_groups": 16,
+        "total_core_hours": 19.037319,
+        "total_elapsed_s": 17133.587311
+      },
+      "workflow": "mols"
+    },
+    "transition_states": {
+      "n_collected": 1,
+      "n_errored": 0,
+      "n_failures": 0,
+      "n_missing": 0,
+      "n_rows": 1,
+      "n_skipped": 0,
+      "n_targets": 1,
+      "output": "/lustre/hpc/kemi/jmni/results/uma-task06-smoke-20260930/alpb_full/workflow/calculations/transition_states/merged.parquet",
+      "target_retention": "all",
+      "timing": {
+        "n_timing_files": 1,
+        "n_timing_groups": 5,
+        "total_core_hours": 13.350326,
+        "total_elapsed_s": 12015.293553
+      },
+      "workflow": "screen_ts"
+    }
+  },
+  "finalized_at": "2026-09-30T12:47:31Z",
+  "n_references_calculated": 4,
+  "n_references_not_published": 1,
+  "n_references_published": 3,
+  "n_references_reused": 0,
+  "overall_status": "partial",
+  "reference_publication_report": "calculations/references/publication_report.json",
+  "schema_version": 2,
+  "submission": {
+    "references": {
+      "collection_job_id": "65689186",
+      "collection_output": "/lustre/hpc/kemi/jmni/results/uma-task06-smoke-20260930/alpb_full/workflow/calculations/references/computed.parquet",
+      "collection_report": "/lustre/hpc/kemi/jmni/results/uma-task06-smoke-20260930/alpb_full/workflow/calculations/references/collection_report.json",
+      "job_ids": [
+        "65689170",
+        "65689171",
+        "65689172",
+        "65689173",
+        "65689174",
+        "65689175",
+        "65689176",
+        "65689177",
+        "65689178",
+        "65689179",
+        "65689180",
+        "65689181",
+        "65689182",
+        "65689183",
+        "65689184",
+        "65689185"
+      ]
+    },
+    "transition_states": {
+      "collection_job_id": "65689169",
+      "collection_output": "/lustre/hpc/kemi/jmni/results/uma-task06-smoke-20260930/alpb_full/workflow/calculations/transition_states/merged.parquet",
+      "collection_report": "/lustre/hpc/kemi/jmni/results/uma-task06-smoke-20260930/alpb_full/workflow/calculations/transition_states/collection_report.json",
+      "job_ids": [
+        "65689162",
+        "65689163",
+        "65689164",
+        "65689166",
+        "65689168"
+      ]
+    }
+  }
+}

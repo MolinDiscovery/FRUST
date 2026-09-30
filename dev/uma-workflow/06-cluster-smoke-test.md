@@ -56,7 +56,8 @@ agent turn open to poll a long-running calculation.
 
 ## Completion record
 
-**Running — pass 1 completed 2026-09-30.** The HPC checkout was updated from
+**Completed 2026-09-30 as a functional integration check; the full scientific
+barrier remains invalid.** The HPC checkout was updated from
 GitHub to FRUST `21d0346` on `feature/uma-screening`. The pinned OET fork is
 `1b4fcda`, using
 `/lustre/hpc/kemi/jmni/software/oet-uma-2p23-cpu`. Both runs use the
@@ -98,6 +99,50 @@ The submission script is
 [`evidence/task06/submit_smoke.py`](evidence/task06/submit_smoke.py).
 Focused local checks passed with
 `conda run -n UMA python -m pytest tests/test_uma_screening_workflow.py tests/test_uma_job_scope.py -q`
-(11 passed). When the user reports completion, inspect the ALPB finalizer,
-collector reports, result tiers, DFT stages, server stop events, and any
-chemistry-specific failures before marking Task 06 complete.
+(11 passed).
+
+### Pass 2 — completed result review
+
+All target, collection, and finalization Slurm jobs finished on `node066` with
+exit code `0:0`, including finalizer `65689187`. The TS branch collected 1/1
+target and the reference branch 4/4, each with zero missing, skipped, or
+errored outputs. Every `*-NT` flag in their final result rows is true. The TS
+path completed `uma_sp` → `uma_sp_filter` → `uma_opt` → ωB97 `dft_preopt` →
+`dft_hessian` → `dft_ts_opt` → `dft_freq` → `dft_solv_sp`; the molecule
+references completed their ωB97 optimization, frequency, and solvent stages.
+The completed rows contain no `dft_rank_sp-EE` column, and the run has
+`low_cost` and `full` tiers only.
+
+All 9 saved ALPB UMA single-point inputs and all 5 optimization inputs contain
+`--xtb-alpb chloroform`. The gas check's 2 single-point and 1 optimization
+inputs omit it. Both modes use `omol@uma-s-1p2p1`; the full TS result records
+`guess_profile=wb97xd3-631g/gas` independently. The result contract resolves
+the full analysis energy to `dft_solv_sp-EE`, the full TS geometry to
+`dft_ts_opt-oc`, and the low-cost analysis energy to `uma_opt-EE`.
+
+The five ALPB server logs each contain exactly one start and one stop for
+their job PID. All 62 audited ALPB client calls were made from
+`node066.cluster` to those five matching `127.0.0.1` binds. The gas job made
+19 local client calls and logged one start and stop. Saved TS stage provenance
+shows that `uma_sp` and `uma_opt` reused the same server PID (`765594` ALPB;
+`765593` gas). A separate post-job PID probe could not get a new node066
+allocation while the node was busy; the launcher stop events and completed
+Slurm jobs are the cleanup evidence.
+
+The [run report](evidence/task06/run-review/run_report.json) has
+`overall_status="partial"`. It correctly marks the ligand **invalid** because
+its ωB97 frequency has one imaginary mode at **−65.61 cm⁻¹**, rather than the
+zero required for a minimum. TS1 has one imaginary mode at **−1077.84 cm⁻¹**
+but remains **unreviewed**, so its status is `review`. The full barrier is
+therefore **invalid** (`dependency_invalid:ligand` and
+`dependency_review:TS1`), despite the completed numerical energy. The
+low-cost barrier tier is `ready`. No large-scale benchmark or ligand repair was
+attempted in this functional check.
+
+The compact [review evidence](evidence/task06/run-review/) contains the
+[Slurm status](evidence/task06/run-review/slurm_status.txt), collection and
+analysis reports, four saved UMA ORCA input examples, client/server logs, and
+the small analysis tables. Full calculator outputs and all checkpoint parquets
+remain in the cluster run root. Task 07 must present this as a successful
+workflow execution with an invalid full scientific barrier, not as a validated
+barrier result.

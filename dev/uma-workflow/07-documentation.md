@@ -29,6 +29,11 @@ This task is documentation work; it does not start another screening campaign.
    demonstrated. Run `conda run -n UMA mkdocs build --strict` and fix broken
    links or examples.
 
+> **Task 06 result:** The full execution completed, but its barrier is invalid
+> because the ligand has one imaginary ωB97 mode (−65.61 cm⁻¹), and TS1's
+> single imaginary mode (−1077.84 cm⁻¹) remains unreviewed. The guide must
+> distinguish workflow success from a scientifically accepted barrier.
+
 ## Acceptance
 
 - A reader can run a small gas or ALPB UMA screen, select the intended guess

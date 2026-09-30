@@ -1,0 +1,62 @@
+{
+  "mode": "alpb_full",
+  "submission_host": "fend05.cluster",
+  "frust_revision": "21d03466d922941efc4117be73ef8a460275d649",
+  "oet_revision": "1b4fcda928e7374bb72212f296a8821f99a78323",
+  "oet_runtime": "/lustre/hpc/kemi/jmni/software/oet-uma-2p23-cpu",
+  "input": "/lustre/hpc/kemi/jmni/results/uma-task06-smoke-20260930/alpb_full/screen.csv",
+  "guess_profile": "wb97xd3-631g/gas",
+  "include_dft_rank_sp": false,
+  "jobs": {
+    "transition_states": {
+      "job_ids": [
+        "65689162",
+        "65689163",
+        "65689164",
+        "65689166",
+        "65689168"
+      ],
+      "targets": [
+        "TS1__n_methyl_pyrrole__tmp_bcat__r2"
+      ],
+      "directories": [
+        "/lustre/hpc/kemi/jmni/results/uma-task06-smoke-20260930/alpb_full/workflow/calculations/transition_states/TS1__n_methyl_pyrrole__tmp_bcat__r2"
+      ],
+      "collection_job_id": "65689169"
+    },
+    "references": {
+      "job_ids": [
+        "65689170",
+        "65689171",
+        "65689172",
+        "65689173",
+        "65689174",
+        "65689175",
+        "65689176",
+        "65689177",
+        "65689178",
+        "65689179",
+        "65689180",
+        "65689181",
+        "65689182",
+        "65689183",
+        "65689184",
+        "65689185"
+      ],
+      "targets": [
+        "ligand__n_methyl_pyrrole",
+        "dimer__tmp_bcat",
+        "HBpin-mol",
+        "HH"
+      ],
+      "directories": [
+        "/lustre/hpc/kemi/jmni/results/uma-task06-smoke-20260930/alpb_full/workflow/calculations/references/ligand__n_methyl_pyrrole",
+        "/lustre/hpc/kemi/jmni/results/uma-task06-smoke-20260930/alpb_full/workflow/calculations/references/dimer__tmp_bcat",
+        "/lustre/hpc/kemi/jmni/results/uma-task06-smoke-20260930/alpb_full/workflow/calculations/references/HBpin-mol",
+        "/lustre/hpc/kemi/jmni/results/uma-task06-smoke-20260930/alpb_full/workflow/calculations/references/HH"
+      ],
+      "collection_job_id": "65689186"
+    }
+  },
+  "finalization_job_id": "65689187"
+}

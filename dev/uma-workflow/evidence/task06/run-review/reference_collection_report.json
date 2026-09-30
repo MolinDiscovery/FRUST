@@ -1,0 +1,162 @@
+{
+  "collected_files": [
+    "/lustre/hpc/kemi/jmni/results/uma-task06-smoke-20260930/alpb_full/workflow/calculations/references/ligand__n_methyl_pyrrole/init.dft_opt.dft_freq.dft_solv_sp.parquet",
+    "/lustre/hpc/kemi/jmni/results/uma-task06-smoke-20260930/alpb_full/workflow/calculations/references/dimer__tmp_bcat/init.dft_opt.dft_freq.dft_solv_sp.parquet",
+    "/lustre/hpc/kemi/jmni/results/uma-task06-smoke-20260930/alpb_full/workflow/calculations/references/HBpin-mol/init.dft_opt.dft_freq.dft_solv_sp.parquet",
+    "/lustre/hpc/kemi/jmni/results/uma-task06-smoke-20260930/alpb_full/workflow/calculations/references/HH/init.dft_opt.dft_freq.dft_solv_sp.parquet"
+  ],
+  "compaction": {
+    "errors": [],
+    "n_removed_files": 0,
+    "n_targets": 0,
+    "removed_bytes": 0,
+    "targets": []
+  },
+  "errored_files": [],
+  "errors": [],
+  "failure_summary": [],
+  "missing_files": [],
+  "n_collected": 4,
+  "n_errored": 0,
+  "n_failures": 0,
+  "n_missing": 0,
+  "n_rows": 4,
+  "n_skipped": 0,
+  "n_targets": 4,
+  "output": "/lustre/hpc/kemi/jmni/results/uma-task06-smoke-20260930/alpb_full/workflow/calculations/references/computed.parquet",
+  "require_normal_termination": true,
+  "skipped_files": [],
+  "target_retention": "all",
+  "timing": {
+    "errored_timing_files": [],
+    "missing_timing_targets": [],
+    "n_timing_files": 4,
+    "n_timing_groups": 16,
+    "slowest_groups": [
+      {
+        "elapsed_s": 7235.202591,
+        "finished_at": "2026-09-30T12:19:51Z",
+        "group": "dft_freq",
+        "input_parquet": "init.dft_opt.parquet",
+        "input_rows": 1,
+        "job_id": "65689176",
+        "kind": "group",
+        "output_parquet": "init.dft_opt.dft_freq.parquet",
+        "output_rows": 1,
+        "resources": {
+          "memory_gb": 38.400000000000006,
+          "n_cores": 4
+        },
+        "schema_version": 1,
+        "stage_ids": [
+          "dft_freq"
+        ],
+        "started_at": "2026-09-30T10:19:16Z",
+        "submitted_at": "2026-09-30T08:22:52Z",
+        "target": "dimer__tmp_bcat",
+        "workflow": "mols"
+      },
+      {
+        "elapsed_s": 6695.849881,
+        "finished_at": "2026-09-30T10:18:54Z",
+        "group": "dft_opt",
+        "input_parquet": "init.parquet",
+        "input_rows": 1,
+        "job_id": "65689175",
+        "kind": "group",
+        "output_parquet": "init.dft_opt.parquet",
+        "output_rows": 1,
+        "resources": {
+          "memory_gb": 25.6,
+          "n_cores": 4
+        },
+        "schema_version": 1,
+        "stage_ids": [
+          "dft_opt"
+        ],
+        "started_at": "2026-09-30T08:27:19Z",
+        "submitted_at": "2026-09-30T08:22:52Z",
+        "target": "dimer__tmp_bcat",
+        "workflow": "mols"
+      },
+      {
+        "elapsed_s": 1601.273436,
+        "finished_at": "2026-09-30T12:46:43Z",
+        "group": "dft_solv_sp",
+        "input_parquet": "init.dft_opt.dft_freq.parquet",
+        "input_rows": 1,
+        "job_id": "65689177",
+        "kind": "group",
+        "output_parquet": "init.dft_opt.dft_freq.dft_solv_sp.parquet",
+        "output_rows": 1,
+        "resources": {
+          "memory_gb": 25.6,
+          "n_cores": 4
+        },
+        "schema_version": 1,
+        "stage_ids": [
+          "dft_solv_sp"
+        ],
+        "started_at": "2026-09-30T12:20:02Z",
+        "submitted_at": "2026-09-30T08:22:53Z",
+        "target": "dimer__tmp_bcat",
+        "workflow": "mols"
+      },
+      {
+        "elapsed_s": 325.170376,
+        "finished_at": "2026-09-30T08:36:24Z",
+        "group": "dft_freq",
+        "input_parquet": "init.dft_opt.parquet",
+        "input_rows": 1,
+        "job_id": "65689180",
+        "kind": "group",
+        "output_parquet": "init.dft_opt.dft_freq.parquet",
+        "output_rows": 1,
+        "resources": {
+          "memory_gb": 38.400000000000006,
+          "n_cores": 4
+        },
+        "schema_version": 1,
+        "stage_ids": [
+          "dft_freq"
+        ],
+        "started_at": "2026-09-30T08:30:59Z",
+        "submitted_at": "2026-09-30T08:22:53Z",
+        "target": "HBpin-mol",
+        "workflow": "mols"
+      },
+      {
+        "elapsed_s": 221.500554,
+        "finished_at": "2026-09-30T08:30:29Z",
+        "group": "dft_opt",
+        "input_parquet": "init.parquet",
+        "input_rows": 1,
+        "job_id": "65689179",
+        "kind": "group",
+        "output_parquet": "init.dft_opt.parquet",
+        "output_rows": 1,
+        "resources": {
+          "memory_gb": 25.6,
+          "n_cores": 4
+        },
+        "schema_version": 1,
+        "stage_ids": [
+          "dft_opt"
+        ],
+        "started_at": "2026-09-30T08:26:47Z",
+        "submitted_at": "2026-09-30T08:22:53Z",
+        "target": "HBpin-mol",
+        "workflow": "mols"
+      }
+    ],
+    "timing_files": [
+      "/lustre/hpc/kemi/jmni/results/uma-task06-smoke-20260930/alpb_full/workflow/calculations/references/ligand__n_methyl_pyrrole/timing.json",
+      "/lustre/hpc/kemi/jmni/results/uma-task06-smoke-20260930/alpb_full/workflow/calculations/references/dimer__tmp_bcat/timing.json",
+      "/lustre/hpc/kemi/jmni/results/uma-task06-smoke-20260930/alpb_full/workflow/calculations/references/HBpin-mol/timing.json",
+      "/lustre/hpc/kemi/jmni/results/uma-task06-smoke-20260930/alpb_full/workflow/calculations/references/HH/timing.json"
+    ],
+    "total_core_hours": 19.037319,
+    "total_elapsed_s": 17133.587311
+  },
+  "workflow": "mols"
+}
