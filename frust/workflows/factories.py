@@ -115,6 +115,7 @@ def _with_initial_prune(
 def _molecule_stage_defs(
     *,
     top_n: int,
+    uma_rank_top_n: int = 1,
     calculation_level: CalculationLevel,
     method: MethodPlan,
     include_dft_rank_sp: bool = True,
@@ -123,6 +124,16 @@ def _molecule_stage_defs(
 ) -> list[StageDef]:
     """Return the shared molecule stage graph."""
     screening_sp, screening_opt = _screening_stage_ids(method)
+    ranking_active = (
+        "uma_rank_sp" in method.stages
+        and calculation_level in {"uma_ranked", "full"}
+    )
+    if calculation_level == "uma_ranked" and not ranking_active:
+        raise ValueError("uma_ranked requires an UMA ranking plan")
+    if ranking_active and (screening_opt != "xtb_opt" or method.result_family != "dft"):
+        raise ValueError("UMA reranking requires g-xTB screening and a DFT final method")
+    if ranking_active and calculation_level == "full" and include_dft_rank_sp:
+        raise ValueError("UMA reranking requires include_dft_rank_sp=False")
     stages = [
         StageDef("prepare", "prepare", kind="prepare"),
         StageDef("xtb_preopt", "xtb_preopt", n_cores=2),
@@ -142,6 +153,13 @@ def _molecule_stage_defs(
                 rank_by="uma_sp",
             )
         )
+    elif ranking_active:
+        stages.append(
+            StageDef(
+                "xtb_sp_filter", "broad g-xTB selection", kind="filter",
+                lowest=top_n, rank_by="xtb_sp",
+            )
+        )
     stages.append(
         StageDef(
             screening_opt,
@@ -151,6 +169,8 @@ def _molecule_stage_defs(
             n_cores=2,
         )
     )
+    if ranking_active:
+        stages.extend(_uma_ranking_stages(uma_rank_top_n))
     if calculation_level == "full" and method.result_family == "uma":
         if screening_opt != "uma_opt":
             raise ValueError("Full UMA minima require UMA screening")
@@ -201,7 +221,11 @@ def _molecule_stage_defs(
         if include_terminal_solv_sp:
             stages.append(StageDef("dft_solv_sp", "DFT solvent single point"))
     else:
-        rank_by = "dft_rank_sp" if calculation_level == "dft_ranked" else screening_opt
+        rank_by = (
+            "uma_rank_sp" if calculation_level == "uma_ranked"
+            else "dft_rank_sp" if calculation_level == "dft_ranked"
+            else screening_opt
+        )
         stages.append(
             StageDef("filter", "filter", kind="filter", lowest=1, rank_by=rank_by)
         )
@@ -245,9 +269,9 @@ def _calculation_level(
     if value is None:
         return "full" if dft else non_dft_level
     normalized = str(value).strip().lower()
-    if normalized not in {"low_cost", "dft_ranked", "full"}:
+    if normalized not in {"low_cost", "uma_ranked", "dft_ranked", "full"}:
         raise ValueError(
-            "calculation_level must be 'low_cost', 'dft_ranked', or 'full'"
+            "calculation_level must be 'low_cost', 'uma_ranked', 'dft_ranked', or 'full'"
         )
     return normalized  # type: ignore[return-value]
 
@@ -329,6 +353,7 @@ class MolsWorkflow(BaseWorkflow):
         screening: ScreeningPlan | str | None = None,
         n_confs: int | None = None,
         top_n: int = 20,
+        uma_rank_top_n: int = 1,
         dft: bool = True,
         calculation_level: CalculationLevel | None = None,
         include_dft_rank_sp: bool | None = None,
@@ -350,6 +375,9 @@ class MolsWorkflow(BaseWorkflow):
         self.smiles = smiles
         self.split = split
         self.select_mols = select_mols
+        self.uma_rank_top_n = int(uma_rank_top_n)
+        if self.uma_rank_top_n < 1:
+            raise ValueError("uma_rank_top_n must be positive")
         self.include_dft_rank_sp = (
             "uma_opt" not in self.method.stages
             if include_dft_rank_sp is None
@@ -481,6 +509,7 @@ class MolsWorkflow(BaseWorkflow):
         """Return molecule workflow stages."""
         return _molecule_stage_defs(
             top_n=self.top_n,
+            uma_rank_top_n=self.uma_rank_top_n,
             calculation_level=self.calculation_level,
             method=self.method,
             include_dft_rank_sp=self.include_dft_rank_sp,
@@ -692,6 +721,7 @@ class ScreenTSWorkflow(BaseWorkflow):
         n_confs: int | None = None,
         top_n: int = 20,
         ts_refine_n: int = 3,
+        uma_rank_top_n: int = 1,
         dft: bool = True,
         calculation_level: CalculationLevel | None = None,
         include_dft_rank_sp: bool | None = None,
@@ -714,6 +744,9 @@ class ScreenTSWorkflow(BaseWorkflow):
         self.ts_refine_n = int(ts_refine_n)
         if self.ts_refine_n < 1:
             raise ValueError("ts_refine_n must be positive")
+        self.uma_rank_top_n = int(uma_rank_top_n)
+        if self.uma_rank_top_n < 1:
+            raise ValueError("uma_rank_top_n must be positive")
         self.ts_backend = str(ts_backend).strip().lower()
         self.spec_profile = str(spec_profile).strip().lower()
         self.spec_match = str(spec_match).strip().lower()
@@ -927,8 +960,19 @@ class ScreenTSWorkflow(BaseWorkflow):
             )
             return stages
         stages = _ts_screening_stages(
-            self.top_n, method=self.method, prune_initial=self.prune_initial
+            self.top_n, method=self.method, prune_initial=self.prune_initial,
+            ranking_active="uma_rank_sp" in self.method.stages,
         )
+        if "uma_rank_sp" in self.method.stages:
+            if self.calculation_level not in {"uma_ranked", "full"}:
+                raise ValueError("UMA reranking requires level='uma_ranked' or 'full'")
+            if screening_opt != "xtb_opt" or self.method.result_family != "dft":
+                raise ValueError("UMA reranking requires g-xTB screening and DFT final method")
+            if self.calculation_level == "full" and self.include_dft_rank_sp:
+                raise ValueError("UMA reranking requires include_dft_rank_sp=False")
+            stages.extend(_uma_ranking_stages(self.uma_rank_top_n))
+        elif self.calculation_level == "uma_ranked":
+            raise ValueError("uma_ranked requires an UMA ranking plan")
         if self.calculation_level == "dft_ranked" or (
             self.calculation_level == "full" and self.include_dft_rank_sp
         ):
@@ -951,7 +995,9 @@ class ScreenTSWorkflow(BaseWorkflow):
             )
         else:
             rank_by = (
-                "dft_rank_sp"
+                "uma_rank_sp"
+                if self.calculation_level == "uma_ranked"
+                else "dft_rank_sp"
                 if self.calculation_level == "dft_ranked"
                 else screening_opt
             )
@@ -989,6 +1035,7 @@ class Int3Workflow(BaseWorkflow):
         screening: ScreeningPlan | str | None = None,
         n_confs: int | None = None,
         top_n: int = 20,
+        uma_rank_top_n: int = 1,
         dft: bool = True,
         calculation_level: CalculationLevel | None = None,
         include_dft_rank_sp: bool | None = None,
@@ -1009,6 +1056,9 @@ class Int3Workflow(BaseWorkflow):
         self.dataframe = dataframe
         self.spec_profile = str(spec_profile).strip().lower()
         self.spec_match = str(spec_match).strip().lower()
+        self.uma_rank_top_n = int(uma_rank_top_n)
+        if self.uma_rank_top_n < 1:
+            raise ValueError("uma_rank_top_n must be positive")
         self.include_dft_rank_sp = (
             "uma_opt" not in self.method.stages
             if include_dft_rank_sp is None
@@ -1082,8 +1132,19 @@ class Int3Workflow(BaseWorkflow):
         """Return the dedicated INT3 screening and refinement graph."""
         _, screening_opt = _screening_stage_ids(self.method)
         stages = _ts_screening_stages(
-            self.top_n, method=self.method, prune_initial=self.prune_initial
+            self.top_n, method=self.method, prune_initial=self.prune_initial,
+            ranking_active="uma_rank_sp" in self.method.stages,
         )
+        if "uma_rank_sp" in self.method.stages:
+            if self.calculation_level not in {"uma_ranked", "full"}:
+                raise ValueError("UMA reranking requires level='uma_ranked' or 'full'")
+            if screening_opt != "xtb_opt" or self.method.result_family != "dft":
+                raise ValueError("UMA reranking requires g-xTB screening and DFT final method")
+            if self.calculation_level == "full" and self.include_dft_rank_sp:
+                raise ValueError("UMA reranking requires include_dft_rank_sp=False")
+            stages.extend(_uma_ranking_stages(self.uma_rank_top_n))
+        elif self.calculation_level == "uma_ranked":
+            raise ValueError("uma_ranked requires an UMA ranking plan")
         if self.calculation_level == "dft_ranked" or (
             self.calculation_level == "full" and self.include_dft_rank_sp
         ):
@@ -1106,7 +1167,9 @@ class Int3Workflow(BaseWorkflow):
             )
         else:
             rank_by = (
-                "dft_rank_sp"
+                "uma_rank_sp"
+                if self.calculation_level == "uma_ranked"
+                else "dft_rank_sp"
                 if self.calculation_level == "dft_ranked"
                 else screening_opt
             )
@@ -1545,6 +1608,7 @@ def _ts_screening_stages(
     *,
     method: MethodPlan,
     prune_initial: bool | dict[str, Any] | None = False,
+    ranking_active: bool = False,
 ) -> list[StageDef]:
     """Return common constrained TS screening stages.
 
@@ -1580,6 +1644,13 @@ def _ts_screening_stages(
                 rank_by="uma_sp",
             )
         )
+    elif ranking_active:
+        stages.append(
+            StageDef(
+                "xtb_sp_filter", "broad g-xTB selection", kind="filter",
+                lowest=top_n, rank_by="xtb_sp",
+            )
+        )
     stages.append(
         StageDef(
             screening_opt,
@@ -1595,6 +1666,17 @@ def _ts_screening_stages(
         )
     )
     return _with_initial_prune(stages, prune_initial)
+
+
+def _uma_ranking_stages(uma_rank_top_n: int) -> list[StageDef]:
+    """Return UMA SP and the separate post-UMA candidate cutoff."""
+    return [
+        StageDef("uma_rank_sp", "UMA single-point reranking", n_cores=2),
+        StageDef(
+            "uma_rank_filter", "UMA reranked candidate selection",
+            kind="filter", lowest=uma_rank_top_n, rank_by="uma_rank_sp",
+        ),
+    ]
 
 
 def _dft_rank_sp_stage() -> StageDef:

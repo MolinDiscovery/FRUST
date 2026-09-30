@@ -308,8 +308,9 @@ class ReferenceLibrary:
 
         Parameters
         ----------
-        calculation_level : {"low_cost", "dft_ranked", "full"} or None, optional
-            Restrict results to one scientific result level.
+        calculation_level : {"low_cost", "uma_ranked", "dft_ranked", "full"} or None, optional
+            Restrict results to the screening result, UMA or DFT single-point
+            ranking, or final characterization tier, respectively.
         state_id, compound_name, method, formula : str or None, optional
             Exact case-insensitive metadata filters.
         review : {"approved", "rejected", "unreviewed"} or None, optional
@@ -369,10 +370,11 @@ class ReferenceLibrary:
             Structure-generation and conformer-selection settings.
         reuse_policy : {"approved", "auto_valid"}, optional
             Review requirement for full thermochemical references. Exact
-            low-cost and DFT-ranked screening artifacts are reusable after
-            automatic validation.
-        calculation_level : {"low_cost", "dft_ranked", "full"}, optional
-            Scientific result tier to match.
+            low-cost, UMA-ranked, and DFT-ranked screening artifacts are
+            reusable after automatic validation.
+        calculation_level : {"low_cost", "uma_ranked", "dft_ranked", "full"}, optional
+            Screening, UMA single-point, DFT single-point, or final tier to
+            match, respectively.
 
         Returns
         -------
@@ -447,9 +449,9 @@ class ReferenceLibrary:
             Composed calculator plan used to produce the result.
         protocol : mapping or None, optional
             Structure-generation and conformer-selection settings.
-        calculation_level : {"low_cost", "dft_ranked", "full"}, optional
-            Validation and storage tier. Only ``"full"`` requires frequencies
-            and assembled thermochemistry.
+        calculation_level : {"low_cost", "uma_ranked", "dft_ranked", "full"}, optional
+            Screening, UMA single-point, DFT single-point, or final tier.
+            Only ``"full"`` requires frequencies and thermochemistry.
         source_run, source_target_dir : str, pathlib.Path, or None, optional
             Provenance and calculator-file source locations.
         artifact_policy : {"standard", "screening"}, optional
@@ -532,6 +534,9 @@ class ReferenceLibrary:
                     selected_cid=row.get("cid"),
                     calculation_level=calculation_level,
                     result_family=method.result_family,
+                    ranking_stage=(
+                        "uma_rank_sp" if "uma_rank_sp" in method.stages else None
+                    ),
                 )
             electronic_energy = float(
                 get_result(df, "electronic_energy", purpose="analysis").iloc[0]
@@ -795,9 +800,9 @@ def reference_identity(
     calculation_level: CalculationLevel = "full",
 ) -> tuple[str, dict[str, Any]]:
     """Return a stable compatibility key and its scientific identity."""
-    if calculation_level not in {"low_cost", "dft_ranked", "full"}:
+    if calculation_level not in {"low_cost", "uma_ranked", "dft_ranked", "full"}:
         raise ValueError(
-            "calculation_level must be 'low_cost', 'dft_ranked', or 'full'"
+            "calculation_level must be 'low_cost', 'uma_ranked', 'dft_ranked', or 'full'"
         )
     if calculation_level == "full" and method.thermochemistry is None:
         raise ValueError(
@@ -845,6 +850,8 @@ def _active_reference_method(
         else ["xtb_sp", "xtb_opt"]
     )
     stages = ["xtb_preopt", *screening]
+    if calculation_level in {"uma_ranked", "full"} and "uma_rank_sp" in method.stages:
+        stages.append("uma_rank_sp")
     if calculation_level == "dft_ranked" or (
         calculation_level == "full" and include_dft_rank_sp
     ):
@@ -994,6 +1001,21 @@ def _validate_reference_result(
     method: MethodPlan,
     calculation_level: CalculationLevel,
 ) -> dict[str, Any]:
+    if calculation_level == "uma_ranked":
+        contract = df.attrs.get("frust_results", {})
+        if not isinstance(contract, dict):
+            raise ValueError("Reference result has no UMA ranking contract")
+        recorded_calculator = (contract.get("energy_protocol") or {}).get("calculator")
+        if (
+            result_column(
+                df, "electronic_energy", purpose="analysis", require_present=False
+            ) != "uma_rank_sp-EE"
+            or result_column(
+                df, "coords", purpose="optimized", require_present=False
+            ) != "xtb_opt-oc"
+            or recorded_calculator != method.for_stage("uma_rank_sp").to_dict()
+        ):
+            raise ValueError("Reference result does not match the requested UMA ranking")
     if calculation_level == "full" and method.result_family == "uma":
         contract = df.attrs.get("frust_results", {})
         if not isinstance(contract, dict):
@@ -1102,6 +1124,7 @@ def _copy_scientific_calculator_files(
     selected_cid: Any = None,
     calculation_level: CalculationLevel = "full",
     result_family: str = "dft",
+    ranking_stage: str | None = None,
 ) -> None:
     if source_target_dir is None:
         return
@@ -1111,6 +1134,8 @@ def _copy_scientific_calculator_files(
     stage_names = {"xtb_preopt", "xtb_sp", "xtb_opt", "uma_sp", "uma_opt"}
     if calculation_level in {"dft_ranked", "full"}:
         stage_names.add("dft_rank_sp")
+    if calculation_level in {"uma_ranked", "full"} and ranking_stage is not None:
+        stage_names.add(ranking_stage)
     if calculation_level == "full":
         stage_names.update(
             {"uma_min_opt", "uma_freq"}

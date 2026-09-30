@@ -23,7 +23,7 @@ _SCREENING_BUILTINS_REGISTERED = False
 _RANKING_PRESETS: dict[str, "RankingPlan"] = {}
 _RANKING_BUILTINS_REGISTERED = False
 
-CalculationLevel = Literal["low_cost", "dft_ranked", "full"]
+CalculationLevel = Literal["low_cost", "uma_ranked", "dft_ranked", "full"]
 
 _STAGE_ALIASES = {
     "dft_rank_sp": "dft_pre_sp",

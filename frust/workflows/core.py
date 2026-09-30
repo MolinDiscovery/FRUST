@@ -20,6 +20,7 @@ from dataclasses import dataclass
 from pathlib import Path
 from typing import Any, Iterable, Literal
 
+import numpy as np
 import pandas as pd
 
 from frust.artifacts import (
@@ -2500,11 +2501,29 @@ def _run_stage_calculation(
     if stage.kind == "filter":
         if not stage.rank_by:
             raise ValueError(f"Filter stage {stage.id!r} must define rank_by")
-        return lowest_energy_rows(
+        input_rows = len(df)
+        energy_col = output_column(stage.rank_by, "electronic_energy")
+        if stage.id == "uma_rank_filter":
+            energies = pd.to_numeric(df[energy_col], errors="coerce")
+            df = df.loc[np.isfinite(energies)].copy()
+        result = lowest_energy_rows(
             df,
             n=stage.lowest or 1,
-            energy_col=output_column(stage.rank_by, "electronic_energy"),
+            energy_col=energy_col,
         )
+        steps = dict(result.attrs.get("frust_steps", {}))
+        steps[stage.id] = {
+            "engine": "filter",
+            "filtering": {
+                "lowest": stage.lowest or 1,
+                "energy_col": energy_col,
+                "input_rows": input_rows,
+                "output_rows": len(result),
+                "dropped_rows": input_rows - len(result),
+            },
+        }
+        result.attrs["frust_steps"] = steps
+        return result
 
     step = Stepper(
         step_type=workflow._step_type_for_target(target),
@@ -2566,16 +2585,24 @@ def _write_analysis_tier_snapshot(
         "uma_opt" if "uma_opt" in workflow.method.stages else "xtb_opt"
     )
     include_dft_rank_sp = bool(getattr(workflow, "include_dft_rank_sp", True))
-    if stage.id == screening_opt_stage and requested_level in {"dft_ranked", "full"}:
+    if stage.id == screening_opt_stage and requested_level in {
+        "uma_ranked", "dft_ranked", "full"
+    }:
         tier = "low_cost"
+    elif stage.id == "uma_rank_sp" and requested_level == "full":
+        tier = "uma_ranked"
     elif stage.id == "dft_rank_sp" and requested_level == "full":
         tier = "dft_ranked"
     if tier is None:
         return
 
     energy_column = output_column(stage.id, "electronic_energy")
+    source = df.copy()
+    if tier == "uma_ranked":
+        energies = pd.to_numeric(source[energy_column], errors="coerce")
+        source = source.loc[np.isfinite(energies)].copy()
     snapshot = lowest_energy_rows(
-        df.copy(),
+        source,
         n=1,
         energy_col=energy_column,
     )
@@ -2590,6 +2617,7 @@ def _write_analysis_tier_snapshot(
         screening_opt_stage=screening_opt_stage,
         include_dft_rank_sp=include_dft_rank_sp,
         thermochemistry=None,
+        ranking_stage=("uma_rank_sp" if tier == "uma_ranked" else None),
     )
     contract = snapshot.attrs["frust_results"]
     analysis_column = str(contract["columns"]["analysis"]["electronic_energy"])
@@ -2658,6 +2686,12 @@ def _attach_workflow_attrs(
     if workflow.result_profile == "transition_state" and workflow.method.result_family == "uma":
         df.attrs["frust_workflow"]["ts_refine_n"] = int(workflow.ts_refine_n)
         df.attrs["frust_workflow"]["screen_top_n"] = int(workflow.top_n)
+    if "uma_rank_sp" in workflow.method.stages:
+        df.attrs["frust_workflow"]["ranking_stage"] = "uma_rank_sp"
+        df.attrs["frust_workflow"]["uma_rank_top_n"] = int(
+            workflow.uma_rank_top_n
+        )
+        df.attrs["frust_workflow"]["screen_top_n"] = int(workflow.top_n)
     if "spec_profile" in structure_options:
         df.attrs["frust_workflow"]["guess_profile"] = structure_options["spec_profile"]
         df.attrs["frust_workflow"]["guess_profile_match"] = structure_options.get(
@@ -2681,6 +2715,9 @@ def _attach_workflow_attrs(
             ),
             include_dft_rank_sp=bool(getattr(workflow, "include_dft_rank_sp", True)),
             thermochemistry=workflow.method.thermochemistry,
+            ranking_stage=(
+                "uma_rank_sp" if "uma_rank_sp" in workflow.method.stages else None
+            ),
         )
         contract = df.attrs["frust_results"]
         analysis_column = str(contract["columns"]["analysis"]["electronic_energy"])

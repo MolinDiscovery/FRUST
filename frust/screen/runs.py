@@ -96,6 +96,7 @@ class ScreenRun:
                         ),
                         "screening": self.manifest.get("screening", {}).get("name"),
                         "method": self.manifest.get("method", {}).get("name"),
+                        "ranking_method": self.manifest.get("ranking", {}).get("name"),
                         "ranking_solvation": _solvation_label(
                             self.manifest.get("ranking_solvation", {})
                         ),
@@ -122,7 +123,7 @@ class ScreenRun:
 
         Parameters
         ----------
-        level : {"low_cost", "dft_ranked", "full"} or None, optional
+        level : {"low_cost", "uma_ranked", "dft_ranked", "full"} or None, optional
             Nested analysis tier. ``None`` returns the terminal level requested
             when the workflow was submitted.
         """
@@ -134,7 +135,7 @@ class ScreenRun:
 
         Parameters
         ----------
-        level : {"low_cost", "dft_ranked", "full"} or None, optional
+        level : {"low_cost", "uma_ranked", "dft_ranked", "full"} or None, optional
             Nested analysis tier. Each tier performs its own conformer and
             dimer-topology selection.
 
@@ -155,7 +156,7 @@ class ScreenRun:
 
         Parameters
         ----------
-        level : {"low_cost", "dft_ranked", "full"} or None, optional
+        level : {"low_cost", "uma_ranked", "dft_ranked", "full"} or None, optional
             Nested analysis tier. ``None`` preserves the historical behavior
             and returns the terminal requested level.
         """
@@ -288,7 +289,7 @@ class ScreenRun:
         quantity : {"electronic", "gibbs"}, optional
             Energy quantity prepared for plotting. Gibbs profiles require the
             ``"full"`` analysis level.
-        level : {"low_cost", "dft_ranked", "full"} or None, optional
+        level : {"low_cost", "uma_ranked", "dft_ranked", "full"} or None, optional
             Nested analysis tier. ``None`` uses the terminal requested level.
         dimer_reference : {"lowest", "dimer", "dimer_bh_bridged", "dimer_eight_membered"} or None, optional
             Dimer topology used to rebuild the profile in memory. ``None``
@@ -363,7 +364,7 @@ class ScreenRun:
             Include a profile with invalid or incomplete dependencies.
         quantity : {"electronic", "gibbs"}, optional
             Energy quantity plotted on the vertical axis.
-        level : {"low_cost", "dft_ranked", "full"} or None, optional
+        level : {"low_cost", "uma_ranked", "dft_ranked", "full"} or None, optional
             Nested analysis tier. ``None`` uses the terminal requested level.
         dimer_reference : {"lowest", "dimer", "dimer_bh_bridged", "dimer_eight_membered"} or None, optional
             Select an already calculated dimer for this plot. ``None`` uses
@@ -780,7 +781,10 @@ def _state_rows(
             "calculator": protocol.get("calculator"),
         }
     )
-    method_family = str(method.get("result_family", "dft"))
+    method_family = (
+        "uma" if calculation_level == "uma_ranked"
+        else str(method.get("result_family", "dft"))
+    )
     calculator = protocol.get("calculator", {})
     nt_columns = normal_termination_columns(df)
     rows: list[dict[str, Any]] = []
@@ -1055,7 +1059,10 @@ def _build_barriers(
         for key, value in manifest.get("g_corrections_kcal_mol", {}).items()
     }
     full = manifest.get("calculation_level", "full") == "full"
-    method_family = str(manifest.get("method", {}).get("result_family", "dft"))
+    method_family = (
+        "uma" if manifest.get("calculation_level") == "uma_ranked"
+        else str(manifest.get("method", {}).get("result_family", "dft"))
+    )
     targets = manifest.get("analysis_targets", [])
     rows: list[dict[str, Any]] = []
     for target in targets:

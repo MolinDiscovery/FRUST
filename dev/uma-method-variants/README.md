@@ -59,7 +59,7 @@ rename gas constraints as an ALPB profile.
 | [02 — UMA TS refinement](02-uma-ts-refinement.md) | Complete | 01 | Constrained UMA Opt → released UMA OptTS → NumFreq with mode controls |
 | [03 — UMA full references and analysis](03-uma-full-analysis.md) | Complete | 02 | UMA minima, thermochemistry, balanced ΔE‡/ΔG‡, and portable result quality |
 | [03a — Per-candidate UMA barriers](03a-uma-candidate-barriers.md) | Complete | 03 | Portable barrier and quality for each retained TS candidate |
-| [04 — g-xTB then UMA ranking](04-gxtb-uma-ranking.md) | Pending | 03a | UMA SP reranking on g-xTB optimized candidates; ωB97 path preserved |
+| [04 — g-xTB then UMA ranking](04-gxtb-uma-ranking.md) | Complete | 03a | UMA SP reranking on g-xTB optimized candidates; ωB97 path preserved |
 | [04a — Optional ωB97 comparison](04a-optional-wb97-comparison.md) | Pending | 04 | Separate ωB97 characterization of selected UMA candidates and references |
 | [05 — Bounded compute-node checks](05-compute-node-checks.md) | Pending | 04a | Real gas/ALPB UMA checks, hybrid ranking, and a small comparison; submit then return control |
 | [06 — User documentation](06-user-documentation.md) | Pending | 05 | Reader-facing examples verified against the completed checks |

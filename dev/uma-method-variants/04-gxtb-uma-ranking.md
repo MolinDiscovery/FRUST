@@ -34,5 +34,52 @@ established ωB97 full characterization.
 
 ## Completion record
 
-Pending. Record public options, stage/tier example, tests, and any migration
-note here before starting Task 05.
+Completed 2026-09-30 on `feature/uma-screening`. The hybrid path is
+selectable with an independent UMA ranking plan and two candidate limits:
+
+```python
+import frust as ft
+
+wf = ft.workflows.catalyst_screen(
+    dataframe=components,
+    ts_types=["TS1"],
+    screening="gxtb-default",
+    ranking="uma-alpb-chloroform",  # or "uma-gas"
+    method="wb97xd3-631g",
+    level="full",
+    top_n=20,
+    uma_rank_top_n=3,
+)
+wf.show_stages()[["branch", "stage", "lowest", "solvent"]]
+```
+
+The active order is initial RMSD prune → constrained GFN-FF Opt → g-xTB SP
+→ `xtb_sp_filter` (broad `top_n`) → constrained `xtb_opt` → `uma_rank_sp`
+on `xtb_opt-oc` → `uma_rank_filter` (`uma_rank_top_n`) → the established
+ωB97 refinement. There is no `uma_opt` in this path. Missing/non-finite
+UMA energies cannot win the post-UMA filter; ties retain stable input order.
+The gas or ALPB(chloroform) choice is explicit in the ranking plan and saved
+manifest. `ft.show_steps(df)` exposes both filter cutoffs without widening
+the main calculation dataframe.
+
+| Tier | Analysis energy | Geometry | Meaning |
+| --- | --- | --- | --- |
+| `low_cost` | `xtb_opt-EE` | `xtb_opt-oc` | Independently selected g-xTB screen result |
+| `uma_ranked` | `uma_rank_sp-EE` | `xtb_opt-oc` | Independently selected UMA electronic result |
+| `full` | `dft_solv_sp-EE` for the default ωB97 plan | `dft_ts_opt-oc` or `dft_opt-oc` | ωB97 stationary points, frequencies, and barrier |
+
+The portable run contains all three tiers, and
+`run.compare_barriers()` keeps their source and units separate. The full
+result remains labelled DFT/ωB97; `ranking_method` in `run.summary()` and
+the manifest show that UMA made the earlier selection. Reference identity
+includes the UMA ranking fingerprint and cutoff, so gas and ALPB references
+cannot be interchanged. Low-cost references can still be reused when their
+g-xTB protocol matches. Resume signatures include the ranking and cutoff.
+Existing g-xTB-only, UMA-screened, and ωB97 runs retain their defaults and
+need no bundle migration.
+
+Mocked local and submitted tests cover gas and ALPB plans and results, both
+selection limits, ties, missing UMA energies, stage order and input geometry,
+reference identity, saved tiers, restart, and incompatible options. The fast
+UMA suite passed: 402 tests, 13 slow tests deselected. Live ORCA/UMA checks
+remain Task 05.

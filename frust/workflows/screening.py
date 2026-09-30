@@ -38,9 +38,11 @@ from frust.workflows.factories import Int3Workflow, MolsWorkflow, ScreenTSWorkfl
 from frust.workflows.methods import (
     CalculationLevel,
     MethodPlan,
+    RankingPlan,
     ScreeningPlan,
     apply_screening_plan,
     preset as method_preset,
+    ranking_preset,
     screening_preset,
     with_ranking_solvation,
 )
@@ -115,6 +117,7 @@ class CatalystScreenWorkflow:
         screening: ScreeningPlan | str = "gxtb-default",
         level: CalculationLevel = "full",
         method: MethodPlan | str | None = None,
+        ranking: RankingPlan | str | None = None,
         ranking_solvation: str = "method",
         spec_profile: str = "auto",
         spec_match: str = "prefer-exact",
@@ -126,6 +129,7 @@ class CatalystScreenWorkflow:
         reuse_policy: ReusePolicy = "approved",
         n_confs: int | None = None,
         top_n: int = 20,
+        uma_rank_top_n: int = 1,
         ts_refine_n: int = 3,
         prune_initial: bool | dict[str, Any] = True,
     ) -> None:
@@ -141,21 +145,46 @@ class CatalystScreenWorkflow:
         if reuse_policy not in {"approved", "auto_valid"}:
             raise ValueError("reuse_policy must be 'approved' or 'auto_valid'")
         normalized_level = str(level).strip().lower()
-        if normalized_level not in {"low_cost", "dft_ranked", "full"}:
-            raise ValueError("level must be 'low_cost', 'dft_ranked', or 'full'")
+        if normalized_level not in {"low_cost", "uma_ranked", "dft_ranked", "full"}:
+            raise ValueError("level must be 'low_cost', 'uma_ranked', 'dft_ranked', or 'full'")
         self.csv_path = None if csv_path is None else Path(csv_path)
         self.dataframe = None if dataframe is None else dataframe.copy()
         self.ts_types = tuple(str(value).upper() for value in ts_types)
         self.level: CalculationLevel = normalized_level  # type: ignore[assignment]
         self.screening = _coerce_screening(screening)
+        if ranking is None:
+            self.ranking = None
+        elif isinstance(ranking, RankingPlan):
+            self.ranking = ranking
+        elif isinstance(ranking, str):
+            self.ranking = ranking_preset(ranking)
+        else:
+            raise TypeError("ranking must be a RankingPlan, preset name, or None")
+        if self.ranking is None and self.level == "uma_ranked":
+            raise ValueError("level='uma_ranked' requires UMA ranking")
+        if self.ranking is not None:
+            if self.level not in {"uma_ranked", "full"}:
+                raise ValueError("UMA ranking requires level='uma_ranked' or 'full'")
+            if "xtb_opt" not in self.screening.stages:
+                raise ValueError("UMA ranking requires g-xTB screening")
+            if ranking_solvation != "method":
+                raise ValueError("ranking_solvation applies only to DFT ranking")
         self.include_dft_rank_sp = (
-            "uma_opt" not in self.screening.stages
+            "uma_opt" not in self.screening.stages and self.ranking is None
             if include_dft_rank_sp is None
             else bool(include_dft_rank_sp)
         )
+        if self.ranking is not None and self.include_dft_rank_sp:
+            raise ValueError("UMA ranking requires include_dft_rank_sp=False")
         self.spec_profile = str(spec_profile).strip().lower()
         self.spec_match = str(spec_match).strip().lower()
         composed_method = apply_screening_plan(_coerce_method(method), self.screening)
+        if self.ranking is not None:
+            if composed_method.result_family != "dft":
+                raise ValueError("UMA reranking requires a DFT final method")
+            composed_method = composed_method.with_stage(
+                self.ranking.stage_id, self.ranking.calculator
+            )
         if composed_method.result_family == "uma" and self.level == "full":
             if scope != "barriers":
                 raise ValueError("Full UMA currently supports scope='barriers' only")
@@ -205,6 +234,9 @@ class CatalystScreenWorkflow:
         self.reuse_policy = reuse_policy
         self.n_confs = n_confs
         self.top_n = int(top_n)
+        self.uma_rank_top_n = int(uma_rank_top_n)
+        if self.uma_rank_top_n < 1:
+            raise ValueError("uma_rank_top_n must be positive")
         self.ts_refine_n = int(ts_refine_n)
         if self.ts_refine_n < 1:
             raise ValueError("ts_refine_n must be positive")
@@ -240,6 +272,7 @@ class CatalystScreenWorkflow:
                     include_dft_rank_sp=self.include_dft_rank_sp,
                     n_confs=self.n_confs,
                     top_n=self.top_n,
+                    uma_rank_top_n=self.uma_rank_top_n,
                     ts_refine_n=self.ts_refine_n,
                     calculation_level=self.level,
                     prune_initial=self.prune_initial,
@@ -251,6 +284,7 @@ class CatalystScreenWorkflow:
                     include_dft_rank_sp=self.include_dft_rank_sp,
                     n_confs=self.n_confs,
                     top_n=self.top_n,
+                    uma_rank_top_n=self.uma_rank_top_n,
                     calculation_level=self.level,
                     prune_initial=self.prune_initial,
                 ),
@@ -263,6 +297,7 @@ class CatalystScreenWorkflow:
                     include_dft_rank_sp=self.include_dft_rank_sp,
                     n_confs=self.n_confs,
                     top_n=self.top_n,
+                    uma_rank_top_n=self.uma_rank_top_n,
                     calculation_level=self.level,
                     prune_initial=self.prune_initial,
                 )
@@ -274,6 +309,7 @@ class CatalystScreenWorkflow:
                     include_dft_rank_sp=self.include_dft_rank_sp,
                     n_confs=self.n_confs,
                     top_n=self.top_n,
+                    uma_rank_top_n=self.uma_rank_top_n,
                     calculation_level=self.level,
                     prune_initial=self.prune_initial,
                 )
@@ -321,6 +357,9 @@ class CatalystScreenWorkflow:
         result.attrs["screening_fingerprint"] = self.screening.fingerprint()
         result.attrs["method"] = self.method.name
         result.attrs["method_fingerprint"] = self.method.fingerprint()
+        if self.ranking is not None:
+            result.attrs["ranking"] = self.ranking.to_dict()
+            result.attrs["uma_rank_top_n"] = self.uma_rank_top_n
         result.attrs["ranking_solvation"] = self.ranking_solvation
         result.attrs["thermochemistry"] = (
             None
@@ -734,6 +773,12 @@ class CatalystScreenWorkflow:
 
     def _analysis_levels(self) -> tuple[CalculationLevel, ...]:
         """Return calculation tiers available from the requested workflow."""
+        if self.ranking is not None:
+            return (
+                ("low_cost", "uma_ranked", "full")
+                if self.level == "full"
+                else ("low_cost", "uma_ranked")
+            )
         if self.level == "full":
             return (
                 ("low_cost", "dft_ranked", "full")
@@ -759,6 +804,9 @@ class CatalystScreenWorkflow:
             "top_n": self.top_n,
             "prune_initial": self.prune_initial,
         }
+        if self.ranking is not None and level in {"uma_ranked", "full"}:
+            protocol["ranking_fingerprint"] = self.ranking.fingerprint()
+            protocol["uma_rank_top_n"] = self.uma_rank_top_n
         if level == "full" and not self.include_dft_rank_sp:
             protocol["include_dft_rank_sp"] = False
         return protocol
@@ -943,6 +991,10 @@ class CatalystScreenWorkflow:
             "calculation_results": terminal_results,
             "tier_calculation_results": level_results,
         }
+        if self.ranking is not None:
+            manifest["ranking"] = self.ranking.to_dict()
+            manifest["ranking_fingerprint"] = self.ranking.fingerprint()
+            manifest["uma_rank_top_n"] = self.uma_rank_top_n
         if self.method.result_family == "uma":
             manifest["ts_refine_n"] = self.ts_refine_n
         signature_keys = [
@@ -966,6 +1018,8 @@ class CatalystScreenWorkflow:
         ]
         if self.method.result_family == "uma":
             signature_keys.append("ts_refine_n")
+        if self.ranking is not None:
+            signature_keys.extend(["ranking_fingerprint", "uma_rank_top_n"])
         manifest["run_signature"] = _json_hash(
             {key: manifest[key] for key in signature_keys}
         )
@@ -995,6 +1049,7 @@ def catalyst_screen(
     screening: ScreeningPlan | str = "gxtb-default",
     level: CalculationLevel = "full",
     method: MethodPlan | str | None = None,
+    ranking: RankingPlan | str | None = None,
     ranking_solvation: str = "method",
     spec_profile: str = "auto",
     spec_match: str = "prefer-exact",
@@ -1006,6 +1061,7 @@ def catalyst_screen(
     reuse_policy: ReusePolicy = "approved",
     n_confs: int | None = None,
     top_n: int = 20,
+    uma_rank_top_n: int = 1,
     ts_refine_n: int = 3,
     prune_initial: bool | dict[str, Any] = True,
 ) -> CatalystScreenWorkflow:
@@ -1031,25 +1087,34 @@ def catalyst_screen(
         Inexpensive geometry-screening plan. The default ``"gxtb-default"``
         runs GFN-FF followed by direct g-xTB ranking and optimization. Choose
         ``"uma-gas"`` or ``"uma-alpb-chloroform"`` for UMA screening.
-    level : {"low_cost", "dft_ranked", "full"}, optional
+    level : {"low_cost", "uma_ranked", "dft_ranked", "full"}, optional
         ``"low_cost"`` reports electronic barriers from the selected g-xTB or
-        UMA screen, ``"dft_ranked"`` reports DFT single-point electronic
-        barriers on screened geometries, and
+        UMA screen, ``"uma_ranked"`` reports UMA single-point electronic
+        barriers on g-xTB optimized geometries, ``"dft_ranked"`` reports DFT
+        single-point electronic barriers on screened geometries, and
         ``"full"`` performs refinement and frequencies with the selected
         final method, DFT or UMA, so both electronic and Gibbs barriers are
-        available when the frequency stage returns thermochemistry. Deeper runs retain
-        independently selected lower-tier winners. A ``"full"`` run with
+        available when the frequency stage returns thermochemistry. Deeper runs
+        retain independently selected lower-tier winners. A ``"full"`` run
+        with UMA reranking retains low-cost, UMA-ranked, and full barriers.
+        A ``"full"`` run with
         ``include_dft_rank_sp=True`` retains low-cost, DFT-ranked, and full
         barriers; otherwise it retains low-cost and full barriers.
     method : MethodPlan, str, or None, optional
         Final calculation plan. ``"uma-gas"`` and
         ``"uma-alpb-chloroform"`` characterize TS and reference minima with
         UMA; DFT presets retain independent DFT validation.
+    ranking : RankingPlan, str, or None, optional
+        Optional ``"uma-gas"`` or ``"uma-alpb-chloroform"`` single-point
+        reranking after g-xTB optimization. The ``"full"`` result still uses
+        the selected DFT method; no UMA optimization is run.
     ranking_solvation : str, optional
         Solvation for DFT single points on screened geometries. ``"method"``
         inherits the method's analysis solvent, ``"gas"`` disables implicit
         solvent, and another value selects that SMD solvent. Full UMA uses
-        ``"method"`` because it has no DFT ranking stage.
+        ``"method"`` because it has no DFT ranking stage. UMA reranking also
+        requires ``"method"``; its gas or ALPB environment comes from
+        ``ranking``.
     spec_profile : str, optional
         TS/INT3 guess and constraint profile. ``"auto"`` follows the DFT
         validation method, normally ωB97 gas, or the reviewed UMA gas profile
@@ -1060,7 +1125,8 @@ def catalyst_screen(
         Profile resolution policy for TS/INT3 guesses.
     include_dft_rank_sp : bool or None, optional
         Include the ωB97 ranking single point in a ``"full"`` run. The
-        default is ``False`` for UMA screening and ``True`` for g-xTB;
+        default is ``False`` for UMA screening or UMA reranking and ``True``
+        for plain g-xTB screening;
         ``"dft_ranked"`` always runs the ranking point.
     scope : {"barriers", "full_cycle"}, optional
         ``"barriers"`` calculates the dependencies of the four supplied
@@ -1083,14 +1149,18 @@ def catalyst_screen(
     reuse_policy : {"approved", "auto_valid"}, optional
         Full thermochemical references use ``"approved"`` for manual-review
         reuse or ``"auto_valid"`` to accept automatic minimum checks.
-        Exact-match ``"low_cost"`` and ``"dft_ranked"`` screening artifacts
-        are automatically reusable because they are stored separately and are
-        not presented as approved DFT minima.
+        Exact-match ``"low_cost"``, ``"uma_ranked"``, and ``"dft_ranked"``
+        screening artifacts are automatically reusable because they are
+        stored separately and are not presented as approved DFT minima.
     n_confs : int or None, optional
         Initial conformer count forwarded consistently to every child
         workflow.
     top_n : int, optional
-        Number of low-energy candidates retained before final refinement.
+        Number retained by the low-cost screen. With UMA reranking, this is
+        the broad g-xTB cutoff before the UMA single points.
+    uma_rank_top_n : int, optional
+        Number of UMA-ranked candidates advanced to final ωB97 refinement.
+        Defaults to one and is independent of ``top_n``.
     ts_refine_n : int, optional
         Maximum distinct UMA optimized TS candidates sent to Hessian,
         released ``OptTS``, and final numerical frequencies in a full UMA run.
@@ -1120,6 +1190,7 @@ def catalyst_screen(
         screening=screening,
         level=level,
         method=method,
+        ranking=ranking,
         ranking_solvation=ranking_solvation,
         spec_profile=spec_profile,
         spec_match=spec_match,
@@ -1131,6 +1202,7 @@ def catalyst_screen(
         reuse_policy=reuse_policy,
         n_confs=n_confs,
         top_n=top_n,
+        uma_rank_top_n=uma_rank_top_n,
         ts_refine_n=ts_refine_n,
         prune_initial=prune_initial,
     )
