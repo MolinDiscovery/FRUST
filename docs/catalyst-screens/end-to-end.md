@@ -73,12 +73,12 @@ run.dimer_references()[
 
 | level | geometry | energy used for screening analysis | result |
 | --- | --- | --- | --- |
-| `low_cost` | g-xTB | g-xTB | ΔE |
-| `dft_ranked` | g-xTB | DFT SP | ΔE |
+| `low_cost` | g-xTB or UMA, per screening plan | same screening potential | ΔE |
+| `dft_ranked` | g-xTB or UMA, per screening plan | DFT SP | ΔE |
 | `full` | DFT | final DFT energy plus frequencies | ΔE and ΔG |
 
 The default `ranking_solvation="method"` applies the method's analysis solvent
-to every DFT SP on a g-xTB structure. For the current presets this normally
+to every DFT ranking SP on a screened structure. For the current presets this normally
 means SMD chloroform. Use `ranking_solvation="gas"` to opt out, or provide a
 different SMD solvent name.
 
@@ -95,6 +95,60 @@ ranked.show_stages()[["branch", "stage", "solvent"]]
 The selected level applies to TSs and every molecular dependency. A ranked TS
 is therefore combined only with equally ranked ligand, dimer, HBpin, and H2
 energies.
+
+## Screen With UMA Before ωB97 Validation
+
+The following full run selects conformers with ALPB-corrected UMA, then sends
+the retained structures directly to ωB97 validation:
+
+```python
+uma_screen = ft.workflows.catalyst_screen(
+    csv_path="screen.csv",
+    screening="uma-alpb-chloroform",
+    method="wb97xd3-631g",
+    level="full",
+    include_dft_rank_sp=False,
+)
+
+uma_screen.show_stages()[["branch", "stage", "engine", "solvent"]]
+```
+
+| Stage | Meaning |
+| --- | --- |
+| `xtb_preopt` | Constrained GFN-FF preoptimization for TSs and INT3 |
+| `uma_sp` | UMA single-point energies, including the selected ALPB correction |
+| `uma_sp_filter` | Keep the lowest `top_n` conformers by UMA single-point energy |
+| `uma_opt` | Constrained UMA optimization for TSs and INT3 |
+| `dft_preopt` onward | ωB97 optimization, TS/frequency checks, and final chloroform SP |
+
+The same `screening="uma-gas"` option removes the ALPB correction. The
+`low_cost` result uses `uma_opt-EE` and `uma_opt-oc`; `dft_ranked` adds the
+ωB97 ranking single point. For a `full` run, set
+`include_dft_rank_sp=True` if you also want that ranking point and its
+separate `dft_ranked` result tier. The default for a full UMA run is `False`;
+the existing g-xTB default remains `True`.
+
+The initial TS guess and its constraints are chosen separately from the UMA
+potential. By default, ωB97 validation selects the ωB97 gas guess profile.
+To use the reviewed UMA **gas** profile instead:
+
+```python
+uma_screen = ft.workflows.catalyst_screen(
+    csv_path="screen.csv",
+    screening="uma-alpb-chloroform",
+    method="wb97xd3-631g",
+    level="full",
+    spec_profile="omol-uma-s-1p2p1/gas",
+    spec_match="exact",
+)
+```
+
+!!! note "Guess profile and calculation solvent are independent"
+
+    The example uses gas-phase UMA reference geometry and constraints to
+    construct a guess, then calculates the screening stages with the UMA plus
+    ALPB(chloroform) potential. There is currently no reviewed UMA ALPB
+    geometry profile.
 
 ## Preview Structures Before Submission
 

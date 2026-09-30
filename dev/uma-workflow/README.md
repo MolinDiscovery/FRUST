@@ -33,7 +33,8 @@ For an UMA screen, `level="dft_ranked"` runs the ωB97 ranking single point.
 With `level="full"`, the ranking single point is independently configurable:
 it can run before ωB97 validation or be skipped so UMA selection feeds
 validation directly. Preserve existing r2SCAN-3c and ωB97 behavior. Task 05
-settles the public switch name and its UMA default before implementation.
+uses `include_dft_rank_sp`, which defaults to `False` for UMA and `True` for
+g-xTB. `dft_ranked` always runs the ranking single point.
 
 ## Task order and status
 
@@ -43,7 +44,7 @@ settles the public switch name and its UMA default before implementation.
 | [02 — Solvent correction](02-solvent-correction.md) | Complete | 01 | OET UMA energy/gradient correction with an explicit input option |
 | [03 — Server lifecycle](03-server-lifecycle.md) | Complete | 01–02 | One reusable UMA server per submitted target job |
 | [04 — Geometry profiles](04-geometry-profile.md) | Complete for gas; ALPB deferred | 02–03 | Reviewed UMA gas TS-guess profile for TS1–TS4 and INT3 |
-| [05 — Workflow integration](05-workflow-integration.md) | Pending | 02–04 | Named UMA screening stages and ωB97 validation path |
+| [05 — Workflow integration](05-workflow-integration.md) | Complete | 02–04 | Named UMA screening stages and ωB97 validation path; optional DFT ranking SP |
 | [06 — Final smoke test and docs](06-smoke-and-docs.md) | Pending | 01–05 | Small cluster end-to-end run and user-facing guidance |
 
 After Task 06, [Post-task 07 — Optional ALPB geometry
@@ -81,7 +82,7 @@ a screening benchmark.
 | Build the UMA gas profile now; defer ALPB geometry calibration | The ALPB potential may be unsuitable for low-frequency TS3/TS4 references. Corrected screening may start from an explicitly selected gas or ωB97 guess profile without labelling it as an ALPB reference. |
 | One UMA server per submitted target job | Reuse the loaded model across the job's UMA stages and numerical-frequency calls; stop it at job exit. |
 | Use explicit UMA stage names and result labels | `xtb_sp` and `xtb_opt` would misdescribe UMA results. |
-| Make DFT ranking SP optional in UMA `full` runs | Keep `dft_ranked` available and allow a full run both with and without the ranking SP. The UMA default is still to be decided. |
+| Make DFT ranking SP optional in UMA `full` runs | `include_dft_rank_sp=False` is the UMA default; g-xTB retains `True`, and `dft_ranked` always runs the ranking SP. |
 | Benchmark later | Large-scale accuracy and candidate-recovery work starts only after the workflow is functional. |
 
 ## Continuation note

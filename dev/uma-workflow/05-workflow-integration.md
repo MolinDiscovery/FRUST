@@ -8,8 +8,8 @@
 > chosen guess/constraint profile explicit in result provenance. The UMA ALPB
 > profile remains optional later work; do not imply an ALPB-optimized reference
 > when using gas UMA or ωB97 constraints. The exact
-> placement of any ALPB single point after gas UMA optimization remains to be
-> settled during this task.
+> placement of any ALPB single point after gas UMA optimization was resolved
+> by using the same ALPB-corrected UMA potential for both screening stages.
 
 ## Goal
 
@@ -26,10 +26,9 @@ uses the established ωB97 validation method plan after UMA selection.
 | `full`, ranking SP enabled | Run the ωB97 ranking SP, then full validation. |
 | `full`, ranking SP disabled | Proceed directly to ωB97 full validation. |
 
-The ranking-SP switch for `full` is independent of the requested level. Decide
-its public name and UMA default before implementation; record the choice in
-the index. Existing g-xTB/r2SCAN-3c/ωB97 workflows retain their current
-semantics.
+The ranking-SP switch for `full` is `include_dft_rank_sp`. It defaults to
+`False` for UMA and `True` for g-xTB. `dft_ranked` always runs the ranking SP.
+Existing g-xTB/r2SCAN-3c/ωB97 workflows retain their current semantics.
 
 ## Work
 
@@ -64,5 +63,42 @@ semantics.
 
 ## Completion record
 
-Pending. Add the public API example, FRUST revision, stage table from a small
-run, and focused test results here.
+Implemented on `feature/uma-screening` (revision recorded by the Task 05
+commit). The public API accepts `screening="uma-gas"` or
+`screening="uma-alpb-chloroform"` in `ft.workflows.catalyst_screen(...)` and
+the individual molecule, TS, and INT3 factories. For example:
+
+```python
+wf = ft.workflows.catalyst_screen(
+    dataframe=components,
+    screening="uma-alpb-chloroform",
+    method="wb97xd3-631g",
+    level="full",
+    include_dft_rank_sp=False,
+)
+```
+
+The default TS/INT3 guess and constraint profile follows the ωB97 validation
+method. The reviewed UMA gas profile can be selected explicitly with
+`spec_profile="omol-uma-s-1p2p1/gas"`; it is never inferred from the screening
+potential. The selected profile is recorded as `guess_profile`, while the UMA
+model and ALPB environment remain in the calculator specification.
+
+| Mode | Stage sequence after GFN-FF preoptimization | Saved lower tiers |
+| --- | --- | --- |
+| UMA `low_cost` | `uma_sp` → `uma_sp_filter` → `uma_opt` | Final result uses `uma_opt-EE` and `uma_opt-oc`. |
+| UMA `dft_ranked` | UMA stages → `dft_rank_sp` → final filter | `tier_low_cost.parquet`; final result uses `dft_rank_sp-EE`. |
+| UMA `full`, default | UMA stages → ωB97 refinement | `tier_low_cost.parquet`; no DFT-ranked tier. |
+| UMA `full`, ranking enabled | UMA stages → `dft_rank_sp` → `dft_rank_filter` → ωB97 refinement | Low-cost and DFT-ranked tiers. |
+
+The small mocked TS run in `tests/test_uma_screening_workflow.py` confirmed
+that an input with three conformers selected the lowest UMA single-point row
+before constrained UMA optimization. The same test module checks tier files,
+semantic columns, profile resolution, reference fingerprints, and the full
+coordinator stage graph including molecule references and INT3.
+
+Checks: `conda run -n UMA python -m pytest tests/test_uma_screening_workflow.py -q`
+(7 passed); `conda run -n UMA python -m pytest -q` (363 passed, 13 deselected);
+`conda run -n UMA mkdocs build --strict` (passed). A real compute-node
+end-to-end run and final user guide review remain in Task 06. The scientific
+screening benchmark remains outside this task sequence.

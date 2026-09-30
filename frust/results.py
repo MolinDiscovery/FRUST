@@ -22,6 +22,8 @@ def result_contract(
     dft: bool,
     calculation_level: str | None = None,
     include_terminal_solv_sp: bool = True,
+    screening_opt_stage: str = "xtb_opt",
+    include_dft_rank_sp: bool = True,
     thermochemistry: Any | None = None,
 ) -> dict[str, object]:
     """Return the canonical semantic-column contract for a workflow profile.
@@ -34,13 +36,17 @@ def result_contract(
         Whether the workflow includes DFT refinement.
     calculation_level : {"low_cost", "dft_ranked", "full"} or None, optional
         Explicit workflow depth. ``"low_cost"`` resolves analysis to the
-        g-xTB optimization energy, ``"dft_ranked"`` to the DFT single point
-        on the g-xTB geometry, and ``"full"`` to the final DFT analysis
-        energy and exposes frequency results.
+        selected g-xTB or UMA screening optimization energy,
+        ``"dft_ranked"`` to the DFT single point on that geometry, and
+        ``"full"`` to the final DFT analysis energy and frequency results.
     include_terminal_solv_sp : bool, optional
         Whether the DFT workflow includes a final solvent single point. When
         ``False``, the final DFT frequency-stage electronic energy is the
         analysis energy because all DFT stages already include solvent.
+    screening_opt_stage : {"xtb_opt", "uma_opt"}, optional
+        Optimization stage providing the low-cost energy and geometry.
+    include_dft_rank_sp : bool, optional
+        Whether a full run includes a separate DFT ranking single point.
     thermochemistry : ThermochemistrySpec or None, optional
         Explicit molecular free-energy assembly recipe recorded for a
         ``"full"`` result. Lower calculation levels have no frequency result,
@@ -55,9 +61,11 @@ def result_contract(
         calculation_level = (
             "full"
             if dft
-            else "dft_ranked"
-            if profile in {"transition_state", "constrained_minimum"}
-            else "low_cost"
+            else (
+                "dft_ranked"
+                if profile in {"transition_state", "constrained_minimum"}
+                else "low_cost"
+            )
         )
     calculation_level = str(calculation_level).strip().lower()
     if calculation_level not in {"low_cost", "dft_ranked", "full"}:
@@ -65,23 +73,25 @@ def result_contract(
             "calculation_level must be 'low_cost', 'dft_ranked', or 'full'"
         )
     has_full_dft = calculation_level == "full"
+    if screening_opt_stage not in {"xtb_opt", "uma_opt"}:
+        raise ValueError("screening_opt_stage must be 'xtb_opt' or 'uma_opt'")
     ranking_stage = (
-        "dft_rank_sp" if calculation_level in {"dft_ranked", "full"} else "xtb_opt"
+        "dft_rank_sp"
+        if calculation_level == "dft_ranked" or (has_full_dft and include_dft_rank_sp)
+        else screening_opt_stage
     )
     if profile == "minimum":
-        optimized_stage = "dft_opt" if has_full_dft else "xtb_opt"
+        optimized_stage = "dft_opt" if has_full_dft else screening_opt_stage
     elif profile == "transition_state":
-        optimized_stage = "dft_ts_opt" if has_full_dft else "xtb_opt"
+        optimized_stage = "dft_ts_opt" if has_full_dft else screening_opt_stage
     elif profile == "constrained_minimum":
-        optimized_stage = "dft_opt" if has_full_dft else "xtb_opt"
+        optimized_stage = "dft_opt" if has_full_dft else screening_opt_stage
     else:
         raise ValueError(f"Unknown result profile {profile!r}")
     analysis_stage = (
         "dft_solv_sp"
         if has_full_dft and include_terminal_solv_sp
-        else "dft_freq"
-        if has_full_dft
-        else ranking_stage
+        else "dft_freq" if has_full_dft else ranking_stage
     )
     columns: dict[str, dict[str, str]] = {
         "analysis": {
@@ -120,6 +130,8 @@ def attach_result_contract(
     dft: bool,
     calculation_level: str | None = None,
     include_terminal_solv_sp: bool = True,
+    screening_opt_stage: str = "xtb_opt",
+    include_dft_rank_sp: bool = True,
     thermochemistry: Any | None = None,
 ) -> pd.DataFrame:
     """Attach compact semantic result metadata to a dataframe in place.
@@ -136,6 +148,10 @@ def attach_result_contract(
         Explicit workflow depth recorded in the canonical contract.
     include_terminal_solv_sp : bool, optional
         Whether a separate final solvent single point was calculated.
+    screening_opt_stage : {"xtb_opt", "uma_opt"}, optional
+        Screening optimization stage used for lower-tier result columns.
+    include_dft_rank_sp : bool, optional
+        Whether a full run includes the DFT ranking single point.
     thermochemistry : ThermochemistrySpec or None, optional
         Explicit molecular free-energy assembly recipe to record.
 
@@ -149,6 +165,8 @@ def attach_result_contract(
         dft=dft,
         calculation_level=calculation_level,
         include_terminal_solv_sp=include_terminal_solv_sp,
+        screening_opt_stage=screening_opt_stage,
+        include_dft_rank_sp=include_dft_rank_sp,
         thermochemistry=thermochemistry,
     )
     return df
@@ -250,7 +268,9 @@ def frequency_values(row: Mapping[str, Any] | pd.Series) -> list[float]:
         if isinstance(value, (list, tuple, np.ndarray)):
             return [float(item) for item in value]
 
-    vibration_columns = [column for column in row.keys() if str(column).endswith("-vibs")]
+    vibration_columns = [
+        column for column in row.keys() if str(column).endswith("-vibs")
+    ]
     for column in reversed(vibration_columns):
         value = row[column]
         if not isinstance(value, (list, tuple, np.ndarray)):

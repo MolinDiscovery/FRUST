@@ -16,7 +16,6 @@ from collections.abc import Mapping
 from dataclasses import dataclass, field, replace as dataclass_replace
 from typing import Any, Literal
 
-
 _PRESETS: dict[str, "MethodPlan"] = {}
 _BUILTINS_REGISTERED = False
 _SCREENING_PRESETS: dict[str, "ScreeningPlan"] = {}
@@ -32,7 +31,9 @@ _STAGE_ALIASES = {
     "dft_freq": "freq",
     "dft_solv_sp": "solv",
 }
-_LEGACY_STAGE_ALIASES = {legacy: canonical for canonical, legacy in _STAGE_ALIASES.items()}
+_LEGACY_STAGE_ALIASES = {
+    legacy: canonical for canonical, legacy in _STAGE_ALIASES.items()
+}
 
 
 @dataclass(frozen=True)
@@ -176,9 +177,10 @@ class ScreeningPlan:
     name : str
         Human-readable screening-plan name.
     stages : mapping
-        Calculator specifications for ``xtb_preopt``, ``xtb_sp``, and
-        ``xtb_opt``. The built-in ``"gxtb-default"`` plan uses GFN-FF for
-        preoptimization and direct g-xTB for ranking and optimization.
+        Calculator specifications for ``xtb_preopt`` and either
+        ``xtb_sp``/``xtb_opt`` or ``uma_sp``/``uma_opt``. The built-in
+        ``"gxtb-default"`` plan uses GFN-FF and direct g-xTB; the UMA plans
+        use GFN-FF followed by UMA ranking and optimization.
 
     Notes
     -----
@@ -191,19 +193,15 @@ class ScreeningPlan:
     stages: Mapping[str, CalculatorSpec]
 
     def __post_init__(self) -> None:
-        required = {"xtb_preopt", "xtb_sp", "xtb_opt"}
         normalized = {str(key): value for key, value in self.stages.items()}
-        missing = sorted(required - set(normalized))
-        extra = sorted(set(normalized) - required)
-        if missing or extra:
-            details = []
-            if missing:
-                details.append(f"missing {missing}")
-            if extra:
-                details.append(f"unexpected {extra}")
+        allowed = (
+            {"xtb_preopt", "xtb_sp", "xtb_opt"},
+            {"xtb_preopt", "uma_sp", "uma_opt"},
+        )
+        if set(normalized) not in allowed:
             raise ValueError(
-                "ScreeningPlan must define exactly the screening stages: "
-                + "; ".join(details)
+                "ScreeningPlan stages must be xtb_preopt plus either "
+                "xtb_sp/xtb_opt or uma_sp/uma_opt"
             )
         for stage_id, spec in normalized.items():
             if not isinstance(spec, CalculatorSpec):
@@ -376,7 +374,9 @@ class MethodPlan:
         updated = dict(self.stages)
         for stage_id, spec in stages.items():
             if not isinstance(spec, CalculatorSpec):
-                raise TypeError(f"Replacement for {stage_id!r} must be a CalculatorSpec")
+                raise TypeError(
+                    f"Replacement for {stage_id!r} must be a CalculatorSpec"
+                )
             canonical = _LEGACY_STAGE_ALIASES.get(stage_id)
             legacy = _STAGE_ALIASES.get(stage_id)
             if canonical in updated:
@@ -512,6 +512,55 @@ def gxtb(
     )
 
 
+def uma(
+    *,
+    job: str = "sp",
+    xtb_alpb: str | None = None,
+    model: str = "omol@uma-s-1p2p1",
+    **kwargs: Any,
+) -> CalculatorSpec:
+    """Build a pinned UMA screening calculator specification.
+
+    Parameters
+    ----------
+    job : {"sp", "opt"}, optional
+        Single-point ranking or geometry optimization.
+    xtb_alpb : {"chloroform"} or None, optional
+        Add the GFN2-xTB ALPB(chloroform) minus gas correction to UMA.
+        ``None`` selects gas-phase UMA.
+    model : str, optional
+        UMA task and checkpoint, default ``"omol@uma-s-1p2p1"``.
+    **kwargs
+        Additional UMA options forwarded to :meth:`frust.stepper.Stepper.orca`.
+
+    Returns
+    -------
+    CalculatorSpec
+        ORCA external-potential specification with explicit UMA provenance.
+    """
+    if job not in {"sp", "opt"}:
+        raise ValueError("UMA screening job must be 'sp' or 'opt'")
+    if xtb_alpb not in {None, "chloroform"}:
+        raise ValueError("UMA screening supports only ALPB(chloroform)")
+    options = {"ExtOpt": None}
+    if job == "opt":
+        options["Opt"] = None
+    return CalculatorSpec(
+        engine="orca",
+        options=options,
+        method="UMA-S 1.2.1 (OMol)",
+        solvent=xtb_alpb,
+        solvation_model="alpb" if xtb_alpb else None,
+        kwargs={
+            "uma": model,
+            "uma_offline": True,
+            "uma_inference_settings": "batch",
+            **({"uma_xtb_alpb": xtb_alpb} if xtb_alpb else {}),
+            **kwargs,
+        },
+    )
+
+
 def screening_preset(name: str = "gxtb-default") -> ScreeningPlan:
     """Return a registered inexpensive screening-plan preset.
 
@@ -579,7 +628,13 @@ def apply_screening_plan(method: MethodPlan, screening: ScreeningPlan) -> Method
         raise TypeError("method must be a MethodPlan")
     if not isinstance(screening, ScreeningPlan):
         raise TypeError("screening must be a ScreeningPlan")
-    return method.replace(**dict(screening.stages))
+    stages = dict(method.stages)
+    stages.pop("xtb_sp", None)
+    stages.pop("xtb_opt", None)
+    stages.pop("uma_sp", None)
+    stages.pop("uma_opt", None)
+    stages.update(screening.stages)
+    return dataclass_replace(method, stages=stages)
 
 
 def with_ranking_solvation(
@@ -621,9 +676,7 @@ def with_ranking_solvation(
     updated = _replace_orca_solvation(rank_spec, solvent)
     resolved = method.with_stage("dft_rank_sp", updated)
     requested_value = (
-        requested.casefold()
-        if requested.casefold() in {"method", "gas"}
-        else requested
+        requested.casefold() if requested.casefold() in {"method", "gas"} else requested
     )
     return resolved, {
         "requested": requested_value,
@@ -812,9 +865,7 @@ def with_ts_mode_following(
     kwargs.update(
         {
             "ts_mode": tuple(mode_roles),
-            "ts_active_atoms": (
-                None if active_roles is None else tuple(active_roles)
-            ),
+            "ts_active_atoms": (None if active_roles is None else tuple(active_roles)),
             "ts_active_atoms_factor": active_atoms_factor,
             "recalc_hess": recalc_hess,
             "trust_radius": trust_radius,
@@ -871,7 +922,9 @@ def preset(name: str) -> MethodPlan:
         return _PRESETS[key]
     except KeyError as exc:
         available = ", ".join(sorted(_PRESETS))
-        raise KeyError(f"Unknown workflow method preset {name!r}. Available: {available}") from exc
+        raise KeyError(
+            f"Unknown workflow method preset {name!r}. Available: {available}"
+        ) from exc
 
 
 def register_preset(name: str, method: MethodPlan) -> MethodPlan:
@@ -948,6 +1001,18 @@ def _ensure_screening_presets() -> None:
             },
         ),
     )
+    for environment, solvent in (("gas", None), ("alpb-chloroform", "chloroform")):
+        register_screening_preset(
+            f"uma-{environment}",
+            ScreeningPlan(
+                name=f"uma-{environment}",
+                stages={
+                    "xtb_preopt": xtb(gfnff=True, opt=True),
+                    "uma_sp": uma(job="sp", xtb_alpb=solvent),
+                    "uma_opt": uma(job="opt", xtb_alpb=solvent),
+                },
+            ),
+        )
     _SCREENING_BUILTINS_REGISTERED = True
 
 
@@ -1163,7 +1228,9 @@ def _orca_options(method: str, basis: str | None, job: str) -> dict[str, None]:
         keywords = job_keywords[job_name]
     except KeyError as exc:
         supported = ", ".join(sorted(job_keywords))
-        raise ValueError(f"Unsupported ORCA job {job!r}. Supported jobs: {supported}") from exc
+        raise ValueError(
+            f"Unsupported ORCA job {job!r}. Supported jobs: {supported}"
+        ) from exc
 
     options: dict[str, None] = {method: None}
     if basis:

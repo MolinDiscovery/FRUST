@@ -37,7 +37,6 @@ from frust.screen._quality import minimum_vibration_status
 from frust.structures import StructureTarget
 from frust.workflows.methods import CalculationLevel, MethodPlan
 
-
 ReviewDecision = Literal["approved", "rejected", "unreviewed"]
 ReusePolicy = Literal["approved", "auto_valid"]
 INDEX_COLUMNS = [
@@ -170,7 +169,11 @@ class ReferenceRecord:
     def files(self) -> list[Path]:
         """Return calculator input/output files retained by this entry."""
         root = self.path / "calculator_files"
-        return sorted(path for path in root.rglob("*") if path.is_file()) if root.exists() else []
+        return (
+            sorted(path for path in root.rglob("*") if path.is_file())
+            if root.exists()
+            else []
+        )
 
     def view(self, **kwargs: Any) -> Any:
         """Display the optimized structure with FRUST's molecule viewer."""
@@ -328,7 +331,9 @@ class ReferenceLibrary:
         }
         for column, value in filters.items():
             if value is not None:
-                result = result[result[column].astype(str).str.casefold() == str(value).casefold()]
+                result = result[
+                    result[column].astype(str).str.casefold() == str(value).casefold()
+                ]
         return result.reset_index(drop=True)
 
     def get(self, reference_id: str) -> ReferenceRecord:
@@ -460,7 +465,9 @@ class ReferenceLibrary:
         self.initialize()
         artifact_policy = validate_artifact_policy(artifact_policy)
         if len(df) != 1:
-            raise ValueError("reference publication requires exactly one selected result row")
+            raise ValueError(
+                "reference publication requires exactly one selected result row"
+            )
         validation = _validate_reference_result(df, method, calculation_level)
         if artifact_policy == "screening":
             df = compact_result_dataframe(df)
@@ -473,13 +480,16 @@ class ReferenceLibrary:
         result_content = _reference_result_content(df, method, calculation_level)
         result_fingerprint = _content_hash(result_content)
         evidence_level = "compact" if artifact_policy == "screening" else "full"
-        reference_id = "ref_" + _content_hash(
-            {
-                "identity": identity,
-                "result": result_content,
-                "evidence_level": evidence_level,
-            }
-        )[:16]
+        reference_id = (
+            "ref_"
+            + _content_hash(
+                {
+                    "identity": identity,
+                    "result": result_content,
+                    "evidence_level": evidence_level,
+                }
+            )[:16]
+        )
         compound_name = _compound_name(target)
         method_slug = _slug(method.name)
         state_slug = _slug(target.state_id)
@@ -512,7 +522,9 @@ class ReferenceLibrary:
             df.to_parquet(result_path, index=False)
             coords_col = result_column(df, "coords", purpose="optimized")
             row = df.iloc[0]
-            (temp_path / "optimized.xyz").write_text(ac2xyz(row["atoms"], row[coords_col]))
+            (temp_path / "optimized.xyz").write_text(
+                ac2xyz(row["atoms"], row[coords_col])
+            )
             if artifact_policy == "standard":
                 _copy_scientific_calculator_files(
                     source_target_dir,
@@ -621,7 +633,9 @@ class ReferenceLibrary:
         if not destination.exists():
             destination.parent.mkdir(parents=True, exist_ok=True)
             temporary = Path(
-                tempfile.mkdtemp(prefix=f".{record.reference_id}-", dir=destination.parent)
+                tempfile.mkdtemp(
+                    prefix=f".{record.reference_id}-", dir=destination.parent
+                )
             )
             shutil.rmtree(temporary)
             shutil.copytree(source_path, temporary)
@@ -669,13 +683,15 @@ class ReferenceLibrary:
             raise ValueError("decision must be 'approved' or 'rejected'")
         self.get(reference_id)
         row = pd.DataFrame(
-            [{
-                "reference_id": reference_id,
-                "decision": decision,
-                "note": str(note),
-                "reviewer": str(reviewer),
-                "reviewed_at": _utc_now(),
-            }]
+            [
+                {
+                    "reference_id": reference_id,
+                    "decision": decision,
+                    "note": str(note),
+                    "reviewer": str(reviewer),
+                    "reviewed_at": _utc_now(),
+                }
+            ]
         )
         with self._locked():
             reviews = self._reviews()
@@ -729,10 +745,14 @@ class ReferenceLibrary:
             raise ValueError(f"Reference metadata is missing: {metadata_path}")
         metadata_digest_path = entry_path / "metadata.sha256"
         if not metadata_digest_path.exists():
-            raise ValueError(f"Reference metadata checksum is missing: {metadata_digest_path}")
+            raise ValueError(
+                f"Reference metadata checksum is missing: {metadata_digest_path}"
+            )
         digest_fields = metadata_digest_path.read_text().split()
         if not digest_fields:
-            raise ValueError(f"Reference metadata checksum is empty: {metadata_digest_path}")
+            raise ValueError(
+                f"Reference metadata checksum is empty: {metadata_digest_path}"
+            )
         expected_metadata_digest = digest_fields[0]
         if _file_sha256(metadata_path) != expected_metadata_digest:
             raise ValueError(f"Reference checksum failed for {metadata_path}")
@@ -775,12 +795,18 @@ def reference_identity(
 ) -> tuple[str, dict[str, Any]]:
     """Return a stable compatibility key and its scientific identity."""
     if calculation_level not in {"low_cost", "dft_ranked", "full"}:
-        raise ValueError("calculation_level must be 'low_cost', 'dft_ranked', or 'full'")
+        raise ValueError(
+            "calculation_level must be 'low_cost', 'dft_ranked', or 'full'"
+        )
     if calculation_level == "full" and method.thermochemistry is None:
         raise ValueError(
             f"Method plan {method.name!r} has no thermochemistry specification"
         )
-    active_plan = _active_reference_method(method, calculation_level)
+    active_plan = _active_reference_method(
+        method,
+        calculation_level,
+        include_dft_rank_sp=bool((protocol or {}).get("include_dft_rank_sp", True)),
+    )
     method_fingerprint = _content_hash(active_plan)
     identity = {
         "schema_version": 2,
@@ -808,10 +834,19 @@ def reference_identity(
 def _active_reference_method(
     method: MethodPlan,
     calculation_level: CalculationLevel,
+    *,
+    include_dft_rank_sp: bool = True,
 ) -> dict[str, Any]:
     """Return only calculator stages that can affect a molecular reference."""
-    stages = ["xtb_preopt", "xtb_sp", "xtb_opt"]
-    if calculation_level in {"dft_ranked", "full"}:
+    screening = (
+        ["uma_sp", "uma_opt"]
+        if {"uma_sp", "uma_opt"}.issubset(method.stages)
+        else ["xtb_sp", "xtb_opt"]
+    )
+    stages = ["xtb_preopt", *screening]
+    if calculation_level == "dft_ranked" or (
+        calculation_level == "full" and include_dft_rank_sp
+    ):
         stages.append("dft_rank_sp")
     if calculation_level == "full":
         stages.extend(["dft_opt", "dft_freq"])
@@ -820,8 +855,7 @@ def _active_reference_method(
     return {
         "schema_version": 1,
         "stages": {
-            stage_id: method.for_stage(stage_id).to_dict()
-            for stage_id in stages
+            stage_id: method.for_stage(stage_id).to_dict() for stage_id in stages
         },
         "include_terminal_solv_sp": (
             method.include_terminal_solv_sp if calculation_level == "full" else False
@@ -897,9 +931,7 @@ def _bind_reference_dataframe(
         "bindings": [
             {
                 "reference_id": str(metadata["reference_id"]),
-                "calculation_level": str(
-                    metadata.get("calculation_level") or "full"
-                ),
+                "calculation_level": str(metadata.get("calculation_level") or "full"),
                 "source_compound_name": str(metadata.get("compound_name") or ""),
                 "target_id": target.target_id,
                 "scope": target.scope,
@@ -958,7 +990,9 @@ def _validate_reference_result(
     nt_columns = normal_termination_columns(df)
     if not nt_columns:
         raise ValueError("Reference has no normal-termination provenance")
-    failed_nt = [column for column in nt_columns if not bool(df[column].fillna(False).all())]
+    failed_nt = [
+        column for column in nt_columns if not bool(df[column].fillna(False).all())
+    ]
     if failed_nt:
         raise ValueError(f"Reference has non-normal termination columns: {failed_nt}")
     electronic = get_result(df, "electronic_energy", purpose="analysis")
@@ -982,8 +1016,7 @@ def _validate_reference_result(
     minimum = minimum_vibration_status(frequencies)
     if minimum["status"] == "invalid":
         frequencies = ", ".join(
-            f"{frequency:.2f}"
-            for frequency in minimum["negative_frequencies_cm1"]
+            f"{frequency:.2f}" for frequency in minimum["negative_frequencies_cm1"]
         )
         raise ValueError(
             f"Reference minimum has {minimum['n_imag']} imaginary frequencies: "
@@ -1015,7 +1048,9 @@ def _reference_result_content(
         free_energy_components(
             df,
             thermochemistry=method.thermochemistry,
-        ).iloc[0].to_dict()
+        )
+        .iloc[0]
+        .to_dict()
         if calculation_level == "full"
         else {"analysis_electronic_energy_hartree": electronic_energy}
     )
@@ -1027,8 +1062,7 @@ def _reference_result_content(
             "energies": energies,
             "frequencies_cm1": frequency_values(row),
             "normal_termination": {
-                column: row[column]
-                for column in normal_termination_columns(df)
+                column: row[column] for column in normal_termination_columns(df)
             },
         }
     )
@@ -1046,7 +1080,7 @@ def _copy_scientific_calculator_files(
     source = Path(source_target_dir)
     if not source.is_dir():
         return
-    stage_names = {"xtb_preopt", "xtb_sp", "xtb_opt"}
+    stage_names = {"xtb_preopt", "xtb_sp", "xtb_opt", "uma_sp", "uma_opt"}
     if calculation_level in {"dft_ranked", "full"}:
         stage_names.add("dft_rank_sp")
     if calculation_level == "full":
@@ -1140,7 +1174,9 @@ def _compound_name(target: StructureTarget) -> str:
 
 def _formula(atoms: Any) -> str:
     counts = Counter(str(atom) for atom in atoms)
-    order = ["C", "H"] + sorted(element for element in counts if element not in {"C", "H"})
+    order = ["C", "H"] + sorted(
+        element for element in counts if element not in {"C", "H"}
+    )
     return "".join(
         element + (str(counts[element]) if counts[element] != 1 else "")
         for element in order
@@ -1149,12 +1185,19 @@ def _formula(atoms: Any) -> str:
 
 
 def _slug(value: str) -> str:
-    text = "".join(character if character.isalnum() else "_" for character in str(value))
+    text = "".join(
+        character if character.isalnum() else "_" for character in str(value)
+    )
     return text.strip("_").lower() or "reference"
 
 
 def _utc_now() -> str:
-    return datetime.now(timezone.utc).replace(microsecond=0).isoformat().replace("+00:00", "Z")
+    return (
+        datetime.now(timezone.utc)
+        .replace(microsecond=0)
+        .isoformat()
+        .replace("+00:00", "Z")
+    )
 
 
 def _json_compatible(value: Any) -> Any:

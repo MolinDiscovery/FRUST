@@ -31,10 +31,21 @@ from frust.structures import (
 )
 from frust.utils.mols import create_mol_per_rpos
 from frust.utils.pruning import normalize_pruning_options
-from frust.workflows.core import BaseWorkflow, ExecutionOptions, StageDef, WorkflowTarget
-from frust.workflows.methods import CalculationLevel, MethodPlan
+from frust.workflows.core import (
+    BaseWorkflow,
+    ExecutionOptions,
+    StageDef,
+    WorkflowTarget,
+)
+from frust.workflows.methods import (
+    CalculationLevel,
+    MethodPlan,
+    ScreeningPlan,
+    apply_screening_plan,
+    preset as method_preset,
+    screening_preset,
+)
 from frust.workflows.spec_profiles import profile_for_geometry_stage
-
 
 SplitMode = Literal["per_input", "per_rpos"]
 
@@ -105,31 +116,99 @@ def _molecule_stage_defs(
     *,
     top_n: int,
     calculation_level: CalculationLevel,
+    method: MethodPlan,
+    include_dft_rank_sp: bool = True,
     include_terminal_solv_sp: bool = True,
     prune_initial: bool | dict[str, Any] | None = False,
 ) -> list[StageDef]:
     """Return the shared molecule stage graph."""
+    screening_sp, screening_opt = _screening_stage_ids(method)
     stages = [
         StageDef("prepare", "prepare", kind="prepare"),
         StageDef("xtb_preopt", "xtb_preopt", n_cores=2),
-        StageDef("xtb_sp", "xtb_sp", n_cores=2),
-        StageDef("xtb_opt", "xTB optimization", lowest=top_n, rank_by="xtb_opt", n_cores=2),
+        StageDef(
+            screening_sp,
+            "UMA single point" if screening_sp == "uma_sp" else "xtb_sp",
+            n_cores=2,
+        ),
     ]
-    if calculation_level in {"dft_ranked", "full"}:
+    if screening_sp == "uma_sp":
+        stages.append(
+            StageDef(
+                "uma_sp_filter",
+                "UMA single-point selection",
+                kind="filter",
+                lowest=top_n,
+                rank_by="uma_sp",
+            )
+        )
+    stages.append(
+        StageDef(
+            screening_opt,
+            "UMA optimization" if screening_opt == "uma_opt" else "xTB optimization",
+            lowest=top_n,
+            rank_by=screening_opt,
+            n_cores=2,
+        )
+    )
+    if calculation_level == "dft_ranked" or (
+        calculation_level == "full" and include_dft_rank_sp
+    ):
         stages.append(StageDef("dft_rank_sp", "DFT ranking single point"))
+        if calculation_level == "full" and screening_opt == "uma_opt":
+            stages.append(
+                StageDef(
+                    "dft_rank_filter",
+                    "DFT single-point selection",
+                    kind="filter",
+                    lowest=1,
+                    rank_by="dft_rank_sp",
+                )
+            )
     if calculation_level == "full":
         stages.extend(
             [
-                StageDef("dft_opt", "DFT minimum optimization", lowest=1, rank_by="dft_opt"),
+                StageDef(
+                    "dft_opt", "DFT minimum optimization", lowest=1, rank_by="dft_opt"
+                ),
                 StageDef("dft_freq", "DFT frequencies"),
             ]
         )
         if include_terminal_solv_sp:
             stages.append(StageDef("dft_solv_sp", "DFT solvent single point"))
     else:
-        rank_by = "dft_rank_sp" if calculation_level == "dft_ranked" else "xtb_opt"
-        stages.append(StageDef("filter", "filter", kind="filter", lowest=1, rank_by=rank_by))
+        rank_by = "dft_rank_sp" if calculation_level == "dft_ranked" else screening_opt
+        stages.append(
+            StageDef("filter", "filter", kind="filter", lowest=1, rank_by=rank_by)
+        )
     return _with_initial_prune(stages, prune_initial)
+
+
+def _screening_stage_ids(method: MethodPlan) -> tuple[str, str]:
+    """Return the ranking and optimization stage ids of the active screen."""
+    if {"uma_sp", "uma_opt"}.issubset(method.stages):
+        return "uma_sp", "uma_opt"
+    return "xtb_sp", "xtb_opt"
+
+
+def _screening_method(
+    method: MethodPlan | str | None,
+    screening: ScreeningPlan | str | None,
+) -> MethodPlan | str | None:
+    """Compose an optional screening preset with a downstream method plan."""
+    if screening is None:
+        return method
+    base = (
+        method
+        if isinstance(method, MethodPlan)
+        else method_preset(method or "wb97xd3-631g")
+    )
+    plan = (
+        screening
+        if isinstance(screening, ScreeningPlan)
+        else screening_preset(screening)
+    )
+    return apply_screening_plan(base, plan)
 
 
 def _calculation_level(
@@ -143,7 +222,9 @@ def _calculation_level(
         return "full" if dft else non_dft_level
     normalized = str(value).strip().lower()
     if normalized not in {"low_cost", "dft_ranked", "full"}:
-        raise ValueError("calculation_level must be 'low_cost', 'dft_ranked', or 'full'")
+        raise ValueError(
+            "calculation_level must be 'low_cost', 'dft_ranked', or 'full'"
+        )
     return normalized  # type: ignore[return-value]
 
 
@@ -221,10 +302,12 @@ class MolsWorkflow(BaseWorkflow):
         split: SplitMode = "per_rpos",
         select_mols: str | list[str] = "all",
         method: MethodPlan | str | None = None,
+        screening: ScreeningPlan | str | None = None,
         n_confs: int | None = None,
         top_n: int = 20,
         dft: bool = True,
         calculation_level: CalculationLevel | None = None,
+        include_dft_rank_sp: bool | None = None,
         prune_initial: bool | dict[str, Any] = True,
     ) -> None:
         self.calculation_level = _calculation_level(
@@ -233,7 +316,7 @@ class MolsWorkflow(BaseWorkflow):
             non_dft_level="low_cost",
         )
         super().__init__(
-            method=method,
+            method=_screening_method(method, screening),
             n_confs=n_confs,
             top_n=top_n,
             dft=self.calculation_level == "full",
@@ -243,6 +326,11 @@ class MolsWorkflow(BaseWorkflow):
         self.smiles = smiles
         self.split = split
         self.select_mols = select_mols
+        self.include_dft_rank_sp = (
+            "uma_opt" not in self.method.stages
+            if include_dft_rank_sp is None
+            else bool(include_dft_rank_sp)
+        )
         self.prune_initial = prune_initial
 
     def _input_df(self) -> pd.DataFrame:
@@ -282,7 +370,11 @@ class MolsWorkflow(BaseWorkflow):
         if self.split == "per_input":
             targets = []
             for idx, row in df.iterrows():
-                name = row.get("compound_name") or row.get("substrate_name") or f"row_{idx:03d}"
+                name = (
+                    row.get("compound_name")
+                    or row.get("substrate_name")
+                    or f"row_{idx:03d}"
+                )
                 targets.append(
                     WorkflowTarget(
                         tag=sanitize_tag(str(name)),
@@ -366,6 +458,8 @@ class MolsWorkflow(BaseWorkflow):
         return _molecule_stage_defs(
             top_n=self.top_n,
             calculation_level=self.calculation_level,
+            method=self.method,
+            include_dft_rank_sp=self.include_dft_rank_sp,
             include_terminal_solv_sp=self.method.include_terminal_solv_sp,
             prune_initial=self.prune_initial,
         )
@@ -544,6 +638,7 @@ class RawMolsWorkflow(BaseWorkflow):
         return _molecule_stage_defs(
             top_n=self.top_n,
             calculation_level=self.calculation_level,
+            method=self.method,
             include_terminal_solv_sp=self.method.include_terminal_solv_sp,
             prune_initial=self.prune_initial,
         )
@@ -569,10 +664,12 @@ class ScreenTSWorkflow(BaseWorkflow):
         spec_profile: str = "auto",
         spec_match: str = "prefer-exact",
         method: MethodPlan | str | None = None,
+        screening: ScreeningPlan | str | None = None,
         n_confs: int | None = None,
         top_n: int = 20,
         dft: bool = True,
         calculation_level: CalculationLevel | None = None,
+        include_dft_rank_sp: bool | None = None,
         prune_initial: bool | dict[str, Any] = True,
     ) -> None:
         self.calculation_level = _calculation_level(
@@ -581,7 +678,7 @@ class ScreenTSWorkflow(BaseWorkflow):
             non_dft_level="dft_ranked",
         )
         super().__init__(
-            method=method,
+            method=_screening_method(method, screening),
             n_confs=n_confs,
             top_n=top_n,
             dft=self.calculation_level == "full",
@@ -592,6 +689,11 @@ class ScreenTSWorkflow(BaseWorkflow):
         self.ts_backend = str(ts_backend).strip().lower()
         self.spec_profile = str(spec_profile).strip().lower()
         self.spec_match = str(spec_match).strip().lower()
+        self.include_dft_rank_sp = (
+            "uma_opt" not in self.method.stages
+            if include_dft_rank_sp is None
+            else bool(include_dft_rank_sp)
+        )
         self.prune_initial = prune_initial
 
     def _resolved_spec_profile(self) -> str:
@@ -649,7 +751,9 @@ class ScreenTSWorkflow(BaseWorkflow):
         unknown = sorted(set(self.ts_types) - set(supported_specs))
         if unknown:
             supported = ", ".join(sorted(supported_specs))
-            raise ValueError(f"Unsupported screen TS types {unknown}. Supported: {supported}")
+            raise ValueError(
+                f"Unsupported screen TS types {unknown}. Supported: {supported}"
+            )
         systems = self._systems()
         if self.ts_backend == "tsguess2":
             resolve_profile_specs(
@@ -660,13 +764,17 @@ class ScreenTSWorkflow(BaseWorkflow):
             return plan_targets(systems, states=self.ts_types)
         targets: list[WorkflowTarget] = []
         for _, system in systems.iterrows():
-            rpos_values = parse_rpos_value(system.get("rpos"), str(system["substrate_smiles"]))
+            rpos_values = parse_rpos_value(
+                system.get("rpos"), str(system["substrate_smiles"])
+            )
             for ts_type in self.ts_types:
                 for rpos in rpos_values:
                     target = system.copy()
                     target["rpos"] = int(rpos)
                     target["ts_type"] = ts_type
-                    tag = sanitize_tag(f"{ts_type}__{system['system_name']}__r{int(rpos)}")
+                    tag = sanitize_tag(
+                        f"{ts_type}__{system['system_name']}__r{int(rpos)}"
+                    )
                     targets.append(
                         WorkflowTarget(
                             tag=tag,
@@ -742,9 +850,24 @@ class ScreenTSWorkflow(BaseWorkflow):
 
     def _stage_defs(self) -> list[StageDef]:
         """Return screen TS workflow stages."""
-        stages = _ts_screening_stages(self.top_n, prune_initial=self.prune_initial)
-        if self.calculation_level in {"dft_ranked", "full"}:
+        _, screening_opt = _screening_stage_ids(self.method)
+        stages = _ts_screening_stages(
+            self.top_n, method=self.method, prune_initial=self.prune_initial
+        )
+        if self.calculation_level == "dft_ranked" or (
+            self.calculation_level == "full" and self.include_dft_rank_sp
+        ):
             stages.append(_dft_rank_sp_stage())
+            if self.calculation_level == "full" and screening_opt == "uma_opt":
+                stages.append(
+                    StageDef(
+                        "dft_rank_filter",
+                        "DFT single-point selection",
+                        kind="filter",
+                        lowest=1,
+                        rank_by="dft_rank_sp",
+                    )
+                )
         if self.calculation_level == "full":
             stages.extend(
                 _ts_dft_refinement_stages(
@@ -755,12 +878,15 @@ class ScreenTSWorkflow(BaseWorkflow):
             rank_by = (
                 "dft_rank_sp"
                 if self.calculation_level == "dft_ranked"
-                else "xtb_opt"
+                else screening_opt
             )
             stages.append(
                 StageDef(
-                    "filter", "filter", kind="filter",
-                    lowest=1, rank_by=rank_by,
+                    "filter",
+                    "filter",
+                    kind="filter",
+                    lowest=1,
+                    rank_by=rank_by,
                 )
             )
         return stages
@@ -785,10 +911,12 @@ class Int3Workflow(BaseWorkflow):
         spec_profile: str = "auto",
         spec_match: str = "prefer-exact",
         method: MethodPlan | str | None = None,
+        screening: ScreeningPlan | str | None = None,
         n_confs: int | None = None,
         top_n: int = 20,
         dft: bool = True,
         calculation_level: CalculationLevel | None = None,
+        include_dft_rank_sp: bool | None = None,
         prune_initial: bool | dict[str, Any] = True,
     ) -> None:
         self.calculation_level = _calculation_level(
@@ -797,7 +925,7 @@ class Int3Workflow(BaseWorkflow):
             non_dft_level="dft_ranked",
         )
         super().__init__(
-            method=method,
+            method=_screening_method(method, screening),
             n_confs=n_confs,
             top_n=top_n,
             dft=self.calculation_level == "full",
@@ -806,6 +934,11 @@ class Int3Workflow(BaseWorkflow):
         self.dataframe = dataframe
         self.spec_profile = str(spec_profile).strip().lower()
         self.spec_match = str(spec_match).strip().lower()
+        self.include_dft_rank_sp = (
+            "uma_opt" not in self.method.stages
+            if include_dft_rank_sp is None
+            else bool(include_dft_rank_sp)
+        )
         self.prune_initial = prune_initial
 
     def _resolved_spec_profile(self) -> str:
@@ -872,9 +1005,24 @@ class Int3Workflow(BaseWorkflow):
 
     def _stage_defs(self) -> list[StageDef]:
         """Return the dedicated INT3 screening and refinement graph."""
-        stages = _ts_screening_stages(self.top_n, prune_initial=self.prune_initial)
-        if self.calculation_level in {"dft_ranked", "full"}:
+        _, screening_opt = _screening_stage_ids(self.method)
+        stages = _ts_screening_stages(
+            self.top_n, method=self.method, prune_initial=self.prune_initial
+        )
+        if self.calculation_level == "dft_ranked" or (
+            self.calculation_level == "full" and self.include_dft_rank_sp
+        ):
             stages.append(_dft_rank_sp_stage())
+            if self.calculation_level == "full" and screening_opt == "uma_opt":
+                stages.append(
+                    StageDef(
+                        "dft_rank_filter",
+                        "DFT single-point selection",
+                        kind="filter",
+                        lowest=1,
+                        rank_by="dft_rank_sp",
+                    )
+                )
         if self.calculation_level == "full":
             stages.extend(
                 _int3_dft_refinement_stages(
@@ -885,7 +1033,7 @@ class Int3Workflow(BaseWorkflow):
             rank_by = (
                 "dft_rank_sp"
                 if self.calculation_level == "dft_ranked"
-                else "xtb_opt"
+                else screening_opt
             )
             stages.append(
                 StageDef(
@@ -907,9 +1055,12 @@ def mols(
     split: SplitMode = "per_rpos",
     select_mols: str | list[str] = "all",
     method: MethodPlan | str | None = None,
+    screening: ScreeningPlan | str | None = None,
     n_confs: int | None = None,
     top_n: int = 20,
     dft: bool = True,
+    calculation_level: CalculationLevel | None = None,
+    include_dft_rank_sp: bool | None = None,
     prune_initial: bool | dict[str, Any] = True,
 ) -> MolsWorkflow:
     """Create a molecule-state workflow.
@@ -951,6 +1102,10 @@ def mols(
         ``"r2scan-def2svp"`` (ORCA R2SCAN/def2-SVP DFT stages). A preset may
         contain stage keys this molecule workflow does not use; call
         ``wf.show_stages()`` to inspect the active stages.
+    screening : ScreeningPlan or str or None, optional
+        Screening preset such as ``"uma-gas"`` or
+        ``"uma-alpb-chloroform"``. ``None`` preserves the method plan's
+        screening calculators.
     n_confs : int or None, optional
         Conformer count for initial dataframe preparation.
     top_n : int, optional
@@ -959,6 +1114,11 @@ def mols(
         Include DFT optimization and frequency stages when ``True``. Gas-phase
         presets also include a terminal solvent single point; solvent-inclusive
         presets do not.
+    calculation_level : {"low_cost", "dft_ranked", "full"} or None, optional
+        Explicit workflow depth. When set, it takes precedence over ``dft``.
+    include_dft_rank_sp : bool or None, optional
+        Include the DFT ranking single point in a full run. The default is
+        ``False`` for UMA screening and ``True`` for g-xTB screening.
     prune_initial : bool or dict, optional
         If ``False``, leave the initial conformer ensemble unchanged. If
         ``True``, insert PRISM pruning immediately after ``prepare`` using the
@@ -1001,9 +1161,12 @@ def mols(
         split=split,
         select_mols=select_mols,
         method=method,
+        screening=screening,
         n_confs=n_confs,
         top_n=top_n,
         dft=dft,
+        calculation_level=calculation_level,
+        include_dft_rank_sp=include_dft_rank_sp,
         prune_initial=prune_initial,
     )
 
@@ -1088,11 +1251,14 @@ def screen_ts(
     ts_types: tuple[str, ...] | list[str] = ("TS1", "TS2", "TS3", "TS4"),
     ts_backend: str = "tsguess2",
     method: MethodPlan | str | None = None,
+    screening: ScreeningPlan | str | None = None,
     spec_profile: str = "auto",
     spec_match: str = "prefer-exact",
     n_confs: int | None = None,
     top_n: int = 20,
     dft: bool = True,
+    calculation_level: CalculationLevel | None = None,
+    include_dft_rank_sp: bool | None = None,
     prune_initial: bool | dict[str, Any] = True,
 ) -> ScreenTSWorkflow:
     """Create a substrate/catalyst transition-state screen workflow.
@@ -1119,6 +1285,10 @@ def screen_ts(
         ``"r2scan-3c-solv"`` and ``"wb97xd3-631g-solv"``
         (solvent-inclusive DFT stages without a terminal solvent SP), and
         ``"r2scan-def2svp"`` (ORCA R2SCAN/def2-SVP DFT stages).
+    screening : ScreeningPlan or str or None, optional
+        Screening preset. ``"uma-gas"`` and ``"uma-alpb-chloroform"`` use
+        GFN-FF followed by UMA single-point selection and constrained UMA
+        optimization. ``None`` keeps the method plan's screening calculators.
     spec_profile : str, optional
         Geometry-reference profile used by ``tsguess2``. ``"auto"`` selects
         the profile from the DFT TS-optimization method and environment. Pass
@@ -1140,6 +1310,12 @@ def screen_ts(
         terminal solvent single point; solvent-inclusive presets do not. If
         ``False``, stop after the DFT pre-SP cutoff and keep the lowest-energy
         row.
+    calculation_level : {"low_cost", "dft_ranked", "full"} or None, optional
+        Explicit screening depth. When set, it takes precedence over ``dft``.
+    include_dft_rank_sp : bool or None, optional
+        Whether a full run includes the DFT ranking single point. Defaults to
+        ``False`` for UMA screening and ``True`` otherwise. ``dft_ranked``
+        always includes it.
     prune_initial : bool or dict, optional
         Defaults to ``True``, which inserts PRISM pruning immediately after
         ``prepare`` with ``modes=("moi", "rmsd")``,
@@ -1176,11 +1352,14 @@ def screen_ts(
         ts_types=ts_types,
         ts_backend=ts_backend,
         method=method,
+        screening=screening,
         spec_profile=spec_profile,
         spec_match=spec_match,
         n_confs=n_confs,
         top_n=top_n,
         dft=dft,
+        calculation_level=calculation_level,
+        include_dft_rank_sp=include_dft_rank_sp,
         prune_initial=prune_initial,
     )
 
@@ -1190,11 +1369,14 @@ def int3(
     csv_path: str | Path | None = None,
     dataframe: pd.DataFrame | None = None,
     method: MethodPlan | str | None = None,
+    screening: ScreeningPlan | str | None = None,
     spec_profile: str = "auto",
     spec_match: str = "prefer-exact",
     n_confs: int | None = None,
     top_n: int = 20,
     dft: bool = True,
+    calculation_level: CalculationLevel | None = None,
+    include_dft_rank_sp: bool | None = None,
     prune_initial: bool | dict[str, Any] = True,
 ) -> Int3Workflow:
     """Create a modern, dedicated INT3 constrained-minimum workflow.
@@ -1212,6 +1394,9 @@ def int3(
         are ``"r2scan-3c"`` (ORCA r2SCAN-3c composite DFT stages),
         ``"wb97xd3-631g"`` (default ORCA wB97X-D3/6-31G** workflow), and
         ``"r2scan-def2svp"`` (ORCA R2SCAN/def2-SVP DFT stages).
+    screening : ScreeningPlan or str or None, optional
+        Optional screening preset, including ``"uma-gas"`` and
+        ``"uma-alpb-chloroform"``.
     spec_profile : str, optional
         Geometry-reference profile used for INT3 construction. ``"auto"``
         selects it from the DFT optimization method and environment.
@@ -1230,6 +1415,11 @@ def int3(
         terminal solvent single point; solvent-inclusive presets do not. If
         ``False``, stop after the DFT pre-SP cutoff and keep the lowest-energy
         row.
+    calculation_level : {"low_cost", "dft_ranked", "full"} or None, optional
+        Explicit workflow depth. When set, it takes precedence over ``dft``.
+    include_dft_rank_sp : bool or None, optional
+        Include the DFT ranking single point in a full run. Defaults to
+        ``False`` for UMA screening and ``True`` otherwise.
     prune_initial : bool or dict, optional
         If ``False``, leave the initial INT3 conformer ensemble unchanged. If
         ``True``, insert PRISM pruning immediately after ``prepare`` using the
@@ -1256,11 +1446,14 @@ def int3(
         csv_path=csv_path,
         dataframe=dataframe,
         method=method,
+        screening=screening,
         spec_profile=spec_profile,
         spec_match=spec_match,
         n_confs=n_confs,
         top_n=top_n,
         dft=dft,
+        calculation_level=calculation_level,
+        include_dft_rank_sp=include_dft_rank_sp,
         prune_initial=prune_initial,
     )
 
@@ -1268,6 +1461,7 @@ def int3(
 def _ts_screening_stages(
     top_n: int,
     *,
+    method: MethodPlan,
     prune_initial: bool | dict[str, Any] | None = False,
 ) -> list[StageDef]:
     """Return common constrained TS screening stages.
@@ -1284,15 +1478,40 @@ def _ts_screening_stages(
         ``prepare``, constrained GFNFF preoptimization, low-cost ranking, and
         constrained low-cost optimization.
     """
+    screening_sp, screening_opt = _screening_stage_ids(method)
     stages = [
         StageDef("prepare", "prepare", kind="prepare"),
         StageDef("xtb_preopt", "xtb_preopt", constraint=True, n_cores=2),
-        StageDef("xtb_sp", "xtb_sp", n_cores=2),
         StageDef(
-            "xtb_opt", "constrained xTB optimization", constraint=True,
-            lowest=top_n, rank_by="xtb_opt", n_cores=2,
+            screening_sp,
+            "UMA single point" if screening_sp == "uma_sp" else "xtb_sp",
+            n_cores=2,
         ),
     ]
+    if screening_sp == "uma_sp":
+        stages.append(
+            StageDef(
+                "uma_sp_filter",
+                "UMA single-point selection",
+                kind="filter",
+                lowest=top_n,
+                rank_by="uma_sp",
+            )
+        )
+    stages.append(
+        StageDef(
+            screening_opt,
+            (
+                "constrained UMA optimization"
+                if screening_opt == "uma_opt"
+                else "constrained xTB optimization"
+            ),
+            constraint=True,
+            lowest=top_n,
+            rank_by=screening_opt,
+            n_cores=2,
+        )
+    )
     return _with_initial_prune(stages, prune_initial)
 
 
@@ -1304,12 +1523,17 @@ def _dft_rank_sp_stage() -> StageDef:
 def _dft_preopt_stage() -> StageDef:
     """Return the constrained DFT preoptimization stage."""
     return StageDef(
-        "dft_preopt", "constrained DFT preoptimization", constraint=True,
-        lowest=1, rank_by="dft_preopt",
+        "dft_preopt",
+        "constrained DFT preoptimization",
+        constraint=True,
+        lowest=1,
+        rank_by="dft_preopt",
     )
 
 
-def _ts_dft_refinement_stages(*, include_terminal_solv_sp: bool = True) -> list[StageDef]:
+def _ts_dft_refinement_stages(
+    *, include_terminal_solv_sp: bool = True
+) -> list[StageDef]:
     """Return common TS DFT refinement stages.
 
     Returns
@@ -1329,7 +1553,9 @@ def _ts_dft_refinement_stages(*, include_terminal_solv_sp: bool = True) -> list[
     return stages
 
 
-def _int3_dft_refinement_stages(*, include_terminal_solv_sp: bool = True) -> list[StageDef]:
+def _int3_dft_refinement_stages(
+    *, include_terminal_solv_sp: bool = True
+) -> list[StageDef]:
     """Return INT3 DFT refinement stages after the DFT single-point cutoff."""
     stages = [
         _dft_preopt_stage(),

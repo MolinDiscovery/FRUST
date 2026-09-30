@@ -63,7 +63,6 @@ from frust.utils.uma import uma_job_server_scope
 from frust.workflows.diagnostics import _collection_failure_summary
 from frust.workflows.methods import CalculatorSpec, MethodPlan, preset as method_preset
 
-
 ExecutionMode = Literal["single_job", "dft_staged", "fully_staged"]
 TargetRetention = Literal["compact_success", "all"]
 DEFAULT_WORKFLOW_RESOURCES = Resources(cpus=4, mem_gb=20, timeout_min=720)
@@ -413,7 +412,9 @@ class BaseWorkflow:
         mode = execution or ("dft_staged" if self.dft else "single_job")
         rows: list[dict[str, Any]] = []
         for group in self._stage_groups(mode):
-            group_name = "single_job" if mode == "single_job" else self._group_name(group)
+            group_name = (
+                "single_job" if mode == "single_job" else self._group_name(group)
+            )
             for stage in group:
                 method_key = stage.method_stage or stage.id
                 spec: CalculatorSpec | None = None
@@ -422,7 +423,9 @@ class BaseWorkflow:
                 options_text = (
                     _format_pruning_stage_options(stage.prune_options)
                     if stage.kind == "prune"
-                    else _format_stage_options(spec.options if spec is not None else None)
+                    else _format_stage_options(
+                        spec.options if spec is not None else None
+                    )
                 )
 
                 row = {
@@ -454,7 +457,9 @@ class BaseWorkflow:
                             "read_files": _format_planned_sequence(stage.read_files),
                             "use_last_hess": stage.use_last_hess,
                             "save_files": _format_planned_sequence(stage.save_files),
-                            "prune_options": _format_planned_mapping(stage.prune_options),
+                            "prune_options": _format_planned_mapping(
+                                stage.prune_options
+                            ),
                         }
                     )
                 rows.append(row)
@@ -590,7 +595,9 @@ class BaseWorkflow:
                     current_parquet: str | None = None
                     df = pd.DataFrame()
                     for group_index, group in enumerate(groups):
-                        output_parquet = _next_parquet(current_parquet, self._group_name(group))
+                        output_parquet = _next_parquet(
+                            current_parquet, self._group_name(group)
+                        )
                         df = _run_stage_group_job(
                             self,
                             target,
@@ -778,7 +785,11 @@ class BaseWorkflow:
                     mem_gb=orca_memory_gb(resources, orca_memory_fraction),
                     debug=debug,
                     save_output_dir=save_output_dir,
-                    work_dir=str(work_dir or cluster.work_dir) if (work_dir or cluster.work_dir) else None,
+                    work_dir=(
+                        str(work_dir or cluster.work_dir)
+                        if (work_dir or cluster.work_dir)
+                        else None
+                    ),
                     artifact_policy=artifact_policy,
                     uma_oet_tools=None if uma_oet_tools is None else str(uma_oet_tools),
                 )
@@ -819,7 +830,11 @@ class BaseWorkflow:
                     mem_gb=orca_memory_gb(resources, orca_memory_fraction),
                     debug=debug,
                     save_output_dir=save_output_dir,
-                    work_dir=str(work_dir or cluster.work_dir) if (work_dir or cluster.work_dir) else None,
+                    work_dir=(
+                        str(work_dir or cluster.work_dir)
+                        if (work_dir or cluster.work_dir)
+                        else None
+                    ),
                     artifact_policy=artifact_policy,
                     uma_oet_tools=None if uma_oet_tools is None else str(uma_oet_tools),
                 )
@@ -842,7 +857,9 @@ class BaseWorkflow:
                 current_parquet = output_parquet
 
             if last_job is not None and current_parquet is not None:
-                final_job_id = getattr(last_job, "job_id", f"{target.tag}_{self._group_name(groups[-1])}")
+                final_job_id = getattr(
+                    last_job, "job_id", f"{target.tag}_{self._group_name(groups[-1])}"
+                )
                 final_job_ids.append(final_job_id)
                 final_jobs.append(last_job)
                 expected_parquets[target.tag] = current_parquet
@@ -851,9 +868,15 @@ class BaseWorkflow:
         collection_output_path: Path | None = None
         collection_report_path: Path | None = None
         if collect and selected and final_job_ids:
-            collection_output_path = Path(collect_output) if collect_output is not None else root / "merged.parquet"
+            collection_output_path = (
+                Path(collect_output)
+                if collect_output is not None
+                else root / "merged.parquet"
+            )
             collection_report_path = (
-                Path(collect_report) if collect_report is not None else root / "collection_report.json"
+                Path(collect_report)
+                if collect_report is not None
+                else root / "collection_report.json"
             )
             update_executor_with_dependencies(
                 executor,
@@ -878,7 +901,9 @@ class BaseWorkflow:
                 artifact_policy,
                 _defer_screening_cleanup,
             )
-            collection_job_id = getattr(collection_job, "job_id", f"{self.workflow_name}_collect")
+            collection_job_id = getattr(
+                collection_job, "job_id", f"{self.workflow_name}_collect"
+            )
 
         return JobSubmissionResult(
             job_ids=job_ids,
@@ -887,8 +912,12 @@ class BaseWorkflow:
             mode=f"{self.workflow_name}:{mode}",
             backend=cluster.backend,
             collection_job_id=collection_job_id,
-            collection_output=None if collection_output_path is None else str(collection_output_path),
-            collection_report=None if collection_report_path is None else str(collection_report_path),
+            collection_output=(
+                None if collection_output_path is None else str(collection_output_path)
+            ),
+            collection_report=(
+                None if collection_report_path is None else str(collection_report_path)
+            ),
         )
 
     def collect(
@@ -949,7 +978,9 @@ class BaseWorkflow:
             files.append(final_file)
 
         if not frames:
-            raise FileNotFoundError(f"No final workflow parquet files found under {root}")
+            raise FileNotFoundError(
+                f"No final workflow parquet files found under {root}"
+            )
 
         merged = pd.concat(frames, ignore_index=True)
         merged.attrs.update(
@@ -1092,13 +1123,19 @@ class BaseWorkflow:
         if execution == "fully_staged":
             return [[stage] for stage in stages]
         if execution != "dft_staged":
-            raise ValueError("execution must be 'single_job', 'dft_staged', or 'fully_staged'")
+            raise ValueError(
+                "execution must be 'single_job', 'dft_staged', or 'fully_staged'"
+            )
 
         if not self.dft:
             return [stages]
 
         dft_stage_ids = {
-            "dft_hessian", "dft_ts_opt", "dft_freq", "dft_solv_sp", "dft_opt"
+            "dft_hessian",
+            "dft_ts_opt",
+            "dft_freq",
+            "dft_solv_sp",
+            "dft_opt",
         }
         first_split = next(
             (idx for idx, stage in enumerate(stages) if stage.id in dft_stage_ids),
@@ -1165,7 +1202,9 @@ class BaseWorkflow:
             stage_start = monotonic_seconds()
             input_rows = None if df is None else int(len(df))
             if stage.kind == "prepare":
-                df = self._prepare_initial_df(target, save_dir=save_dir, options=options)
+                df = self._prepare_initial_df(
+                    target, save_dir=save_dir, options=options
+                )
             else:
                 if df is None:
                     raise ValueError(f"Stage {stage.id!r} requires an input dataframe")
@@ -1253,7 +1292,8 @@ def _uma_scope_for_stages(
     """
     uses_uma = any(
         stage.kind == "calc"
-        and (spec := workflow.method.for_stage(stage.method_stage or stage.id)).engine == "orca"
+        and (spec := workflow.method.for_stage(stage.method_stage or stage.id)).engine
+        == "orca"
         and spec.kwargs.get("uma") is not None
         and spec.kwargs.get("uma_server", True)
         for stage in stages
@@ -1397,7 +1437,9 @@ def _run_stage_group_job(
     target_dir = Path(save_dir)
     group_started_at = utc_timestamp()
     group_start = monotonic_seconds()
-    input_df = None if input_parquet is None else pd.read_parquet(target_dir / input_parquet)
+    input_df = (
+        None if input_parquet is None else pd.read_parquet(target_dir / input_parquet)
+    )
     stages_by_id = {stage.id: stage for stage in workflow._stage_defs()}
     stages = [stages_by_id[stage_id] for stage_id in stage_ids]
     group_name = workflow._group_name(stages)
@@ -1551,7 +1593,11 @@ def _collect_expected_outputs(
 
     for target in targets:
         expected_name = expected_parquets.get(target.tag)
-        final_file = root / target.tag / expected_name if expected_name else root / target.tag / "final.parquet"
+        final_file = (
+            root / target.tag / expected_name
+            if expected_name
+            else root / target.tag / "final.parquet"
+        )
         if not final_file.exists():
             missing_files.append(str(final_file))
             continue
@@ -1713,7 +1759,9 @@ def _collect_timing_sidecars(
                 continue
             groups = payload.get("groups", [])
             if isinstance(groups, list):
-                records.extend(dict(record) for record in groups if isinstance(record, Mapping))
+                records.extend(
+                    dict(record) for record in groups if isinstance(record, Mapping)
+                )
             timing_files.append(str(consolidated))
             continue
 
@@ -1732,10 +1780,7 @@ def _collect_timing_sidecars(
                 records.append(dict(record))
                 timing_files.append(str(path))
 
-    total_elapsed_s = sum(
-        float(record.get("elapsed_s") or 0.0)
-        for record in records
-    )
+    total_elapsed_s = sum(float(record.get("elapsed_s") or 0.0) for record in records)
     total_core_hours = 0.0
     for record in records:
         resources = record.get("resources")
@@ -1744,9 +1789,7 @@ def _collect_timing_sidecars(
             n_cores = resources.get("n_cores")
         try:
             total_core_hours += (
-                float(record.get("elapsed_s") or 0.0)
-                * float(n_cores or 0.0)
-                / 3600.0
+                float(record.get("elapsed_s") or 0.0) * float(n_cores or 0.0) / 3600.0
             )
         except (TypeError, ValueError):
             continue
@@ -1887,9 +1930,7 @@ def _remove_collected_target_directories(
             target_result["removed_bytes"] = sum(path.stat().st_size for path in files)
             shutil.rmtree(target_dir)
         except Exception as exc:
-            target_result["errors"].append(
-                {"file": str(target_dir), "error": str(exc)}
-            )
+            target_result["errors"].append({"file": str(target_dir), "error": str(exc)})
         report["targets"].append(target_result)
         report["n_targets"] += 1
         report["n_removed_files"] += len(target_result["removed_files"])
@@ -1921,17 +1962,18 @@ def _compact_successful_target(target_dir: Path, final_file: Path) -> dict[str, 
         "errors": [],
     }
     if not target_dir.is_dir():
-        result["errors"].append({"file": str(target_dir), "error": "target directory does not exist"})
+        result["errors"].append(
+            {"file": str(target_dir), "error": "target directory does not exist"}
+        )
         return result
     if not final_file.exists():
-        result["errors"].append({"file": str(final_file), "error": "final parquet does not exist"})
+        result["errors"].append(
+            {"file": str(final_file), "error": "final parquet does not exist"}
+        )
         return result
 
     for path in sorted(target_dir.glob("*.parquet")):
-        if (
-            _same_file(path, final_file)
-            or path.name in ANALYSIS_TIER_FILES.values()
-        ):
+        if _same_file(path, final_file) or path.name in ANALYSIS_TIER_FILES.values():
             continue
         _remove_compaction_file(path, result)
 
@@ -2101,7 +2143,7 @@ def _format_stage_solvent(spec: CalculatorSpec | None) -> str | None:
     """Return a compact solvent label for workflow stage inspection."""
     if spec is None or spec.solvent is None:
         return None
-    return f"SMD({spec.solvent})"
+    return f"{(spec.solvation_model or 'smd').upper()}({spec.solvent})"
 
 
 def _format_planned_input(value: str | None) -> str | None:
@@ -2263,9 +2305,7 @@ def _deepest_parquet(target_dir: Path) -> Path | None:
         return final_file
     tier_names = set(ANALYSIS_TIER_FILES.values())
     files = sorted(
-        path
-        for path in target_dir.glob("*.parquet")
-        if path.name not in tier_names
+        path for path in target_dir.glob("*.parquet") if path.name not in tier_names
     )
     if not files:
         return None
@@ -2346,7 +2386,10 @@ def _workflow_stage_summary_message(
     """Return a compact log message for a workflow-level stage."""
     if stage.kind == "prepare":
         conformers = df.attrs.get("frust_conformers")
-        if isinstance(conformers, Mapping) and conformers.get("source") == "Stepper.build_initial_df":
+        if (
+            isinstance(conformers, Mapping)
+            and conformers.get("source") == "Stepper.build_initial_df"
+        ):
             return None
         return conformer_generation_summary(df, label=stage.name)
     if stage.kind == "filter":
@@ -2517,7 +2560,11 @@ def _write_analysis_tier_snapshot(
         )
     )
     tier: str | None = None
-    if stage.id == "xtb_opt" and requested_level in {"dft_ranked", "full"}:
+    screening_opt_stage = (
+        "uma_opt" if "uma_opt" in workflow.method.stages else "xtb_opt"
+    )
+    include_dft_rank_sp = bool(getattr(workflow, "include_dft_rank_sp", True))
+    if stage.id == screening_opt_stage and requested_level in {"dft_ranked", "full"}:
         tier = "low_cost"
     elif stage.id == "dft_rank_sp" and requested_level == "full":
         tier = "dft_ranked"
@@ -2538,6 +2585,8 @@ def _write_analysis_tier_snapshot(
         dft=False,
         calculation_level=tier,
         include_terminal_solv_sp=False,
+        screening_opt_stage=screening_opt_stage,
+        include_dft_rank_sp=include_dft_rank_sp,
         thermochemistry=None,
     )
     contract = snapshot.attrs["frust_results"]
@@ -2603,6 +2652,12 @@ def _attach_workflow_attrs(
             "result_profile": workflow.result_profile,
         }
     )
+    structure_options = workflow._structure_build_kwargs()
+    if "spec_profile" in structure_options:
+        df.attrs["frust_workflow"]["guess_profile"] = structure_options["spec_profile"]
+        df.attrs["frust_workflow"]["guess_profile_match"] = structure_options.get(
+            "spec_match", "prefer-exact"
+        )
     if workflow.result_profile is not None:
         calculation_level = getattr(
             workflow,
@@ -2615,6 +2670,10 @@ def _attach_workflow_attrs(
             dft=workflow.dft,
             calculation_level=calculation_level,
             include_terminal_solv_sp=workflow.method.include_terminal_solv_sp,
+            screening_opt_stage=(
+                "uma_opt" if "uma_opt" in workflow.method.stages else "xtb_opt"
+            ),
+            include_dft_rank_sp=bool(getattr(workflow, "include_dft_rank_sp", True)),
             thermochemistry=workflow.method.thermochemistry,
         )
         contract = df.attrs["frust_results"]
