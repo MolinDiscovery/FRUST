@@ -127,7 +127,8 @@ provides five gas states: TS1 −944.65, TS2 −278.92, TS3 −94.46, and TS4
 registered `omol-uma-s-1p2p1/gas` profile contains those five references.
 The profile tests cover exact resolution, constraints against role coordinates,
 and a generated TS3 guess. ALPB profile construction remains deferred; the
-workflow task must handle this choice explicitly.
+workflow task must handle this choice explicitly. A bounded follow-up is
+described in [Post-task 07](07-optional-alpb-profile.md).
 
 Verification on the local development checkout in the `UMA` environment:
 

@@ -3,10 +3,11 @@
 > **Planning update, 2026-09-30:** A method-specific UMA `tsguess2` profile is
 > not a prerequisite for screening. The existing ωB97 gas profile supplies the
 > initial TS geometry and row-level constraints, just as it does for g-xTB
-> screening in a ωB97 workflow. UMA then evaluates and optimizes those rows.
-> Keep the chosen guess/constraint profile explicit in result provenance. UMA
-> gas and ALPB reference profiles remain optional calibration work; do not
-> imply an ALPB-optimized reference when using ωB97 constraints. The exact
+> screening in a ωB97 workflow. The reviewed UMA gas profile is also available
+> as an explicit choice. UMA then evaluates and optimizes those rows. Keep the
+> chosen guess/constraint profile explicit in result provenance. The UMA ALPB
+> profile remains optional later work; do not imply an ALPB-optimized reference
+> when using gas UMA or ωB97 constraints. The exact
 > placement of any ALPB single point after gas UMA optimization remains to be
 > settled during this task.
 

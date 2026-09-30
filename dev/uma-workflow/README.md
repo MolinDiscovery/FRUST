@@ -46,6 +46,11 @@ settles the public switch name and its UMA default before implementation.
 | [05 — Workflow integration](05-workflow-integration.md) | Pending | 02–04 | Named UMA screening stages and ωB97 validation path |
 | [06 — Final smoke test and docs](06-smoke-and-docs.md) | Pending | 01–05 | Small cluster end-to-end run and user-facing guidance |
 
+After Task 06, [Post-task 07 — Optional ALPB geometry
+profile](07-optional-alpb-profile.md) can revisit the unresolved TS3/TS4
+ALPB saddles. It is outside the current completion path and includes no
+screening benchmark.
+
 The scientific benchmark against full ωB97 results is **outside this plan**. A
 small calculation used to prove that a feature works is a functional test, not
 a screening benchmark.
