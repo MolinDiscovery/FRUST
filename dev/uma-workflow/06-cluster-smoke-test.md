@@ -56,5 +56,48 @@ agent turn open to poll a long-running calculation.
 
 ## Completion record
 
-Pending. Add the FRUST and OET revisions, cluster job and artifact paths,
-observed stage sequence, server evidence, test results, and limitations here.
+**Running — pass 1 completed 2026-09-30.** The HPC checkout was updated from
+GitHub to FRUST `21d0346` on `feature/uma-screening`. The pinned OET fork is
+`1b4fcda`, using
+`/lustre/hpc/kemi/jmni/software/oet-uma-2p23-cpu`. Both runs use the
+`wb97xd3-631g/gas` guess/constraint profile explicitly; this is not an ALPB
+geometry profile.
+
+| Check | Submitted job(s) | Status at handoff |
+| --- | --- | --- |
+| ALPB full TS1 target | Initial job `65689162`; later dependent jobs `65689163`, `65689164`, `65689166`, `65689168` | UMA SP and optimization finished; ωB97 preoptimization running on node066. |
+| ALPB full references | Initial jobs `65689170`, `65689174`, `65689178`, `65689182`; dependent DFT jobs through `65689185` | Initial UMA stages ran on node066; DFT jobs started. |
+| ALPB collectors and finalizer | `65689169`, `65689186`, `65689187` | Pending upstream completion. Wait for finalizer `65689187` before opening the full result bundle. |
+| Gas TS1 low-cost check | `65689189`; collector `65689191` | Both completed on node066 with exit code 0. One final row contains `uma_sp-EE`, `uma_opt-EE`, and `uma_opt-oc`. |
+
+The run root is
+`/lustre/hpc/kemi/jmni/results/uma-task06-smoke-20260930`. Each mode has
+`submission.json`, its input CSV, Submitit logs, client-call logs, saved ORCA
+inputs, and persistent server logs. The ALPB full run also has `plan.csv` and
+a `workflow/manifest.json` recording `include_dft_rank_sp: false`, the
+resolved guess profile, and `uma_xtb_alpb: chloroform`.
+
+The saved ALPB `uma_sp` ORCA input contains
+`-m uma-s-1p2p1 ... --xtb-alpb chloroform`; the gas input uses the same UMA
+model without `--xtb-alpb`. Early client audit records only
+`host=node066.cluster` and `127.0.0.1` binds. The five ALPB initial jobs each
+started one server on node066 with a distinct PID and local bind. The gas job
+made 19 client calls to its one server, PID `765593`, which logged a clean
+stop at job exit. The ALPB TS1 low-cost tier already contains one selected
+row with `uma_opt-EE` as its analysis energy. These are launch and screening
+checks; full DFT validation and ALPB server cleanup still require pass 2.
+
+To check progress from `h -5`:
+
+```bash
+squeue -j 65689187,65689191 -o "%.18i %.10T %.10M %.20R"
+sacct -j 65689187,65689191 --format=JobIDRaw,State,Elapsed,NodeList,ExitCode
+```
+
+The submission script is
+[`evidence/task06/submit_smoke.py`](evidence/task06/submit_smoke.py).
+Focused local checks passed with
+`conda run -n UMA python -m pytest tests/test_uma_screening_workflow.py tests/test_uma_job_scope.py -q`
+(11 passed). When the user reports completion, inspect the ALPB finalizer,
+collector reports, result tiers, DFT stages, server stop events, and any
+chemistry-specific failures before marking Task 06 complete.

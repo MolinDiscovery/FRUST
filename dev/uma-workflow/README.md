@@ -45,7 +45,7 @@ g-xTB. `dft_ranked` always runs the ranking single point.
 | [03 — Server lifecycle](03-server-lifecycle.md) | Complete | 01–02 | One reusable UMA server per submitted target job |
 | [04 — Geometry profiles](04-geometry-profile.md) | Complete for gas; ALPB deferred | 02–03 | Reviewed UMA gas TS-guess profile for TS1–TS4 and INT3 |
 | [05 — Workflow integration](05-workflow-integration.md) | Complete | 02–04 | Named UMA screening stages and ωB97 validation path; optional DFT ranking SP |
-| [06 — Cluster smoke test](06-cluster-smoke-test.md) | Pending | 01–05 | Small compute-node end-to-end run; return control once jobs are running, then review results after the user's update |
+| [06 — Cluster smoke test](06-cluster-smoke-test.md) | Running; awaiting result review | 01–05 | Small compute-node end-to-end run; launch verified, review results after the user's update |
 | [07 — Documentation](07-documentation.md) | Pending | 01–06 | User-facing UMA guide checked against the smoke-run artifacts |
 
 After Task 07, [Post-task 08 — Optional ALPB geometry
