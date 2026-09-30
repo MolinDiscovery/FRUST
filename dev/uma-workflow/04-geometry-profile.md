@@ -1,5 +1,14 @@
 # 04 — Build gas-phase and ALPB UMA TS-guess profiles
 
+> **Scope update, 2026-09-30:** ALPB profile construction is deferred. The
+> screening workflow can use an existing ωB97 `tsguess2` profile for its initial
+> structures and constrained screening stages, even when UMA performs the
+> screening calculations. A UMA-specific profile is useful for calibration,
+> but is not required to run screening. The remaining reference effort is one
+> final **gas-phase TS3** optimization and frequency check. Its result must be
+> reviewed in `evidence/task04/ts3_gas_review.ipynb`; if it fails, leave TS3
+> quarantined and seek user input before further reference calculations.
+
 ## Goal
 
 Provide two separately calculated and reviewed `tsguess2` geometry profiles
@@ -106,6 +115,11 @@ animated mode before accepting a reference.
 
 ## Completion record
 
-Pending. Add reference source paths for both environments, the frequency and
-mode-review table with viewer paths, matched ωB97 comparisons, any user
-review or quarantines, profile revisions, and test results here.
+Pending. The initial gas TS3 result has two shallow imaginary frequencies
+(−27.81 and −13.02 cm⁻¹), neither assigned confidently to the reactive mode.
+The first Hessian-guided retries failed before OptTS because ORCA could not
+find `private_input.hess`; their redundant subsequent frequency calculations
+were cancelled. The final gas attempt uses direct OptTS from the ALPB-optimized
+TS3 geometry displaced along its two shallow peripheral modes, followed by
+gas-phase NumFreq. Add the job result, mode review, reference decisions, and
+any profile revision after that run completes.

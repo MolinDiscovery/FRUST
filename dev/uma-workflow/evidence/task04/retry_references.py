@@ -18,7 +18,7 @@ from reference_workflow import UMAReferenceWorkflow
 
 
 class RetryUMAReferenceWorkflow(UMAReferenceWorkflow):
-    """Reoptimize a saved TS after mode displacement and a fresh Hessian.
+    """Reoptimize a saved TS after displacing unwanted modes.
 
     Parameters
     ----------
@@ -52,7 +52,6 @@ class RetryUMAReferenceWorkflow(UMAReferenceWorkflow):
         super().__init__(state=state, environment=environment, output_root=output_root)
         self.seed = Path(seed)
         self.displacements = displacements
-        self.method = self.method.with_stage("uma_pre_freq", self.method.for_stage("uma_freq"))
 
     def _prepare_initial_df(self, target, *, save_dir, options) -> pd.DataFrame:
         """Seed the retry from a saved geometry and selected normal modes."""
@@ -77,20 +76,13 @@ class RetryUMAReferenceWorkflow(UMAReferenceWorkflow):
         return frame
 
     def _stage_defs(self) -> list[StageDef]:
-        """Calculate a seed Hessian, follow the TS mode, then verify it."""
+        """Optimize with the tested direct path and verify the final modes."""
         files = ["input.inp", "orca.out", "input_EXT.uma.json", "input.xyz"]
         return [
             StageDef("prepare", "Load and displace prior UMA geometry", kind="prepare"),
             StageDef(
-                "uma_pre_freq",
-                "UMA seed numerical Hessian",
-                read_files=["input.hess"],
-                save_files=files,
-            ),
-            StageDef(
                 "uma_ts_opt",
                 "UMA saddle refinement",
-                use_last_hess=True,
                 save_files=files,
             ),
             StageDef("uma_freq", "UMA final numerical frequencies", save_files=files),

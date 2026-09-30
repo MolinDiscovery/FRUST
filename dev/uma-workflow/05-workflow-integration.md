@@ -1,5 +1,15 @@
 # 05 — Integrate UMA screening with ωB97 validation
 
+> **Planning update, 2026-09-30:** A method-specific UMA `tsguess2` profile is
+> not a prerequisite for screening. The existing ωB97 gas profile supplies the
+> initial TS geometry and row-level constraints, just as it does for g-xTB
+> screening in a ωB97 workflow. UMA then evaluates and optimizes those rows.
+> Keep the chosen guess/constraint profile explicit in result provenance. UMA
+> gas and ALPB reference profiles remain optional calibration work; do not
+> imply an ALPB-optimized reference when using ωB97 constraints. The exact
+> placement of any ALPB single point after gas UMA optimization remains to be
+> settled during this task.
+
 ## Goal
 
 Make UMA a first-class screening choice in the existing dataframe-first
@@ -22,10 +32,11 @@ semantics.
 
 ## Work
 
-1. Add UMA screening choices for both gas phase and ALPB(chloroform): GFN-FF
+1. Add UMA screening choices for gas phase and ALPB(chloroform): GFN-FF
    preoptimization, UMA single points for selection, and constrained UMA
-   optimization. Use ALPB(chloroform) for the proposed default, and make gas
-   phase explicitly selectable. Each choice must use its matching profile.
+   optimization. Use the existing ωB97 profile for guesses and constraints
+   unless a reviewed UMA profile is explicitly selected. Keep the chosen
+   potential and geometry profile separately visible in provenance.
 2. Use `uma_sp` and `uma_opt` or similarly unambiguous stage/result labels.
    Carry these names through snapshots, manifests, `ft.show_steps`, and
    analysis rather than writing UMA data into `xtb_*` columns.
@@ -42,7 +53,8 @@ semantics.
 ## Acceptance
 
 - A user can choose gas-phase or ALPB(chloroform) UMA screening through a
-  documented public workflow API, and the matching profile is selected.
+  documented public workflow API, with an explicit, available guess/constraint
+  profile; selecting the UMA potential never implies an unreviewed UMA profile.
 - The requested levels and both `full` ranking-SP settings follow the table
   above; `full` uses the same target chemistry locally and on the cluster.
 - UMA output names and provenance identify the model and selected environment.
