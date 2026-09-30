@@ -5,10 +5,10 @@ For a complete catalyst screen, start with
 This page covers the lower-level `Stepper.orca(...)` controls and the ORCA
 input that carries them to ORCA-External-Tools (OET).
 
-The 2026-09-30 cluster check used `omol@uma-s-1p2p1`, the MolinDiscovery OET
-fork at `1b4fcda`, and an OET runtime with `fairchem-core` 2.23.0. Specify
-the model explicitly to reproduce it. A task-only `uma="omol"` still defaults
-to the older `uma-s-1p1` model in the low-level API.
+The examples use `omol@uma-s-1p2p1` with the MolinDiscovery OET fork at
+`1b4fcda` and an OET runtime with `fairchem-core` 2.23.0. Specify the model
+explicitly: a task-only `uma="omol"` still defaults to the older `uma-s-1p1`
+model in the low-level API.
 
 ## Requirements
 
@@ -34,7 +34,7 @@ installation, `.env` setup, and smoke tests.
 
 ## Basic API
 
-Use the checked model through the public Stepper API:
+Use an explicit model through the public Stepper API:
 
 ```python
 import frust as ft
@@ -52,7 +52,7 @@ The `uma` argument accepts a task alone or a task plus model:
 
 ```python
 uma="omol"                # low-level default: uma-s-1p1
-uma="omol@uma-s-1p2p1"   # checked catalyst-screen model
+uma="omol@uma-s-1p2p1"   # model used by the UMA screening presets
 ```
 
 The explicit model becomes these OET arguments:
@@ -171,9 +171,7 @@ separate server lifetimes.
 
 Server mode is used locally and in submitted jobs. With the Slurm submitit
 backend, FRUST is already running inside the allocated job, so the server and
-`oet_client` calls stay on that compute node. In the 2026-09-30 node066 check,
-all 62 ALPB calls used same-node `127.0.0.1` binds, and each of five UMA
-initial jobs logged one server start and stop.
+`oet_client` calls stay on that compute node through a `127.0.0.1` bind.
 
 ## Standalone Mode
 

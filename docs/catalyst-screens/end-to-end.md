@@ -98,8 +98,8 @@ energies.
 
 ## Screen With UMA Before ωB97 Validation
 
-For a small input table, both UMA environments, the ranking-SP switch, and a
-checked result, use the [UMA screening guide](uma-screening.md). The abbreviated
+For a small input table, both UMA environments, the ranking-SP switch, and an
+example result, use the [UMA screening guide](uma-screening.md). The abbreviated
 full-run example below shows how that choice fits into the composed workflow.
 
 The following full run selects conformers with ALPB-corrected UMA, then sends

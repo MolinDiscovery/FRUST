@@ -81,7 +81,7 @@ ALPB-corrected UMA potential, and ωB97 handles the final validation. Use
 `screening="uma-gas"` to omit the correction. The `ScreeningPlan` does not
 choose the TS guess profile; `spec_profile` does. See the
 [UMA screening guide](../catalyst-screens/uma-screening.md) for the input table,
-result tiers, and checked cluster example.
+result tiers, and a complete example.
 
 Built-in method plans are selected by name:
 

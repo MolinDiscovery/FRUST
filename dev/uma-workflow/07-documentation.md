@@ -71,3 +71,8 @@ the default UMA full run has `("low_cost", "full")` tiers.
 
 The run remains a functional smoke check with TS1 at `review`; no accuracy
 benchmark or scientific TS approval was added by this documentation task.
+
+Editorial follow-up: user-facing pages now present the calculation and result
+conventions directly. Node names, job counts, run revisions, and the repair
+history remain in this development record and the Task 06 evidence rather
+than in the reader guide.

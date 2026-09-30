@@ -54,11 +54,9 @@ run.set_review(
 )
 ```
 
-For example, the small UMA/ωB97 TS1 integration run had one ωB97 imaginary
-frequency at −1077.84 cm⁻¹. It remains `review` until its motion is formally
-accepted. Its free N-methylpyrrole reference originally had a −65.61 cm⁻¹
-methyl torsion; a separate minimum reoptimization changed the lowest
-frequency to +24.97 cm⁻¹. Minimum references need zero imaginary modes.
+Minimum references need zero imaginary modes. If a ligand has an imaginary
+methyl torsion, reoptimize it from a displaced geometry and repeat the
+frequency calculation before using its free energy in a barrier.
 
 ## Multiple Rows
 
