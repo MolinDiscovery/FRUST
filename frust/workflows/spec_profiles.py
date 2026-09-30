@@ -5,6 +5,7 @@ from __future__ import annotations
 import re
 
 from frust.tsguess2.models import GeometryKey
+from frust.utils.uma import parse_uma_spec
 from frust.workflows.methods import CalculatorSpec, MethodPlan
 
 
@@ -16,7 +17,8 @@ def profile_for_geometry_stage(method: MethodPlan, stage_id: str) -> str:
     method : MethodPlan
         Workflow calculator plan.
     stage_id : str
-        Geometry stage, normally ``"dft_ts_opt"`` or ``"dft_opt"``.
+        Geometry stage, such as ``"dft_ts_opt"``, ``"dft_opt"``, or an UMA
+        screening optimization stage.
 
     Returns
     -------
@@ -28,6 +30,17 @@ def profile_for_geometry_stage(method: MethodPlan, stage_id: str) -> str:
 
 def geometry_key_for_calculator(spec: CalculatorSpec) -> GeometryKey:
     """Translate semantic calculator metadata to a tsguess2 geometry key."""
+    if spec.engine == "orca" and (uma := spec.kwargs.get("uma")) is not None:
+        parsed = parse_uma_spec(
+            uma,
+            xtb_alpb=spec.kwargs.get("uma_xtb_alpb"),
+            xtb_exe=spec.kwargs.get("uma_xtb_exe"),
+        )
+        return GeometryKey(
+            method=f"{parsed.task}-{parsed.model}",
+            solvation_model="alpb" if parsed.xtb_alpb else None,
+            solvent=parsed.xtb_alpb,
+        )
     if spec.engine != "orca" or not spec.method:
         raise ValueError(
             "Automatic tsguess2 profile selection requires an ORCA geometry "

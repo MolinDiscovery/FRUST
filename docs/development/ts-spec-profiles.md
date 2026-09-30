@@ -129,7 +129,7 @@ reference workflow may save `uma_ts_opt-oc`, `uma_opt-oc`, and
 ```bash
 conda run -n UMA python scripts/extract_tsguess2_profile.py \
   runs/uma_gas_TSs.parquet runs/uma_gas_INT3.parquet \
-  --method uma-s-1p2p1 \
+  --method omol-uma-s-1p2p1 \
   --ts-coordinates-column uma_ts_opt-oc \
   --minimum-coordinates-column uma_opt-oc \
   --vibrations-column uma_freq-vibs \
