@@ -63,8 +63,8 @@ Existing g-xTB/r2SCAN-3c/ωB97 workflows retain their current semantics.
 
 ## Completion record
 
-Implemented on `feature/uma-screening` (revision recorded by the Task 05
-commit). The public API accepts `screening="uma-gas"` or
+Implemented on `feature/uma-screening` in FRUST revision `e228b05`. The public
+API accepts `screening="uma-gas"` or
 `screening="uma-alpb-chloroform"` in `ft.workflows.catalyst_screen(...)` and
 the individual molecule, TS, and INT3 factories. For example:
 
