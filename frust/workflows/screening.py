@@ -35,6 +35,7 @@ from frust.structures.specs import DIMER_STATES
 from frust.utils.dataframes import merge_dataframe_attrs
 from frust.workflows.core import ANALYSIS_TIER_FILES
 from frust.workflows.factories import Int3Workflow, MolsWorkflow, ScreenTSWorkflow
+from frust.workflows.factories import SeededWb97TSWorkflow
 from frust.workflows.methods import (
     CalculationLevel,
     MethodPlan,
@@ -1039,6 +1040,204 @@ class CatalystScreenWorkflow:
                 "choose a new out_dir"
             )
         manifest_path.write_text(json.dumps(manifest, indent=2, sort_keys=True) + "\n")
+
+
+class Wb97ComparisonWorkflow(CatalystScreenWorkflow):
+    """Opt-in ωB97 characterization seeded by a completed UMA run.
+
+    Parameters
+    ----------
+    parent : ScreenRun
+        Portable full-UMA run that supplied the TS candidates.
+    candidate_rows : pandas.DataFrame
+        Exact rows selected from ``parent.candidate_barriers()``.
+    reference_store : str, pathlib.Path, or None, optional
+        Shared reference library for exact-match ωB97 minima.
+    reuse_policy : {"approved", "auto_valid"}, optional
+        Rule for reusing full thermochemical references.
+    """
+
+    def __init__(
+        self, parent: ScreenRun, candidate_rows: pd.DataFrame, *,
+        reference_store: str | Path | None = None,
+        reuse_policy: ReusePolicy = "approved",
+    ) -> None:
+        source = parent.manifest
+        self.parent = parent
+        self.candidate_rows = candidate_rows.reset_index(drop=True).copy()
+        self.seed_dir: Path | None = None
+        super().__init__(
+            dataframe=pd.DataFrame(source["components"]),
+            ts_types=tuple(dict.fromkeys(self.candidate_rows["ts_type"])),
+            screening="gxtb-default",
+            level="full",
+            method="wb97xd3-631g",
+            spec_profile=source["resolved_ts_spec_profile"],
+            include_dft_rank_sp=False,
+            dimer_reference=source["dimer_reference"],
+            g_corrections_kcal_mol=source["g_corrections_kcal_mol"],
+            reference_store=reference_store,
+            reuse_policy=reuse_policy,
+        )
+
+    def children(self) -> dict[str, Any]:
+        """Use parent geometries for TS targets and ordinary ωB97 references."""
+        children = super().children()
+        if not isinstance(children["transition_states"], SeededWb97TSWorkflow):
+            keys = tuple(
+                (str(row.ts_result_id), str(row.system_name), int(row.rpos),
+                 str(row.ts_type))
+                for row in self.candidate_rows.itertuples()
+            )
+            children["transition_states"] = SeededWb97TSWorkflow(
+                dataframe=self.components(),
+                ts_types=self.ts_types,
+                method=self.method,
+                calculation_level="full",
+                include_dft_rank_sp=False,
+                candidate_ids=keys,
+                seed_dir=self.seed_dir,
+            )
+            self._children_cache = children
+        return dict(children)
+
+    def _analysis_levels(self) -> tuple[CalculationLevel, ...]:
+        """Keep this follow-on bundle focused on final ωB97 results."""
+        return ("full",)
+
+    def _write_manifest(
+        self, root: Path, *, artifact_policy: ArtifactPolicy = "standard"
+    ) -> None:
+        """Snapshot UMA seeds and provenance before jobs leave this process."""
+        path = root / "manifest.json"
+        requested_ids = self.candidate_rows["ts_result_id"].astype(str).tolist()
+        if path.exists():
+            existing = json.loads(path.read_text())
+            previous = existing.get("comparison", {})
+            if not (
+                previous.get("parent_run_signature") == self.parent.manifest["run_signature"]
+                and previous.get("candidate_result_ids") == requested_ids
+                and existing.get("method_fingerprint") == self.method.fingerprint()
+                and existing.get("screening_fingerprint") == self.screening.fingerprint()
+                and existing.get("reuse_policy") == self.reuse_policy
+                and existing.get("artifact_policy") == artifact_policy
+                and existing.get("dimer_reference") == self.dimer_reference
+            ):
+                raise FileExistsError(
+                    f"Run directory {root} contains a different catalyst-screen "
+                    "manifest; choose a new out_dir"
+                )
+            self.seed_dir = root.resolve() / "comparison" / "seeds"
+            self.children()["transition_states"].seed_dir = self.seed_dir
+            return
+        seeds: list[tuple[str, pd.DataFrame]] = []
+        for row in self.candidate_rows.itertuples():
+            result_id = str(row.ts_result_id)
+            seed = self.parent._raw_result(result_id).copy()
+            if "uma_ts_opt-oc" not in seed or seed["uma_ts_opt-oc"].isna().any():
+                raise ValueError(
+                    f"UMA candidate {result_id!r} has no optimized TS geometry"
+                )
+            geometry = seed["uma_ts_opt-oc"].iloc[0]
+            keep = [column for column in seed if "-" not in column]
+            seed = seed[keep].copy()
+            seed["coords_embedded"] = pd.Series([geometry])
+            seed["parent_uma_result_id"] = result_id
+            seeds.append((result_id, seed))
+        super()._write_manifest(root, artifact_policy=artifact_policy)
+        self.seed_dir = root.resolve() / "comparison" / "seeds"
+        self.seed_dir.mkdir(parents=True, exist_ok=True)
+        self.children()["transition_states"].seed_dir = self.seed_dir
+        for result_id, seed in seeds:
+            _write_verified_parquet(seed, self.seed_dir / f"{result_id}.parquet")
+        self.candidate_rows.to_parquet(
+            root / "comparison" / "uma_candidates.parquet", index=False
+        )
+        parent_states = self.parent.states()
+        parent_states = parent_states[
+            parent_states["result_id"].isin(self.candidate_rows["ts_result_id"])
+        ]
+        parent_states.to_parquet(root / "comparison" / "uma_states.parquet", index=False)
+        manifest = json.loads(path.read_text())
+        manifest["analysis_targets"] = [
+            {**target, "parent_uma_result_id": str(item.builder_options["parent_uma_result_id"])}
+            for target, item in zip(
+                manifest["analysis_targets"],
+                self.children()["transition_states"].targets(),
+            )
+        ]
+        manifest["comparison"] = {
+            "parent_run_signature": self.parent.manifest["run_signature"],
+            "parent_method": self.parent.manifest["method"],
+            "parent_method_fingerprint": self.parent.manifest["method_fingerprint"],
+            "parent_dimer_reference": self.parent.manifest["dimer_reference"],
+            "candidate_result_ids": requested_ids,
+            "uma_candidates": "comparison/uma_candidates.parquet",
+            "uma_states": "comparison/uma_states.parquet",
+        }
+        manifest["run_signature"] = _json_hash({
+            "base": manifest["run_signature"],
+            "comparison": manifest["comparison"],
+        })
+        path.write_text(json.dumps(manifest, indent=2, sort_keys=True) + "\n")
+
+
+def wb97_comparison(
+    uma_run: ScreenRun | str | Path, *,
+    candidates: Literal["selected"] | list[str] | tuple[str, ...] = "selected",
+    reference_store: str | Path | None = None,
+    reuse_policy: ReusePolicy = "approved",
+) -> Wb97ComparisonWorkflow:
+    """Prepare an optional ωB97 comparison for completed UMA TS candidates.
+
+    Parameters
+    ----------
+    uma_run : ScreenRun, str, or pathlib.Path
+        Completed portable full-UMA run or its directory.
+    candidates : {"selected"} or sequence of str, optional
+        ``"selected"`` advances each target's selected UMA candidate.
+        A sequence names exact UMA ``ts_result_id`` values and may contain
+        several candidates for the same TS target.
+    reference_store : str, pathlib.Path, or None, optional
+        Exact-match ωB97 reference library used by the follow-on run.
+    reuse_policy : {"approved", "auto_valid"}, optional
+        ``"approved"`` reuses only manually approved full references;
+        ``"auto_valid"`` also reuses automatically validated minima.
+
+    Returns
+    -------
+    Wb97ComparisonWorkflow
+        Call ``run`` or ``submit`` with a new output directory, then open the
+        result and call ``method_comparison()`` for side-by-side barriers.
+
+    Examples
+    --------
+    >>> import frust as ft
+    >>> parent = ft.screen.open_run("runs/uma")
+    >>> wf = ft.workflows.wb97_comparison(parent, candidates="selected")
+    >>> comparison = wf.run(out_dir="runs/uma_wb97")
+    >>> comparison.method_comparison()
+    """
+    parent = uma_run if isinstance(uma_run, ScreenRun) else ScreenRun(uma_run)
+    manifest = parent.manifest
+    if manifest.get("calculation_level") != "full" or manifest.get("method", {}).get("result_family") != "uma":
+        raise ValueError("ωB97 comparison requires a completed full UMA run")
+    available = parent.candidate_barriers()
+    if candidates == "selected":
+        chosen = available[available["selected"]].copy()
+    else:
+        requested = tuple(str(value) for value in candidates)
+        if not requested or len(set(requested)) != len(requested):
+            raise ValueError("candidates must contain distinct UMA result IDs")
+        missing = set(requested) - set(available["ts_result_id"])
+        if missing:
+            raise ValueError(f"Unknown UMA candidate result IDs: {sorted(missing)}")
+        chosen = available.set_index("ts_result_id").loc[list(requested)].reset_index()
+    if chosen.empty:
+        raise ValueError("No selected UMA candidates are available")
+    return Wb97ComparisonWorkflow(
+        parent, chosen, reference_store=reference_store, reuse_policy=reuse_policy
+    )
 
 
 def catalyst_screen(

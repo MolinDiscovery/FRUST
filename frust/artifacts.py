@@ -25,6 +25,7 @@ _IDENTITY_COLUMNS = (
     "structure_type",
     "rpos",
     "cid",
+    "parent_uma_result_id",
     "charge",
     "multiplicity",
     "smiles",

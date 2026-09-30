@@ -199,6 +199,90 @@ class ScreenRun:
             self.refresh_analysis()
         return pd.read_parquet(path)
 
+    def method_comparison(self) -> pd.DataFrame:
+        """Return independently calculated UMA and ωB97 candidate barriers.
+
+        Returns
+        -------
+        pandas.DataFrame
+            One row per selected parent UMA candidate. ``uma_*`` and
+            ``wb97_*`` energies, quality, method, solvent, and reference IDs
+            remain separate. ``match_status`` is ``"matched"`` when candidate
+            identity and stoichiometry agree, ``"missing_wb97"`` when the
+            ωB97 TS is absent, or ``"composition_mismatch"`` when its atom
+            formula differs. ``"reference_definition_mismatch"`` flags
+            changed barrier equations, dimer selection policy, or Gibbs
+            corrections. Each method's own ``quality_status`` still
+            determines whether its barrier is usable.
+
+        Raises
+        ------
+        ValueError
+            If this is not a follow-on ωB97 comparison bundle.
+        """
+        comparison = self.manifest.get("comparison")
+        if not isinstance(comparison, Mapping):
+            raise ValueError("This run has no UMA/ωB97 comparison")
+        uma = pd.read_parquet(self.path / comparison["uma_candidates"])
+        uma_states = pd.read_parquet(self.path / comparison["uma_states"])
+        wb97 = self.barriers()
+        keys = [
+            "system_name", "substrate_name", "catalyst_name", "rpos", "ts_type",
+        ]
+        uma = uma.rename(columns={"ts_result_id": "parent_uma_result_id"})
+        uma = uma.rename(columns={
+            column: f"uma_{column}"
+            for column in uma.columns
+            if column not in {*keys, "parent_uma_result_id"}
+        })
+        wb97 = wb97.rename(columns={
+            column: f"wb97_{column}"
+            for column in wb97.columns
+            if column not in {*keys, "parent_uma_result_id"}
+        })
+        paired = uma.merge(
+            wb97, on=[*keys, "parent_uma_result_id"], how="left",
+            validate="one_to_one",
+        )
+        parent_formulas = uma_states[["result_id", "formula"]].rename(columns={
+            "result_id": "parent_uma_result_id", "formula": "uma_formula",
+        })
+        paired = paired.merge(
+            parent_formulas, on="parent_uma_result_id", how="left",
+            validate="many_to_one",
+        )
+        wb97_states = self.states()
+        wb97_formulas = wb97_states[
+            wb97_states["state_kind"].eq("transition_state")
+        ][["result_id", "formula"]].drop_duplicates("result_id").rename(columns={
+            "result_id": "wb97_ts_result_id", "formula": "wb97_formula",
+        })
+        paired = paired.merge(
+            wb97_formulas, on="wb97_ts_result_id", how="left",
+            validate="many_to_one",
+        )
+        missing = paired["wb97_ts_result_id"].isna()
+        mismatch = (~missing) & paired["uma_formula"].ne(paired["wb97_formula"])
+        same_definition = (
+            comparison["parent_dimer_reference"] == self.manifest["dimer_reference"]
+        ) & paired["uma_formula_id"].eq(paired["wb97_formula_id"]) & paired[
+            "uma_g_correction_kcal_mol"
+        ].eq(paired["wb97_g_correction_kcal_mol"])
+        paired["match_status"] = "matched"
+        paired.loc[(~missing) & (~same_definition), "match_status"] = (
+            "reference_definition_mismatch"
+        )
+        paired.loc[missing, "match_status"] = "missing_wb97"
+        paired.loc[mismatch, "match_status"] = "composition_mismatch"
+        paired["reference_definition_match"] = same_definition
+        paired["uma_method_fingerprint"] = comparison["parent_method_fingerprint"]
+        paired["wb97_method_fingerprint"] = self.manifest["method_fingerprint"]
+        paired["reference_definition"] = self.manifest["dimer_reference"]
+        paired["same_dimer_state"] = paired["uma_dimer_state_id"].eq(
+            paired["wb97_dimer_state_id"]
+        )
+        return paired
+
     def compare_barriers(
         self,
         *,
@@ -843,8 +927,7 @@ def _state_rows(
             quality = "review"
         else:
             quality = "ready"
-        rows.append(
-            {
+        state_row = {
                 "result_id": result_id,
                 "source": source,
                 "source_row": position,
@@ -890,7 +973,9 @@ def _state_rows(
                 "quality_status": quality,
                 "quality_issues": ";".join(issues),
             }
-        )
+        if "parent_uma_result_id" in df.columns:
+            state_row["parent_uma_result_id"] = row.get("parent_uma_result_id")
+        rows.append(state_row)
     result = pd.DataFrame(rows)
     result["rpos"] = pd.to_numeric(result["rpos"], errors="coerce").astype("Int64")
     return result
@@ -1079,6 +1164,23 @@ def _build_barriers(
             terms[dimer_state] = -0.5
         if ts_type in {"TS3", "TS4"}:
             terms.update({"HBpin-mol": -1.0, "HH": 1.0})
+        result_ids = (
+            {dimer_state: dimer_result_id}
+            if dimer_state is not None and dimer_result_id is not None
+            else {}
+        )
+        parent_id = target.get("parent_uma_result_id")
+        if parent_id is not None:
+            result_ids[ts_type] = "__missing_parent_candidate__"
+        if parent_id is not None and "parent_uma_result_id" in states.columns:
+            parent_matches = states[
+                states["state_id"].eq(ts_type)
+                & states["parent_uma_result_id"].eq(str(parent_id))
+                & states["system_name"].eq(system)
+                & _rpos_mask(states["rpos"], rpos)
+            ]
+            if len(parent_matches) == 1:
+                result_ids[ts_type] = str(parent_matches.iloc[0]["result_id"])
         selected, problems = _resolve_terms(
             states,
             terms,
@@ -1086,11 +1188,7 @@ def _build_barriers(
             substrate_name=substrate,
             catalyst_name=catalyst,
             rpos=rpos,
-            result_ids=(
-                {dimer_state: dimer_result_id}
-                if dimer_state is not None and dimer_result_id is not None
-                else None
-            ),
+            result_ids=result_ids or None,
             select_ts_candidates=method_family == "uma",
         )
         if dimer_state is None:
@@ -1129,7 +1227,7 @@ def _build_barriers(
             if len(protocols) != 1:
                 problems.append("mixed_electronic_energy_protocols")
                 quality = "invalid"
-            if method_family == "uma":
+            if method_family == "uma" or parent_id is not None:
                 composition = Counter()
                 for state, coefficient in terms.items():
                     for element, count in _parse_formula(
@@ -1166,8 +1264,7 @@ def _build_barriers(
                     ]
                 )
             dependency_issues.extend(_dependency_quality_issues(selected, terms))
-        rows.append(
-            {
+        barrier_row = {
                 "system_name": system,
                 "substrate_name": substrate,
                 "catalyst_name": catalyst,
@@ -1206,7 +1303,9 @@ def _build_barriers(
                 ),
                 "formula_id": f"frust_ts_barrier::{ts_type}::v2",
             }
-        )
+        if parent_id is not None:
+            barrier_row["parent_uma_result_id"] = str(parent_id)
+        rows.append(barrier_row)
     return pd.DataFrame(rows)
 
 

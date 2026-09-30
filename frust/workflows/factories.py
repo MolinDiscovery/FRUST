@@ -1013,6 +1013,59 @@ class ScreenTSWorkflow(BaseWorkflow):
         return stages
 
 
+class SeededWb97TSWorkflow(ScreenTSWorkflow):
+    """Characterize selected UMA structures with the existing DFT TS stages."""
+
+    def __init__(self, *, candidate_ids: tuple[tuple[str, str, int, str], ...], seed_dir: Path | None = None,
+                 **kwargs: Any) -> None:
+        super().__init__(**kwargs)
+        self.candidate_ids = candidate_ids
+        self.seed_dir = seed_dir
+
+    def _build_targets(self) -> list[StructureTarget]:
+        """Return one lightweight target for each selected parent result."""
+        from dataclasses import replace
+
+        by_key = {
+            (target.system.system_name, target.rpos, target.state_id): target
+            for target in super()._build_targets()
+        }
+        targets = []
+        for result_id, system_name, rpos, state_id in self.candidate_ids:
+            original = by_key[(system_name, rpos, state_id)]
+            suffix = result_id[:12]
+            targets.append(replace(
+                original,
+                target_id=f"{original.target_id}::uma::{result_id}",
+                tag=f"{original.tag}__uma_{suffix}",
+                builder_options={**original.builder_options,
+                                 "parent_uma_result_id": result_id},
+            ))
+        return targets
+
+    def _prepare_initial_df(
+        self, target: StructureTarget, *, save_dir: Path | None,
+        options: ExecutionOptions,
+    ) -> pd.DataFrame:
+        """Load the portable UMA seed prepared before local or cluster execution."""
+        del save_dir, options
+        if self.seed_dir is None:
+            raise ValueError("Comparison seeds have not been snapshotted")
+        result_id = str(target.builder_options["parent_uma_result_id"])
+        frame = pd.read_parquet(self.seed_dir / f"{result_id}.parquet")
+        frame["structure_id"] = target.target_id
+        return frame
+
+    def _stage_defs(self) -> list[StageDef]:
+        """Run constrained preoptimization and released ωB97 TS refinement."""
+        return [
+            StageDef("prepare", "prepare", kind="prepare"),
+            *_ts_dft_refinement_stages(
+                include_terminal_solv_sp=self.method.include_terminal_solv_sp
+            ),
+        ]
+
+
 class Int3Workflow(BaseWorkflow):
     """Modern constrained-minimum workflow for the INT3 state.
 
