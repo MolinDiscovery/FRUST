@@ -42,7 +42,7 @@ rename gas constraints as an ALPB profile.
 
 | Task | Status | Depends on | Deliverable |
 | --- | --- | --- | --- |
-| [01 — Stage and result contracts](01-stage-and-result-contracts.md) | Pending | Existing UMA screening workflow | Public choices, stage labels, tier semantics, provenance, and minimal stage-plan scaffold |
+| [01 — Stage and result contracts](01-stage-and-result-contracts.md) | Complete | Existing UMA screening workflow | Public choices, stage labels, tier semantics, provenance, and minimal stage-plan scaffold |
 | [02 — UMA TS refinement](02-uma-ts-refinement.md) | Pending | 01 | Constrained UMA Opt → released UMA OptTS → NumFreq with mode controls |
 | [03 — UMA full references and analysis](03-uma-full-analysis.md) | Pending | 02 | UMA minima, thermochemistry, balanced ΔE‡/ΔG‡, and portable result quality |
 | [04 — g-xTB then UMA ranking](04-gxtb-uma-ranking.md) | Pending | 01–03 | UMA SP reranking on g-xTB optimized candidates; ωB97 path preserved |

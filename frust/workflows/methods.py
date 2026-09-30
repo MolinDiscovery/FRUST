@@ -20,6 +20,8 @@ _PRESETS: dict[str, "MethodPlan"] = {}
 _BUILTINS_REGISTERED = False
 _SCREENING_PRESETS: dict[str, "ScreeningPlan"] = {}
 _SCREENING_BUILTINS_REGISTERED = False
+_RANKING_PRESETS: dict[str, "RankingPlan"] = {}
+_RANKING_BUILTINS_REGISTERED = False
 
 CalculationLevel = Literal["low_cost", "dft_ranked", "full"]
 
@@ -232,6 +234,63 @@ class ScreeningPlan:
 
 
 @dataclass(frozen=True)
+class RankingPlan:
+    """Describe an optional single-point ranking stage after screening.
+
+    Parameters
+    ----------
+    name : str
+        Human-readable ranking-plan name.
+    stage_id : {"uma_rank_sp"}
+        Distinct stage id used for UMA single points on already optimized
+        screening geometries. It is separate from ``uma_sp``, which ranks
+        preoptimization geometries in an UMA screening plan.
+    calculator : CalculatorSpec
+        Calculator settings for the ranking stage.
+
+    Notes
+    -----
+    The screening and ranking candidate limits belong to workflow selection,
+    not to this calculator plan. A ranking plan can be fingerprinted on its
+    own for run and reference provenance.
+    """
+
+    name: str
+    stage_id: str
+    calculator: CalculatorSpec
+
+    def __post_init__(self) -> None:
+        if self.stage_id != "uma_rank_sp":
+            raise ValueError("RankingPlan stage_id must be 'uma_rank_sp'")
+        if not isinstance(self.calculator, CalculatorSpec):
+            raise TypeError("RankingPlan calculator must be a CalculatorSpec")
+        if self.calculator.engine != "orca" or "uma" not in self.calculator.kwargs:
+            raise ValueError("UMA ranking requires an ORCA UMA calculator")
+        if "Opt" in self.calculator.options or "OptTS" in self.calculator.options:
+            raise ValueError("UMA ranking requires a single-point calculator")
+
+    def to_dict(self, *, include_name: bool = True) -> dict[str, Any]:
+        """Return a stable JSON-compatible ranking-plan description."""
+        payload: dict[str, Any] = {
+            "schema_version": 1,
+            "stage_id": self.stage_id,
+            "calculator": self.calculator.to_dict(),
+        }
+        if include_name:
+            payload["name"] = self.name
+        return payload
+
+    def fingerprint(self) -> str:
+        """Return a SHA-256 fingerprint of the ranking calculator settings."""
+        encoded = json.dumps(
+            self.to_dict(include_name=False),
+            sort_keys=True,
+            separators=(",", ":"),
+        ).encode("utf-8")
+        return hashlib.sha256(encoded).hexdigest()
+
+
+@dataclass(frozen=True)
 class MethodPlan:
     """Calculator choices for a complete FRUST workflow graph.
 
@@ -248,6 +307,9 @@ class MethodPlan:
     thermochemistry : ThermochemistrySpec or None, optional
         Explicit rule used to assemble molecular free energies from the
         frequency and analysis stages.
+    result_family : {"dft", "uma"}, optional
+        Final calculator family. Existing plans default to ``"dft"``. This
+        distinguishes a full UMA characterization from DFT validation.
 
     Notes
     -----
@@ -270,6 +332,7 @@ class MethodPlan:
     stages: Mapping[str, CalculatorSpec]
     include_terminal_solv_sp: bool = True
     thermochemistry: ThermochemistrySpec | None = None
+    result_family: Literal["dft", "uma"] = "dft"
 
     def __post_init__(self) -> None:
         normalized: dict[str, CalculatorSpec] = {}
@@ -287,6 +350,8 @@ class MethodPlan:
             self.thermochemistry, ThermochemistrySpec
         ):
             raise TypeError("thermochemistry must be a ThermochemistrySpec or None")
+        if self.result_family not in {"dft", "uma"}:
+            raise ValueError("result_family must be 'dft' or 'uma'")
 
     def to_dict(self, *, include_name: bool = True) -> dict[str, Any]:
         """Return a stable JSON-compatible method-plan description.
@@ -308,6 +373,8 @@ class MethodPlan:
                 for stage_id in sorted(self.stages)
             },
         }
+        if self.result_family != "dft":
+            payload["result_family"] = self.result_family
         if include_name:
             payload["name"] = self.name
         return payload
@@ -584,6 +651,30 @@ def screening_preset(name: str = "gxtb-default") -> ScreeningPlan:
         available = ", ".join(sorted(_SCREENING_PRESETS))
         raise KeyError(
             f"Unknown screening preset {name!r}. Available: {available}"
+        ) from exc
+
+
+def ranking_preset(name: str) -> RankingPlan:
+    """Return a built-in UMA ranking plan.
+
+    Parameters
+    ----------
+    name : {"uma-gas", "uma-alpb-chloroform"}
+        UMA environment for a single point on g-xTB optimized geometries.
+
+    Returns
+    -------
+    RankingPlan
+        Inspectable plan for the distinct ``uma_rank_sp`` stage.
+    """
+    _ensure_ranking_presets()
+    key = _preset_key(name)
+    try:
+        return _RANKING_PRESETS[key]
+    except KeyError as exc:
+        available = ", ".join(sorted(_RANKING_PRESETS))
+        raise KeyError(
+            f"Unknown ranking preset {name!r}. Available: {available}"
         ) from exc
 
 
@@ -1014,6 +1105,21 @@ def _ensure_screening_presets() -> None:
             ),
         )
     _SCREENING_BUILTINS_REGISTERED = True
+
+
+def _ensure_ranking_presets() -> None:
+    """Register the built-in UMA single-point ranking plans once."""
+    global _RANKING_BUILTINS_REGISTERED
+    if _RANKING_BUILTINS_REGISTERED:
+        return
+    for environment, solvent in (("gas", None), ("alpb-chloroform", "chloroform")):
+        name = f"uma-{environment}"
+        _RANKING_PRESETS[name] = RankingPlan(
+            name=name,
+            stage_id="uma_rank_sp",
+            calculator=uma(job="sp", xtb_alpb=solvent),
+        )
+    _RANKING_BUILTINS_REGISTERED = True
 
 
 def _analysis_solvent(method: MethodPlan) -> str | None:

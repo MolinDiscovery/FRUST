@@ -70,6 +70,7 @@ DEFAULT_COLLECTION_RESOURCES = Resources(cpus=2, mem_gb=4, timeout_min=120)
 TARGET_TIMING_FILE = "timing.json"
 ANALYSIS_TIER_FILES = {
     "low_cost": "tier_low_cost.parquet",
+    "uma_ranked": "tier_uma_ranked.parquet",
     "dft_ranked": "tier_dft_ranked.parquet",
 }
 _LEGACY_STAGE_RESOURCE_KEYS = {

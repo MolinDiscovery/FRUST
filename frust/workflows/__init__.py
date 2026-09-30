@@ -27,6 +27,7 @@ _PUBLIC_API: dict[str, tuple[str, str]] = {
     "StructureTarget": ("frust.structures", "StructureTarget"),
     "MethodPlan": ("frust.workflows.methods", "MethodPlan"),
     "ScreeningPlan": ("frust.workflows.methods", "ScreeningPlan"),
+    "RankingPlan": ("frust.workflows.methods", "RankingPlan"),
     "CalculatorSpec": ("frust.workflows.methods", "CalculatorSpec"),
     "ThermochemistrySpec": ("frust.workflows.methods", "ThermochemistrySpec"),
     "CatalystScreenWorkflow": ("frust.workflows.screening", "CatalystScreenWorkflow"),
@@ -95,5 +96,6 @@ if TYPE_CHECKING:
         CalculatorSpec,
         MethodPlan,
         ScreeningPlan,
+        RankingPlan,
         ThermochemistrySpec,
     )
