@@ -1,0 +1,7 @@
+[launcher] bind=127.0.0.1:49533 server_cores=2 memory_per_thread_mib=500 slurm_job_id=65689182 slurm_job_nodelist=node066 cmd=/lustre/hpc/kemi/jmni/results/uma-task06-smoke-20260930/alpb_full/oet-audit/bin/oet_server uma --bind 127.0.0.1:49533 --nthreads 2 --memory-per-thread 500
+[launcher] event=started pid=765572 hostname=node066.cluster bind=127.0.0.1:49533
+Warp CUDA warning: Could not find or load the NVIDIA CUDA driver. GPU execution will not be available.
+INFO:waitress:Serving on http://127.0.0.1:49533
+Warp CUDA warning: Could not find or load the NVIDIA CUDA driver. GPU execution will not be available.
+PID 765572 received signal 15, shutting down...
+[launcher] event=stopped pid=765572 hostname=node066.cluster
