@@ -368,9 +368,23 @@ def free_energy_components(
     """
     recipe = _thermochemistry_mapping(df, thermochemistry)
     mode = str(recipe.get("mode", "")).strip().lower()
-    frequency_ge = get_result(df, "gibbs_energy", purpose="frequency")
-    frequency_ee = get_result(df, "electronic_energy", purpose="frequency")
-    analysis_ee = get_result(df, "electronic_energy", purpose="analysis")
+    frequency_ge_column = result_column(
+        df, "gibbs_energy", purpose="frequency", require_present=False
+    )
+    frequency_ee_column = result_column(
+        df, "electronic_energy", purpose="frequency", require_present=False
+    )
+    frequency_ge = pd.to_numeric(
+        df.get(frequency_ge_column, pd.Series(np.nan, index=df.index)),
+        errors="coerce",
+    )
+    frequency_ee = pd.to_numeric(
+        df.get(frequency_ee_column, pd.Series(np.nan, index=df.index)),
+        errors="coerce",
+    )
+    analysis_ee = pd.to_numeric(
+        get_result(df, "electronic_energy", purpose="analysis"), errors="coerce"
+    )
     thermal = frequency_ge - frequency_ee
     if mode == "frequency_gibbs":
         free_energy = frequency_ge

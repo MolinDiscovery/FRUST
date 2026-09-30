@@ -157,6 +157,17 @@ class CatalystScreenWorkflow:
         self.spec_match = str(spec_match).strip().lower()
         composed_method = apply_screening_plan(_coerce_method(method), self.screening)
         if composed_method.result_family == "uma" and self.level == "full":
+            if scope != "barriers":
+                raise ValueError("Full UMA currently supports scope='barriers' only")
+            if "uma_opt" not in self.screening.stages:
+                raise ValueError("Full UMA requires UMA screening in the same environment")
+            screening_potential = self.screening.stages["uma_opt"].kwargs
+            final_potential = composed_method.for_stage("uma_freq").kwargs
+            if any(
+                screening_potential.get(key) != final_potential.get(key)
+                for key in ("uma", "uma_xtb_alpb")
+            ):
+                raise ValueError("Full UMA screening and final stages must use one model and environment")
             if self.include_dft_rank_sp:
                 raise ValueError("Full UMA does not include DFT ranking")
             if ranking_solvation != "method":
@@ -932,6 +943,8 @@ class CatalystScreenWorkflow:
             "calculation_results": terminal_results,
             "tier_calculation_results": level_results,
         }
+        if self.method.result_family == "uma":
+            manifest["ts_refine_n"] = self.ts_refine_n
         signature_keys = [
             "scope",
             "dimer_reference",
@@ -951,6 +964,8 @@ class CatalystScreenWorkflow:
             "analysis_targets",
             "artifact_policy",
         ]
+        if self.method.result_family == "uma":
+            signature_keys.append("ts_refine_n")
         manifest["run_signature"] = _json_hash(
             {key: manifest[key] for key in signature_keys}
         )
@@ -1020,24 +1035,27 @@ def catalyst_screen(
         ``"low_cost"`` reports electronic barriers from the selected g-xTB or
         UMA screen, ``"dft_ranked"`` reports DFT single-point electronic
         barriers on screened geometries, and
-        ``"full"`` additionally performs DFT refinement and frequencies so
-        both electronic and Gibbs barriers are available. Deeper runs retain
+        ``"full"`` performs refinement and frequencies with the selected
+        final method, DFT or UMA, so both electronic and Gibbs barriers are
+        available when the frequency stage returns thermochemistry. Deeper runs retain
         independently selected lower-tier winners. A ``"full"`` run with
         ``include_dft_rank_sp=True`` retains low-cost, DFT-ranked, and full
         barriers; otherwise it retains low-cost and full barriers.
     method : MethodPlan, str, or None, optional
-        Downstream DFT calculation plan. It supplies the DFT ranking method for
-        ``"dft_ranked"`` and the complete refinement and thermochemistry plan
-        for ``"full"``.
+        Final calculation plan. ``"uma-gas"`` and
+        ``"uma-alpb-chloroform"`` characterize TS and reference minima with
+        UMA; DFT presets retain independent DFT validation.
     ranking_solvation : str, optional
         Solvation for DFT single points on screened geometries. ``"method"``
         inherits the method's analysis solvent, ``"gas"`` disables implicit
-        solvent, and another value selects that SMD solvent.
+        solvent, and another value selects that SMD solvent. Full UMA uses
+        ``"method"`` because it has no DFT ranking stage.
     spec_profile : str, optional
         TS/INT3 guess and constraint profile. ``"auto"`` follows the DFT
-        validation method, normally ωB97 gas. To use the reviewed UMA gas
-        reference, pass ``"omol-uma-s-1p2p1/gas"`` explicitly. This choice
-        does not change the UMA calculation environment.
+        validation method, normally ωB97 gas, or the reviewed UMA gas profile
+        for full UMA. To select that profile explicitly, pass
+        ``"omol-uma-s-1p2p1/gas"``. This choice does not change the UMA
+        calculation environment.
     spec_match : {"prefer-exact", "exact"}, optional
         Profile resolution policy for TS/INT3 guesses.
     include_dft_rank_sp : bool or None, optional
@@ -1047,7 +1065,8 @@ def catalyst_screen(
     scope : {"barriers", "full_cycle"}, optional
         ``"barriers"`` calculates the dependencies of the four supplied
         barrier equations. ``"full_cycle"`` adds every state needed for the
-        balanced catalytic-cycle profile.
+        balanced catalytic-cycle profile. Full UMA currently supports
+        ``"barriers"`` only.
     dimer_reference : {"lowest", "dimer", "dimer_bh_bridged", "dimer_eight_membered"}, optional
         Catalyst dimer used in barrier and profile equations. ``"lowest"``
         calculates all three topologies and strictly selects the lowest

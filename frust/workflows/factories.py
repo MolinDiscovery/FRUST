@@ -151,6 +151,30 @@ def _molecule_stage_defs(
             n_cores=2,
         )
     )
+    if calculation_level == "full" and method.result_family == "uma":
+        if screening_opt != "uma_opt":
+            raise ValueError("Full UMA minima require UMA screening")
+        if include_dft_rank_sp:
+            raise ValueError("Full UMA minima cannot include DFT ranking")
+        potentials = {
+            (
+                method.for_stage(stage_id).kwargs.get("uma"),
+                method.for_stage(stage_id).kwargs.get("uma_xtb_alpb"),
+            )
+            for stage_id in ("uma_sp", "uma_opt", "uma_min_opt", "uma_freq")
+        }
+        if len(potentials) != 1:
+            raise ValueError("Full UMA stages must use one model and environment")
+        stages.extend(
+            [
+                StageDef(
+                    "uma_min_opt", "UMA minimum optimization",
+                    lowest=1, rank_by="uma_min_opt",
+                ),
+                StageDef("uma_freq", "UMA numerical frequencies"),
+            ]
+        )
+        return _with_initial_prune(stages, prune_initial)
     if calculation_level == "dft_ranked" or (
         calculation_level == "full" and include_dft_rank_sp
     ):

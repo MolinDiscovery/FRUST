@@ -40,5 +40,49 @@ labelled UMA electronic and free-energy barrier.
 
 ## Completion record
 
-Pending. Record result columns, scope support, tests, and limitations here
-before starting Task 04.
+Completed 2026-09-30 on `feature/uma-screening`. A full UMA catalyst screen
+uses the same pinned model and gas or ALPB(chloroform) correction for TS
+refinement and every reference minimum:
+
+```python
+import frust as ft
+
+wf = ft.workflows.catalyst_screen(
+    dataframe=components,
+    ts_types=["TS1"],
+    screening="uma-gas",
+    method="uma-gas",
+    level="full",
+    scope="barriers",
+    ts_refine_n=3,
+)
+run = wf.run(out_dir="uma_screen", n_cores=8, mem_gb=32)
+run.barriers()[[
+    "ts_type", "delta_e_kcal_mol", "delta_g_kcal_mol", "quality_status"
+]]
+```
+
+| State | Final geometry | Energy and thermochemistry | Frequency check |
+| --- | --- | --- | --- |
+| TS | `uma_ts_opt-oc` | `uma_freq-EE`, `uma_freq-GE`, `uma_freq-vibs` | Exactly one imaginary mode; its displacement needs review |
+| Reference minimum | `uma_min_opt-oc` | `uma_freq-EE`, `uma_freq-GE`, `uma_freq-vibs` | No significant imaginary modes |
+
+The portable `states` and `barriers` tables identify the UMA method family,
+`omol@uma-s-1p2p1` model, solvent correction, selected guess profile, energy
+protocol fingerprint, and quality. ΔE‡ and ΔG‡ use the existing balanced TS
+equations and report kcal/mol. The analysis rejects mixed potential/solvent
+fingerprints and unbalanced compositions. Missing reference or Gibbs data
+leaves the corresponding result incomplete; Gibbs is never filled from
+electronic energy. Several UMA TS candidates are ranked by quality and then
+energy; approving the intended imaginary mode can promote a reviewed
+candidate to `ready`. Old DFT result identities and reference reuse keys stay
+unchanged.
+
+`scope="full_cycle"` fails clearly for full UMA because the extra cycle
+states have not been added. The installed Tooltoad ORCA parser reads the
+`Final Gibbs free energy` line after `NumFreq`; a focused test also verifies
+that Stepper carries this value into `uma_freq-GE`. Gas and ALPB runs, portable
+restart, submitted stage plans, reference publication, missing data, bad
+frequencies, mixed protocols, and balance checks passed with mocked
+calculations. The fast UMA suite passed: 392 tests; 13 slow tests were
+deselected. Live ORCA/UMA compatibility remains for Task 05.

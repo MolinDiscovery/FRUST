@@ -1319,7 +1319,7 @@ def _r2scan_def2svp() -> MethodPlan:
 
 
 def _uma_full_method(environment: str, solvent: str | None) -> MethodPlan:
-    """Build one pinned UMA TS method with a numerical Hessian seed.
+    """Build one pinned UMA plan for TS and reference minima.
 
     Parameters
     ----------
@@ -1331,7 +1331,8 @@ def _uma_full_method(environment: str, solvent: str | None) -> MethodPlan:
     Returns
     -------
     MethodPlan
-        Full UMA method with numerical seed and final frequency stages.
+        Full UMA method with TS Hessian, reference optimization, and final
+        numerical frequency stages.
     """
     screening = screening_preset(f"uma-{environment}")
     return MethodPlan(
@@ -1343,6 +1344,7 @@ def _uma_full_method(environment: str, solvent: str | None) -> MethodPlan:
             **screening.stages,
             "uma_hessian": uma(job="hessian", xtb_alpb=solvent),
             "uma_ts_opt": uma(job="optts", xtb_alpb=solvent),
+            "uma_min_opt": uma(job="opt", xtb_alpb=solvent),
             "uma_freq": uma(job="freq", xtb_alpb=solvent),
         },
     )

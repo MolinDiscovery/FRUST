@@ -736,6 +736,8 @@ def _state_rows(
             "calculator": protocol.get("calculator"),
         }
     )
+    method_family = str(method.get("result_family", "dft"))
+    calculator = protocol.get("calculator", {})
     nt_columns = normal_termination_columns(df)
     rows: list[dict[str, Any]] = []
     for position, (_, row) in enumerate(df.iterrows()):
@@ -770,6 +772,9 @@ def _state_rows(
             electronic_energy,
             free_energy,
             vibration,
+            protocol_fingerprint=(
+                protocol_fingerprint if method_family == "uma" else None
+            ),
         )
         review_status = (
             reviews.get(result_id, "unreviewed")
@@ -808,12 +813,15 @@ def _state_rows(
                 "geometry_stage": protocol.get("geometry_stage"),
                 "energy_stage": protocol.get("analysis_stage"),
                 "energy_method": protocol.get("calculator", {}).get("method"),
+                "energy_model": calculator.get("kwargs", {}).get("uma")
+                or calculator.get("method"),
                 "energy_basis": protocol.get("calculator", {}).get("basis"),
                 "solvation_model": protocol.get("calculator", {}).get(
                     "solvation_model"
                 ),
                 "solvent": protocol.get("calculator", {}).get("solvent"),
                 "energy_protocol_fingerprint": protocol_fingerprint,
+                "method_family": method_family,
                 "electronic_energy_hartree": electronic_energy,
                 "analysis_electronic_energy_hartree": electronic_energy,
                 "frequency_electronic_energy_hartree": component.get(
@@ -1003,6 +1011,7 @@ def _build_barriers(
         for key, value in manifest.get("g_corrections_kcal_mol", {}).items()
     }
     full = manifest.get("calculation_level", "full") == "full"
+    method_family = str(manifest.get("method", {}).get("result_family", "dft"))
     targets = manifest.get("analysis_targets", [])
     rows: list[dict[str, Any]] = []
     for target in targets:
@@ -1031,6 +1040,7 @@ def _build_barriers(
                 if dimer_state is not None and dimer_result_id is not None
                 else None
             ),
+            select_ts_candidates=method_family == "uma",
         )
         if dimer_state is None:
             problems.extend(dimer_issues)
@@ -1043,6 +1053,11 @@ def _build_barriers(
         delta_e = np.nan
         delta_g = np.nan
         corrected_delta_g = np.nan
+        barrier_protocol = None
+        barrier_method = None
+        barrier_model = None
+        barrier_solvation_model = None
+        barrier_solvent = None
         if problems:
             quality = (
                 "incomplete"
@@ -1057,22 +1072,39 @@ def _build_barriers(
             if len(protocols) != 1:
                 problems.append("mixed_electronic_energy_protocols")
                 quality = "invalid"
-            delta_e = sum(
-                float(selected[state]["electronic_energy_hartree"]) * coefficient
-                for state, coefficient in terms.items()
-            )
-            delta_e *= HARTREE_TO_KCAL_MOL
-            if full:
-                free_energies = [selected[state]["free_energy_hartree"] for state in terms]
-                if any(pd.isna(value) for value in free_energies):
-                    problems.append("missing_free_energy")
-                    quality = "incomplete"
-                else:
-                    delta_g = sum(
-                        float(selected[state]["free_energy_hartree"]) * coefficient
-                        for state, coefficient in terms.items()
-                    ) * HARTREE_TO_KCAL_MOL
-                    corrected_delta_g = delta_g + correction
+            if method_family == "uma":
+                composition = Counter()
+                for state, coefficient in terms.items():
+                    for element, count in _parse_formula(
+                        str(selected[state]["formula"])
+                    ).items():
+                        composition[element] += count * coefficient
+                if any(abs(float(count)) > 1e-8 for count in composition.values()):
+                    problems.append("unbalanced_composition")
+                    quality = "invalid"
+            if not problems:
+                barrier_protocol = next(iter(protocols))
+                barrier_method = selected[ts_type]["energy_method"]
+                barrier_model = selected[ts_type].get("energy_model")
+                barrier_solvation_model = selected[ts_type]["solvation_model"]
+                barrier_solvent = selected[ts_type]["solvent"]
+                delta_e = sum(
+                    float(selected[state]["electronic_energy_hartree"]) * coefficient
+                    for state, coefficient in terms.items()
+                ) * HARTREE_TO_KCAL_MOL
+                if full:
+                    free_energies = [
+                        selected[state]["free_energy_hartree"] for state in terms
+                    ]
+                    if any(pd.isna(value) for value in free_energies):
+                        problems.append("missing_free_energy")
+                        quality = "incomplete"
+                    else:
+                        delta_g = sum(
+                            float(selected[state]["free_energy_hartree"]) * coefficient
+                            for state, coefficient in terms.items()
+                        ) * HARTREE_TO_KCAL_MOL
+                        corrected_delta_g = delta_g + correction
             if not problems:
                 quality = _combined_quality(
                     [
@@ -1093,6 +1125,13 @@ def _build_barriers(
                 "dimer_reference_quality": dimer_quality,
                 "delta_e_kcal_mol": delta_e,
                 "delta_g_kcal_mol": delta_g,
+                "method_family": method_family,
+                "energy_method": barrier_method,
+                "energy_model": barrier_model,
+                "solvation_model": barrier_solvation_model,
+                "solvent": barrier_solvent,
+                "ts_guess_profile": manifest.get("resolved_ts_spec_profile"),
+                "energy_protocol_fingerprint": barrier_protocol,
                 "g_correction_kcal_mol": correction if full else np.nan,
                 "delta_g_corrected_kcal_mol": corrected_delta_g,
                 "quality_status": quality,
@@ -1282,6 +1321,7 @@ def _resolve_terms(
     catalyst_name: str,
     rpos: int,
     result_ids: Mapping[str, str] | None = None,
+    select_ts_candidates: bool = False,
 ) -> tuple[dict[str, pd.Series], list[str]]:
     selected: dict[str, pd.Series] = {}
     problems: list[str] = []
@@ -1308,7 +1348,23 @@ def _resolve_terms(
         if len(matches) == 0:
             problems.append(f"missing:{state_id}")
         elif len(matches) > 1:
-            problems.append(f"ambiguous:{state_id}")
+            if select_ts_candidates and state_id.startswith("TS"):
+                ranked = matches.copy()
+                ranked["_quality_rank"] = ranked["quality_status"].map(
+                    QUALITY_ORDER
+                ).fillna(3)
+                energy_column = (
+                    "free_energy_hartree"
+                    if ranked["free_energy_hartree"].notna().any()
+                    else "electronic_energy_hartree"
+                )
+                selected[state_id] = ranked.sort_values(
+                    ["_quality_rank", energy_column, "result_id"],
+                    kind="stable",
+                    na_position="last",
+                ).iloc[0]
+            else:
+                problems.append(f"ambiguous:{state_id}")
         else:
             selected[state_id] = matches.iloc[0]
     return selected, problems
@@ -1394,6 +1450,7 @@ def _result_id(
     electronic_energy: Any,
     free_energy: Any,
     vibration: Mapping[str, Any],
+    protocol_fingerprint: str | None = None,
 ) -> str:
     payload = {
         "state_id": state_id,
@@ -1408,6 +1465,9 @@ def _result_id(
         "imaginary_frequencies": vibration["imaginary_frequencies"],
         "frequencies_cm1": frequency_values(row),
     }
+    if protocol_fingerprint is not None:
+        payload["energy_protocol_fingerprint"] = protocol_fingerprint
+        payload["normal_modes"] = _json_value(row.get("uma_freq-vibs"))
     return "result_" + _json_hash(payload)[:16]
 
 

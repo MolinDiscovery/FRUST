@@ -531,6 +531,7 @@ class ReferenceLibrary:
                     temp_path / "calculator_files",
                     selected_cid=row.get("cid"),
                     calculation_level=calculation_level,
+                    result_family=method.result_family,
                 )
             electronic_energy = float(
                 get_result(df, "electronic_energy", purpose="analysis").iloc[0]
@@ -849,10 +850,13 @@ def _active_reference_method(
     ):
         stages.append("dft_rank_sp")
     if calculation_level == "full":
-        stages.extend(["dft_opt", "dft_freq"])
-        if method.include_terminal_solv_sp:
-            stages.append("dft_solv_sp")
-    return {
+        if method.result_family == "uma":
+            stages.extend(["uma_min_opt", "uma_freq"])
+        else:
+            stages.extend(["dft_opt", "dft_freq"])
+            if method.include_terminal_solv_sp:
+                stages.append("dft_solv_sp")
+    active = {
         "schema_version": 1,
         "stages": {
             stage_id: method.for_stage(stage_id).to_dict() for stage_id in stages
@@ -861,6 +865,9 @@ def _active_reference_method(
             method.include_terminal_solv_sp if calculation_level == "full" else False
         ),
     }
+    if method.result_family != "dft":
+        active["result_family"] = method.result_family
+    return active
 
 
 def _target_chemical_identity(target: StructureTarget) -> dict[str, Any]:
@@ -987,6 +994,26 @@ def _validate_reference_result(
     method: MethodPlan,
     calculation_level: CalculationLevel,
 ) -> dict[str, Any]:
+    if calculation_level == "full" and method.result_family == "uma":
+        contract = df.attrs.get("frust_results", {})
+        if not isinstance(contract, dict):
+            raise ValueError("Reference result has no full UMA result contract")
+        expected_calculator = method.for_stage("uma_freq").to_dict()
+        recorded_calculator = (contract.get("energy_protocol") or {}).get("calculator")
+        if (
+            contract.get("dft") is not False
+            or result_column(
+                df, "electronic_energy", purpose="analysis", require_present=False
+            ) != "uma_freq-EE"
+            or result_column(
+                df, "coords", purpose="optimized", require_present=False
+            ) != "uma_min_opt-oc"
+            or recorded_calculator != expected_calculator
+        ):
+            raise ValueError(
+                "Reference result does not match the requested full UMA model "
+                "and environment"
+            )
     nt_columns = normal_termination_columns(df)
     if not nt_columns:
         raise ValueError("Reference has no normal-termination provenance")
@@ -1074,6 +1101,7 @@ def _copy_scientific_calculator_files(
     *,
     selected_cid: Any = None,
     calculation_level: CalculationLevel = "full",
+    result_family: str = "dft",
 ) -> None:
     if source_target_dir is None:
         return
@@ -1084,7 +1112,11 @@ def _copy_scientific_calculator_files(
     if calculation_level in {"dft_ranked", "full"}:
         stage_names.add("dft_rank_sp")
     if calculation_level == "full":
-        stage_names.update({"dft_opt", "dft_freq", "dft_solv_sp"})
+        stage_names.update(
+            {"uma_min_opt", "uma_freq"}
+            if result_family == "uma"
+            else {"dft_opt", "dft_freq", "dft_solv_sp"}
+        )
     cid_suffix = None if pd.isna(selected_cid) else f"_{selected_cid}"
     candidates = [
         path
