@@ -162,6 +162,42 @@ class ScreenRun:
         self._ensure_analysis()
         return self._level_table("barriers", level=level)
 
+    def candidate_barriers(self) -> pd.DataFrame:
+        """Return one full UMA barrier per refined TS candidate.
+
+        Returns
+        -------
+        pandas.DataFrame
+            One row per retained TS result, including ``ts_result_id``,
+            parent ``cid``, ΔE‡ and ΔG‡ in kcal/mol, method provenance, and
+            ``quality_status``. ``selected`` marks the candidate represented
+            by :meth:`barriers`. Selection ranks candidates by quality
+            (ready, review, invalid, incomplete), then lowest available Gibbs
+            or electronic energy, then result ID. ``"ready"`` means the
+            stationary points and TS mode review passed; ``"review"`` needs
+            scientific review;
+            ``"invalid"`` failed a quality or balance check; and
+            ``"incomplete"`` lacks a required result. Other method families
+            and non-full runs return an empty table.
+        """
+        self._ensure_analysis()
+        path = self.analysis_dir / "candidate_barriers.parquet"
+        if not path.exists():
+            manifest = self.manifest
+            if (
+                manifest.get("calculation_level") != "full"
+                or manifest.get("method", {}).get("result_family") != "uma"
+            ):
+                return pd.DataFrame(
+                    columns=[
+                        *self.barriers().columns,
+                        "cid", "selected", "ts_review_status",
+                        "ts_quality_issues", "n_imag",
+                    ]
+                )
+            self.refresh_analysis()
+        return pd.read_parquet(path)
+
     def compare_barriers(
         self,
         *,
@@ -564,6 +600,12 @@ def build_analysis(run_dir: str | Path) -> dict[str, Any]:
         index=False,
     )
     barriers.to_parquet(analysis_dir / "barriers.parquet", index=False)
+    candidate_barriers = _build_candidate_barriers(
+        states, manifest, dimer_references, barriers
+    )
+    candidate_barriers.to_parquet(
+        analysis_dir / "candidate_barriers.parquet", index=False
+    )
     if manifest.get("scope") == "full_cycle":
         profiles.to_parquet(analysis_dir / "profiles.parquet", index=False)
 
@@ -626,6 +668,7 @@ def build_analysis(run_dir: str | Path) -> dict[str, Any]:
         "n_states": int(len(states)),
         "n_dimer_candidates": int(len(dimer_references)),
         "n_barriers": int(len(barriers)),
+        "n_candidate_barriers": int(len(candidate_barriers)),
         "n_profile_states": int(len(profiles)),
         "state_quality": _counts(states, "quality_status"),
         "dimer_reference_quality": _counts(
@@ -633,6 +676,7 @@ def build_analysis(run_dir: str | Path) -> dict[str, Any]:
             "selection_quality_status",
         ),
         "barrier_quality": _counts(barriers, "quality_status"),
+        "candidate_barrier_quality": _counts(candidate_barriers, "quality_status"),
         "analysis_levels": list(analysis_levels),
     }
     (analysis_dir / "report.json").write_text(json.dumps(report, indent=2, sort_keys=True) + "\n")
@@ -1054,10 +1098,16 @@ def _build_barriers(
         delta_g = np.nan
         corrected_delta_g = np.nan
         barrier_protocol = None
-        barrier_method = None
-        barrier_model = None
-        barrier_solvation_model = None
-        barrier_solvent = None
+        ts_row = selected.get(ts_type)
+        barrier_method = None if ts_row is None else ts_row["energy_method"]
+        barrier_model = None if ts_row is None else ts_row.get("energy_model")
+        barrier_solvation_model = (
+            None if ts_row is None else ts_row["solvation_model"]
+        )
+        barrier_solvent = None if ts_row is None else ts_row["solvent"]
+        ts_protocol = (
+            None if ts_row is None else ts_row["energy_protocol_fingerprint"]
+        )
         if problems:
             quality = (
                 "incomplete"
@@ -1084,10 +1134,6 @@ def _build_barriers(
                     quality = "invalid"
             if not problems:
                 barrier_protocol = next(iter(protocols))
-                barrier_method = selected[ts_type]["energy_method"]
-                barrier_model = selected[ts_type].get("energy_model")
-                barrier_solvation_model = selected[ts_type]["solvation_model"]
-                barrier_solvent = selected[ts_type]["solvent"]
                 delta_e = sum(
                     float(selected[state]["electronic_energy_hartree"]) * coefficient
                     for state, coefficient in terms.items()
@@ -1120,8 +1166,20 @@ def _build_barriers(
                 "catalyst_name": catalyst,
                 "rpos": rpos,
                 "ts_type": ts_type,
+                "ts_result_id": (
+                    selected[ts_type]["result_id"] if ts_type in selected else None
+                ),
+                "ts_cid": selected[ts_type]["cid"] if ts_type in selected else None,
                 "dimer_state_id": dimer_state,
                 "dimer_result_id": dimer_result_id,
+                "reference_result_ids": json.dumps(
+                    {
+                        state: str(selected[state]["result_id"])
+                        for state in terms
+                        if state != ts_type and state in selected
+                    },
+                    sort_keys=True,
+                ),
                 "dimer_reference_quality": dimer_quality,
                 "delta_e_kcal_mol": delta_e,
                 "delta_g_kcal_mol": delta_g,
@@ -1132,6 +1190,7 @@ def _build_barriers(
                 "solvent": barrier_solvent,
                 "ts_guess_profile": manifest.get("resolved_ts_spec_profile"),
                 "energy_protocol_fingerprint": barrier_protocol,
+                "ts_energy_protocol_fingerprint": ts_protocol,
                 "g_correction_kcal_mol": correction if full else np.nan,
                 "delta_g_corrected_kcal_mol": corrected_delta_g,
                 "quality_status": quality,
@@ -1142,6 +1201,52 @@ def _build_barriers(
             }
         )
     return pd.DataFrame(rows)
+
+
+def _build_candidate_barriers(
+    states: pd.DataFrame,
+    manifest: Mapping[str, Any],
+    dimer_references: pd.DataFrame,
+    selected_barriers: pd.DataFrame,
+) -> pd.DataFrame:
+    """Evaluate each full UMA TS with the selected reference set."""
+    columns = [
+        *selected_barriers.columns,
+        "cid", "selected", "ts_review_status", "ts_quality_issues", "n_imag",
+    ]
+    if (
+        manifest.get("calculation_level") != "full"
+        or manifest.get("method", {}).get("result_family") != "uma"
+    ):
+        return pd.DataFrame(columns=columns)
+
+    rows: list[dict[str, Any]] = []
+    for target_position, target in enumerate(manifest.get("analysis_targets", [])):
+        candidates = states[
+            states["state_kind"].eq("transition_state")
+            & states["state_id"].eq(str(target["state_id"]))
+            & states["system_name"].eq(str(target["system_name"]))
+            & _rpos_mask(states["rpos"], int(target["rpos"]))
+        ]
+        one_target_manifest = dict(manifest)
+        one_target_manifest["analysis_targets"] = [target]
+        selected = selected_barriers.iloc[target_position]
+        for candidate_index, candidate in candidates.iterrows():
+            other_candidates = candidates.index.difference([candidate_index])
+            one_candidate_states = states.drop(index=other_candidates)
+            barrier = _build_barriers(
+                one_candidate_states, one_target_manifest, dimer_references
+            ).iloc[0].to_dict()
+            barrier["cid"] = candidate["cid"]
+            barrier["ts_review_status"] = candidate["review_status"]
+            barrier["ts_quality_issues"] = candidate["quality_issues"]
+            barrier["n_imag"] = candidate["n_imag"]
+            barrier["selected"] = (
+                barrier["ts_result_id"] == selected["ts_result_id"]
+                and str(candidate["cid"]) == str(selected["ts_cid"])
+            )
+            rows.append(barrier)
+    return pd.DataFrame(rows, columns=columns)
 
 
 def _build_profiles(

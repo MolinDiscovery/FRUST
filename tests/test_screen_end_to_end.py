@@ -653,6 +653,8 @@ def test_barrier_analysis_matches_supplied_formulas_and_survives_relocation(tmp_
     run = ft.screen.open_run(original).refresh_analysis()
     barriers = run.barriers().set_index("ts_type")
 
+    assert run.candidate_barriers().empty
+
     assert barriers.loc["TS1", "delta_e_kcal_mol"] == pytest.approx(0.15 * 627.5094740631)
     assert barriers.loc["TS1", "delta_g_kcal_mol"] == pytest.approx(0.1 * 627.5094740631)
     assert barriers.loc["TS1", "delta_g_corrected_kcal_mol"] == pytest.approx(
@@ -674,6 +676,8 @@ def test_barrier_analysis_matches_supplied_formulas_and_survives_relocation(tmp_
     shutil.copytree(original, relocated)
     moved = ft.screen.open_run(relocated)
     pd.testing.assert_frame_equal(run.barriers(), moved.barriers())
+    (relocated / "analysis/candidate_barriers.parquet").unlink()
+    assert moved.candidate_barriers().empty
 
 
 def test_screening_projection_preserves_states_barriers_profiles_and_quality(tmp_path):

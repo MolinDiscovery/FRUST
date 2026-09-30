@@ -4,6 +4,7 @@ from __future__ import annotations
 
 from contextlib import nullcontext
 from copy import deepcopy
+import json
 from types import SimpleNamespace
 from unittest.mock import patch
 
@@ -144,6 +145,69 @@ def test_full_uma_local_run_and_portable_barrier(tmp_path, monkeypatch, environm
     assert run.manifest["ts_refine_n"] == 2
     reopened = ScreenRun(run.path).refresh_analysis()
     pd.testing.assert_frame_equal(run.barriers(), reopened.barriers())
+    pd.testing.assert_frame_equal(
+        run.candidate_barriers(), reopened.candidate_barriers()
+    )
+
+
+def test_full_uma_reports_each_candidate_barrier(tmp_path, monkeypatch):
+    run = _run_full_uma(tmp_path, monkeypatch)
+    candidates = run.candidate_barriers().sort_values("cid").reset_index(drop=True)
+    ts_states = run.states().query("state_id == 'TS1'")
+
+    assert candidates["cid"].tolist() == [0, 1]
+    assert set(candidates["ts_result_id"]) == set(ts_states["result_id"])
+    assert candidates["selected"].tolist() == [True, False]
+    assert set(candidates["quality_status"]) == {"review"}
+    assert candidates["delta_e_kcal_mol"].tolist() == pytest.approx(
+        [0.15 * 627.5094740631, 0.16 * 627.5094740631]
+    )
+    assert candidates["delta_g_kcal_mol"].tolist() == pytest.approx(
+        [0.1 * 627.5094740631, 0.11 * 627.5094740631]
+    )
+    assert set(candidates["dimer_result_id"]) == {
+        run.barriers().iloc[0]["dimer_result_id"]
+    }
+    reference_ids = [json.loads(value) for value in candidates["reference_result_ids"]]
+    assert reference_ids[0] == reference_ids[1]
+    assert set(reference_ids[0]) == {"dimer", "ligand"}
+    assert set(candidates["energy_protocol_fingerprint"]) == {
+        run.barriers().iloc[0]["energy_protocol_fingerprint"]
+    }
+    assert len(run.barriers()) == 1
+    assert len(run.compare_barriers()) == 1
+
+    reopened = ScreenRun(run.path)
+    pd.testing.assert_frame_equal(candidates, reopened.candidate_barriers().sort_values("cid").reset_index(drop=True))
+
+
+def test_one_candidate_failure_does_not_hide_other_uma_barrier(tmp_path, monkeypatch):
+    run = _run_full_uma(tmp_path, monkeypatch)
+    ts_path = run.path / "calculations/transition_states/merged.parquet"
+    ts = pd.read_parquet(ts_path)
+    bad_index = ts.index[ts["cid"].eq(1)][0]
+    ts.at[bad_index, "uma_freq-vibs"] = [
+        {"frequency": -250.0}, {"frequency": -80.0}
+    ]
+    ts.to_parquet(ts_path)
+    run.refresh_analysis()
+    candidates = run.candidate_barriers().sort_values("cid")
+    assert candidates["quality_status"].tolist() == ["review", "invalid"]
+    assert candidates["selected"].tolist() == [True, False]
+    assert "expected_1_imag_found_2" in candidates.iloc[1]["ts_quality_issues"]
+    assert candidates.iloc[1]["n_imag"] == 2
+
+    ts.at[bad_index, "uma_freq-vibs"] = [
+        {"frequency": -250.0, "mode": []}
+    ]
+    ts.at[bad_index, "uma_freq-GE"] = float("nan")
+    ts.to_parquet(ts_path)
+    run.refresh_analysis()
+    candidates = run.candidate_barriers().sort_values("cid")
+    assert candidates["quality_status"].tolist() == ["review", "incomplete"]
+    assert pd.notna(candidates.iloc[1]["delta_e_kcal_mol"])
+    assert pd.isna(candidates.iloc[1]["delta_g_kcal_mol"])
+    assert candidates["selected"].tolist() == [True, False]
 
 
 def test_missing_reference_and_missing_gibbs_are_incomplete(tmp_path, monkeypatch):
@@ -156,6 +220,7 @@ def test_missing_reference_and_missing_gibbs_are_incomplete(tmp_path, monkeypatc
     barrier = run.barriers().iloc[0]
     assert barrier["quality_status"] == "incomplete"
     assert pd.isna(barrier["delta_g_kcal_mol"])
+    assert run.candidate_barriers()["quality_status"].eq("incomplete").all()
 
     run2 = _run_full_uma(tmp_path / "second", monkeypatch)
     ts_path = run2.path / "calculations/transition_states/merged.parquet"
@@ -166,6 +231,7 @@ def test_missing_reference_and_missing_gibbs_are_incomplete(tmp_path, monkeypatc
     barrier = run2.barriers().iloc[0]
     assert barrier["quality_status"] == "incomplete"
     assert pd.isna(barrier["delta_g_kcal_mol"])
+    assert run2.candidate_barriers()["delta_g_kcal_mol"].isna().all()
 
 
 def test_compact_uma_bundle_retains_reviewable_ts_mode(tmp_path, monkeypatch):
@@ -192,6 +258,7 @@ def test_bad_frequency_and_mixed_environment_are_rejected(tmp_path, monkeypatch)
     ts.to_parquet(ts_path)
     run.refresh_analysis()
     assert run.barriers().iloc[0]["quality_status"] == "invalid"
+    assert run.candidate_barriers()["quality_status"].eq("invalid").all()
 
     run2 = _run_full_uma(tmp_path / "second", monkeypatch)
     reference_path = run2.path / "calculations/references/merged.parquet"
@@ -206,6 +273,11 @@ def test_bad_frequency_and_mixed_environment_are_rejected(tmp_path, monkeypatch)
     assert "mixed_electronic_energy_protocols" in barrier["quality_issues"]
     assert pd.isna(barrier["delta_e_kcal_mol"])
     assert pd.isna(barrier["delta_g_kcal_mol"])
+    candidate_barriers = run2.candidate_barriers()
+    assert candidate_barriers["delta_e_kcal_mol"].isna().all()
+    assert candidate_barriers["energy_model"].eq("omol@uma-s-1p2p1").all()
+    assert candidate_barriers["ts_energy_protocol_fingerprint"].notna().all()
+    assert candidate_barriers["energy_protocol_fingerprint"].isna().all()
 
 
 def test_unbalanced_uma_barrier_has_no_energy(tmp_path, monkeypatch):
@@ -221,6 +293,9 @@ def test_unbalanced_uma_barrier_has_no_energy(tmp_path, monkeypatch):
     assert "unbalanced_composition" in barrier["quality_issues"]
     assert pd.isna(barrier["delta_e_kcal_mol"])
     assert pd.isna(barrier["delta_g_kcal_mol"])
+    assert run.candidate_barriers()["quality_issues"].str.contains(
+        "unbalanced_composition"
+    ).all()
 
 
 def test_full_uma_rejects_unsupported_scope_and_mixed_plan():
@@ -316,6 +391,10 @@ def test_approved_uma_mode_selects_reviewed_candidate(tmp_path, monkeypatch):
     selected = run.states().query("state_id == 'TS1' and quality_status == 'ready'")
     assert selected["cid"].tolist() == [1]
     assert run.barriers().iloc[0]["quality_status"] == "ready"
+    candidate_barriers = run.candidate_barriers().sort_values("cid")
+    assert candidate_barriers["selected"].tolist() == [False, True]
+    assert candidate_barriers["quality_status"].tolist() == ["review", "ready"]
+    assert run.barriers().iloc[0]["ts_result_id"] == approved["result_id"]
 
 
 def test_full_uma_submitted_plan_and_matching_restart(tmp_path):

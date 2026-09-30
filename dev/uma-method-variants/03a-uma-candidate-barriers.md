@@ -47,4 +47,40 @@ issues. `selected` identifies the candidate represented by `run.barriers()`.
 
 ## Completion record
 
-Pending.
+Completed 2026-09-30 on `feature/uma-screening`. A full UMA run writes
+`analysis/candidate_barriers.parquet` alongside the existing selected
+`analysis/barriers.parquet`. For example:
+
+```python
+import frust as ft
+
+run = ft.screen.open_run("uma_screen")
+candidates = run.candidate_barriers()
+candidates[[
+    "ts_type", "ts_result_id", "cid", "selected",
+    "delta_e_kcal_mol", "delta_g_kcal_mol", "quality_status",
+]]
+```
+
+Each candidate uses the same balanced equation and selected reference rows
+as the main barrier. `reference_result_ids` records the exact reference
+results; `ts_energy_protocol_fingerprint` identifies the TS calculator even
+when a mixed protocol invalidates the barrier. `energy_protocol_fingerprint`
+is present only when every term matches. The table also carries the model,
+solvent, guess profile, mode count, mode review status, and candidate-specific
+quality issues. Missing references or Gibbs data, bad frequencies, mixed
+protocols, and unbalanced formulas retain explicit quality rather than
+silently hiding a candidate.
+
+`run.barriers()` still contains one row per target. It selects the best
+quality candidate, then the lowest available Gibbs or electronic energy,
+then result ID; the candidate table marks that exact result with `selected`.
+Approving an imaginary mode can change which candidate is selected. Old DFT
+bundles return an empty candidate table, including when they lack the new
+artifact, and `compare_barriers()` keeps its one-row-per-target shape.
+
+Mocked end-to-end tests cover distinct candidate energies, approval,
+candidate-specific bad modes and missing Gibbs, missing references, mixed
+environments, balance, relocation, and DFT compatibility. The fast UMA suite
+passed: 394 tests, 13 slow tests deselected. No live chemistry ran for this
+task; bounded compute checks remain Task 05.
