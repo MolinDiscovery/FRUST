@@ -121,5 +121,9 @@ The first Hessian-guided retries failed before OptTS because ORCA could not
 find `private_input.hess`; their redundant subsequent frequency calculations
 were cancelled. The final gas attempt uses direct OptTS from the ALPB-optimized
 TS3 geometry displaced along its two shallow peripheral modes, followed by
-gas-phase NumFreq. Add the job result, mode review, reference decisions, and
-any profile revision after that run completes.
+gas-phase NumFreq. Job `65685852` completed with one imaginary mode at
+−94.46 cm⁻¹, but its optimized reactive distances and mode agree closely with
+the separately optimized gas TS4. The [review finding](evidence/task04/ts3_gas_final_review.md)
+and executed [review notebook](evidence/task04/ts3_gas_review.ipynb) therefore
+leave TS3 quarantined pending user chemical review. No UMA gas TS3 profile is
+active; no ALPB profile work is planned in the present scope.
