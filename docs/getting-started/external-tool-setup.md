@@ -70,16 +70,27 @@ from FRUST and separate from ORCA.
 
 !!! info "Why FRUST uses a custom OET fork"
 
-    FRUST uses the MolinDiscovery OET fork because the g-xTB route was changed
-    to work with the newer g-xTB 2.0 architecture. Upstream OET's documented
-    g-xTB path is based on the older preliminary g-xTB setup, where ORCA's
-    wrapper route used numerical gradients. For FRUST we want ORCA to drive
-    optimizations while g-xTB 2.0 supplies the external energies and gradients.
+    The tested MolinDiscovery OET fork at `1b4fcda` has two FRUST-specific
+    capabilities. Its `oet_gxtb` wrapper calls the g-xTB 2.0 implementation
+    inside the modified `xtb` binary and returns energies and gradients to
+    ORCA. The upstream g-xTB calculator inspected on 2026-09-29 still used the
+    older standalone `gxtb` route and parameter files; that interface did not
+    match the installed g-xTB 2.0 executable. Direct `Stepper.gxtb(...)` uses
+    the g-xTB executable through Tooltoad.
 
-    The custom `oet_gxtb` wrapper does that bridge: ORCA calls `oet_gxtb`,
-    `oet_gxtb` calls the g-xTB 2.0 `xtb` binary from `GXTB_EXE`, and the
-    resulting energy/gradient information is passed back to ORCA. Direct
-    `Stepper.gxtb(...)` uses the same g-xTB 2.0 executable through Tooltoad.
+    The fork also accepts `--xtb-alpb chloroform` for UMA and adds the
+    GFN2-xTB ALPB-minus-gas energy **and gradient** correction to UMA. Neither
+    the upstream nor earlier fork UMA calculator inspected on 2026-09-29 had
+    that option. FRUST writes the flag into ORCA's `%method Ext_Params`, so it
+    is visible in the saved input. See [UMA With FRUST](../external-tools/uma.md)
+    for the calculation formula and [UMA Screening And ωB97
+    Validation](../catalyst-screens/uma-screening.md) for a tested workflow.
+
+    The 2026-09-30 cluster smoke run used FRUST `21d0346`, OET fork `1b4fcda`,
+    a separate OET CPU runtime with `fairchem-core` 2.23.0, and the
+    `omol@uma-s-1p2p1` checkpoint. Pin the OET runtime and checkpoint when
+    reproducing that run; the FRUST `UMA` conda environment does not by itself
+    select the OET calculator's FairChem version.
 
 Choose stable install paths:
 

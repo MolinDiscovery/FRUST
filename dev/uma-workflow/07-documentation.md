@@ -29,10 +29,12 @@ This task is documentation work; it does not start another screening campaign.
    demonstrated. Run `conda run -n UMA mkdocs build --strict` and fix broken
    links or examples.
 
-> **Task 06 result:** The full execution completed, but its barrier is invalid
-> because the ligand has one imaginary ωB97 mode (−65.61 cm⁻¹), and TS1's
-> single imaginary mode (−1077.84 cm⁻¹) remains unreviewed. The guide must
-> distinguish workflow success from a scientifically accepted barrier.
+> **Task 06 result:** The original cluster finalization marked the full
+> barrier `invalid` because the ligand had a −65.61 cm⁻¹ methyl torsion. A
+> subsequent run-local Mac reoptimization removed it (+24.97 cm⁻¹ lowest
+> frequency), so the rebuilt full barrier is `review`: TS1's single
+> −1077.84 cm⁻¹ imaginary mode remains unreviewed. The guide must distinguish
+> workflow success from a scientifically accepted barrier.
 
 ## Acceptance
 
@@ -45,5 +47,27 @@ This task is documentation work; it does not start another screening campaign.
 
 ## Completion record
 
-Pending. Record the FRUST revision, pages changed, Task 06 artifacts used to
-verify examples, strict build result, and any unresolved documentation limits.
+Completed 2026-09-30. The workflow example was checked against the current
+FRUST API, and its measured values come from the Task 06 run executed at FRUST
+`21d0346`, OET fork `1b4fcda`, and `omol@uma-s-1p2p1`. The practical guide is
+[`docs/catalyst-screens/uma-screening.md`](../../docs/catalyst-screens/uma-screening.md).
+It shows a two-row input, gas and ALPB screening, three result levels, both
+full-run ranking-SP settings, gas guess-profile choices, and review status.
+
+Updated the external-tool setup box and lower-level UMA guide for the verified
+fork, FairChem runtime, explicit model selection, ALPB energy/gradient formula,
+ORCA `Ext_Params`, and job-scoped server behavior. Added links from the
+catalyst-screen overview, end-to-end guide, TS guess guide, and workflow-method
+guide; the vibration guide now includes a portable run review example.
+
+The numerical example and caveats were checked against Task 06's
+[`run-review`](evidence/task06/run-review/) snapshot and
+[`post-repair`](evidence/task06/run-review/post-repair/) records. The saved
+ALPB ORCA input shows `--xtb-alpb chloroform`; the server audit shows
+compute-node loopback calls and one server lifecycle per initial job.
+`conda run -n UMA mkdocs build --strict` passed. A construction-only API check
+confirmed `wf.show_stages()` has the documented stage and solvent columns and
+the default UMA full run has `("low_cost", "full")` tiers.
+
+The run remains a functional smoke check with TS1 at `review`; no accuracy
+benchmark or scientific TS approval was added by this documentation task.

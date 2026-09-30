@@ -98,6 +98,10 @@ energies.
 
 ## Screen With UMA Before ωB97 Validation
 
+For a small input table, both UMA environments, the ranking-SP switch, and a
+checked result, use the [UMA screening guide](uma-screening.md). The abbreviated
+full-run example below shows how that choice fits into the composed workflow.
+
 The following full run selects conformers with ALPB-corrected UMA, then sends
 the retained structures directly to ωB97 validation:
 
@@ -127,6 +131,11 @@ The same `screening="uma-gas"` option removes the ALPB correction. The
 `include_dft_rank_sp=True` if you also want that ranking point and its
 separate `dft_ranked` result tier. The default for a full UMA run is `False`;
 the existing g-xTB default remains `True`.
+
+For the default UMA full run, `run.available_analysis_levels()` returns
+`("low_cost", "full")`. With `include_dft_rank_sp=True`, it returns
+`("low_cost", "dft_ranked", "full")`. A direct `level="dft_ranked"` request
+always performs the ranking single point.
 
 The initial TS guess and its constraints are chosen separately from the UMA
 potential. By default, ωB97 validation selects the ωB97 gas guess profile.
@@ -291,10 +300,11 @@ barriers
 
 A full run also preserves the independently selected winner at each cheaper
 level. This gives the screening electronic barrier, the DFT-ranked electronic
-barrier, and the final DFT electronic and Gibbs barriers from one submission:
+barrier when ranking is enabled, and the final DFT electronic and Gibbs
+barriers from one submission:
 
 ```python
-run.available_analysis_levels()
+run.available_analysis_levels()  # example with DFT ranking enabled
 # ('low_cost', 'dft_ranked', 'full')
 
 comparison = run.compare_barriers()

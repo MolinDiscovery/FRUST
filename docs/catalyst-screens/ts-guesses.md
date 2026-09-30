@@ -92,7 +92,7 @@ constraint values come from a method/environment profile:
 ft.show_spec_profiles()[["profile", "state", "status"]]
 ```
 
-The built-in catalog has four slots:
+The built-in catalog has five available or planned slots:
 
 | Profile | Current availability |
 | --- | --- |
@@ -100,6 +100,7 @@ The built-in catalog has four slots:
 | `wb97xd3-631g/smd-chloroform` | Missing; same-method gas fallback is available with `prefer-exact` |
 | `r2scan-3c/gas` | TS1--TS4 and INT3 active |
 | `r2scan-3c/smd-chloroform` | TS1, TS2, TS4, and INT3 active; TS3 quarantined with reviewed gas fallback available under `prefer-exact` |
+| `omol-uma-s-1p2p1/gas` | TS1--TS4 and INT3 active; reviewed UMA-S 1.2.1 gas references |
 
 Workflows select the profile from their DFT geometry stage:
 
@@ -118,6 +119,14 @@ Output:
 ```text
 'r2scan-3c/smd-chloroform'
 ```
+
+For an UMA screen, `screening="uma-gas"` or
+`screening="uma-alpb-chloroform"` selects the calculator, while
+`spec_profile` selects the TS guess and constraint source. The default with
+`method="wb97xd3-631g"` is `wb97xd3-631g/gas`. To use the reviewed UMA gas
+constraints explicitly, pass `spec_profile="omol-uma-s-1p2p1/gas"` and
+`spec_match="exact"`. There is no registered UMA ALPB geometry profile.
+See the [UMA screening guide](uma-screening.md) for a complete example.
 
 Use `spec_match="exact"` when a workflow must stop rather than use the other
 environment from the same method family. FRUST never falls back between

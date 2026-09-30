@@ -1,19 +1,20 @@
 # Workflow Method Plans
 
 `ft.workflows` is the recommended high-level API for new FRUST runs that should
-move cleanly from a local test to cluster submission. It keeps three decisions
+move cleanly from a local test to cluster submission. It keeps four decisions
 separate:
 
 | Concept | Owns | Example |
 | --- | --- | --- |
 | `Workflow` | chemistry, targets, stage graph | `ft.workflows.screen_ts(...)` |
-| `MethodPlan` | calculator engines/options, solvent-SP policy, and thermochemistry recipe | `ft.workflows.methods.preset("r2scan-3c")` |
+| `ScreeningPlan` | GFN-FF preparation and g-xTB or UMA screening potential | `ft.workflows.methods.screening_preset("uma-alpb-chloroform")` |
+| `MethodPlan` | DFT calculator options, solvent-SP policy, and thermochemistry recipe | `ft.workflows.methods.preset("wb97xd3-631g")` |
 | execution mode | job grouping | `single_job`, `dft_staged`, `fully_staged` |
 
 The same workflow and method can be used in both places:
 
 ```text
-same Workflow + same MethodPlan
+same Workflow + same ScreeningPlan + same MethodPlan
     -> local smoke test with wf.run(...)
     -> cluster production with wf.submit(...)
 ```
@@ -58,6 +59,29 @@ Nothing expensive happens during `wf.targets()`. TS conformers are generated
 when the workflow runs.
 
 ## Method Plans
+
+For catalyst screens, choose the screening potential separately from the DFT
+validation method. For example:
+
+```python
+wf = ft.workflows.catalyst_screen(
+    csv_path="screen.csv",
+    ts_types=["TS1"],
+    screening="uma-alpb-chloroform",
+    method="wb97xd3-631g",
+    level="full",
+    include_dft_rank_sp=False,
+)
+
+wf.show_stages()[["branch", "stage", "engine", "solvent"]]
+```
+
+Here `uma_sp` selects conformers, `uma_opt` optimizes them with the same
+ALPB-corrected UMA potential, and ωB97 handles the final validation. Use
+`screening="uma-gas"` to omit the correction. The `ScreeningPlan` does not
+choose the TS guess profile; `spec_profile` does. See the
+[UMA screening guide](../catalyst-screens/uma-screening.md) for the input table,
+result tiers, and checked cluster example.
 
 Built-in method plans are selected by name:
 

@@ -1,13 +1,13 @@
 # Vibrations
 
-Use `plot_vibs` to inspect normal modes from FRUST frequency calculations. For
+Use `ft.plot_vibs` to inspect normal modes from FRUST frequency calculations. For
 transition states, the imaginary mode should match the intended reaction
 coordinate.
 
 ```python
-from frust.vis import plot_vibs
+import frust as ft
 
-plot_vibs(df_ok, vId=0)
+ft.plot_vibs(df_ok, vId=0)
 ```
 
 `plot_vibs` uses the same scene renderer and default visual style as
@@ -29,13 +29,44 @@ cell sizes, labels, background, and atom/stick styling.
     must also describe the intended bond formation, bond breaking, proton
     transfer, hydride transfer, or other reaction coordinate.
 
+For a portable catalyst-screen run, inspect its full-tier review queue and the
+corresponding animated mode before approving a barrier:
+
+```python
+run = ft.screen.open_run("runs/uma-ts1-full")
+queue = run.review_queue()
+queue[["result_id", "state_id", "n_imag", "imaginary_frequencies_cm1"]]
+
+result_id = queue.iloc[0]["result_id"]
+run.plot_vibration(result_id, mode=0)
+```
+
+Rotate the molecule by dragging in the 3D viewer; watch whether the moving
+atoms follow the expected bond changes. A single imaginary frequency alone
+leaves the TS at `review`. After checking its geometry and mode, record an
+explicit decision:
+
+```python
+run.set_review(
+    result_id,
+    "approved",
+    note="Imaginary mode follows the intended B-H/C-H transfer coordinate.",
+)
+```
+
+For example, the small UMA/ωB97 TS1 integration run had one ωB97 imaginary
+frequency at −1077.84 cm⁻¹. It remains `review` until its motion is formally
+accepted. Its free N-methylpyrrole reference originally had a −65.61 cm⁻¹
+methyl torsion; a separate minimum reoptimization changed the lowest
+frequency to +24.97 cm⁻¹. Minimum references need zero imaginary modes.
+
 ## Multiple Rows
 
 By default, `plot_vibs(df_ok)` displays every row in the dataframe, matching
 `plot_mols(df_ok)`. This makes filtered dataframes convenient:
 
 ```python
-plot_vibs(
+ft.plot_vibs(
     df_ok[df_ok["substrate_name"] == "1-benzylpyrrole"],
     columns=2,
 )
@@ -44,7 +75,7 @@ plot_vibs(
 For explicit subsets, pass row positions:
 
 ```python
-plot_vibs(
+ft.plot_vibs(
     df_ok,
     row_indices=[0, 1, 2, 3],
     columns=2,
@@ -55,7 +86,7 @@ plot_vibs(
 Use `max_rows` for large screens:
 
 ```python
-plot_vibs(
+ft.plot_vibs(
     df_ok,
     max_rows=12,
     columns=3,
@@ -79,7 +110,7 @@ Use `custom_coords_col_name` when you want to inspect vibrations against a
 specific coordinate stage.
 
 ```python
-plot_vibs(
+ft.plot_vibs(
     df_ok,
     row_index=0,
     vId=0,
@@ -95,7 +126,7 @@ documentation or shared with collaborators.
 !!! example "Export an imaginary-mode viewer"
 
     ```python
-    plot_vibs(
+    ft.plot_vibs(
         df_ok,
         row_index=0,
         vId=0,
@@ -121,7 +152,7 @@ documentation or shared with collaborators.
     When comparing rows, pass `legends` so each viewer cell is identified:
 
     ```python
-    plot_vibs(
+    ft.plot_vibs(
         df_ok,
         row_indices=[0, 1],
         legends=["lowest", "second-lowest"],
