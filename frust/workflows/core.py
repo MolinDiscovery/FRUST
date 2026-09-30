@@ -542,8 +542,9 @@ class BaseWorkflow:
             ``"all"`` keeps all intermediate parquet checkpoints.
         artifact_policy : {"standard", "screening"}, optional
             ``"screening"`` retains final structure, scalar energies, and
-            frequency values while omitting displacement vectors and consumed
-            intermediate data. ``"standard"`` remains the default.
+            frequency values while omitting consumed intermediate data. Full
+            UMA TS results retain final mode vectors for review.
+            ``"standard"`` remains the default.
         uma_oet_tools : str or pathlib.Path or None, optional
             OET runtime used for UMA stages within each local target or stage
             group. For example, pass a dedicated FairChem 2.23 runtime here.
@@ -2654,6 +2655,9 @@ def _attach_workflow_attrs(
         }
     )
     structure_options = workflow._structure_build_kwargs()
+    if workflow.result_profile == "transition_state" and workflow.method.result_family == "uma":
+        df.attrs["frust_workflow"]["ts_refine_n"] = int(workflow.ts_refine_n)
+        df.attrs["frust_workflow"]["screen_top_n"] = int(workflow.top_n)
     if "spec_profile" in structure_options:
         df.attrs["frust_workflow"]["guess_profile"] = structure_options["spec_profile"]
         df.attrs["frust_workflow"]["guess_profile_match"] = structure_options.get(
@@ -2668,8 +2672,9 @@ def _attach_workflow_attrs(
         attach_result_contract(
             df,
             workflow.result_profile,
-            dft=workflow.dft,
+            dft=workflow.dft and workflow.method.result_family == "dft",
             calculation_level=calculation_level,
+            full_method=workflow.method.result_family,
             include_terminal_solv_sp=workflow.method.include_terminal_solv_sp,
             screening_opt_stage=(
                 "uma_opt" if "uma_opt" in workflow.method.stages else "xtb_opt"

@@ -2375,7 +2375,10 @@ class Stepper:
                 inp["xtra_inp_str"] = (xin + "\n\n" + client_block).strip() if xin else client_block
                 return inp
 
-            result = self._run_engine(df, self.orca_fn, prefix, build_orca_uma, save_step, lowest, save_files)
+            result = self._run_engine(
+                df, self.orca_fn, prefix, build_orca_uma, save_step, lowest,
+                save_files, use_last_hess,
+            )
             uma_input = {
                 "uma": uma,
                 "uma_task": spec.task,

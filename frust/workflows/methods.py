@@ -590,8 +590,9 @@ def uma(
 
     Parameters
     ----------
-    job : {"sp", "opt"}, optional
-        Single-point ranking or geometry optimization.
+    job : {"sp", "opt", "hessian", "optts", "freq"}, optional
+        Single point, optimization, numerical Hessian seed, transition-state
+        optimization, or final numerical frequency calculation.
     xtb_alpb : {"chloroform"} or None, optional
         Add the GFN2-xTB ALPB(chloroform) minus gas correction to UMA.
         ``None`` selects gas-phase UMA.
@@ -605,13 +606,17 @@ def uma(
     CalculatorSpec
         ORCA external-potential specification with explicit UMA provenance.
     """
-    if job not in {"sp", "opt"}:
-        raise ValueError("UMA screening job must be 'sp' or 'opt'")
+    if job not in {"sp", "opt", "hessian", "optts", "freq"}:
+        raise ValueError("Unsupported UMA job")
     if xtb_alpb not in {None, "chloroform"}:
         raise ValueError("UMA screening supports only ALPB(chloroform)")
     options = {"ExtOpt": None}
     if job == "opt":
         options["Opt"] = None
+    elif job in {"hessian", "freq"}:
+        options["NumFreq"] = None
+    elif job == "optts":
+        options["OptTS"] = None
     return CalculatorSpec(
         engine="orca",
         options=options,
@@ -988,6 +993,11 @@ def preset(name: str) -> MethodPlan:
           solvent single point.
         - ``"r2scan-def2svp"``: use ORCA ``R2SCAN`` with the ``def2-SVP`` basis
           for DFT stages.
+        - ``"uma-gas"``: use pinned OMol UMA-S 1.2.1 for gas-phase screening
+          and full TS refinement with numerical frequencies.
+        - ``"uma-alpb-chloroform"``: use the same UMA model with the
+          GFN2-xTB ALPB(chloroform) energy and gradient correction at every
+          UMA stage.
 
     Returns
     -------
@@ -1073,6 +1083,8 @@ def _ensure_builtin_presets() -> None:
     register_preset("r2scan-3c-solv", _r2scan_3c_solv())
     register_preset("wb97xd3-631g-solv", _wb97xd3_631g_solv())
     register_preset("r2scan-def2svp", _r2scan_def2svp())
+    for environment, solvent in (("gas", None), ("alpb-chloroform", "chloroform")):
+        register_preset(f"uma-{environment}", _uma_full_method(environment, solvent))
     _BUILTINS_REGISTERED = True
 
 
@@ -1303,6 +1315,36 @@ def _r2scan_def2svp() -> MethodPlan:
                 method=method, basis="def2-SVPD", job="sp", solvent="chloroform"
             ),
         ),
+    )
+
+
+def _uma_full_method(environment: str, solvent: str | None) -> MethodPlan:
+    """Build one pinned UMA TS method with a numerical Hessian seed.
+
+    Parameters
+    ----------
+    environment : str
+        Preset suffix, ``"gas"`` or ``"alpb-chloroform"``.
+    solvent : str or None
+        ``"chloroform"`` enables the same ALPB correction at every UMA stage.
+
+    Returns
+    -------
+    MethodPlan
+        Full UMA method with numerical seed and final frequency stages.
+    """
+    screening = screening_preset(f"uma-{environment}")
+    return MethodPlan(
+        name=f"uma-{environment}",
+        include_terminal_solv_sp=False,
+        thermochemistry=ThermochemistrySpec("frequency_gibbs"),
+        result_family="uma",
+        stages={
+            **screening.stages,
+            "uma_hessian": uma(job="hessian", xtb_alpb=solvent),
+            "uma_ts_opt": uma(job="optts", xtb_alpb=solvent),
+            "uma_freq": uma(job="freq", xtb_alpb=solvent),
+        },
     )
 
 

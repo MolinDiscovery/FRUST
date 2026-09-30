@@ -41,5 +41,53 @@ search so the rest of each candidate can settle.
 
 ## Completion record
 
-Pending. Record implementation choices, tests, and any ORCA limitation here
-before starting Task 03.
+Completed 2026-09-30 on `feature/uma-screening`. Full UMA TS refinement is
+available in `ft.workflows.screen_ts(...)` with `method="uma-gas"` or
+`method="uma-alpb-chloroform"` and `calculation_level="full"`. The composed
+`ft.workflows.catalyst_screen(...)` accepts `ts_refine_n`; its UMA reference
+and final analysis branches remain Task 03.
+
+```python
+import frust as ft
+
+wf = ft.workflows.screen_ts(
+    dataframe=systems,
+    ts_types=["TS1"],
+    method="uma-gas",
+    calculation_level="full",
+    top_n=10,
+    ts_refine_n=3,
+)
+wf.show_stages()[["stage", "constraint", "lowest"]]
+```
+
+After `uma_opt`, an RMSD prune on `uma_opt-oc` preserves distinct geometries,
+then `uma_refine_filter` keeps up to `ts_refine_n` per structure by
+`uma_opt-EE`. Existing `structure_id` and `cid` values continue through all
+stages. The screening `top_n` and refinement `ts_refine_n` are recorded in
+workflow provenance. `auto` guess-profile selection resolves to the reviewed
+`omol-uma-s-1p2p1/gas` profile for either UMA calculation environment; the
+resolved profile is saved with the result. No ALPB geometry profile is claimed.
+
+The released path is `uma_hessian` (`ExtOpt NumFreq`, retrieving `input.hess`)
+→ `uma_ts_opt` (`ExtOpt OptTS`, `constraint=False`, reading that Hessian) →
+`uma_freq` (`ExtOpt NumFreq`). The seed Hessian is reused for the initial
+`OptTS` search, then final frequencies are recalculated at the optimized
+geometry. The same pinned `omol@uma-s-1p2p1` model and gas or ALPB setting is
+required at all UMA stages. A mixed screening/refinement environment is
+rejected. UMA's Stepper path now passes the Hessian reuse flag to ORCA, and
+generated input includes `--xtb-alpb chloroform` when selected. A live ORCA
+compatibility check remains Task 05.
+
+The existing job-scoped server covers the complete stage group, including
+both `NumFreq` calls, and closes on success, failure, or cancellation. Final
+`uma_freq-vibs` vectors and `uma_freq-frequencies_cm1` values are preserved in
+portable full UMA TS results, including compact screening artifacts, so the
+imaginary mode remains inspectable. Existing TS quality rules require one
+imaginary frequency and keep unreviewed modes in `review`.
+
+Checks: focused mock tests cover stage order, candidate identities, constraint
+release, Hessian handoff, ALPB input, saved mode data, and vibration validity.
+Existing UMA server tests cover single-server reuse and cleanup. The full fast
+suite passed: 380 tests; 13 slow tests were deselected. No live chemistry was
+run for this task.

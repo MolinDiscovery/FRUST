@@ -667,6 +667,7 @@ class ScreenTSWorkflow(BaseWorkflow):
         screening: ScreeningPlan | str | None = None,
         n_confs: int | None = None,
         top_n: int = 20,
+        ts_refine_n: int = 3,
         dft: bool = True,
         calculation_level: CalculationLevel | None = None,
         include_dft_rank_sp: bool | None = None,
@@ -686,6 +687,9 @@ class ScreenTSWorkflow(BaseWorkflow):
         self.csv_path = csv_path
         self.dataframe = dataframe
         self.ts_types = tuple(str(ts_type).upper() for ts_type in ts_types)
+        self.ts_refine_n = int(ts_refine_n)
+        if self.ts_refine_n < 1:
+            raise ValueError("ts_refine_n must be positive")
         self.ts_backend = str(ts_backend).strip().lower()
         self.spec_profile = str(spec_profile).strip().lower()
         self.spec_match = str(spec_match).strip().lower()
@@ -700,6 +704,8 @@ class ScreenTSWorkflow(BaseWorkflow):
         """Return the explicit or method-derived tsguess2 profile."""
         if self.spec_profile != "auto":
             return self.spec_profile
+        if self.method.result_family == "uma":
+            return "omol-uma-s-1p2p1/gas"
         return profile_for_geometry_stage(self.method, "dft_ts_opt")
 
     @property
@@ -851,6 +857,51 @@ class ScreenTSWorkflow(BaseWorkflow):
     def _stage_defs(self) -> list[StageDef]:
         """Return screen TS workflow stages."""
         _, screening_opt = _screening_stage_ids(self.method)
+        if self.calculation_level == "full" and self.method.result_family == "uma":
+            if screening_opt != "uma_opt":
+                raise ValueError("Full UMA TS refinement requires UMA screening")
+            if self.include_dft_rank_sp:
+                raise ValueError("Full UMA TS refinement cannot include DFT ranking")
+            uma_stages = ("uma_sp", "uma_opt", "uma_hessian", "uma_ts_opt", "uma_freq")
+            potentials = {
+                (
+                    self.method.for_stage(stage_id).kwargs.get("uma"),
+                    self.method.for_stage(stage_id).kwargs.get("uma_xtb_alpb"),
+                )
+                for stage_id in uma_stages
+            }
+            if len(potentials) != 1:
+                raise ValueError("Full UMA stages must use one model and environment")
+            stages = _ts_screening_stages(
+                self.top_n, method=self.method, prune_initial=self.prune_initial
+            )
+            stages.extend(
+                [
+                    StageDef(
+                        "uma_refine_prune", "UMA geometry diversity selection",
+                        kind="prune",
+                        prune_options=normalize_pruning_options({
+                            "modes": ("rmsd",),
+                            "coords_col": "uma_opt-oc",
+                            "energy_col": "uma_opt-EE",
+                        }),
+                    ),
+                    StageDef(
+                        "uma_refine_filter", "UMA TS candidate selection",
+                        kind="filter", lowest=self.ts_refine_n, rank_by="uma_opt",
+                    ),
+                    StageDef(
+                        "uma_hessian", "UMA numerical Hessian seed",
+                        read_files=["input.hess"],
+                    ),
+                    StageDef(
+                        "uma_ts_opt", "UMA transition-state optimization",
+                        use_last_hess=True,
+                    ),
+                    StageDef("uma_freq", "UMA final numerical frequencies"),
+                ]
+            )
+            return stages
         stages = _ts_screening_stages(
             self.top_n, method=self.method, prune_initial=self.prune_initial
         )
@@ -1256,6 +1307,7 @@ def screen_ts(
     spec_match: str = "prefer-exact",
     n_confs: int | None = None,
     top_n: int = 20,
+    ts_refine_n: int = 3,
     dft: bool = True,
     calculation_level: CalculationLevel | None = None,
     include_dft_rank_sp: bool | None = None,
@@ -1284,16 +1336,19 @@ def screen_ts(
         ``"wb97xd3-631g"`` (default ORCA wB97X-D3/6-31G** workflow),
         ``"r2scan-3c-solv"`` and ``"wb97xd3-631g-solv"``
         (solvent-inclusive DFT stages without a terminal solvent SP), and
-        ``"r2scan-def2svp"`` (ORCA R2SCAN/def2-SVP DFT stages).
+        ``"r2scan-def2svp"`` (ORCA R2SCAN/def2-SVP DFT stages). For full
+        UMA TS refinement, use ``"uma-gas"`` or
+        ``"uma-alpb-chloroform"`` with matching UMA screening.
     screening : ScreeningPlan or str or None, optional
         Screening preset. ``"uma-gas"`` and ``"uma-alpb-chloroform"`` use
         GFN-FF followed by UMA single-point selection and constrained UMA
         optimization. ``None`` keeps the method plan's screening calculators.
     spec_profile : str, optional
         Geometry-reference profile used by ``tsguess2``. ``"auto"`` selects
-        the profile from the DFT TS-optimization method and environment. Pass
-        an explicit profile such as ``"r2scan-3c/smd-chloroform"`` for a
-        custom method plan.
+        the profile from the DFT TS-optimization method and environment, or
+        the reviewed UMA gas profile for full UMA TS refinement. An UMA ALPB
+        geometry profile has not been reviewed. Pass an explicit profile such
+        as ``"r2scan-3c/smd-chloroform"`` for a custom method plan.
     spec_match : {"prefer-exact", "exact"}, optional
         Profile matching policy. ``"prefer-exact"`` may use the other
         environment from the same method family when an exact reference is
@@ -1304,12 +1359,14 @@ def screen_ts(
     top_n : int, optional
         Number of low-cost optimized TS guesses kept before the DFT pre-SP
         cutoff.
+    ts_refine_n : int, optional
+        Maximum number of geometrically distinct UMA optimized candidates to
+        carry into Hessian, unconstrained TS search, and final frequencies.
     dft : bool, optional
-        If ``True``, include constrained DFT preoptimization, Hessian,
-        ``OptTS``, and frequency stages. Gas-phase presets also include a
-        terminal solvent single point; solvent-inclusive presets do not. If
-        ``False``, stop after the DFT pre-SP cutoff and keep the lowest-energy
-        row.
+        Legacy switch for ``calculation_level="full"``. A DFT method adds
+        constrained preoptimization, Hessian, ``OptTS``, and frequencies. An
+        UMA method uses the UMA TS refinement stages. An explicit
+        ``calculation_level`` takes precedence.
     calculation_level : {"low_cost", "dft_ranked", "full"} or None, optional
         Explicit screening depth. When set, it takes precedence over ``dft``.
     include_dft_rank_sp : bool or None, optional
@@ -1357,6 +1414,7 @@ def screen_ts(
         spec_match=spec_match,
         n_confs=n_confs,
         top_n=top_n,
+        ts_refine_n=ts_refine_n,
         dft=dft,
         calculation_level=calculation_level,
         include_dft_rank_sp=include_dft_rank_sp,

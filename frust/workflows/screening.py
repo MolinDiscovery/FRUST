@@ -126,6 +126,7 @@ class CatalystScreenWorkflow:
         reuse_policy: ReusePolicy = "approved",
         n_confs: int | None = None,
         top_n: int = 20,
+        ts_refine_n: int = 3,
         prune_initial: bool | dict[str, Any] = True,
     ) -> None:
         if (csv_path is None) == (dataframe is None):
@@ -155,10 +156,20 @@ class CatalystScreenWorkflow:
         self.spec_profile = str(spec_profile).strip().lower()
         self.spec_match = str(spec_match).strip().lower()
         composed_method = apply_screening_plan(_coerce_method(method), self.screening)
-        self.method, self.ranking_solvation = with_ranking_solvation(
-            composed_method,
-            ranking_solvation,
-        )
+        if composed_method.result_family == "uma" and self.level == "full":
+            if self.include_dft_rank_sp:
+                raise ValueError("Full UMA does not include DFT ranking")
+            if ranking_solvation != "method":
+                raise ValueError("ranking_solvation applies only to DFT ranking")
+            self.method = composed_method
+            self.ranking_solvation = {
+                "requested": "method", "model": None, "solvent": None
+            }
+        else:
+            self.method, self.ranking_solvation = with_ranking_solvation(
+                composed_method,
+                ranking_solvation,
+            )
         self.ranking_solvation["applied"] = self.level == "dft_ranked" or (
             self.level == "full" and self.include_dft_rank_sp
         )
@@ -183,6 +194,9 @@ class CatalystScreenWorkflow:
         self.reuse_policy = reuse_policy
         self.n_confs = n_confs
         self.top_n = int(top_n)
+        self.ts_refine_n = int(ts_refine_n)
+        if self.ts_refine_n < 1:
+            raise ValueError("ts_refine_n must be positive")
         self.prune_initial = prune_initial
         self._components_cache: pd.DataFrame | None = None
         self._systems_cache: pd.DataFrame | None = None
@@ -215,6 +229,7 @@ class CatalystScreenWorkflow:
                     include_dft_rank_sp=self.include_dft_rank_sp,
                     n_confs=self.n_confs,
                     top_n=self.top_n,
+                    ts_refine_n=self.ts_refine_n,
                     calculation_level=self.level,
                     prune_initial=self.prune_initial,
                 ),
@@ -976,6 +991,7 @@ def catalyst_screen(
     reuse_policy: ReusePolicy = "approved",
     n_confs: int | None = None,
     top_n: int = 20,
+    ts_refine_n: int = 3,
     prune_initial: bool | dict[str, Any] = True,
 ) -> CatalystScreenWorkflow:
     """Create an end-to-end catalyst-screen workflow.
@@ -1056,6 +1072,9 @@ def catalyst_screen(
         workflow.
     top_n : int, optional
         Number of low-energy candidates retained before final refinement.
+    ts_refine_n : int, optional
+        Maximum distinct UMA optimized TS candidates sent to Hessian,
+        released ``OptTS``, and final numerical frequencies in a full UMA run.
     prune_initial : bool or dict, optional
         Initial conformer-pruning configuration forwarded to child workflows.
 
@@ -1093,6 +1112,7 @@ def catalyst_screen(
         reuse_policy=reuse_policy,
         n_confs=n_confs,
         top_n=top_n,
+        ts_refine_n=ts_refine_n,
         prune_initial=prune_initial,
     )
 
