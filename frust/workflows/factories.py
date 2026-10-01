@@ -1058,11 +1058,15 @@ class SeededWb97TSWorkflow(ScreenTSWorkflow):
 
     def _stage_defs(self) -> list[StageDef]:
         """Run constrained preoptimization and released ωB97 TS refinement."""
+        from dataclasses import replace
+
+        refinement = _ts_dft_refinement_stages(
+            include_terminal_solv_sp=self.method.include_terminal_solv_sp
+        )
+        refinement[0] = replace(refinement[0], lowest=None, rank_by=None)
         return [
             StageDef("prepare", "prepare", kind="prepare"),
-            *_ts_dft_refinement_stages(
-                include_terminal_solv_sp=self.method.include_terminal_solv_sp
-            ),
+            *refinement,
         ]
 
 

@@ -96,6 +96,7 @@ def test_selected_comparison_uses_independent_barriers(tmp_path, monkeypatch):
         "dft_freq",
         "dft_solv_sp",
     ]
+    assert workflow.children()["transition_states"]._stage_defs()[1].lowest is None
     paired = comparison.method_comparison()
     assert len(paired) == 1
     assert paired.iloc[0]["match_status"] == "matched"
