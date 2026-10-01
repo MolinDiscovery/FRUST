@@ -53,8 +53,8 @@ class _TinyUmaWorkflow(BaseWorkflow):
     def _stage_defs(self):
         return [
             StageDef("prepare", "prepare", kind="prepare"),
-            StageDef("uma_sp", "UMA single point"),
-            StageDef("uma_opt", "UMA optimization"),
+            StageDef("uma_sp", "UMA single point", n_cores=2),
+            StageDef("uma_opt", "UMA optimization", n_cores=2),
             StageDef("uma_numfreq", "UMA numerical frequencies"),
         ]
 
@@ -120,16 +120,21 @@ def test_workflow_reuses_one_server_for_sp_opt_and_numfreq(tmp_path):
         patch("frust.workflows.core.Stepper", side_effect=fake_stepper),
     ):
         result = _TinyUmaWorkflow(method=_method()).run(
-            targets=[0], n_cores=1, mem_gb=2,
+            targets=[0], n_cores=4, mem_gb=2,
             save_output_dir=False, uma_oet_tools=runtime,
         )
 
     assert [event[0] for event in starts] == ["start", "stop"]
     assert starts[0][2] == str(runtime)
+    assert starts[0][1]["server_cores"] == 4
     assert len(requests) == 3
     assert all("-b 127.0.0.1:12345" in request for request in requests)
     assert all(
         result.attrs["frust_steps"][stage]["input"]["uma_server_pid"] == 44221
+        for stage in ("uma_sp", "uma_opt", "uma_numfreq")
+    )
+    assert all(
+        result.attrs["frust_steps"][stage]["input"]["uma_server_cores"] == 4
         for stage in ("uma_sp", "uma_opt", "uma_numfreq")
     )
     assert current_uma_job_scope() is None

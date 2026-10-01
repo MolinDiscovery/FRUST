@@ -2409,6 +2409,8 @@ def _apply_calculator(
     df: pd.DataFrame,
     stage: StageDef,
     spec: CalculatorSpec,
+    *,
+    uma_server_cores: int,
 ) -> pd.DataFrame:
     """Dispatch one calculator stage through Stepper.
 
@@ -2423,6 +2425,8 @@ def _apply_calculator(
     spec : CalculatorSpec
         Calculator engine, options, and extra input selected from the method
         plan.
+    uma_server_cores : int
+        Stable server budget from the workflow job allocation.
 
     Returns
     -------
@@ -2443,6 +2447,8 @@ def _apply_calculator(
         "n_cores": stage.n_cores,
         **spec.kwargs,
     }
+    if spec.engine == "orca" and kwargs.get("uma") is not None and kwargs.get("uma_server", True):
+        kwargs.setdefault("uma_server_cores", uma_server_cores)
     if spec.engine == "xtb":
         return step.xtb(
             df,
@@ -2542,7 +2548,7 @@ def _run_stage_calculation(
         )
 
     spec = workflow.method.for_stage(stage.method_stage or stage.id)
-    return _apply_calculator(step, df, stage, spec)
+    return _apply_calculator(step, df, stage, spec, uma_server_cores=options.n_cores)
 
 
 def _write_analysis_tier_snapshot(
