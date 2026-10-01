@@ -8,6 +8,7 @@ import re
 import textwrap
 from typing import Any
 
+import numpy as np
 import pandas as pd
 
 
@@ -533,7 +534,7 @@ def _role_mapping(row: Mapping[str, Any]) -> dict[str, int]:
             raise ValueError(f"constraint role {key!r} has a negative atom index")
         roles[str(key)] = index
     atoms = row.get("atoms")
-    if isinstance(atoms, Sequence) and not isinstance(atoms, (str, bytes)):
+    if isinstance(atoms, (Sequence, np.ndarray)) and not isinstance(atoms, (str, bytes)):
         invalid = {role: index for role, index in roles.items() if index >= len(atoms)}
         if invalid:
             raise ValueError(f"constraint roles reference atoms outside the row: {invalid}")
@@ -544,7 +545,7 @@ def _constraint_entries(row: Mapping[str, Any]) -> list[Mapping[str, Any]]:
     value = row.get("constraint_spec")
     if isinstance(value, Mapping):
         value = [value]
-    if isinstance(value, Sequence) and not isinstance(value, (str, bytes)):
+    if isinstance(value, (Sequence, np.ndarray)) and not isinstance(value, (str, bytes)):
         entries = list(value)
     else:
         raise ValueError("'constraint_spec' must be a sequence of constraint mappings")
@@ -555,7 +556,7 @@ def _constraint_entries(row: Mapping[str, Any]) -> list[Mapping[str, Any]]:
 
 def _entry_roles(entry: Mapping[str, Any]) -> list[str]:
     roles = entry.get("roles")
-    if not isinstance(roles, Sequence) or isinstance(roles, (str, bytes)):
+    if not isinstance(roles, (Sequence, np.ndarray)) or isinstance(roles, (str, bytes)):
         raise ValueError("constraint entries must contain a sequence-valued 'roles' field")
     return [str(role) for role in roles]
 

@@ -11,10 +11,28 @@ import pandas as pd
 import pytest
 
 import frust as ft
+from frust.constraints import render_orca_constraints, validate_dataframe_constraints
 from frust.screen.runs import ScreenRun
 from frust.workflows.factories import MolsWorkflow
 
 from test_uma_full_analysis import _FakeStepper, _prepared, _run_full_uma
+
+
+def test_comparison_seed_constraints_survive_parquet(tmp_path):
+    seed = pd.DataFrame({
+        "atoms": [["B", "H", "C"]],
+        "constraint_roles": [{"cat_B": 0, "transfer_H": 1, "substrate_C": 2}],
+        "constraint_spec": [[
+            {"kind": "distance", "roles": ("cat_B", "transfer_H"), "value": 1.2},
+            {"kind": "distance", "roles": ("transfer_H", "substrate_C"), "value": 1.3},
+        ]],
+    })
+    path = tmp_path / "comparison_seed.parquet"
+    seed.to_parquet(path)
+    restored = pd.read_parquet(path)
+
+    validate_dataframe_constraints(restored)
+    assert "{B 0 1 1.2 C}" in render_orca_constraints(restored.iloc[0])
 
 
 class _FakeComparisonStepper(_FakeStepper):
