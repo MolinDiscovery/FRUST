@@ -123,3 +123,49 @@ sacct -j 65713427,65713438,65713304,65713462 --format=JobIDRaw,State,Elapsed,Nod
 When results arrive, review the two full UMA bundles, the hybrid tier
 handoff, the comparison launcher and its child jobs, saved ORCA gas/ALPB
 flags, all server start/stop records, and TS/reference vibration quality.
+
+### Result update and comparison repair — 2026-10-01
+
+The repaired gas and ALPB full runs and the hybrid TS-only path finished with
+zero scheduler exit codes. Each gas/ALPB target job started exactly one UMA
+server on node066 with a loopback bind and `server_cores=4`; each server log
+ends with a stopped event. The hybrid collector also completed with one row
+carrying g-xTB SP/Opt, UMA ranking SP, and all ωB97 TS stages through the
+chloroform single point; it has no UMA optimization column. These process
+exits do not establish chemical validity:
+
+| UMA run | TS imaginary mode | Reference minima | Reported barrier status |
+| --- | --- | --- | --- |
+| Gas, two retained TS candidates | −1215.91 and −1184.66 cm⁻¹; both unreviewed | Ligand has one imaginary mode at −66.53 cm⁻¹; other references are ready | Selected candidate `invalid` because the ligand is invalid and the TS needs review. The numerical 25.15 kcal/mol ΔE‡ and 30.66 kcal/mol ΔG‡ must not be treated as validated barriers. |
+| ALPB(chloroform), one TS candidate | −1387.12 cm⁻¹; unreviewed | All four references are ready | `review` until the TS mode is checked. The numerical values are 19.70 kcal/mol ΔE‡ and 26.04 kcal/mol ΔG‡. |
+
+The optional ωB97 comparison launcher ran and submitted selected gas candidate
+`result_9801565d9615ca15`. Its first TS job `65713634` failed before ORCA:
+the saved Parquet seed reconstructed `constraint_spec` and its nested `roles`
+as NumPy arrays, but the constraint renderer only accepted Python sequences.
+FRUST `0c7c04e` accepts those round-tripped arrays; 408 fast tests passed.
+The first TS repair job `65716166` then reached the next handoff issue:
+comparison preoptimization attempted a lowest-energy cutoff on its sole seed,
+which has no prior energy column. FRUST `dcef42e` removes that unnecessary
+cutoff for seeded comparison TS targets; 408 fast tests passed again. Both
+failed TS job chains and their finalizers were canceled; the independent
+ωB97 reference jobs were retained.
+
+The second TS repair uses the original comparison run directory and saved UMA
+seed. Its stage jobs are `65716219`–`65716223`, collector `65716224`, and
+finalizer `65716225`. The finalizer also depends on original ωB97 reference
+collector `65713656`; one reference stage job (`65713646`) was still running
+at this update. Repair job `65716219` reached constrained ωB97 preoptimization
+on node066, past both previous handoff failures. The failed repair's submission
+record was backed up as
+`comparison/repair_submission_failed_65716166.json`. The current job IDs are
+in `comparison/repair_submission.json`. Check progress with:
+
+```bash
+squeue -j 65716219,65716224,65713646,65713656,65716225 -o "%.18i %.12T %.12M %.20R"
+sacct -j 65716219,65716224,65713646,65713656,65716225 --format=JobIDRaw,State,Elapsed,ExitCode
+```
+
+Do not mark Task 05 complete until the ωB97 comparison has a complete portable
+result, the TS modes have been reviewed, and the gas ligand reference issue has
+been resolved or explicitly retained as an invalid gas barrier.
