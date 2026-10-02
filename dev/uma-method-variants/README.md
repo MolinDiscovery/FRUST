@@ -61,8 +61,8 @@ rename gas constraints as an ALPB profile.
 | [03a — Per-candidate UMA barriers](03a-uma-candidate-barriers.md) | Complete | 03 | Portable barrier and quality for each retained TS candidate |
 | [04 — g-xTB then UMA ranking](04-gxtb-uma-ranking.md) | Complete | 03a | UMA SP reranking on g-xTB optimized candidates; ωB97 path preserved |
 | [04a — Optional ωB97 comparison](04a-optional-wb97-comparison.md) | Complete | 04 | Separate ωB97 characterization of selected UMA candidates and references |
-| [05 — Bounded compute-node checks](05-compute-node-checks.md) | Running | 04a | Real gas/ALPB UMA checks, hybrid ranking, and a small comparison; submit then return control |
-| [06 — User documentation](06-user-documentation.md) | Pending | 05 | Reader-facing examples verified against the completed checks |
+| [05 — Bounded compute-node checks](05-compute-node-checks.md) | Complete | 04a | Real gas/ALPB UMA checks, hybrid ranking, and a small comparison; submit then return control |
+| [06 — User documentation](06-user-documentation.md) | Complete | 05 | Reader-facing examples verified against the completed checks |
 
 The larger accuracy and candidate-recovery benchmark is **outside this
 sequence**. A small real calculation here is a functional check. The optional

@@ -1,12 +1,12 @@
 # UMA With FRUST
 
 For a complete catalyst screen, start with
-[UMA Screening And ωB97 Validation](../catalyst-screens/uma-screening.md).
+[UMA Method Choices For Catalyst Screens](../catalyst-screens/uma-screening.md).
 This page covers the lower-level `Stepper.orca(...)` controls and the ORCA
 input that carries them to ORCA-External-Tools (OET).
 
-The examples use `omol@uma-s-1p2p1` with the MolinDiscovery OET fork at
-`1b4fcda` and an OET runtime with `fairchem-core` 2.23.0. Specify the model
+The examples use `omol@uma-s-1p2p1` with an OET runtime compatible with
+`fairchem-core` 2.23.0. Specify the model
 explicitly: a task-only `uma="omol"` still defaults to the older `uma-s-1p1`
 model in the low-level API.
 
@@ -272,8 +272,8 @@ df = step.orca(
 )
 ```
 
-By default the UMA server receives the same core count as this ORCA call.
-Override the UMA server budget separately with:
+For an individual `Stepper.orca(...)` call, the UMA server receives the same
+core count as the call by default. Override the server budget separately with:
 
 ```python
 df = step.orca(
@@ -291,6 +291,11 @@ This starts the server with:
 ```text
 --nthreads 4 --memory-per-thread 750
 ```
+
+In a `ft.workflows` job, the server budget defaults to the **job allocation**
+throughout its UMA stages. A screening stage may use fewer ORCA calculation
+cores while still reusing that one server during final optimization and
+NumFreq. Explicit `uma_server_cores` values in a shared job must agree.
 
 ## Server Logs
 
@@ -340,6 +345,12 @@ Each log starts with the launcher command and useful cluster context:
 ```
 
 ## Common Workflows
+
+For complete catalyst screens, use
+[UMA Method Choices For Catalyst Screens](../catalyst-screens/uma-screening.md).
+It shows UMA screening before ωB97, UMA final barriers with one or several TS
+candidates, and UMA SP reranking after g-xTB. The calls below operate on an
+existing `Stepper` dataframe.
 
 Single-point style external call:
 

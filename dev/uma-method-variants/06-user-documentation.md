@@ -37,5 +37,23 @@ examples on the implemented public API and the verified functional checks.
 
 ## Completion record
 
-Pending. Record updated pages, example verification, build result, and any
-remaining scientific limitation here.
+**Complete, 2026-10-02.** The four paths now lead the
+[UMA method choices guide](../../docs/catalyst-screens/uma-screening.md) with
+the N-methylpyrrole/TMP boron catalyst input, runnable constructors, stage
+flows, candidate limits, a method-labelled TS1 result table, tier meanings,
+quality values, mode review, missing thermochemistry inspection, and the
+optional independently calculated ωB97 comparison. Related explanations were
+aligned in the [workflow method guide](../../docs/workflows/workflow-methods.md),
+[end-to-end catalyst screen](../../docs/catalyst-screens/end-to-end.md),
+[catalyst overview](../../docs/catalyst-screens/overview.md),
+[UMA lower-level guide](../../docs/external-tools/uma.md),
+[vibrations](../../docs/visualization/vibrations.md), and
+[result inspection](../../docs/workflows/inspecting-results.md).
+
+The four example `ft.workflows.catalyst_screen(...)` calls were instantiated
+with the documented CSV and their `show_stages()`/`targets()` outputs checked
+without calculators. The g-xTB path included `uma_rank_sp` and no `uma_opt`;
+full UMA paths ended in `uma_hessian`, `uma_ts_opt`, and `uma_freq`.
+`conda run -n UMA mkdocs build --strict` passed. The bounded calculation
+is a functional check, not an accuracy benchmark; the gas UMA example remains
+marked invalid because its ligand reference has an imaginary mode.

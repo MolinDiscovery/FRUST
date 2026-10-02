@@ -74,8 +74,14 @@ run.dimer_references()[
 | level | geometry | energy used for screening analysis | result |
 | --- | --- | --- | --- |
 | `low_cost` | g-xTB or UMA, per screening plan | same screening potential | ΔE |
+| `uma_ranked` | g-xTB optimized geometry | UMA SP reranking | ΔE |
 | `dft_ranked` | g-xTB or UMA, per screening plan | DFT SP | ΔE |
-| `full` | DFT | final DFT energy plus frequencies | ΔE and ΔG |
+| `full` | final UMA or DFT optimization | matching final-method energy plus frequencies | ΔE and ΔG |
+
+`uma_ranked` is available only when UMA SP reranks g-xTB optimized geometries.
+For `full`, TSs and all required references use the **same final method**.
+The [UMA method choices](uma-screening.md) show which paths end at UMA and
+which end at ωB97.
 
 The default `ranking_solvation="method"` applies the method's analysis solvent
 to every DFT ranking SP on a screened structure. For the current presets this normally
@@ -98,8 +104,8 @@ energies.
 
 ## Screen With UMA Before ωB97 Validation
 
-For a small input table, both UMA environments, the ranking-SP switch, and an
-example result, use the [UMA screening guide](uma-screening.md). The abbreviated
+For a small input table, both UMA environments, the reranking and full UMA
+choices, use the [UMA method choices](uma-screening.md). The abbreviated
 full-run example below shows how that choice fits into the composed workflow.
 
 The following full run selects conformers with ALPB-corrected UMA, then sends
@@ -129,7 +135,7 @@ The same `screening="uma-gas"` option removes the ALPB correction. The
 `low_cost` result uses `uma_opt-EE` and `uma_opt-oc`; `dft_ranked` adds the
 ωB97 ranking single point. For a `full` run, set
 `include_dft_rank_sp=True` if you also want that ranking point and its
-separate `dft_ranked` result tier. The default for a full UMA run is `False`;
+separate `dft_ranked` result tier. The default for a full UMA-screened ωB97 run is `False`;
 the existing g-xTB default remains `True`.
 
 For the default UMA full run, `run.available_analysis_levels()` returns

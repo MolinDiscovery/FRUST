@@ -54,8 +54,9 @@ xTB stage. Direct `ft.screen.create_ts_guesses(...)` calls only generate the TS
 guess dataframes; prune those manually with `ft.prune_conformers(...)` or
 `Stepper.prune_conformers(...)` when needed.
 
-For a concrete UMA gas or ALPB(chloroform) screen followed by ωB97 validation,
-start with [UMA Screening And ωB97 Validation](uma-screening.md).
+For UMA gas or ALPB(chloroform) screening, UMA final barriers, or g-xTB
+geometries reranked by UMA SP, start with
+[UMA Method Choices For Catalyst Screens](uma-screening.md).
 
 ## What This Workflow Can Do
 

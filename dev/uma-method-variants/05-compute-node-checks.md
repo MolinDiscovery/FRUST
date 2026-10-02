@@ -56,8 +56,10 @@ benchmark is separate.
 
 ## Completion record
 
-**Running, submitted 2026-10-01.** This is Pass 1 only. Chemistry results,
-imaginary modes, thermochemistry, and server cleanup still need Pass 2 review.
+**Complete, 2026-10-02.** The bounded functional paths and portable analysis
+were verified. The gas UMA barrier remains scientifically invalid because its
+ligand reference has an imaginary frequency; that limitation is retained in
+the run and is not a software failure.
 
 The local FRUST branch and HPC checkout were updated through GitHub to
 `d39b441` (`feature/uma-screening`) before the first submission and
@@ -166,6 +168,34 @@ squeue -j 65716219,65716224,65713646,65713656,65716225 -o "%.18i %.12T %.12M %.2
 sacct -j 65716219,65716224,65713646,65713656,65716225 --format=JobIDRaw,State,Elapsed,ExitCode
 ```
 
-Do not mark Task 05 complete until the ωB97 comparison has a complete portable
-result, the TS modes have been reviewed, and the gas ligand reference issue has
-been resolved or explicitly retained as an invalid gas barrier.
+### Final functional review — 2026-10-02
+
+The comparison TS repair jobs `65716219`–`65716223`, collector `65716224`,
+retained reference collector `65713656`, and finalizer `65716225` all completed
+with exit code zero. The portable comparison report has `overall_status:
+success`, four collected ωB97 references, one collected TS, and four published
+references. `ft.screen.open_run(...).method_comparison()` pairs the selected
+gas UMA candidate with the independently calculated ωB97 result as `matched`:
+the composition and dimer reference definition agree. Its method-specific
+quality fields remain separate.
+
+The imaginary modes were checked against the role-labelled reactive atoms in
+the saved geometries. Each has one imaginary frequency; transfer H accounts
+for 97.3–98.4% of the mode's squared displacement, and N–H and H–substrate-C
+distances change in opposite directions. The two gas UMA TS candidates, one
+ALPB UMA TS candidate, and the comparison ωB97 TS were approved through
+`ScreenRun.set_review(...)`, with this numerical rationale recorded per result.
+Before changing the HPC analysis artifacts, the three analysis directories
+were backed up to `review-backups/analysis-pre-ts-review-20261002.tar.gz`.
+
+| Final result | ΔE‡ (kcal/mol) | ΔG‡ (kcal/mol) | Quality |
+| --- | ---: | ---: | --- |
+| Gas UMA, selected TS candidate | 25.15 | 30.66 | `invalid`: the ligand reference retains a −66.53 cm⁻¹ imaginary frequency. These numbers are diagnostic only. |
+| UMA with ALPB(chloroform) | 19.70 | 26.04 | `ready`: TS mode approved and all four reference minima ready. |
+| ωB97 comparison on the selected gas UMA geometry | 26.08 | 32.21 | `ready`: TS mode approved and all four independently calculated references ready. |
+
+The gas ligand's weak imaginary mode is dominated by three H atoms. Resolving
+that conformational minimum may change the gas UMA barrier; it is left invalid
+in the portable run. The ωB97 comparison is a separate method result, not a
+validation of the current gas UMA barrier. The larger accuracy and candidate
+recovery benchmark remains outside this task.

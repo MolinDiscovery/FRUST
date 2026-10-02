@@ -52,9 +52,9 @@ df[[*nt_cols, *error_cols]].head()
     FRUST includes a helper for quickly counting true and non-true TS rows:
 
     ```python
-    from frust.utils.analytics import summarize_ts_vibrations
+    import frust as ft
 
-    summarize_ts_vibrations(
+    ft.summarize_ts_vibrations(
         df,
         col="Freq-vibs",
         max_rows=10,
@@ -70,9 +70,9 @@ Use `plot_vibs(...)` to view the normal mode. For a true TS, the single
 imaginary mode should move along the intended reaction coordinate.
 
 ```python
-from frust.vis import plot_vibs
+import frust as ft
 
-plot_vibs(df_ok, row_index=0, vId=0)
+ft.plot_vibs(df_ok, row_index=0, vId=0)
 ```
 
 !!! tip "Check the mode, not only the count"

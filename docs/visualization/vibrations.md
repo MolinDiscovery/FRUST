@@ -50,13 +50,34 @@ explicit decision:
 run.set_review(
     result_id,
     "approved",
-    note="Imaginary mode follows the intended B-H/C-H transfer coordinate.",
+    note="Transfer H moves between catalyst N and substrate C.",
 )
 ```
 
 Minimum references need zero imaginary modes. If a ligand has an imaginary
 methyl torsion, reoptimize it from a displaced geometry and repeat the
 frequency calculation before using its free energy in a barrier.
+
+For a full UMA run that retains several candidates, inspect each mode before
+using its candidate-specific barrier:
+
+```python
+run.candidate_barriers()[[
+    "ts_cid", "selected", "ts_review_status", "n_imag", "quality_status",
+]]
+```
+
+| Status | Meaning for a candidate barrier |
+| --- | --- |
+| `ready` | Its TS mode is approved and all reference minima are ready. |
+| `review` | The numerical barrier exists but a mode or other flagged result still needs inspection. |
+| `invalid` | A TS or reference fails a quality check; the displayed energy is diagnostic only. |
+| `incomplete` | A required calculation or thermal quantity is missing. |
+
+One TS1 check had a clear N–H to substrate-C transfer mode, but its **gas
+UMA ligand reference** retained an imaginary frequency at −66.53 cm⁻¹. The
+gas barrier remained `invalid` after the TS mode was approved. A TS review
+cannot override a bad minimum reference.
 
 ## Multiple Rows
 
@@ -112,7 +133,7 @@ ft.plot_vibs(
     df_ok,
     row_index=0,
     vId=0,
-    custom_coords_col_name="UMA-OptTS-oc",
+    custom_coords_col_name="uma_ts_opt-oc",
 )
 ```
 

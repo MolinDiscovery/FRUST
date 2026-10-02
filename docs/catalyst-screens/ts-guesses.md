@@ -126,7 +126,8 @@ For an UMA screen, `screening="uma-gas"` or
 `method="wb97xd3-631g"` is `wb97xd3-631g/gas`. To use the reviewed UMA gas
 constraints explicitly, pass `spec_profile="omol-uma-s-1p2p1/gas"` and
 `spec_match="exact"`. There is no registered UMA ALPB geometry profile.
-See the [UMA screening guide](uma-screening.md) for a complete example.
+See [UMA Method Choices For Catalyst Screens](uma-screening.md) for complete
+examples.
 
 Use `spec_match="exact"` when a workflow must stop rather than use the other
 environment from the same method family. FRUST never falls back between
