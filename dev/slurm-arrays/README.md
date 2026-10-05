@@ -73,7 +73,7 @@ five concurrent calculations. Each job's time limit covers the entire batch.
 | [04 — Collection and retries](04-collection-and-retries.md) | Complete | 03 | Failure-aware collection and safe explicit target retries |
 | [05 — Staged arrays](05-staged-arrays.md) | Complete | 04 | Matching-target dependencies, different stage resources/limits, live dependency/failure check |
 | [06 — Public submission integration](06-public-submission-integration.md) | Complete | 05 | Screen and cluster entry points use consistent submission semantics |
-| [07 — Verification and documentation](07-verification-and-documentation.md) | Pending | 06 | Integrated checks, bounded Slurm evidence, beginner-facing examples |
+| [07 — Verification and documentation](07-verification-and-documentation.md) | Complete | 06 | Integrated checks, bounded Slurm evidence, beginner-facing examples |
 
 ## Decisions and boundaries
 

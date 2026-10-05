@@ -1,0 +1,4 @@
+submitit INFO (2026-10-05 19:57:47,890) - Starting with JobEnvironment(job_id=65848129, hostname=node066.cluster, local_rank=1(2), node=0(1), global_rank=1(2))
+submitit INFO (2026-10-05 19:57:47,891) - Loading pickle: /lustre/hpc/kemi/jmni/results/slurm-arrays-task07-20261005/screen/.submitit/control/65848129_submitted.pkl
+submitit INFO (2026-10-05 19:57:50,673) - Job completed successfully
+submitit INFO (2026-10-05 19:57:50,675) - Exiting after successful completion
