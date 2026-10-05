@@ -126,6 +126,7 @@ def snapshot(root, name, result, cluster):
 
 def verify(root, backend):
     evidence = {'metadata':json.loads((root/'metadata.json').read_text())}
+    evidence['verification_revision'] = subprocess.check_output(['git','rev-parse','HEAD'],text=True).strip()
     for name in ['facade_array','facade_individual','screen_initial','screen_retry','screen_reuse']:
         evidence[name] = json.loads((root/f'{name}.json').read_text())
     first = json.loads((root/'initial-screen-report.json').read_text())
@@ -175,6 +176,17 @@ def verify(root, backend):
                for job in evidence[name]['scheduler']]
         evidence['accounting'] = subprocess.check_output(
             ['sacct','-j',','.join(ids),'--format=JobID,State,ExitCode,Start,End,ReqCPUS,ReqMem','-P'],text=True)
+        assert not list(root.glob('**/*_1_log.out')), 'Duplicate Submitit ranks were launched'
+    try:
+        screen(root).submit(out_dir=root/'screen',
+                            cluster=ft.cluster.ClusterConfig(backend=backend,log_dir=root/'logs'),
+                            array=True,array_parallelism=1,retry=True,targets={'transition_states':[0]},
+                            artifact_policy='screening')
+    except ValueError as error:
+        assert 'finalized successfully' in str(error)
+    else:
+        raise AssertionError('Completed screen accepted a destructive retry')
+    evidence['completed_screen_retry'] = 'rejected before submission'
     write_json(root/'verified.json', evidence)
     print('Verified public facade, screen failure/retry, reuse, and cleanup:', root/'verified.json')
 

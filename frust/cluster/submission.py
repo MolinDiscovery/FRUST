@@ -83,6 +83,9 @@ def _plan_submission(
 
 
 def _validate_array_scheduler_options(cluster):
+    if cluster.backend == 'slurm':
+        from frust.cluster.executor import _single_worker_parameters
+        _single_worker_parameters(cluster)
     extra = cluster.extra_slurm_parameters or {}
     conflicts = {str(key).lstrip("-").replace("_", "-") for key in extra}
     conflicts &= {"array", "dependency", "array-parallelism", "map-count", "kill-on-invalid-dep"}

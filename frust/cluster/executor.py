@@ -17,6 +17,15 @@ def _load_submitit():
     return submitit
 
 
+def _single_worker_parameters(cluster):
+    """Keep scheduler allocation rounding from launching duplicate workers."""
+    for key, value in (cluster.extra_slurm_parameters or {}).items():
+        normalized = str(key).lstrip('-').replace('_', '-')
+        if normalized in {'nodes', 'ntasks', 'ntasks-per-node', 'N', 'n'} and str(value) != '1':
+            raise ValueError('FRUST jobs require one node and one Python worker; remove conflicting task/node options')
+    return {'nodes': 1, 'slurm_ntasks_per_node': 1}
+
+
 def create_executor(cluster: ClusterConfig):
     """Create a submitit executor for the requested backend.
 
@@ -31,6 +40,8 @@ def create_executor(cluster: ClusterConfig):
         Configured submitit executor instance.
     """
     submitit = _load_submitit()
+    if cluster.backend == 'slurm':
+        _single_worker_parameters(cluster)
     log_dir = Path(cluster.log_dir)
     log_dir.mkdir(parents=True, exist_ok=True)
     if cluster.backend == "slurm":
@@ -63,6 +74,7 @@ def update_executor(executor, cluster: ClusterConfig, resources: Resources, *, j
         "stderr_to_stdout": bool(cluster.stderr_to_stdout),
     }
     if cluster.backend == "slurm":
+        params.update(_single_worker_parameters(cluster))
         params["slurm_job_name"] = job_name
         if cluster.partition is not None:
             params["slurm_partition"] = cluster.partition
@@ -153,6 +165,7 @@ def update_executor_with_dependencies(
         "stderr_to_stdout": bool(cluster.stderr_to_stdout),
     }
     if cluster.backend == "slurm":
+        params.update(_single_worker_parameters(cluster))
         params["slurm_job_name"] = job_name
         if cluster.partition is not None:
             params["slurm_partition"] = cluster.partition

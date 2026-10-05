@@ -177,6 +177,11 @@ def test_screen_arrays_retry_recollects_successes_and_freezes_reference_plan(tmp
         assert Path(ts.submission_path).exists()
         assert Path(retried.child_submissions['transition_states'].submission_path).exists()
         assert list(root.glob('.frust/screen_submissions/*.json'))
+        with pytest.raises(ValueError,match='finalized successfully'):
+            wf.submit(out_dir=root,cluster=cluster,array=True,array_parallelism=1,
+                      retry=True,targets={'transition_states':[0]},
+                      target_retention='all' if artifact_policy=='standard' else 'compact_success',
+                      artifact_policy=artifact_policy)
 
 
 def test_empty_selection_and_invalid_limits_do_not_create_jobs(tmp_path):
@@ -194,6 +199,7 @@ def test_empty_selection_and_invalid_limits_do_not_create_jobs(tmp_path):
 @pytest.mark.parametrize('cluster',[
     ClusterConfig(extra_slurm_parameters={'dependency':'afterok:123'}),
     ClusterConfig(max_array_size=1),
+    ClusterConfig(extra_slurm_parameters={'ntasks':'2'}),
 ])
 def test_screen_rejects_invalid_scheduler_array_options_before_manifest(tmp_path,cluster):
     wf = ft.workflows.catalyst_screen(dataframe=_components(),level='low_cost',ts_types=['TS1','TS2'])

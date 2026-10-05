@@ -575,6 +575,8 @@ class CatalystScreenWorkflow:
             earlier finalizer ends. By default use each report's retry_targets.
             Recollect complete branches before finalization, preserving earlier
             successes, reference reuse decisions, and attempt records.
+            A successfully finalized screen requires a new output directory
+            for further calculations, including after target cleanup.
         targets : mapping of str to iterable or None, optional
             Retry-only branch-specific child target objects or positions, for example
             {"transition_states": [0, 1]}. Omitted branches select no work when
@@ -2277,6 +2279,9 @@ def _screen_submission_plan(workflow, out_dir, execution, resources, array, para
         if not path.exists():
             raise ValueError('Screen retry requires an existing compatible run manifest')
         original = json.loads(path.read_text())
+        report_path = path.parent / 'run_report.json'
+        if report_path.exists() and json.loads(report_path.read_text()).get('overall_status') == 'success':
+            raise ValueError('Screen already finalized successfully; use a new out_dir')
         calculated_ids = {entry['target_id'] for entry in original['reference_plan'] if entry['action']=='calculate'}
     else:
         calculated_ids = {item.target.target_id for item in workflow.targets()

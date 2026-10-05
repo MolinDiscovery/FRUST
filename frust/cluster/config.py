@@ -51,7 +51,9 @@ class ClusterConfig:
         they accept a ``work_dir`` argument.
     extra_slurm_parameters : dict[str, str] or None, optional
         Additional scheduler parameters forwarded as
-        ``slurm_additional_parameters``.
+        ``slurm_additional_parameters``. FRUST uses one node and one Python
+        worker per job; conflicting task/node counts are rejected. Allocated
+        CPUs are available to that worker's calculations.
     stderr_to_stdout : bool, optional
         Merge stderr into stdout. Screening submissions enable this for fewer
         per-job log files; standard submissions keep separate streams.

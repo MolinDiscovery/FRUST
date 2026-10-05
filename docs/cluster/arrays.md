@@ -193,11 +193,14 @@ for the separate collector. Collection normally writes `merged.parquet` and
 | Report value | Meaning |
 | --- | --- |
 | `success` | The target completed its worker calculations |
-| `failed` | A calculation raised an error or failed normal termination |
+| `failed` | A calculation raised an error |
+| `non_normal` | A returned result failed its normal-termination check |
 | `blocked` | A staged descendant could not proceed after upstream failure |
 | `interrupted` | A worker ended without a final target outcome; its cause is unknown |
 | `unattempted` | A batch could not reach this target, for example after server failure |
 | `missing` | The expected result or stage outcome is absent |
+| `unreadable` | A result parquet could not be read |
+| `stale` | A result belongs to a different submission attempt |
 
 Inspect `target_results`, `retry_targets`, and `failure_summary`; a successful
 scheduler job alone does not establish scientific success. Retries are
@@ -247,6 +250,8 @@ complete branches, including earlier successful targets. Keep the same output
 directory and scientific settings. Screen retries also support
 `artifact_policy="screening"`; cleanup waits for successful final validation.
 The original reference reuse plan and submission records are retained.
+A successfully finalized screen rejects further retries, including after its
+per-target files have been cleaned up. Use a new output directory for more work.
 
 The CSV facade accepts the same single-job array settings:
 
@@ -290,6 +295,9 @@ array before submission; it does not split it automatically. Choose a smaller
 target selection or a suitable single-job batch size. FRUST owns the array and
 dependency scheduler flags, so conflicting `extra_slurm_parameters` are
 rejected.
+Slurm jobs explicitly request one node and one Python worker; additional CPUs
+belong to that worker's calculations. Conflicting task/node overrides are
+rejected so scheduler CPU rounding cannot duplicate workers or finalizers.
 
 See [Slurm's array documentation](https://slurm.schedmd.com/job_array.html)
 for scheduler IDs and per-array limits, and
