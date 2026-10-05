@@ -2736,5 +2736,10 @@ def _attach_workflow_attrs(
             "geometry_stage": optimized_stage,
             "calculator": workflow.method.for_stage(analysis_stage).to_dict(),
         }
+        if analysis_stage == "uma_solv_sp":
+            contract["energy_protocol"]["frequency_calculator"] = (
+                workflow.method.for_stage("uma_freq").to_dict()
+            )
+            contract["energy_protocol"]["thermochemistry"] = contract["thermochemistry"]
     stamp_schema(df)
     return df

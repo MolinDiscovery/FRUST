@@ -194,6 +194,8 @@ def _molecule_stage_defs(
                 StageDef("uma_freq", "UMA numerical frequencies"),
             ]
         )
+        if include_terminal_solv_sp:
+            stages.append(StageDef("uma_solv_sp", "UMA solvent single point"))
         return _with_initial_prune(stages, prune_initial)
     if calculation_level == "dft_ranked" or (
         calculation_level == "full" and include_dft_rank_sp
@@ -958,6 +960,8 @@ class ScreenTSWorkflow(BaseWorkflow):
                     StageDef("uma_freq", "UMA final numerical frequencies"),
                 ]
             )
+            if self.method.include_terminal_solv_sp:
+                stages.append(StageDef("uma_solv_sp", "UMA solvent single point"))
             return stages
         stages = _ts_screening_stages(
             self.top_n, method=self.method, prune_initial=self.prune_initial,

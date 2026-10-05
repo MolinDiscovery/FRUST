@@ -859,6 +859,8 @@ def _active_reference_method(
     if calculation_level == "full":
         if method.result_family == "uma":
             stages.extend(["uma_min_opt", "uma_freq"])
+            if method.include_terminal_solv_sp:
+                stages.append("uma_solv_sp")
         else:
             stages.extend(["dft_opt", "dft_freq"])
             if method.include_terminal_solv_sp:
@@ -1020,13 +1022,14 @@ def _validate_reference_result(
         contract = df.attrs.get("frust_results", {})
         if not isinstance(contract, dict):
             raise ValueError("Reference result has no full UMA result contract")
-        expected_calculator = method.for_stage("uma_freq").to_dict()
+        analysis_stage = "uma_solv_sp" if method.include_terminal_solv_sp else "uma_freq"
+        expected_calculator = method.for_stage(analysis_stage).to_dict()
         recorded_calculator = (contract.get("energy_protocol") or {}).get("calculator")
         if (
             contract.get("dft") is not False
             or result_column(
                 df, "electronic_energy", purpose="analysis", require_present=False
-            ) != "uma_freq-EE"
+            ) != f"{analysis_stage}-EE"
             or result_column(
                 df, "coords", purpose="optimized", require_present=False
             ) != "uma_min_opt-oc"
@@ -1036,6 +1039,18 @@ def _validate_reference_result(
                 "Reference result does not match the requested full UMA model "
                 "and environment"
             )
+        if method.include_terminal_solv_sp:
+            protocol = contract.get("energy_protocol") or {}
+            expected_recipe = (
+                method.thermochemistry.to_dict()
+                if method.thermochemistry is not None else None
+            )
+            if (
+                protocol.get("frequency_calculator") != method.for_stage("uma_freq").to_dict()
+                or protocol.get("thermochemistry") != expected_recipe
+                or contract.get("thermochemistry") != expected_recipe
+            ):
+                raise ValueError("Reference result does not match the requested UMA thermochemistry")
     nt_columns = normal_termination_columns(df)
     if not nt_columns:
         raise ValueError("Reference has no normal-termination provenance")
@@ -1138,7 +1153,7 @@ def _copy_scientific_calculator_files(
         stage_names.add(ranking_stage)
     if calculation_level == "full":
         stage_names.update(
-            {"uma_min_opt", "uma_freq"}
+            {"uma_min_opt", "uma_freq", "uma_solv_sp"}
             if result_family == "uma"
             else {"dft_opt", "dft_freq", "dft_solv_sp"}
         )
