@@ -55,7 +55,7 @@ def test_shared_scope_and_real_stepper_multiple_targets(tmp_path):
 def test_failure_and_interruption_preserve_outputs(tmp_path, failure):
     wf = _workflow()
     seen = []
-    def run(workflow, target, directory, options, submitted):
+    def run(workflow, target, directory, options, submitted, attempt_id=None):
         seen.append(target.tag)
         if target.tag == 'B':
             raise failure

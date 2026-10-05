@@ -235,7 +235,7 @@ def test_local_partial_submission_preserves_ids(tmp_path):
 def test_local_concurrency_and_collection_after_failure(tmp_path):
     submitit = pytest.importorskip("submitit")
 
-    def worker(workflow, target, save_dir, options, submitted_at):
+    def worker(workflow, target, save_dir, options, submitted_at, attempt_id=None, batch_index=0):
         from pathlib import Path
         import json
         import time
@@ -247,7 +247,9 @@ def test_local_concurrency_and_collection_after_failure(tmp_path):
         try:
             if target.tag == "B":
                 raise RuntimeError("injected failure")
-            pd.DataFrame({"target": [target.tag], "calc-NT": [True]}).to_parquet(directory / "final.parquet")
+            df = pd.DataFrame({"target": [target.tag], "calc-NT": [True]})
+            df.attrs["frust_submission"] = {"attempt_id": attempt_id, "target": target.tag}
+            df.to_parquet(directory / "final.parquet")
         finally:
             (directory / "interval.json").write_text(json.dumps([start, time.time()]))
 
