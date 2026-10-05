@@ -929,7 +929,7 @@ def lowest_energy_rows(
 
     sort_keys = list(group_cols) + [energy_col]
     return (
-        out.sort_values(sort_keys, na_position="last")
+        out.sort_values(sort_keys, na_position="last", kind="stable")
         .groupby(list(group_cols), dropna=False)
         .head(n)
     )

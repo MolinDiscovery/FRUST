@@ -1,7 +1,14 @@
 # UMA With FRUST
 
-This page documents the current FRUST API for running UMA through ORCA and
-ORCA-External-Tools 2.
+For a complete catalyst screen, start with
+[UMA Method Choices For Catalyst Screens](../catalyst-screens/uma-screening.md).
+This page covers the lower-level `Stepper.orca(...)` controls and the ORCA
+input that carries them to ORCA-External-Tools (OET).
+
+The examples use `omol@uma-s-1p2p1` with an OET runtime compatible with
+`fairchem-core` 2.23.0. Specify the model
+explicitly: a task-only `uma="omol"` still defaults to the older `uma-s-1p1`
+model in the low-level API.
 
 ## Requirements
 
@@ -27,36 +34,31 @@ installation, `.env` setup, and smoke tests.
 
 ## Basic API
 
-Use UMA through `Stepper.orca(...)`:
+Use an explicit model through the public Stepper API:
 
 ```python
+import frust as ft
+
+step = ft.Stepper(n_cores=4, memory_gb=16)
 df = step.orca(
     df,
-    name="uma-opt",
+    name="uma_opt",
     options={"ExtOpt": None, "Opt": None},
-    uma="omol",
+    uma="omol@uma-s-1p2p1",
 )
 ```
 
-The `uma` argument accepts either a task only or a task plus model:
+The `uma` argument accepts a task alone or a task plus model:
 
 ```python
-uma="omol"
-uma="omol@uma-s-1p1"
+uma="omol"                # low-level default: uma-s-1p1
+uma="omol@uma-s-1p2p1"   # model used by the UMA screening presets
 ```
 
-These are equivalent:
-
-```python
-df = step.orca(df, options={"ExtOpt": None, "Opt": None}, uma="omol")
-
-df = step.orca(df, options={"ExtOpt": None, "Opt": None}, uma="omol@uma-s-1p1")
-```
-
-Internally they become OET arguments:
+The explicit model becomes these OET arguments:
 
 ```text
--t omol -m uma-s-1p1
+-t omol -m uma-s-1p2p1
 ```
 
 ## Full UMA Arguments
@@ -66,9 +68,9 @@ Internally they become OET arguments:
 ```python
 df = step.orca(
     df,
-    name="uma-opt",
+    name="uma_opt",
     options={"ExtOpt": None, "Opt": None},
-    uma="omol@uma-s-1p1",
+    uma="omol@uma-s-1p2p1",
     uma_server=True,
     uma_device="cpu",
     uma_cache_dir=None,
@@ -77,10 +79,50 @@ df = step.orca(
     uma_memory_per_thread_mib=500,
     uma_keep_logs="on_failure",
     uma_log_dir=None,
+    uma_xtb_alpb=None,  # or "chloroform"
+    uma_inference_settings="batch",
 )
 ```
 
-The defaults are usually the right starting point.
+Pin the model as shown; the other defaults are a reasonable starting point.
+
+## Gas Or ALPB(chloroform)
+
+Omit `uma_xtb_alpb` for gas-phase UMA. To add the tested solvent correction:
+
+```python
+df = step.orca(
+    df,
+    name="uma_opt",
+    options={"ExtOpt": None, "Opt": None},
+    uma="omol@uma-s-1p2p1",
+    uma_xtb_alpb="chloroform",
+    uma_inference_settings="batch",
+)
+```
+
+OET evaluates the same geometry, charge, multiplicity, and atom order in all
+three terms:
+
+```text
+E = E_UMA + E_GFN2-xTB,ALPB(chloroform) - E_GFN2-xTB,gas
+∇E = ∇E_UMA + ∇E_GFN2-xTB,ALPB(chloroform) - ∇E_GFN2-xTB,gas
+```
+
+The saved ORCA input exposes the correction in `%method`:
+
+```orca
+%method
+  ProgExt "/path/to/orca-external-tools/bin/oet_client"
+  Ext_Params "-b 127.0.0.1:54403 -t omol -m uma-s-1p2p1 -d cpu --xtb-alpb chloroform --inference-settings batch"
+end
+```
+
+`uma_xtb_exe="/path/to/xtb"` selects a particular normal xTB executable
+when the OET environment does not resolve the intended one. This argument
+requires `uma_xtb_alpb`. The correction is an OET option passed through ORCA;
+it is not ORCA's SMD solvent model. In the built-in catalyst workflow,
+`screening="uma-alpb-chloroform"` applies it to both `uma_sp` and `uma_opt`.
 
 ## Server Mode
 
@@ -89,9 +131,9 @@ Server mode is the default:
 ```python
 df = step.orca(
     df,
-    name="uma-opt",
+    name="uma_opt",
     options={"ExtOpt": None, "Opt": None},
-    uma="omol",
+    uma="omol@uma-s-1p2p1",
 )
 ```
 
@@ -112,7 +154,7 @@ and injects an ORCA block like:
 ```orca
 %method
    ProgExt "/path/to/orca-external-tools/bin/oet_client"
-Ext_Params "-b 127.0.0.1:54403 -t omol -m uma-s-1p1 -d cpu"
+Ext_Params "-b 127.0.0.1:54403 -t omol -m uma-s-1p2p1 -d cpu"
 end
 %output
 Print[P_EXT_OUT] 1
@@ -120,11 +162,16 @@ Print[P_EXT_GRAD] 1
 end
 ```
 
-After ORCA finishes, FRUST shuts down the full UMA server process group.
+After ORCA finishes, FRUST shuts down the full UMA server process group unless
+the call is inside a workflow stage group that will reuse it. A workflow starts
+one server lazily inside each executing job group, reuses it across UMA stages
+in that group, and stops it when the group exits. A numerical-frequency stage
+in the same group can reuse that server. Separately submitted groups have
+separate server lifetimes.
 
 Server mode is used locally and in submitted jobs. With the Slurm submitit
-backend, FRUST is already running inside the allocated job, so the server starts
-on the compute node that owns the calculation.
+backend, FRUST is already running inside the allocated job, so the server and
+`oet_client` calls stay on that compute node through a `127.0.0.1` bind.
 
 ## Standalone Mode
 
@@ -135,7 +182,7 @@ df = step.orca(
     df,
     name="uma-opt-standalone",
     options={"ExtOpt": None, "Opt": None},
-    uma="omol",
+    uma="omol@uma-s-1p2p1",
     uma_server=False,
 )
 ```
@@ -145,7 +192,7 @@ This injects:
 ```orca
 %method
    ProgExt "/path/to/orca-external-tools/bin/oet_uma"
-Ext_Params "-t omol -m uma-s-1p1 -d cpu"
+Ext_Params "-t omol -m uma-s-1p2p1 -d cpu"
 end
 %output
 Print[P_EXT_OUT] 1
@@ -161,7 +208,7 @@ usually slower for optimizations.
 CPU is the default:
 
 ```python
-df = step.orca(df, options={"ExtOpt": None, "Opt": None}, uma="omol")
+df = step.orca(df, options={"ExtOpt": None, "Opt": None}, uma="omol@uma-s-1p2p1")
 ```
 
 CUDA can be requested with:
@@ -170,7 +217,7 @@ CUDA can be requested with:
 df = step.orca(
     df,
     options={"ExtOpt": None, "Opt": None},
-    uma="omol",
+    uma="omol@uma-s-1p2p1",
     uma_device="cuda",
 )
 ```
@@ -183,7 +230,7 @@ To use a specific FairChem cache directory:
 df = step.orca(
     df,
     options={"ExtOpt": None, "Opt": None},
-    uma="omol",
+    uma="omol@uma-s-1p2p1",
     uma_cache_dir="/path/to/fairchem-cache",
 )
 ```
@@ -200,7 +247,7 @@ To request offline mode:
 df = step.orca(
     df,
     options={"ExtOpt": None, "Opt": None},
-    uma="omol",
+    uma="omol@uma-s-1p2p1",
     uma_offline=True,
 )
 ```
@@ -216,23 +263,23 @@ This adds:
 The ORCA call uses `Stepper.n_cores` unless overridden with `n_cores=...`:
 
 ```python
-step = Stepper(step_type="none", n_cores=8, memory_gb=30)
+step = ft.Stepper(n_cores=8, memory_gb=30)
 
 df = step.orca(
     df,
     options={"ExtOpt": None, "Opt": None},
-    uma="omol",
+    uma="omol@uma-s-1p2p1",
 )
 ```
 
-By default the UMA server receives the same core count as this ORCA call.
-Override the UMA server budget separately with:
+For an individual `Stepper.orca(...)` call, the UMA server receives the same
+core count as the call by default. Override the server budget separately with:
 
 ```python
 df = step.orca(
     df,
     options={"ExtOpt": None, "Opt": None},
-    uma="omol",
+    uma="omol@uma-s-1p2p1",
     n_cores=8,
     uma_server_cores=4,
     uma_memory_per_thread_mib=750,
@@ -244,6 +291,11 @@ This starts the server with:
 ```text
 --nthreads 4 --memory-per-thread 750
 ```
+
+In a `ft.workflows` job, the server budget defaults to the **job allocation**
+throughout its UMA stages. A screening stage may use fewer ORCA calculation
+cores while still reusing that one server during final optimization and
+NumFreq. Explicit `uma_server_cores` values in a shared job must agree.
 
 ## Server Logs
 
@@ -263,7 +315,7 @@ The default keeps logs only if the UMA-backed ORCA step fails:
 df = step.orca(
     df,
     options={"ExtOpt": None, "Opt": None},
-    uma="omol",
+    uma="omol@uma-s-1p2p1",
     uma_keep_logs="on_failure",
 )
 ```
@@ -280,7 +332,7 @@ To choose a log directory:
 df = step.orca(
     df,
     options={"ExtOpt": None, "Opt": None},
-    uma="omol",
+    uma="omol@uma-s-1p2p1",
     uma_keep_logs="always",
     uma_log_dir="dev/uma-logs",
 )
@@ -294,14 +346,20 @@ Each log starts with the launcher command and useful cluster context:
 
 ## Common Workflows
 
+For complete catalyst screens, use
+[UMA Method Choices For Catalyst Screens](../catalyst-screens/uma-screening.md).
+It shows UMA screening before ωB97, UMA final barriers with one or several TS
+candidates, and UMA SP reranking after g-xTB. The calls below operate on an
+existing `Stepper` dataframe.
+
 Single-point style external call:
 
 ```python
 df = step.orca(
     df,
-    name="uma-sp",
-    options={"ExtOpt": None, "SP": None},
-    uma="omol",
+    name="uma_sp",
+    options={"ExtOpt": None},
+    uma="omol@uma-s-1p2p1",
 )
 ```
 
@@ -310,9 +368,9 @@ Geometry optimization:
 ```python
 df = step.orca(
     df,
-    name="uma-opt",
+    name="uma_opt",
     options={"ExtOpt": None, "Opt": None},
-    uma="omol",
+    uma="omol@uma-s-1p2p1",
     save_step=True,
 )
 ```
@@ -324,7 +382,7 @@ df = step.orca(
     df,
     name="uma-OptTS",
     options={"ExtOpt": None, "OptTS": None},
-    uma="omol@uma-s-1p1",
+    uma="omol@uma-s-1p2p1",
     save_step=True,
 )
 ```
@@ -336,7 +394,7 @@ df = step.orca(
     df,
     name="uma-OptTS-NumFreq",
     options={"ExtOpt": None, "OptTS": None, "NumFreq": None},
-    uma="omol@uma-s-1p1",
+    uma="omol@uma-s-1p2p1",
     save_step=True,
 )
 ```
@@ -350,7 +408,7 @@ df = step.orca(
     df,
     name="uma-constrained-opt",
     options={"ExtOpt": None, "Opt": None},
-    uma="omol",
+    uma="omol@uma-s-1p2p1",
     constraint=True,
 )
 ```
@@ -363,7 +421,7 @@ df = step.orca(
     df,
     name="uma-OptTS-readhess",
     options={"ExtOpt": None, "OptTS": None},
-    uma="omol",
+    uma="omol@uma-s-1p2p1",
     use_last_hess=True,
 )
 ```
@@ -387,18 +445,18 @@ For:
 ```python
 df = step.orca(
     df,
-    name="uma-opt",
+    name="uma_opt",
     options={"ExtOpt": None, "Opt": None},
-    uma="omol",
+    uma="omol@uma-s-1p2p1",
 )
 ```
 
 you should expect columns such as:
 
 ```text
-uma-opt-EE
-uma-opt-NT
-uma-opt-oc
+uma_opt-EE
+uma_opt-NT
+uma_opt-oc
 ```
 
 where:
@@ -415,7 +473,7 @@ what ORCA returns.
 The step metadata is stored in:
 
 ```python
-df.attrs["frust_steps"]["uma-opt"]
+df.attrs["frust_steps"]["uma_opt"]
 ```
 
 and includes:
@@ -424,18 +482,23 @@ and includes:
 {
     "engine": "orca",
     "options": {"ExtOpt": None, "Opt": None},
-    "uma": "omol",
+    "uma": "omol@uma-s-1p2p1",
     "uma_task": "omol",
-    "uma_model": "uma-s-1p1",
+    "uma_model": "uma-s-1p2p1",
     "uma_server": True,
 }
 ```
+
+For a corrected step, the metadata also records
+`"uma_xtb_alpb": "chloroform"`; calculator provenance records the xTB
+method, ALPB model, and solvent. Inspect the actual row and stage metadata
+with `ft.show_steps(df)` and `df.attrs["frust_steps"]["uma_opt"]`.
 
 ## Limitations
 
 - `uma` and `gxtb=True` are mutually exclusive in one `Stepper.orca(...)` call.
 - `uma` must be a non-empty string.
-- `uma="@uma-s-1p1"` is invalid because the task is missing.
+- `uma="@uma-s-1p2p1"` is invalid because the task is missing.
 - `uma="omol@"` is invalid because the model is missing.
 - Server mode binds to `127.0.0.1`; it is intended for the current process and
   current compute node, not for a shared network service.

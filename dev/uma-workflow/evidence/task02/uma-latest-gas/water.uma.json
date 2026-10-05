@@ -1,0 +1,14 @@
+{
+  "task": "omol",
+  "uma_model": "uma-s-1p2p1",
+  "inference_settings": "batch",
+  "xtb_method": null,
+  "solvent_model": null,
+  "solvent": null,
+  "xtb_executable": null,
+  "energy_components_Eh": {
+    "uma": -76.42749337447343
+  },
+  "total_energy_Eh": -76.42749337447343,
+  "gradient_components": 9
+}

@@ -73,12 +73,18 @@ run.dimer_references()[
 
 | level | geometry | energy used for screening analysis | result |
 | --- | --- | --- | --- |
-| `low_cost` | g-xTB | g-xTB | ΔE |
-| `dft_ranked` | g-xTB | DFT SP | ΔE |
-| `full` | DFT | final DFT energy plus frequencies | ΔE and ΔG |
+| `low_cost` | g-xTB or UMA, per screening plan | same screening potential | ΔE |
+| `uma_ranked` | g-xTB optimized geometry | UMA SP reranking | ΔE |
+| `dft_ranked` | g-xTB or UMA, per screening plan | DFT SP | ΔE |
+| `full` | final UMA or DFT optimization | matching final-method energy plus frequencies | ΔE and ΔG |
+
+`uma_ranked` is available only when UMA SP reranks g-xTB optimized geometries.
+For `full`, TSs and all required references use the **same final method**.
+The [UMA method choices](uma-screening.md) show which paths end at UMA and
+which end at ωB97.
 
 The default `ranking_solvation="method"` applies the method's analysis solvent
-to every DFT SP on a g-xTB structure. For the current presets this normally
+to every DFT ranking SP on a screened structure. For the current presets this normally
 means SMD chloroform. Use `ranking_solvation="gas"` to opt out, or provide a
 different SMD solvent name.
 
@@ -95,6 +101,69 @@ ranked.show_stages()[["branch", "stage", "solvent"]]
 The selected level applies to TSs and every molecular dependency. A ranked TS
 is therefore combined only with equally ranked ligand, dimer, HBpin, and H2
 energies.
+
+## Screen With UMA Before ωB97 Validation
+
+For a small input table, both UMA environments, the reranking and full UMA
+choices, use the [UMA method choices](uma-screening.md). The abbreviated
+full-run example below shows how that choice fits into the composed workflow.
+
+The following full run selects conformers with ALPB-corrected UMA, then sends
+the retained structures directly to ωB97 validation:
+
+```python
+uma_screen = ft.workflows.catalyst_screen(
+    csv_path="screen.csv",
+    screening="uma-alpb-chloroform",
+    method="wb97xd3-631g",
+    level="full",
+    include_dft_rank_sp=False,
+)
+
+uma_screen.show_stages()[["branch", "stage", "engine", "solvent"]]
+```
+
+| Stage | Meaning |
+| --- | --- |
+| `xtb_preopt` | Constrained GFN-FF preoptimization for TSs and INT3 |
+| `uma_sp` | UMA single-point energies, including the selected ALPB correction |
+| `uma_sp_filter` | Keep the lowest `top_n` conformers by UMA single-point energy |
+| `uma_opt` | Constrained UMA optimization for TSs and INT3 |
+| `dft_preopt` onward | ωB97 optimization, TS/frequency checks, and final chloroform SP |
+
+The same `screening="uma-gas"` option removes the ALPB correction. The
+`low_cost` result uses `uma_opt-EE` and `uma_opt-oc`; `dft_ranked` adds the
+ωB97 ranking single point. For a `full` run, set
+`include_dft_rank_sp=True` if you also want that ranking point and its
+separate `dft_ranked` result tier. The default for a full UMA-screened ωB97 run is `False`;
+the existing g-xTB default remains `True`.
+
+For the default UMA full run, `run.available_analysis_levels()` returns
+`("low_cost", "full")`. With `include_dft_rank_sp=True`, it returns
+`("low_cost", "dft_ranked", "full")`. A direct `level="dft_ranked"` request
+always performs the ranking single point.
+
+The initial TS guess and its constraints are chosen separately from the UMA
+potential. By default, ωB97 validation selects the ωB97 gas guess profile.
+To use the reviewed UMA **gas** profile instead:
+
+```python
+uma_screen = ft.workflows.catalyst_screen(
+    csv_path="screen.csv",
+    screening="uma-alpb-chloroform",
+    method="wb97xd3-631g",
+    level="full",
+    spec_profile="omol-uma-s-1p2p1/gas",
+    spec_match="exact",
+)
+```
+
+!!! note "Guess profile and calculation solvent are independent"
+
+    The example uses gas-phase UMA reference geometry and constraints to
+    construct a guess, then calculates the screening stages with the UMA plus
+    ALPB(chloroform) potential. There is currently no reviewed UMA ALPB
+    geometry profile.
 
 ## Preview Structures Before Submission
 
@@ -237,10 +306,11 @@ barriers
 
 A full run also preserves the independently selected winner at each cheaper
 level. This gives the screening electronic barrier, the DFT-ranked electronic
-barrier, and the final DFT electronic and Gibbs barriers from one submission:
+barrier when ranking is enabled, and the final DFT electronic and Gibbs
+barriers from one submission:
 
 ```python
-run.available_analysis_levels()
+run.available_analysis_levels()  # example with DFT ranking enabled
 # ('low_cost', 'dft_ranked', 'full')
 
 comparison = run.compare_barriers()

@@ -24,6 +24,9 @@ def main() -> None:
     parser.add_argument("--basis")
     parser.add_argument("--solvation-model")
     parser.add_argument("--solvent")
+    parser.add_argument("--ts-coordinates-column", default="dft_ts_opt-oc")
+    parser.add_argument("--minimum-coordinates-column", default="dft_opt-oc")
+    parser.add_argument("--vibrations-column", default="dft_freq-vibs")
     parser.add_argument("--exclude", nargs="*", default=[])
     parser.add_argument("--mode-reviewed", nargs="*", default=[])
     parser.add_argument("--output", type=Path)
@@ -51,8 +54,17 @@ def main() -> None:
         if state in candidates:
             raise ValueError(f"Multiple source rows found for {state}")
         topology = CORE_TOPOLOGIES[state]
-        coordinates_column = "dft_ts_opt-oc" if state.startswith("TS") else "dft_opt-oc"
-        vibrations_column = "dft_freq-vibs"
+        coordinates_column = (
+            args.ts_coordinates_column
+            if state.startswith("TS")
+            else args.minimum_coordinates_column
+        )
+        vibrations_column = args.vibrations_column
+        missing_columns = sorted(
+            {coordinates_column, vibrations_column, "constraint_roles"} - set(row.index)
+        )
+        if missing_columns:
+            raise ValueError(f"{state} is missing source columns: {missing_columns}")
         coords = np.vstack(row[coordinates_column]).astype(float)
         roles = {
             str(role): int(index)

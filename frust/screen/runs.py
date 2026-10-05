@@ -96,6 +96,7 @@ class ScreenRun:
                         ),
                         "screening": self.manifest.get("screening", {}).get("name"),
                         "method": self.manifest.get("method", {}).get("name"),
+                        "ranking_method": self.manifest.get("ranking", {}).get("name"),
                         "ranking_solvation": _solvation_label(
                             self.manifest.get("ranking_solvation", {})
                         ),
@@ -122,7 +123,7 @@ class ScreenRun:
 
         Parameters
         ----------
-        level : {"low_cost", "dft_ranked", "full"} or None, optional
+        level : {"low_cost", "uma_ranked", "dft_ranked", "full"} or None, optional
             Nested analysis tier. ``None`` returns the terminal level requested
             when the workflow was submitted.
         """
@@ -134,7 +135,7 @@ class ScreenRun:
 
         Parameters
         ----------
-        level : {"low_cost", "dft_ranked", "full"} or None, optional
+        level : {"low_cost", "uma_ranked", "dft_ranked", "full"} or None, optional
             Nested analysis tier. Each tier performs its own conformer and
             dimer-topology selection.
 
@@ -155,12 +156,132 @@ class ScreenRun:
 
         Parameters
         ----------
-        level : {"low_cost", "dft_ranked", "full"} or None, optional
+        level : {"low_cost", "uma_ranked", "dft_ranked", "full"} or None, optional
             Nested analysis tier. ``None`` preserves the historical behavior
             and returns the terminal requested level.
         """
         self._ensure_analysis()
         return self._level_table("barriers", level=level)
+
+    def candidate_barriers(self) -> pd.DataFrame:
+        """Return one full UMA barrier per refined TS candidate.
+
+        Returns
+        -------
+        pandas.DataFrame
+            One row per retained TS result, including ``ts_result_id``,
+            parent ``cid``, ΔE‡ and ΔG‡ in kcal/mol, method provenance, and
+            ``quality_status``. ``selected`` marks the candidate represented
+            by :meth:`barriers`. Selection ranks candidates by quality
+            (ready, review, invalid, incomplete), then lowest available Gibbs
+            or electronic energy, then result ID. ``"ready"`` means the
+            stationary points and TS mode review passed; ``"review"`` needs
+            scientific review;
+            ``"invalid"`` failed a quality or balance check; and
+            ``"incomplete"`` lacks a required result. Other method families
+            and non-full runs return an empty table.
+        """
+        self._ensure_analysis()
+        path = self.analysis_dir / "candidate_barriers.parquet"
+        if not path.exists():
+            manifest = self.manifest
+            if (
+                manifest.get("calculation_level") != "full"
+                or manifest.get("method", {}).get("result_family") != "uma"
+            ):
+                return pd.DataFrame(
+                    columns=[
+                        *self.barriers().columns,
+                        "cid", "selected", "ts_review_status",
+                        "ts_quality_issues", "n_imag",
+                    ]
+                )
+            self.refresh_analysis()
+        return pd.read_parquet(path)
+
+    def method_comparison(self) -> pd.DataFrame:
+        """Return independently calculated UMA and ωB97 candidate barriers.
+
+        Returns
+        -------
+        pandas.DataFrame
+            One row per selected parent UMA candidate. ``uma_*`` and
+            ``wb97_*`` energies, quality, method, solvent, and reference IDs
+            remain separate. ``match_status`` is ``"matched"`` when candidate
+            identity and stoichiometry agree, ``"missing_wb97"`` when the
+            ωB97 TS is absent, or ``"composition_mismatch"`` when its atom
+            formula differs. ``"reference_definition_mismatch"`` flags
+            changed barrier equations, dimer selection policy, or Gibbs
+            corrections. Each method's own ``quality_status`` still
+            determines whether its barrier is usable.
+
+        Raises
+        ------
+        ValueError
+            If this is not a follow-on ωB97 comparison bundle.
+        """
+        comparison = self.manifest.get("comparison")
+        if not isinstance(comparison, Mapping):
+            raise ValueError("This run has no UMA/ωB97 comparison")
+        uma = pd.read_parquet(self.path / comparison["uma_candidates"])
+        uma_states = pd.read_parquet(self.path / comparison["uma_states"])
+        wb97 = self.barriers()
+        keys = [
+            "system_name", "substrate_name", "catalyst_name", "rpos", "ts_type",
+        ]
+        uma = uma.rename(columns={"ts_result_id": "parent_uma_result_id"})
+        uma = uma.rename(columns={
+            column: f"uma_{column}"
+            for column in uma.columns
+            if column not in {*keys, "parent_uma_result_id"}
+        })
+        wb97 = wb97.rename(columns={
+            column: f"wb97_{column}"
+            for column in wb97.columns
+            if column not in {*keys, "parent_uma_result_id"}
+        })
+        paired = uma.merge(
+            wb97, on=[*keys, "parent_uma_result_id"], how="left",
+            validate="one_to_one",
+        )
+        parent_formulas = uma_states[["result_id", "formula"]].rename(columns={
+            "result_id": "parent_uma_result_id", "formula": "uma_formula",
+        })
+        paired = paired.merge(
+            parent_formulas, on="parent_uma_result_id", how="left",
+            validate="many_to_one",
+        )
+        wb97_states = self.states()
+        wb97_formulas = wb97_states[
+            wb97_states["state_kind"].eq("transition_state")
+        ][["result_id", "formula"]].drop_duplicates("result_id").rename(columns={
+            "result_id": "wb97_ts_result_id", "formula": "wb97_formula",
+        })
+        paired = paired.merge(
+            wb97_formulas, on="wb97_ts_result_id", how="left",
+            validate="many_to_one",
+        )
+        missing = paired["wb97_ts_result_id"].isna()
+        mismatch = (~missing) & paired["uma_formula"].ne(paired["wb97_formula"])
+        same_definition = (
+            comparison["parent_dimer_reference"] == self.manifest["dimer_reference"]
+        ) & paired["uma_formula_id"].eq(paired["wb97_formula_id"]) & paired[
+            "uma_g_correction_kcal_mol"
+        ].eq(paired["wb97_g_correction_kcal_mol"])
+        paired["match_status"] = "matched"
+        paired.loc[(~missing) & (~same_definition), "match_status"] = (
+            "reference_definition_mismatch"
+        )
+        paired.loc[missing, "match_status"] = "missing_wb97"
+        paired.loc[mismatch, "match_status"] = "composition_mismatch"
+        paired["reference_definition_match"] = same_definition
+        paired["uma_method_fingerprint"] = comparison["parent_method_fingerprint"]
+        paired["wb97_method_fingerprint"] = self.manifest["method_fingerprint"]
+        paired["reference_definition"] = self.manifest["dimer_reference"]
+        paired["same_dimer_state"] = paired["uma_dimer_state_id"].eq(
+            paired["wb97_dimer_state_id"]
+        )
+        return paired
 
     def compare_barriers(
         self,
@@ -252,7 +373,7 @@ class ScreenRun:
         quantity : {"electronic", "gibbs"}, optional
             Energy quantity prepared for plotting. Gibbs profiles require the
             ``"full"`` analysis level.
-        level : {"low_cost", "dft_ranked", "full"} or None, optional
+        level : {"low_cost", "uma_ranked", "dft_ranked", "full"} or None, optional
             Nested analysis tier. ``None`` uses the terminal requested level.
         dimer_reference : {"lowest", "dimer", "dimer_bh_bridged", "dimer_eight_membered"} or None, optional
             Dimer topology used to rebuild the profile in memory. ``None``
@@ -327,7 +448,7 @@ class ScreenRun:
             Include a profile with invalid or incomplete dependencies.
         quantity : {"electronic", "gibbs"}, optional
             Energy quantity plotted on the vertical axis.
-        level : {"low_cost", "dft_ranked", "full"} or None, optional
+        level : {"low_cost", "uma_ranked", "dft_ranked", "full"} or None, optional
             Nested analysis tier. ``None`` uses the terminal requested level.
         dimer_reference : {"lowest", "dimer", "dimer_bh_bridged", "dimer_eight_membered"} or None, optional
             Select an already calculated dimer for this plot. ``None`` uses
@@ -564,6 +685,12 @@ def build_analysis(run_dir: str | Path) -> dict[str, Any]:
         index=False,
     )
     barriers.to_parquet(analysis_dir / "barriers.parquet", index=False)
+    candidate_barriers = _build_candidate_barriers(
+        states, manifest, dimer_references, barriers
+    )
+    candidate_barriers.to_parquet(
+        analysis_dir / "candidate_barriers.parquet", index=False
+    )
     if manifest.get("scope") == "full_cycle":
         profiles.to_parquet(analysis_dir / "profiles.parquet", index=False)
 
@@ -626,6 +753,7 @@ def build_analysis(run_dir: str | Path) -> dict[str, Any]:
         "n_states": int(len(states)),
         "n_dimer_candidates": int(len(dimer_references)),
         "n_barriers": int(len(barriers)),
+        "n_candidate_barriers": int(len(candidate_barriers)),
         "n_profile_states": int(len(profiles)),
         "state_quality": _counts(states, "quality_status"),
         "dimer_reference_quality": _counts(
@@ -633,6 +761,7 @@ def build_analysis(run_dir: str | Path) -> dict[str, Any]:
             "selection_quality_status",
         ),
         "barrier_quality": _counts(barriers, "quality_status"),
+        "candidate_barrier_quality": _counts(candidate_barriers, "quality_status"),
         "analysis_levels": list(analysis_levels),
     }
     (analysis_dir / "report.json").write_text(json.dumps(report, indent=2, sort_keys=True) + "\n")
@@ -736,6 +865,11 @@ def _state_rows(
             "calculator": protocol.get("calculator"),
         }
     )
+    method_family = (
+        "uma" if calculation_level == "uma_ranked"
+        else str(method.get("result_family", "dft"))
+    )
+    calculator = protocol.get("calculator", {})
     nt_columns = normal_termination_columns(df)
     rows: list[dict[str, Any]] = []
     for position, (_, row) in enumerate(df.iterrows()):
@@ -770,6 +904,9 @@ def _state_rows(
             electronic_energy,
             free_energy,
             vibration,
+            protocol_fingerprint=(
+                protocol_fingerprint if method_family == "uma" else None
+            ),
         )
         review_status = (
             reviews.get(result_id, "unreviewed")
@@ -790,8 +927,7 @@ def _state_rows(
             quality = "review"
         else:
             quality = "ready"
-        rows.append(
-            {
+        state_row = {
                 "result_id": result_id,
                 "source": source,
                 "source_row": position,
@@ -808,12 +944,15 @@ def _state_rows(
                 "geometry_stage": protocol.get("geometry_stage"),
                 "energy_stage": protocol.get("analysis_stage"),
                 "energy_method": protocol.get("calculator", {}).get("method"),
+                "energy_model": calculator.get("kwargs", {}).get("uma")
+                or calculator.get("method"),
                 "energy_basis": protocol.get("calculator", {}).get("basis"),
                 "solvation_model": protocol.get("calculator", {}).get(
                     "solvation_model"
                 ),
                 "solvent": protocol.get("calculator", {}).get("solvent"),
                 "energy_protocol_fingerprint": protocol_fingerprint,
+                "method_family": method_family,
                 "electronic_energy_hartree": electronic_energy,
                 "analysis_electronic_energy_hartree": electronic_energy,
                 "frequency_electronic_energy_hartree": component.get(
@@ -834,7 +973,9 @@ def _state_rows(
                 "quality_status": quality,
                 "quality_issues": ";".join(issues),
             }
-        )
+        if "parent_uma_result_id" in df.columns:
+            state_row["parent_uma_result_id"] = row.get("parent_uma_result_id")
+        rows.append(state_row)
     result = pd.DataFrame(rows)
     result["rpos"] = pd.to_numeric(result["rpos"], errors="coerce").astype("Int64")
     return result
@@ -1003,6 +1144,10 @@ def _build_barriers(
         for key, value in manifest.get("g_corrections_kcal_mol", {}).items()
     }
     full = manifest.get("calculation_level", "full") == "full"
+    method_family = (
+        "uma" if manifest.get("calculation_level") == "uma_ranked"
+        else str(manifest.get("method", {}).get("result_family", "dft"))
+    )
     targets = manifest.get("analysis_targets", [])
     rows: list[dict[str, Any]] = []
     for target in targets:
@@ -1019,6 +1164,23 @@ def _build_barriers(
             terms[dimer_state] = -0.5
         if ts_type in {"TS3", "TS4"}:
             terms.update({"HBpin-mol": -1.0, "HH": 1.0})
+        result_ids = (
+            {dimer_state: dimer_result_id}
+            if dimer_state is not None and dimer_result_id is not None
+            else {}
+        )
+        parent_id = target.get("parent_uma_result_id")
+        if parent_id is not None:
+            result_ids[ts_type] = "__missing_parent_candidate__"
+        if parent_id is not None and "parent_uma_result_id" in states.columns:
+            parent_matches = states[
+                states["state_id"].eq(ts_type)
+                & states["parent_uma_result_id"].eq(str(parent_id))
+                & states["system_name"].eq(system)
+                & _rpos_mask(states["rpos"], rpos)
+            ]
+            if len(parent_matches) == 1:
+                result_ids[ts_type] = str(parent_matches.iloc[0]["result_id"])
         selected, problems = _resolve_terms(
             states,
             terms,
@@ -1026,11 +1188,8 @@ def _build_barriers(
             substrate_name=substrate,
             catalyst_name=catalyst,
             rpos=rpos,
-            result_ids=(
-                {dimer_state: dimer_result_id}
-                if dimer_state is not None and dimer_result_id is not None
-                else None
-            ),
+            result_ids=result_ids or None,
+            select_ts_candidates=method_family == "uma",
         )
         if dimer_state is None:
             problems.extend(dimer_issues)
@@ -1043,6 +1202,17 @@ def _build_barriers(
         delta_e = np.nan
         delta_g = np.nan
         corrected_delta_g = np.nan
+        barrier_protocol = None
+        ts_row = selected.get(ts_type)
+        barrier_method = None if ts_row is None else ts_row["energy_method"]
+        barrier_model = None if ts_row is None else ts_row.get("energy_model")
+        barrier_solvation_model = (
+            None if ts_row is None else ts_row["solvation_model"]
+        )
+        barrier_solvent = None if ts_row is None else ts_row["solvent"]
+        ts_protocol = (
+            None if ts_row is None else ts_row["energy_protocol_fingerprint"]
+        )
         if problems:
             quality = (
                 "incomplete"
@@ -1057,22 +1227,35 @@ def _build_barriers(
             if len(protocols) != 1:
                 problems.append("mixed_electronic_energy_protocols")
                 quality = "invalid"
-            delta_e = sum(
-                float(selected[state]["electronic_energy_hartree"]) * coefficient
-                for state, coefficient in terms.items()
-            )
-            delta_e *= HARTREE_TO_KCAL_MOL
-            if full:
-                free_energies = [selected[state]["free_energy_hartree"] for state in terms]
-                if any(pd.isna(value) for value in free_energies):
-                    problems.append("missing_free_energy")
-                    quality = "incomplete"
-                else:
-                    delta_g = sum(
-                        float(selected[state]["free_energy_hartree"]) * coefficient
-                        for state, coefficient in terms.items()
-                    ) * HARTREE_TO_KCAL_MOL
-                    corrected_delta_g = delta_g + correction
+            if method_family == "uma" or parent_id is not None:
+                composition = Counter()
+                for state, coefficient in terms.items():
+                    for element, count in _parse_formula(
+                        str(selected[state]["formula"])
+                    ).items():
+                        composition[element] += count * coefficient
+                if any(abs(float(count)) > 1e-8 for count in composition.values()):
+                    problems.append("unbalanced_composition")
+                    quality = "invalid"
+            if not problems:
+                barrier_protocol = next(iter(protocols))
+                delta_e = sum(
+                    float(selected[state]["electronic_energy_hartree"]) * coefficient
+                    for state, coefficient in terms.items()
+                ) * HARTREE_TO_KCAL_MOL
+                if full:
+                    free_energies = [
+                        selected[state]["free_energy_hartree"] for state in terms
+                    ]
+                    if any(pd.isna(value) for value in free_energies):
+                        problems.append("missing_free_energy")
+                        quality = "incomplete"
+                    else:
+                        delta_g = sum(
+                            float(selected[state]["free_energy_hartree"]) * coefficient
+                            for state, coefficient in terms.items()
+                        ) * HARTREE_TO_KCAL_MOL
+                        corrected_delta_g = delta_g + correction
             if not problems:
                 quality = _combined_quality(
                     [
@@ -1081,18 +1264,37 @@ def _build_barriers(
                     ]
                 )
             dependency_issues.extend(_dependency_quality_issues(selected, terms))
-        rows.append(
-            {
+        barrier_row = {
                 "system_name": system,
                 "substrate_name": substrate,
                 "catalyst_name": catalyst,
                 "rpos": rpos,
                 "ts_type": ts_type,
+                "ts_result_id": (
+                    selected[ts_type]["result_id"] if ts_type in selected else None
+                ),
+                "ts_cid": selected[ts_type]["cid"] if ts_type in selected else None,
                 "dimer_state_id": dimer_state,
                 "dimer_result_id": dimer_result_id,
+                "reference_result_ids": json.dumps(
+                    {
+                        state: str(selected[state]["result_id"])
+                        for state in terms
+                        if state != ts_type and state in selected
+                    },
+                    sort_keys=True,
+                ),
                 "dimer_reference_quality": dimer_quality,
                 "delta_e_kcal_mol": delta_e,
                 "delta_g_kcal_mol": delta_g,
+                "method_family": method_family,
+                "energy_method": barrier_method,
+                "energy_model": barrier_model,
+                "solvation_model": barrier_solvation_model,
+                "solvent": barrier_solvent,
+                "ts_guess_profile": manifest.get("resolved_ts_spec_profile"),
+                "energy_protocol_fingerprint": barrier_protocol,
+                "ts_energy_protocol_fingerprint": ts_protocol,
                 "g_correction_kcal_mol": correction if full else np.nan,
                 "delta_g_corrected_kcal_mol": corrected_delta_g,
                 "quality_status": quality,
@@ -1101,8 +1303,56 @@ def _build_barriers(
                 ),
                 "formula_id": f"frust_ts_barrier::{ts_type}::v2",
             }
-        )
+        if parent_id is not None:
+            barrier_row["parent_uma_result_id"] = str(parent_id)
+        rows.append(barrier_row)
     return pd.DataFrame(rows)
+
+
+def _build_candidate_barriers(
+    states: pd.DataFrame,
+    manifest: Mapping[str, Any],
+    dimer_references: pd.DataFrame,
+    selected_barriers: pd.DataFrame,
+) -> pd.DataFrame:
+    """Evaluate each full UMA TS with the selected reference set."""
+    columns = [
+        *selected_barriers.columns,
+        "cid", "selected", "ts_review_status", "ts_quality_issues", "n_imag",
+    ]
+    if (
+        manifest.get("calculation_level") != "full"
+        or manifest.get("method", {}).get("result_family") != "uma"
+    ):
+        return pd.DataFrame(columns=columns)
+
+    rows: list[dict[str, Any]] = []
+    for target_position, target in enumerate(manifest.get("analysis_targets", [])):
+        candidates = states[
+            states["state_kind"].eq("transition_state")
+            & states["state_id"].eq(str(target["state_id"]))
+            & states["system_name"].eq(str(target["system_name"]))
+            & _rpos_mask(states["rpos"], int(target["rpos"]))
+        ]
+        one_target_manifest = dict(manifest)
+        one_target_manifest["analysis_targets"] = [target]
+        selected = selected_barriers.iloc[target_position]
+        for candidate_index, candidate in candidates.iterrows():
+            other_candidates = candidates.index.difference([candidate_index])
+            one_candidate_states = states.drop(index=other_candidates)
+            barrier = _build_barriers(
+                one_candidate_states, one_target_manifest, dimer_references
+            ).iloc[0].to_dict()
+            barrier["cid"] = candidate["cid"]
+            barrier["ts_review_status"] = candidate["review_status"]
+            barrier["ts_quality_issues"] = candidate["quality_issues"]
+            barrier["n_imag"] = candidate["n_imag"]
+            barrier["selected"] = (
+                barrier["ts_result_id"] == selected["ts_result_id"]
+                and str(candidate["cid"]) == str(selected["ts_cid"])
+            )
+            rows.append(barrier)
+    return pd.DataFrame(rows, columns=columns)
 
 
 def _build_profiles(
@@ -1282,6 +1532,7 @@ def _resolve_terms(
     catalyst_name: str,
     rpos: int,
     result_ids: Mapping[str, str] | None = None,
+    select_ts_candidates: bool = False,
 ) -> tuple[dict[str, pd.Series], list[str]]:
     selected: dict[str, pd.Series] = {}
     problems: list[str] = []
@@ -1308,7 +1559,23 @@ def _resolve_terms(
         if len(matches) == 0:
             problems.append(f"missing:{state_id}")
         elif len(matches) > 1:
-            problems.append(f"ambiguous:{state_id}")
+            if select_ts_candidates and state_id.startswith("TS"):
+                ranked = matches.copy()
+                ranked["_quality_rank"] = ranked["quality_status"].map(
+                    QUALITY_ORDER
+                ).fillna(3)
+                energy_column = (
+                    "free_energy_hartree"
+                    if ranked["free_energy_hartree"].notna().any()
+                    else "electronic_energy_hartree"
+                )
+                selected[state_id] = ranked.sort_values(
+                    ["_quality_rank", energy_column, "result_id"],
+                    kind="stable",
+                    na_position="last",
+                ).iloc[0]
+            else:
+                problems.append(f"ambiguous:{state_id}")
         else:
             selected[state_id] = matches.iloc[0]
     return selected, problems
@@ -1394,6 +1661,7 @@ def _result_id(
     electronic_energy: Any,
     free_energy: Any,
     vibration: Mapping[str, Any],
+    protocol_fingerprint: str | None = None,
 ) -> str:
     payload = {
         "state_id": state_id,
@@ -1408,6 +1676,9 @@ def _result_id(
         "imaginary_frequencies": vibration["imaginary_frequencies"],
         "frequencies_cm1": frequency_values(row),
     }
+    if protocol_fingerprint is not None:
+        payload["energy_protocol_fingerprint"] = protocol_fingerprint
+        payload["normal_modes"] = _json_value(row.get("uma_freq-vibs"))
     return "result_" + _json_hash(payload)[:16]
 
 

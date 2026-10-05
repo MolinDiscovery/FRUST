@@ -26,7 +26,7 @@ try:
 
     path = _dotenv_path()
     if path is not None:
-        load_dotenv(path, override=True)
+        load_dotenv(path, override=False)
 except Exception:
     pass
 

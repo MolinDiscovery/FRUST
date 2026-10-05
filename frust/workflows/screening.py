@@ -35,16 +35,18 @@ from frust.structures.specs import DIMER_STATES
 from frust.utils.dataframes import merge_dataframe_attrs
 from frust.workflows.core import ANALYSIS_TIER_FILES
 from frust.workflows.factories import Int3Workflow, MolsWorkflow, ScreenTSWorkflow
+from frust.workflows.factories import SeededWb97TSWorkflow
 from frust.workflows.methods import (
     CalculationLevel,
     MethodPlan,
+    RankingPlan,
     ScreeningPlan,
     apply_screening_plan,
     preset as method_preset,
+    ranking_preset,
     screening_preset,
     with_ranking_solvation,
 )
-
 
 ScreenScope = Literal["barriers", "full_cycle"]
 DimerReference = Literal[
@@ -116,7 +118,11 @@ class CatalystScreenWorkflow:
         screening: ScreeningPlan | str = "gxtb-default",
         level: CalculationLevel = "full",
         method: MethodPlan | str | None = None,
+        ranking: RankingPlan | str | None = None,
         ranking_solvation: str = "method",
+        spec_profile: str = "auto",
+        spec_match: str = "prefer-exact",
+        include_dft_rank_sp: bool | None = None,
         scope: ScreenScope = "barriers",
         dimer_reference: DimerReference = "lowest",
         g_corrections_kcal_mol: dict[str, float] | None = None,
@@ -124,6 +130,8 @@ class CatalystScreenWorkflow:
         reuse_policy: ReusePolicy = "approved",
         n_confs: int | None = None,
         top_n: int = 20,
+        uma_rank_top_n: int = 1,
+        ts_refine_n: int = 3,
         prune_initial: bool | dict[str, Any] = True,
     ) -> None:
         if (csv_path is None) == (dataframe is None):
@@ -138,19 +146,74 @@ class CatalystScreenWorkflow:
         if reuse_policy not in {"approved", "auto_valid"}:
             raise ValueError("reuse_policy must be 'approved' or 'auto_valid'")
         normalized_level = str(level).strip().lower()
-        if normalized_level not in {"low_cost", "dft_ranked", "full"}:
-            raise ValueError("level must be 'low_cost', 'dft_ranked', or 'full'")
+        if normalized_level not in {"low_cost", "uma_ranked", "dft_ranked", "full"}:
+            raise ValueError("level must be 'low_cost', 'uma_ranked', 'dft_ranked', or 'full'")
         self.csv_path = None if csv_path is None else Path(csv_path)
         self.dataframe = None if dataframe is None else dataframe.copy()
         self.ts_types = tuple(str(value).upper() for value in ts_types)
         self.level: CalculationLevel = normalized_level  # type: ignore[assignment]
         self.screening = _coerce_screening(screening)
-        composed_method = apply_screening_plan(_coerce_method(method), self.screening)
-        self.method, self.ranking_solvation = with_ranking_solvation(
-            composed_method,
-            ranking_solvation,
+        if ranking is None:
+            self.ranking = None
+        elif isinstance(ranking, RankingPlan):
+            self.ranking = ranking
+        elif isinstance(ranking, str):
+            self.ranking = ranking_preset(ranking)
+        else:
+            raise TypeError("ranking must be a RankingPlan, preset name, or None")
+        if self.ranking is None and self.level == "uma_ranked":
+            raise ValueError("level='uma_ranked' requires UMA ranking")
+        if self.ranking is not None:
+            if self.level not in {"uma_ranked", "full"}:
+                raise ValueError("UMA ranking requires level='uma_ranked' or 'full'")
+            if "xtb_opt" not in self.screening.stages:
+                raise ValueError("UMA ranking requires g-xTB screening")
+            if ranking_solvation != "method":
+                raise ValueError("ranking_solvation applies only to DFT ranking")
+        self.include_dft_rank_sp = (
+            "uma_opt" not in self.screening.stages and self.ranking is None
+            if include_dft_rank_sp is None
+            else bool(include_dft_rank_sp)
         )
-        self.ranking_solvation["applied"] = self.level != "low_cost"
+        if self.ranking is not None and self.include_dft_rank_sp:
+            raise ValueError("UMA ranking requires include_dft_rank_sp=False")
+        self.spec_profile = str(spec_profile).strip().lower()
+        self.spec_match = str(spec_match).strip().lower()
+        composed_method = apply_screening_plan(_coerce_method(method), self.screening)
+        if self.ranking is not None:
+            if composed_method.result_family != "dft":
+                raise ValueError("UMA reranking requires a DFT final method")
+            composed_method = composed_method.with_stage(
+                self.ranking.stage_id, self.ranking.calculator
+            )
+        if composed_method.result_family == "uma" and self.level == "full":
+            if scope != "barriers":
+                raise ValueError("Full UMA currently supports scope='barriers' only")
+            if "uma_opt" not in self.screening.stages:
+                raise ValueError("Full UMA requires UMA screening in the same environment")
+            screening_potential = self.screening.stages["uma_opt"].kwargs
+            final_potential = composed_method.for_stage("uma_freq").kwargs
+            if any(
+                screening_potential.get(key) != final_potential.get(key)
+                for key in ("uma", "uma_xtb_alpb")
+            ):
+                raise ValueError("Full UMA screening and final stages must use one model and environment")
+            if self.include_dft_rank_sp:
+                raise ValueError("Full UMA does not include DFT ranking")
+            if ranking_solvation != "method":
+                raise ValueError("ranking_solvation applies only to DFT ranking")
+            self.method = composed_method
+            self.ranking_solvation = {
+                "requested": "method", "model": None, "solvent": None
+            }
+        else:
+            self.method, self.ranking_solvation = with_ranking_solvation(
+                composed_method,
+                ranking_solvation,
+            )
+        self.ranking_solvation["applied"] = self.level == "dft_ranked" or (
+            self.level == "full" and self.include_dft_rank_sp
+        )
         if self.level == "full" and self.method.thermochemistry is None:
             raise ValueError(
                 f"Method plan {self.method.name!r} needs a ThermochemistrySpec "
@@ -166,10 +229,18 @@ class CatalystScreenWorkflow:
             },
         }
         configured_store = reference_store or os.environ.get("FRUST_REFERENCE_STORE")
-        self.reference_store = None if configured_store is None else Path(configured_store)
+        self.reference_store = (
+            None if configured_store is None else Path(configured_store)
+        )
         self.reuse_policy = reuse_policy
         self.n_confs = n_confs
         self.top_n = int(top_n)
+        self.uma_rank_top_n = int(uma_rank_top_n)
+        if self.uma_rank_top_n < 1:
+            raise ValueError("uma_rank_top_n must be positive")
+        self.ts_refine_n = int(ts_refine_n)
+        if self.ts_refine_n < 1:
+            raise ValueError("ts_refine_n must be positive")
         self.prune_initial = prune_initial
         self._components_cache: pd.DataFrame | None = None
         self._systems_cache: pd.DataFrame | None = None
@@ -197,8 +268,13 @@ class CatalystScreenWorkflow:
                     dataframe=components,
                     ts_types=self.ts_types,
                     method=self.method,
+                    spec_profile=self.spec_profile,
+                    spec_match=self.spec_match,
+                    include_dft_rank_sp=self.include_dft_rank_sp,
                     n_confs=self.n_confs,
                     top_n=self.top_n,
+                    uma_rank_top_n=self.uma_rank_top_n,
+                    ts_refine_n=self.ts_refine_n,
                     calculation_level=self.level,
                     prune_initial=self.prune_initial,
                 ),
@@ -206,8 +282,10 @@ class CatalystScreenWorkflow:
                     dataframe=components,
                     select_mols=self._reference_states(),
                     method=self.method,
+                    include_dft_rank_sp=self.include_dft_rank_sp,
                     n_confs=self.n_confs,
                     top_n=self.top_n,
+                    uma_rank_top_n=self.uma_rank_top_n,
                     calculation_level=self.level,
                     prune_initial=self.prune_initial,
                 ),
@@ -217,16 +295,22 @@ class CatalystScreenWorkflow:
                     dataframe=components,
                     select_mols=["int1", "int2", "HBpin-ligand"],
                     method=self.method,
+                    include_dft_rank_sp=self.include_dft_rank_sp,
                     n_confs=self.n_confs,
                     top_n=self.top_n,
+                    uma_rank_top_n=self.uma_rank_top_n,
                     calculation_level=self.level,
                     prune_initial=self.prune_initial,
                 )
                 children["int3"] = Int3Workflow(
                     dataframe=components,
                     method=self.method,
+                    spec_profile=self.spec_profile,
+                    spec_match=self.spec_match,
+                    include_dft_rank_sp=self.include_dft_rank_sp,
                     n_confs=self.n_confs,
                     top_n=self.top_n,
+                    uma_rank_top_n=self.uma_rank_top_n,
                     calculation_level=self.level,
                     prune_initial=self.prune_initial,
                 )
@@ -246,7 +330,9 @@ class CatalystScreenWorkflow:
                     if record is not None:
                         action = "reuse"
                         reference_id = record.reference_id
-                planned.append(CatalystScreenTarget(branch, target, action, reference_id))
+                planned.append(
+                    CatalystScreenTarget(branch, target, action, reference_id)
+                )
         return planned
 
     def plan(self) -> pd.DataFrame:
@@ -272,6 +358,9 @@ class CatalystScreenWorkflow:
         result.attrs["screening_fingerprint"] = self.screening.fingerprint()
         result.attrs["method"] = self.method.name
         result.attrs["method_fingerprint"] = self.method.fingerprint()
+        if self.ranking is not None:
+            result.attrs["ranking"] = self.ranking.to_dict()
+            result.attrs["uma_rank_top_n"] = self.uma_rank_top_n
         result.attrs["ranking_solvation"] = self.ranking_solvation
         result.attrs["thermochemistry"] = (
             None
@@ -282,7 +371,9 @@ class CatalystScreenWorkflow:
         result.attrs["dimer_reference"] = self.dimer_reference
         return result
 
-    def show_stages(self, execution: str | None = None, detail: str = "summary") -> pd.DataFrame:
+    def show_stages(
+        self, execution: str | None = None, detail: str = "summary"
+    ) -> pd.DataFrame:
         """Return child stage graphs with an explicit calculation branch."""
         frames = []
         for branch, workflow in self.children().items():
@@ -337,8 +428,17 @@ class CatalystScreenWorkflow:
         work_dir: str | Path | None = None,
         target_retention: str = "compact_success",
         artifact_policy: ArtifactPolicy = "standard",
+        uma_oet_tools: str | Path | None = None,
     ) -> ScreenRun:
-        """Run all required child workflows locally and build analysis."""
+        """Run child workflows locally and build the screen analysis.
+
+        Parameters
+        ----------
+        uma_oet_tools : str, pathlib.Path, or None, optional
+            OET runtime selected inside each child workflow group containing
+            UMA stages. Other arguments control the child workflows and run
+            artifacts as described by :meth:`submit`.
+        """
         artifact_policy = validate_artifact_policy(artifact_policy)
         if artifact_policy == "screening" and target_retention != "compact_success":
             raise ValueError(
@@ -353,7 +453,9 @@ class CatalystScreenWorkflow:
         root.mkdir(parents=True, exist_ok=True)
         self._write_manifest(root, artifact_policy=artifact_policy)
         children = self.children()
-        reference_items = [item for item in self.targets() if item.branch == "references"]
+        reference_items = [
+            item for item in self.targets() if item.branch == "references"
+        ]
         self._snapshot_reused_references(
             root,
             reference_items,
@@ -386,6 +488,7 @@ class CatalystScreenWorkflow:
                 work_dir=work_dir,
                 target_retention=target_retention,
                 artifact_policy=artifact_policy,
+                uma_oet_tools=uma_oet_tools,
             )
             _write_verified_parquet(frame, branch_dir / output_name)
         _finalize_run(self, root, artifact_policy=artifact_policy)
@@ -406,6 +509,7 @@ class CatalystScreenWorkflow:
         finalize_resources: Resources | None = None,
         target_retention: str = "compact_success",
         artifact_policy: ArtifactPolicy = "standard",
+        uma_oet_tools: str | Path | None = None,
     ) -> ScreenSubmissionResult:
         """Submit the complete catalyst screen and its analysis finalizer.
 
@@ -431,9 +535,9 @@ class CatalystScreenWorkflow:
             Scheduler grouping used by every child workflow:
 
             - ``"single_job"`` runs the complete target pipeline in one job.
-            - ``"dft_staged"`` groups structure preparation, GFN-FF, g-xTB,
-              and DFT ranking together, then separates the expensive DFT
-              refinement stages.
+            - ``"dft_staged"`` groups structure preparation, GFN-FF, the
+              selected screening calculator, and any DFT ranking point,
+              then separates later DFT refinement stages.
             - ``"fully_staged"`` submits one dependent job per stage.
 
             When omitted, ``low_cost`` and ``dft_ranked`` use
@@ -475,6 +579,9 @@ class CatalystScreenWorkflow:
             ``"screening"`` keeps compact scientific results, uses a managed
             ``.submitit`` directory, and cleans successful artifacts only after
             final validation. ``"standard"`` preserves existing behavior.
+        uma_oet_tools : str, pathlib.Path, or None, optional
+            OET runtime selected inside child jobs containing UMA stages.
+            For example, point to a pinned FairChem 2.23 CPU runtime.
 
         Returns
         -------
@@ -530,8 +637,8 @@ class CatalystScreenWorkflow:
         Child workflows currently use their default
         ``orca_memory_fraction=0.8``. The complete ``Resources.mem_gb`` value
         is requested from the scheduler and 80 percent is forwarded to ORCA,
-        leaving the remainder for job overhead. This has no effect on
-        ``level="low_cost"`` because that level does not run ORCA.
+        leaving the remainder for job overhead. UMA screening also uses ORCA
+        at ``level="low_cost"``.
         """
         artifact_policy = validate_artifact_policy(artifact_policy)
         if artifact_policy == "screening" and target_retention != "compact_success":
@@ -561,7 +668,9 @@ class CatalystScreenWorkflow:
                 stderr_to_stdout=True,
             )
         children = self.children()
-        reference_items = [item for item in self.targets() if item.branch == "references"]
+        reference_items = [
+            item for item in self.targets() if item.branch == "references"
+        ]
         self._snapshot_reused_references(
             root,
             reference_items,
@@ -603,10 +712,13 @@ class CatalystScreenWorkflow:
                 collect_resources=collect_resources,
                 target_retention=target_retention,
                 artifact_policy=artifact_policy,
+                uma_oet_tools=uma_oet_tools,
                 _defer_screening_cleanup=artifact_policy == "screening",
             )
             submissions[branch] = submission
-            dependency_ids.append(submission.collection_job_id or submission.job_ids[-1])
+            dependency_ids.append(
+                submission.collection_job_id or submission.job_ids[-1]
+            )
             wait_paths.append(str(collect_report))
 
         executor = create_executor(finalize_cluster)
@@ -645,9 +757,7 @@ class CatalystScreenWorkflow:
             finalization_job_id=getattr(final_job, "job_id", None),
             backend=cluster.backend,
             submitit_dir=(
-                str(root / ".submitit")
-                if artifact_policy == "screening"
-                else None
+                str(root / ".submitit") if artifact_policy == "screening" else None
             ),
         )
 
@@ -664,8 +774,18 @@ class CatalystScreenWorkflow:
 
     def _analysis_levels(self) -> tuple[CalculationLevel, ...]:
         """Return calculation tiers available from the requested workflow."""
+        if self.ranking is not None:
+            return (
+                ("low_cost", "uma_ranked", "full")
+                if self.level == "full"
+                else ("low_cost", "uma_ranked")
+            )
         if self.level == "full":
-            return ("low_cost", "dft_ranked", "full")
+            return (
+                ("low_cost", "dft_ranked", "full")
+                if self.include_dft_rank_sp
+                else ("low_cost", "full")
+            )
         if self.level == "dft_ranked":
             return ("low_cost", "dft_ranked")
         return ("low_cost",)
@@ -676,7 +796,7 @@ class CatalystScreenWorkflow:
     ) -> dict[str, Any]:
         """Return reference identity settings for one nested result tier."""
         level = self.level if calculation_level is None else calculation_level
-        return {
+        protocol = {
             "workflow": "frust.workflows.mols::v2",
             "calculation_level": level,
             "screening_fingerprint": self.screening.fingerprint(),
@@ -685,6 +805,12 @@ class CatalystScreenWorkflow:
             "top_n": self.top_n,
             "prune_initial": self.prune_initial,
         }
+        if self.ranking is not None and level in {"uma_ranked", "full"}:
+            protocol["ranking_fingerprint"] = self.ranking.fingerprint()
+            protocol["uma_rank_top_n"] = self.uma_rank_top_n
+        if level == "full" and not self.include_dft_rank_sp:
+            protocol["include_dft_rank_sp"] = False
+        return protocol
 
     def _shared_library(self, *, initialize: bool = False) -> ReferenceLibrary | None:
         if self.reference_store is None:
@@ -704,9 +830,7 @@ class CatalystScreenWorkflow:
             target,
             self.method,
             protocol=self._reference_protocol(self.level),
-            reuse_policy=(
-                self.reuse_policy if self.level == "full" else "auto_valid"
-            ),
+            reuse_policy=(self.reuse_policy if self.level == "full" else "auto_valid"),
             calculation_level=self.level,
         )
         if record is None:
@@ -739,9 +863,7 @@ class CatalystScreenWorkflow:
         tier_frames: dict[str, list[pd.DataFrame]] = {
             tier: [] for tier in self._analysis_levels() if tier != self.level
         }
-        tier_sources: dict[str, list[Path]] = {
-            tier: [] for tier in tier_frames
-        }
+        tier_sources: dict[str, list[Path]] = {tier: [] for tier in tier_frames}
         shared_library = self._shared_library(initialize=False)
         for item in items:
             if item.action != "reuse":
@@ -838,6 +960,12 @@ class CatalystScreenWorkflow:
             "method": self.method.to_dict(),
             "method_fingerprint": self.method.fingerprint(),
             "ranking_solvation": self.ranking_solvation,
+            "include_dft_rank_sp": self.include_dft_rank_sp,
+            "ts_spec_profile": self.spec_profile,
+            "resolved_ts_spec_profile": self.children()[
+                "transition_states"
+            ].resolved_spec_profile,
+            "ts_spec_match": self.spec_match,
             "ts_types": list(self.ts_types),
             "g_corrections_kcal_mol": self.g_corrections_kcal_mol,
             "mechanism_id": (
@@ -864,6 +992,12 @@ class CatalystScreenWorkflow:
             "calculation_results": terminal_results,
             "tier_calculation_results": level_results,
         }
+        if self.ranking is not None:
+            manifest["ranking"] = self.ranking.to_dict()
+            manifest["ranking_fingerprint"] = self.ranking.fingerprint()
+            manifest["uma_rank_top_n"] = self.uma_rank_top_n
+        if self.method.result_family == "uma":
+            manifest["ts_refine_n"] = self.ts_refine_n
         signature_keys = [
             "scope",
             "dimer_reference",
@@ -871,6 +1005,9 @@ class CatalystScreenWorkflow:
             "screening_fingerprint",
             "method_fingerprint",
             "ranking_solvation",
+            "include_dft_rank_sp",
+            "ts_spec_profile",
+            "ts_spec_match",
             "ts_types",
             "g_corrections_kcal_mol",
             "components",
@@ -880,6 +1017,10 @@ class CatalystScreenWorkflow:
             "analysis_targets",
             "artifact_policy",
         ]
+        if self.method.result_family == "uma":
+            signature_keys.append("ts_refine_n")
+        if self.ranking is not None:
+            signature_keys.extend(["ranking_fingerprint", "uma_rank_top_n"])
         manifest["run_signature"] = _json_hash(
             {key: manifest[key] for key in signature_keys}
         )
@@ -901,6 +1042,204 @@ class CatalystScreenWorkflow:
         manifest_path.write_text(json.dumps(manifest, indent=2, sort_keys=True) + "\n")
 
 
+class Wb97ComparisonWorkflow(CatalystScreenWorkflow):
+    """Opt-in ωB97 characterization seeded by a completed UMA run.
+
+    Parameters
+    ----------
+    parent : ScreenRun
+        Portable full-UMA run that supplied the TS candidates.
+    candidate_rows : pandas.DataFrame
+        Exact rows selected from ``parent.candidate_barriers()``.
+    reference_store : str, pathlib.Path, or None, optional
+        Shared reference library for exact-match ωB97 minima.
+    reuse_policy : {"approved", "auto_valid"}, optional
+        Rule for reusing full thermochemical references.
+    """
+
+    def __init__(
+        self, parent: ScreenRun, candidate_rows: pd.DataFrame, *,
+        reference_store: str | Path | None = None,
+        reuse_policy: ReusePolicy = "approved",
+    ) -> None:
+        source = parent.manifest
+        self.parent = parent
+        self.candidate_rows = candidate_rows.reset_index(drop=True).copy()
+        self.seed_dir: Path | None = None
+        super().__init__(
+            dataframe=pd.DataFrame(source["components"]),
+            ts_types=tuple(dict.fromkeys(self.candidate_rows["ts_type"])),
+            screening="gxtb-default",
+            level="full",
+            method="wb97xd3-631g",
+            spec_profile=source["resolved_ts_spec_profile"],
+            include_dft_rank_sp=False,
+            dimer_reference=source["dimer_reference"],
+            g_corrections_kcal_mol=source["g_corrections_kcal_mol"],
+            reference_store=reference_store,
+            reuse_policy=reuse_policy,
+        )
+
+    def children(self) -> dict[str, Any]:
+        """Use parent geometries for TS targets and ordinary ωB97 references."""
+        children = super().children()
+        if not isinstance(children["transition_states"], SeededWb97TSWorkflow):
+            keys = tuple(
+                (str(row.ts_result_id), str(row.system_name), int(row.rpos),
+                 str(row.ts_type))
+                for row in self.candidate_rows.itertuples()
+            )
+            children["transition_states"] = SeededWb97TSWorkflow(
+                dataframe=self.components(),
+                ts_types=self.ts_types,
+                method=self.method,
+                calculation_level="full",
+                include_dft_rank_sp=False,
+                candidate_ids=keys,
+                seed_dir=self.seed_dir,
+            )
+            self._children_cache = children
+        return dict(children)
+
+    def _analysis_levels(self) -> tuple[CalculationLevel, ...]:
+        """Keep this follow-on bundle focused on final ωB97 results."""
+        return ("full",)
+
+    def _write_manifest(
+        self, root: Path, *, artifact_policy: ArtifactPolicy = "standard"
+    ) -> None:
+        """Snapshot UMA seeds and provenance before jobs leave this process."""
+        path = root / "manifest.json"
+        requested_ids = self.candidate_rows["ts_result_id"].astype(str).tolist()
+        if path.exists():
+            existing = json.loads(path.read_text())
+            previous = existing.get("comparison", {})
+            if not (
+                previous.get("parent_run_signature") == self.parent.manifest["run_signature"]
+                and previous.get("candidate_result_ids") == requested_ids
+                and existing.get("method_fingerprint") == self.method.fingerprint()
+                and existing.get("screening_fingerprint") == self.screening.fingerprint()
+                and existing.get("reuse_policy") == self.reuse_policy
+                and existing.get("artifact_policy") == artifact_policy
+                and existing.get("dimer_reference") == self.dimer_reference
+            ):
+                raise FileExistsError(
+                    f"Run directory {root} contains a different catalyst-screen "
+                    "manifest; choose a new out_dir"
+                )
+            self.seed_dir = root.resolve() / "comparison" / "seeds"
+            self.children()["transition_states"].seed_dir = self.seed_dir
+            return
+        seeds: list[tuple[str, pd.DataFrame]] = []
+        for row in self.candidate_rows.itertuples():
+            result_id = str(row.ts_result_id)
+            seed = self.parent._raw_result(result_id).copy()
+            if "uma_ts_opt-oc" not in seed or seed["uma_ts_opt-oc"].isna().any():
+                raise ValueError(
+                    f"UMA candidate {result_id!r} has no optimized TS geometry"
+                )
+            geometry = seed["uma_ts_opt-oc"].iloc[0]
+            keep = [column for column in seed if "-" not in column]
+            seed = seed[keep].copy()
+            seed["coords_embedded"] = pd.Series([geometry])
+            seed["parent_uma_result_id"] = result_id
+            seeds.append((result_id, seed))
+        super()._write_manifest(root, artifact_policy=artifact_policy)
+        self.seed_dir = root.resolve() / "comparison" / "seeds"
+        self.seed_dir.mkdir(parents=True, exist_ok=True)
+        self.children()["transition_states"].seed_dir = self.seed_dir
+        for result_id, seed in seeds:
+            _write_verified_parquet(seed, self.seed_dir / f"{result_id}.parquet")
+        self.candidate_rows.to_parquet(
+            root / "comparison" / "uma_candidates.parquet", index=False
+        )
+        parent_states = self.parent.states()
+        parent_states = parent_states[
+            parent_states["result_id"].isin(self.candidate_rows["ts_result_id"])
+        ]
+        parent_states.to_parquet(root / "comparison" / "uma_states.parquet", index=False)
+        manifest = json.loads(path.read_text())
+        manifest["analysis_targets"] = [
+            {**target, "parent_uma_result_id": str(item.builder_options["parent_uma_result_id"])}
+            for target, item in zip(
+                manifest["analysis_targets"],
+                self.children()["transition_states"].targets(),
+            )
+        ]
+        manifest["comparison"] = {
+            "parent_run_signature": self.parent.manifest["run_signature"],
+            "parent_method": self.parent.manifest["method"],
+            "parent_method_fingerprint": self.parent.manifest["method_fingerprint"],
+            "parent_dimer_reference": self.parent.manifest["dimer_reference"],
+            "candidate_result_ids": requested_ids,
+            "uma_candidates": "comparison/uma_candidates.parquet",
+            "uma_states": "comparison/uma_states.parquet",
+        }
+        manifest["run_signature"] = _json_hash({
+            "base": manifest["run_signature"],
+            "comparison": manifest["comparison"],
+        })
+        path.write_text(json.dumps(manifest, indent=2, sort_keys=True) + "\n")
+
+
+def wb97_comparison(
+    uma_run: ScreenRun | str | Path, *,
+    candidates: Literal["selected"] | list[str] | tuple[str, ...] = "selected",
+    reference_store: str | Path | None = None,
+    reuse_policy: ReusePolicy = "approved",
+) -> Wb97ComparisonWorkflow:
+    """Prepare an optional ωB97 comparison for completed UMA TS candidates.
+
+    Parameters
+    ----------
+    uma_run : ScreenRun, str, or pathlib.Path
+        Completed portable full-UMA run or its directory.
+    candidates : {"selected"} or sequence of str, optional
+        ``"selected"`` advances each target's selected UMA candidate.
+        A sequence names exact UMA ``ts_result_id`` values and may contain
+        several candidates for the same TS target.
+    reference_store : str, pathlib.Path, or None, optional
+        Exact-match ωB97 reference library used by the follow-on run.
+    reuse_policy : {"approved", "auto_valid"}, optional
+        ``"approved"`` reuses only manually approved full references;
+        ``"auto_valid"`` also reuses automatically validated minima.
+
+    Returns
+    -------
+    Wb97ComparisonWorkflow
+        Call ``run`` or ``submit`` with a new output directory, then open the
+        result and call ``method_comparison()`` for side-by-side barriers.
+
+    Examples
+    --------
+    >>> import frust as ft
+    >>> parent = ft.screen.open_run("runs/uma")
+    >>> wf = ft.workflows.wb97_comparison(parent, candidates="selected")
+    >>> comparison = wf.run(out_dir="runs/uma_wb97")
+    >>> comparison.method_comparison()
+    """
+    parent = uma_run if isinstance(uma_run, ScreenRun) else ScreenRun(uma_run)
+    manifest = parent.manifest
+    if manifest.get("calculation_level") != "full" or manifest.get("method", {}).get("result_family") != "uma":
+        raise ValueError("ωB97 comparison requires a completed full UMA run")
+    available = parent.candidate_barriers()
+    if candidates == "selected":
+        chosen = available[available["selected"]].copy()
+    else:
+        requested = tuple(str(value) for value in candidates)
+        if not requested or len(set(requested)) != len(requested):
+            raise ValueError("candidates must contain distinct UMA result IDs")
+        missing = set(requested) - set(available["ts_result_id"])
+        if missing:
+            raise ValueError(f"Unknown UMA candidate result IDs: {sorted(missing)}")
+        chosen = available.set_index("ts_result_id").loc[list(requested)].reset_index()
+    if chosen.empty:
+        raise ValueError("No selected UMA candidates are available")
+    return Wb97ComparisonWorkflow(
+        parent, chosen, reference_store=reference_store, reuse_policy=reuse_policy
+    )
+
+
 def catalyst_screen(
     *,
     csv_path: str | Path | None = None,
@@ -909,7 +1248,11 @@ def catalyst_screen(
     screening: ScreeningPlan | str = "gxtb-default",
     level: CalculationLevel = "full",
     method: MethodPlan | str | None = None,
+    ranking: RankingPlan | str | None = None,
     ranking_solvation: str = "method",
+    spec_profile: str = "auto",
+    spec_match: str = "prefer-exact",
+    include_dft_rank_sp: bool | None = None,
     scope: ScreenScope = "barriers",
     dimer_reference: DimerReference = "lowest",
     g_corrections_kcal_mol: dict[str, float] | None = None,
@@ -917,6 +1260,8 @@ def catalyst_screen(
     reuse_policy: ReusePolicy = "approved",
     n_confs: int | None = None,
     top_n: int = 20,
+    uma_rank_top_n: int = 1,
+    ts_refine_n: int = 3,
     prune_initial: bool | dict[str, Any] = True,
 ) -> CatalystScreenWorkflow:
     """Create an end-to-end catalyst-screen workflow.
@@ -939,27 +1284,54 @@ def catalyst_screen(
         ``"TS1"``, ``"TS2"``, ``"TS3"``, and ``"TS4"``.
     screening : ScreeningPlan or str, optional
         Inexpensive geometry-screening plan. The default ``"gxtb-default"``
-        runs GFN-FF followed by direct g-xTB ranking and optimization.
-    level : {"low_cost", "dft_ranked", "full"}, optional
-        ``"low_cost"`` reports g-xTB electronic barriers, ``"dft_ranked"``
-        reports DFT single-point electronic barriers on g-xTB geometries, and
-        ``"full"`` additionally performs DFT refinement and frequencies so
-        both electronic and Gibbs barriers are available. Deeper runs retain
-        independently selected lower-tier winners: a ``"full"`` run can later
-        compare low-cost, DFT-ranked, and full barriers without a second
-        submission.
+        runs GFN-FF followed by direct g-xTB ranking and optimization. Choose
+        ``"uma-gas"`` or ``"uma-alpb-chloroform"`` for UMA screening.
+    level : {"low_cost", "uma_ranked", "dft_ranked", "full"}, optional
+        ``"low_cost"`` reports electronic barriers from the selected g-xTB or
+        UMA screen, ``"uma_ranked"`` reports UMA single-point electronic
+        barriers on g-xTB optimized geometries, ``"dft_ranked"`` reports DFT
+        single-point electronic barriers on screened geometries, and
+        ``"full"`` performs refinement and frequencies with the selected
+        final method, DFT or UMA, so both electronic and Gibbs barriers are
+        available when the frequency stage returns thermochemistry. Deeper runs
+        retain independently selected lower-tier winners. A ``"full"`` run
+        with UMA reranking retains low-cost, UMA-ranked, and full barriers.
+        A ``"full"`` run with
+        ``include_dft_rank_sp=True`` retains low-cost, DFT-ranked, and full
+        barriers; otherwise it retains low-cost and full barriers.
     method : MethodPlan, str, or None, optional
-        Downstream DFT calculation plan. It supplies the DFT ranking method for
-        ``"dft_ranked"`` and the complete refinement and thermochemistry plan
-        for ``"full"``.
+        Final calculation plan. ``"uma-gas"`` and
+        ``"uma-alpb-chloroform"`` characterize TS and reference minima with
+        UMA; DFT presets retain independent DFT validation.
+    ranking : RankingPlan, str, or None, optional
+        Optional ``"uma-gas"`` or ``"uma-alpb-chloroform"`` single-point
+        reranking after g-xTB optimization. The ``"full"`` result still uses
+        the selected DFT method; no UMA optimization is run.
     ranking_solvation : str, optional
-        Solvation for DFT single points on g-xTB geometries. ``"method"``
+        Solvation for DFT single points on screened geometries. ``"method"``
         inherits the method's analysis solvent, ``"gas"`` disables implicit
-        solvent, and another value selects that SMD solvent.
+        solvent, and another value selects that SMD solvent. Full UMA uses
+        ``"method"`` because it has no DFT ranking stage. UMA reranking also
+        requires ``"method"``; its gas or ALPB environment comes from
+        ``ranking``.
+    spec_profile : str, optional
+        TS/INT3 guess and constraint profile. ``"auto"`` follows the DFT
+        validation method, normally ωB97 gas, or the reviewed UMA gas profile
+        for full UMA. To select that profile explicitly, pass
+        ``"omol-uma-s-1p2p1/gas"``. This choice does not change the UMA
+        calculation environment.
+    spec_match : {"prefer-exact", "exact"}, optional
+        Profile resolution policy for TS/INT3 guesses.
+    include_dft_rank_sp : bool or None, optional
+        Include the ωB97 ranking single point in a ``"full"`` run. The
+        default is ``False`` for UMA screening or UMA reranking and ``True``
+        for plain g-xTB screening;
+        ``"dft_ranked"`` always runs the ranking point.
     scope : {"barriers", "full_cycle"}, optional
         ``"barriers"`` calculates the dependencies of the four supplied
         barrier equations. ``"full_cycle"`` adds every state needed for the
-        balanced catalytic-cycle profile.
+        balanced catalytic-cycle profile. Full UMA currently supports
+        ``"barriers"`` only.
     dimer_reference : {"lowest", "dimer", "dimer_bh_bridged", "dimer_eight_membered"}, optional
         Catalyst dimer used in barrier and profile equations. ``"lowest"``
         calculates all three topologies and strictly selects the lowest
@@ -976,14 +1348,21 @@ def catalyst_screen(
     reuse_policy : {"approved", "auto_valid"}, optional
         Full thermochemical references use ``"approved"`` for manual-review
         reuse or ``"auto_valid"`` to accept automatic minimum checks.
-        Exact-match ``"low_cost"`` and ``"dft_ranked"`` screening artifacts
-        are automatically reusable because they are stored separately and are
-        not presented as approved DFT minima.
+        Exact-match ``"low_cost"``, ``"uma_ranked"``, and ``"dft_ranked"``
+        screening artifacts are automatically reusable because they are
+        stored separately and are not presented as approved DFT minima.
     n_confs : int or None, optional
         Initial conformer count forwarded consistently to every child
         workflow.
     top_n : int, optional
-        Number of low-energy candidates retained before final refinement.
+        Number retained by the low-cost screen. With UMA reranking, this is
+        the broad g-xTB cutoff before the UMA single points.
+    uma_rank_top_n : int, optional
+        Number of UMA-ranked candidates advanced to final ωB97 refinement.
+        Defaults to one and is independent of ``top_n``.
+    ts_refine_n : int, optional
+        Maximum distinct UMA optimized TS candidates sent to Hessian,
+        released ``OptTS``, and final numerical frequencies in a full UMA run.
     prune_initial : bool or dict, optional
         Initial conformer-pruning configuration forwarded to child workflows.
 
@@ -1010,7 +1389,11 @@ def catalyst_screen(
         screening=screening,
         level=level,
         method=method,
+        ranking=ranking,
         ranking_solvation=ranking_solvation,
+        spec_profile=spec_profile,
+        spec_match=spec_match,
+        include_dft_rank_sp=include_dft_rank_sp,
         scope=scope,
         dimer_reference=dimer_reference,
         g_corrections_kcal_mol=g_corrections_kcal_mol,
@@ -1018,6 +1401,8 @@ def catalyst_screen(
         reuse_policy=reuse_policy,
         n_confs=n_confs,
         top_n=top_n,
+        uma_rank_top_n=uma_rank_top_n,
+        ts_refine_n=ts_refine_n,
         prune_initial=prune_initial,
     )
 
@@ -1032,7 +1417,10 @@ def _finalize_submitted_run(
 ) -> FinalizationJobResult:
     if wait_paths:
         deadline = time.monotonic() + 3600
-        while not all(Path(path).exists() for path in wait_paths) and time.monotonic() < deadline:
+        while (
+            not all(Path(path).exists() for path in wait_paths)
+            and time.monotonic() < deadline
+        ):
             time.sleep(1)
     report = _finalize_run(
         workflow,
@@ -1098,14 +1486,17 @@ def _finalize_run(
         artifact_policy=artifact_policy,
     )
     computed_path = reference_dir / "computed.parquet"
-    computed = pd.read_parquet(computed_path) if computed_path.exists() else pd.DataFrame()
+    computed = (
+        pd.read_parquet(computed_path) if computed_path.exists() else pd.DataFrame()
+    )
     reused_path = reference_dir / "reused.parquet"
     reused = pd.read_parquet(reused_path) if reused_path.exists() else pd.DataFrame()
-    reused_ids = set(reused.get("reference_id", pd.Series(dtype=str)).dropna().astype(str))
+    reused_ids = set(
+        reused.get("reference_id", pd.Series(dtype=str)).dropna().astype(str)
+    )
     manifest = json.loads((root / "manifest.json").read_text())
     reference_plan = {
-        str(entry["target_id"]): entry
-        for entry in manifest.get("reference_plan", [])
+        str(entry["target_id"]): entry for entry in manifest.get("reference_plan", [])
     }
     computed_frames: list[pd.DataFrame] = []
     computed_sources: list[Path] = []
@@ -1212,9 +1603,7 @@ def _finalize_run(
         "n_not_published": sum(
             entry["status"] == "not_published" for entry in publication_entries
         ),
-        "n_reused": sum(
-            entry["status"] == "reused" for entry in publication_entries
-        ),
+        "n_reused": sum(entry["status"] == "reused" for entry in publication_entries),
         "n_missing_results": sum(
             entry["status"] == "missing_result" for entry in publication_entries
         ),
@@ -1247,8 +1636,7 @@ def _finalize_run(
         int(publication_report["n_not_published"]) == 0
         and int(publication_report["n_missing_results"]) == 0
         and (
-            int(publication_report["n_published"])
-            + int(publication_report["n_reused"])
+            int(publication_report["n_published"]) + int(publication_report["n_reused"])
             == int(publication_report["n_targets"])
         )
     )
@@ -1271,13 +1659,9 @@ def _finalize_run(
         "analysis_tiers": tier_report,
         "n_references_calculated": int(len(computed)),
         "n_references_published": int(publication_report["n_published"]),
-        "n_references_not_published": int(
-            publication_report["n_not_published"]
-        ),
+        "n_references_not_published": int(publication_report["n_not_published"]),
         "n_references_reused": int(len(reused)),
-        "reference_publication_report": str(
-            publication_report_path.relative_to(root)
-        ),
+        "reference_publication_report": str(publication_report_path.relative_to(root)),
         "submission": dict(submission_status or {}),
     }
     (root / "run_report.json").write_text(
@@ -1423,9 +1807,7 @@ def _cleanup_screening_targets(
                 if target_dir.is_symlink():
                     raise ValueError("target directory is a symlink")
             except Exception as exc:
-                result["errors"].append(
-                    {"target": str(target_dir), "error": str(exc)}
-                )
+                result["errors"].append({"target": str(target_dir), "error": str(exc)})
                 continue
             final_path = _deepest_parquet(target_dir)
             if final_path is None:
@@ -1435,7 +1817,9 @@ def _cleanup_screening_targets(
             try:
                 frame = pd.read_parquet(final_path)
                 nt_columns = normal_termination_columns(frame)
-                normal = not nt_columns or bool(frame[nt_columns].fillna(False).all().all())
+                normal = not nt_columns or bool(
+                    frame[nt_columns].fillna(False).all().all()
+                )
                 if not normal:
                     result["retained_targets"].append(str(target_dir))
                     continue
@@ -1446,9 +1830,7 @@ def _cleanup_screening_targets(
                 )
                 shutil.rmtree(target_dir)
             except Exception as exc:
-                result["errors"].append(
-                    {"target": str(target_dir), "error": str(exc)}
-                )
+                result["errors"].append({"target": str(target_dir), "error": str(exc)})
                 continue
             result["n_removed_targets"] += 1
             result["removed_bytes"] += int(size)
@@ -1558,9 +1940,7 @@ def _concat_tier_results(
         return pd.DataFrame()
     merged = pd.concat(frames, ignore_index=True)
     merged.attrs.clear()
-    merged.attrs.update(
-        merge_dataframe_attrs(frames, source_files=source_files)
-    )
+    merged.attrs.update(merge_dataframe_attrs(frames, source_files=source_files))
     return merged
 
 
@@ -1734,15 +2114,15 @@ def _tier_calculation_result_paths(
 def _deepest_parquet(target_dir: Path) -> Path | None:
     tier_names = set(ANALYSIS_TIER_FILES.values())
     files = (
-        [
-            path
-            for path in target_dir.glob("*.parquet")
-            if path.name not in tier_names
-        ]
+        [path for path in target_dir.glob("*.parquet") if path.name not in tier_names]
         if target_dir.is_dir()
         else []
     )
-    return max(files, key=lambda path: (path.stem.count("."), path.stat().st_mtime), default=None)
+    return max(
+        files,
+        key=lambda path: (path.stem.count("."), path.stat().st_mtime),
+        default=None,
+    )
 
 
 def _coerce_method(method: MethodPlan | str | None) -> MethodPlan:
@@ -1790,4 +2170,9 @@ def _json_hash(value: Any) -> str:
 
 
 def _utc_now() -> str:
-    return datetime.now(timezone.utc).replace(microsecond=0).isoformat().replace("+00:00", "Z")
+    return (
+        datetime.now(timezone.utc)
+        .replace(microsecond=0)
+        .isoformat()
+        .replace("+00:00", "Z")
+    )

@@ -5,9 +5,34 @@ import importlib
 
 import frust as ft
 from frust.workflows import methods
+from frust.workflows.spec_profiles import geometry_key_for_calculator
 
 
 class WorkflowMethodTests(unittest.TestCase):
+    def test_uma_geometry_key_tracks_checkpoint_task_and_solvent(self):
+        gas = methods.CalculatorSpec(
+            "orca",
+            {"ExtOpt": None, "OptTS": None},
+            kwargs={"uma": "omol@uma-s-1p2p1"},
+        )
+        alpb = methods.CalculatorSpec(
+            "orca",
+            {"ExtOpt": None, "OptTS": None},
+            kwargs={
+                "uma": "omol@uma-s-1p2p1",
+                "uma_xtb_alpb": "chloroform",
+            },
+        )
+
+        self.assertEqual(
+            geometry_key_for_calculator(gas).profile_id,
+            "omol-uma-s-1p2p1/gas",
+        )
+        self.assertEqual(
+            geometry_key_for_calculator(alpb).profile_id,
+            "omol-uma-s-1p2p1/alpb-chloroform",
+        )
+
     def test_screening_plan_is_independent_and_reusable(self):
         screening = methods.screening_preset("gxtb-default")
         self.assertEqual(

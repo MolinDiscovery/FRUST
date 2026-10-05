@@ -1,0 +1,6 @@
+host=node066.cluster
+oet=2.0.1.dev10+g1b4fcda92
+fairchem-core=2.23.0
+torch=2.13.0+cpu
+oet_source=/lustre/hpc/kemi/jmni/software/orca-external-tools-src/src/oet/__init__.py
+torch_cuda=None

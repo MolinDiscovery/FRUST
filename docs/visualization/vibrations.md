@@ -1,13 +1,13 @@
 # Vibrations
 
-Use `plot_vibs` to inspect normal modes from FRUST frequency calculations. For
+Use `ft.plot_vibs` to inspect normal modes from FRUST frequency calculations. For
 transition states, the imaginary mode should match the intended reaction
 coordinate.
 
 ```python
-from frust.vis import plot_vibs
+import frust as ft
 
-plot_vibs(df_ok, vId=0)
+ft.plot_vibs(df_ok, vId=0)
 ```
 
 `plot_vibs` uses the same scene renderer and default visual style as
@@ -29,13 +29,63 @@ cell sizes, labels, background, and atom/stick styling.
     must also describe the intended bond formation, bond breaking, proton
     transfer, hydride transfer, or other reaction coordinate.
 
+For a portable catalyst-screen run, inspect its full-tier review queue and the
+corresponding animated mode before approving a barrier:
+
+```python
+run = ft.screen.open_run("runs/uma-ts1-full")
+queue = run.review_queue()
+queue[["result_id", "state_id", "n_imag", "imaginary_frequencies_cm1"]]
+
+result_id = queue.iloc[0]["result_id"]
+run.plot_vibration(result_id, mode=0)
+```
+
+Rotate the molecule by dragging in the 3D viewer; watch whether the moving
+atoms follow the expected bond changes. A single imaginary frequency alone
+leaves the TS at `review`. After checking its geometry and mode, record an
+explicit decision:
+
+```python
+run.set_review(
+    result_id,
+    "approved",
+    note="Transfer H moves between catalyst N and substrate C.",
+)
+```
+
+Minimum references need zero imaginary modes. If a ligand has an imaginary
+methyl torsion, reoptimize it from a displaced geometry and repeat the
+frequency calculation before using its free energy in a barrier.
+
+For a full UMA run that retains several candidates, inspect each mode before
+using its candidate-specific barrier:
+
+```python
+run.candidate_barriers()[[
+    "ts_cid", "selected", "ts_review_status", "n_imag", "quality_status",
+]]
+```
+
+| Status | Meaning for a candidate barrier |
+| --- | --- |
+| `ready` | Its TS mode is approved and all reference minima are ready. |
+| `review` | The numerical barrier exists but a mode or other flagged result still needs inspection. |
+| `invalid` | A TS or reference fails a quality check; the displayed energy is diagnostic only. |
+| `incomplete` | A required calculation or thermal quantity is missing. |
+
+One TS1 check had a clear N–H to substrate-C transfer mode, but its **gas
+UMA ligand reference** retained an imaginary frequency at −66.53 cm⁻¹. The
+gas barrier remained `invalid` after the TS mode was approved. A TS review
+cannot override a bad minimum reference.
+
 ## Multiple Rows
 
 By default, `plot_vibs(df_ok)` displays every row in the dataframe, matching
 `plot_mols(df_ok)`. This makes filtered dataframes convenient:
 
 ```python
-plot_vibs(
+ft.plot_vibs(
     df_ok[df_ok["substrate_name"] == "1-benzylpyrrole"],
     columns=2,
 )
@@ -44,7 +94,7 @@ plot_vibs(
 For explicit subsets, pass row positions:
 
 ```python
-plot_vibs(
+ft.plot_vibs(
     df_ok,
     row_indices=[0, 1, 2, 3],
     columns=2,
@@ -55,7 +105,7 @@ plot_vibs(
 Use `max_rows` for large screens:
 
 ```python
-plot_vibs(
+ft.plot_vibs(
     df_ok,
     max_rows=12,
     columns=3,
@@ -79,11 +129,11 @@ Use `custom_coords_col_name` when you want to inspect vibrations against a
 specific coordinate stage.
 
 ```python
-plot_vibs(
+ft.plot_vibs(
     df_ok,
     row_index=0,
     vId=0,
-    custom_coords_col_name="UMA-OptTS-oc",
+    custom_coords_col_name="uma_ts_opt-oc",
 )
 ```
 
@@ -95,7 +145,7 @@ documentation or shared with collaborators.
 !!! example "Export an imaginary-mode viewer"
 
     ```python
-    plot_vibs(
+    ft.plot_vibs(
         df_ok,
         row_index=0,
         vId=0,
@@ -121,7 +171,7 @@ documentation or shared with collaborators.
     When comparing rows, pass `legends` so each viewer cell is identified:
 
     ```python
-    plot_vibs(
+    ft.plot_vibs(
         df_ok,
         row_indices=[0, 1],
         legends=["lowest", "second-lowest"],

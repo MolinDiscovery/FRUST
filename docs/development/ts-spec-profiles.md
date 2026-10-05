@@ -33,6 +33,41 @@ to calculate the reference structures themselves.
 The extractor deliberately creates JSON candidates. It does **not** edit the
 profile registry or make a candidate selectable in production.
 
+## Current UMA Gas Profile
+
+The reviewed OMol UMA-S 1.2.1 gas profile is `omol-uma-s-1p2p1/gas`. It has
+separate calculated references for all five built-in states:
+
+| State | Final imaginary frequencies (cm⁻¹) | Reference chemistry |
+| --- | --- | --- |
+| TS1 | −944.65 | 1-methylpyrrole / NMe |
+| TS2 | −278.92 | 1-methylpyrrole / NMe |
+| TS3 | −94.46 | thiophene / TMP |
+| TS4 | −65.68 | thiophene / TMP |
+| INT3 | none | thiophene / TMP |
+
+For example, generate one TS3 guess with its reviewed gas constraints:
+
+```python
+import frust as ft
+
+systems = ft.screen.expand(ft.screen.read("screen.csv"))
+ts3 = ft.screen.create_ts_guesses(
+    systems,
+    ts_types=["TS3"],
+    n_confs=1,
+    spec_profile="omol-uma-s-1p2p1/gas",
+    spec_match="exact",
+)["TS3"]
+print(ts3.loc[0, "ts_spec_id"])
+# TS3::tsguess2-v2::omol-uma-s-1p2p1::gas::r1
+```
+
+The UMA ALPB(chloroform) potential has no registered geometry profile. Its
+screening calculations may start from a separately selected guess profile;
+the selected profile identifies the source of the constraints, not the solvent
+environment of the later calculation.
+
 ## The Six-Step Workflow
 
 Use this sequence for every new or replacement profile:
@@ -120,6 +155,24 @@ The extractor reads these final columns:
 | --- | --- | --- |
 | `TS1`--`TS4` | `dft_ts_opt-oc` | `dft_freq-vibs` |
 | `INT3` | `dft_opt-oc` | `dft_freq-vibs` |
+
+For a reference calculation with different stage names, pass the actual
+coordinate and vibration columns to the extractor. For example, a UMA
+reference workflow may save `uma_ts_opt-oc`, `uma_opt-oc`, and
+`uma_freq-vibs`:
+
+```bash
+conda run -n UMA python scripts/extract_tsguess2_profile.py \
+  runs/uma_gas_TSs.parquet runs/uma_gas_INT3.parquet \
+  --method omol-uma-s-1p2p1 \
+  --ts-coordinates-column uma_ts_opt-oc \
+  --minimum-coordinates-column uma_opt-oc \
+  --vibrations-column uma_freq-vibs \
+  --output profile_candidates/uma_gas.json
+```
+
+Use the same potential for the optimization and frequency columns; do not
+extract an ALPB profile from gas-phase optimized coordinates.
 
 The final solvent single-point stage does not change geometry. A gas-phase
 result may contain `dft_solv_sp-*` columns, but the gas profile still comes from

@@ -22,7 +22,11 @@ def result_contract(
     dft: bool,
     calculation_level: str | None = None,
     include_terminal_solv_sp: bool = True,
+    screening_opt_stage: str = "xtb_opt",
+    include_dft_rank_sp: bool = True,
     thermochemistry: Any | None = None,
+    full_method: Literal["dft", "uma"] = "dft",
+    ranking_stage: str | None = None,
 ) -> dict[str, object]:
     """Return the canonical semantic-column contract for a workflow profile.
 
@@ -32,19 +36,34 @@ def result_contract(
         Workflow chemistry/result profile.
     dft : bool
         Whether the workflow includes DFT refinement.
-    calculation_level : {"low_cost", "dft_ranked", "full"} or None, optional
+    calculation_level : {"low_cost", "uma_ranked", "dft_ranked", "full"} or None,
+        optional
         Explicit workflow depth. ``"low_cost"`` resolves analysis to the
-        g-xTB optimization energy, ``"dft_ranked"`` to the DFT single point
-        on the g-xTB geometry, and ``"full"`` to the final DFT analysis
-        energy and exposes frequency results.
+        selected g-xTB or UMA screening optimization energy,
+        ``"uma_ranked"`` to a UMA single point on that geometry,
+        ``"dft_ranked"`` to the DFT single point on that geometry, and
+        ``"full"`` to the final method's energy and frequency results.
     include_terminal_solv_sp : bool, optional
         Whether the DFT workflow includes a final solvent single point. When
         ``False``, the final DFT frequency-stage electronic energy is the
         analysis energy because all DFT stages already include solvent.
+    screening_opt_stage : {"xtb_opt", "uma_opt"}, optional
+        Optimization stage providing the low-cost energy and geometry.
+    include_dft_rank_sp : bool, optional
+        Whether a full run includes a separate DFT ranking single point.
     thermochemistry : ThermochemistrySpec or None, optional
         Explicit molecular free-energy assembly recipe recorded for a
         ``"full"`` result. Lower calculation levels have no frequency result,
         so their contracts omit this field.
+    full_method : {"dft", "uma"}, optional
+        Calculator family used for a ``"full"`` result. ``"uma"`` resolves
+        final TS geometry to ``uma_ts_opt``, final minimum geometry to
+        ``uma_min_opt``, and thermochemistry to ``uma_freq``.
+    ranking_stage : str or None, optional
+        Explicit ranking calculator stage for a ``"full"`` result. Use
+        ``"uma_rank_sp"`` when UMA reranks g-xTB optimized geometries.
+        ``None`` preserves the existing DFT-ranking switch and screening
+        optimization behavior.
 
     Returns
     -------
@@ -55,57 +74,98 @@ def result_contract(
         calculation_level = (
             "full"
             if dft
-            else "dft_ranked"
-            if profile in {"transition_state", "constrained_minimum"}
-            else "low_cost"
+            else (
+                "dft_ranked"
+                if profile in {"transition_state", "constrained_minimum"}
+                else "low_cost"
+            )
         )
     calculation_level = str(calculation_level).strip().lower()
-    if calculation_level not in {"low_cost", "dft_ranked", "full"}:
+    if calculation_level not in {"low_cost", "uma_ranked", "dft_ranked", "full"}:
         raise ValueError(
-            "calculation_level must be 'low_cost', 'dft_ranked', or 'full'"
+            "calculation_level must be 'low_cost', 'uma_ranked', "
+            "'dft_ranked', or 'full'"
         )
-    has_full_dft = calculation_level == "full"
-    ranking_stage = (
-        "dft_rank_sp" if calculation_level in {"dft_ranked", "full"} else "xtb_opt"
-    )
+    if full_method not in {"dft", "uma"}:
+        raise ValueError("full_method must be 'dft' or 'uma'")
+    if ranking_stage not in {None, "dft_rank_sp", "uma_rank_sp"}:
+        raise ValueError("ranking_stage must be 'dft_rank_sp' or 'uma_rank_sp'")
+    if calculation_level == "uma_ranked" and ranking_stage == "dft_rank_sp":
+        raise ValueError("uma_ranked requires a UMA ranking stage")
+    if calculation_level == "dft_ranked" and ranking_stage == "uma_rank_sp":
+        raise ValueError("dft_ranked requires a DFT ranking stage")
+    has_full = calculation_level == "full"
+    has_full_dft = has_full and full_method == "dft"
+    if has_full_dft and ranking_stage == "uma_rank_sp" and include_dft_rank_sp:
+        raise ValueError(
+            "UMA ranking for a full DFT result requires include_dft_rank_sp=False"
+        )
+    if screening_opt_stage not in {"xtb_opt", "uma_opt"}:
+        raise ValueError("screening_opt_stage must be 'xtb_opt' or 'uma_opt'")
+    if calculation_level == "uma_ranked":
+        resolved_ranking_stage = "uma_rank_sp"
+    elif calculation_level == "dft_ranked":
+        resolved_ranking_stage = "dft_rank_sp"
+    elif ranking_stage is not None:
+        resolved_ranking_stage = ranking_stage
+    elif has_full_dft and include_dft_rank_sp:
+        resolved_ranking_stage = "dft_rank_sp"
+    else:
+        resolved_ranking_stage = screening_opt_stage
     if profile == "minimum":
-        optimized_stage = "dft_opt" if has_full_dft else "xtb_opt"
+        optimized_stage = (
+            ("dft_opt" if has_full_dft else "uma_min_opt")
+            if has_full else screening_opt_stage
+        )
     elif profile == "transition_state":
-        optimized_stage = "dft_ts_opt" if has_full_dft else "xtb_opt"
+        optimized_stage = (
+            ("dft_ts_opt" if has_full_dft else "uma_ts_opt")
+            if has_full else screening_opt_stage
+        )
     elif profile == "constrained_minimum":
-        optimized_stage = "dft_opt" if has_full_dft else "xtb_opt"
+        optimized_stage = (
+            ("dft_opt" if has_full_dft else "uma_min_opt")
+            if has_full else screening_opt_stage
+        )
     else:
         raise ValueError(f"Unknown result profile {profile!r}")
+    frequency_stage = "dft_freq" if has_full_dft else "uma_freq"
     analysis_stage = (
         "dft_solv_sp"
         if has_full_dft and include_terminal_solv_sp
-        else "dft_freq"
-        if has_full_dft
-        else ranking_stage
+        else frequency_stage if has_full else resolved_ranking_stage
     )
     columns: dict[str, dict[str, str]] = {
         "analysis": {
             "electronic_energy": output_column(analysis_stage, "electronic_energy")
         },
         "ranking": {
-            "electronic_energy": output_column(ranking_stage, "electronic_energy")
+            "electronic_energy": output_column(
+                resolved_ranking_stage, "electronic_energy"
+            )
         },
         "optimized": {"coords": output_column(optimized_stage, "opt_coords")},
     }
-    if has_full_dft:
+    if has_full:
         columns["frequency"] = {
-            "gibbs_energy": output_column("dft_freq", "gibbs_energy"),
-            "electronic_energy": output_column("dft_freq", "electronic_energy"),
-            "frequencies": COMPACT_FREQUENCY_COLUMN,
+            "gibbs_energy": output_column(frequency_stage, "gibbs_energy"),
+            "electronic_energy": output_column(frequency_stage, "electronic_energy"),
+            "frequencies": f"{frequency_stage}-frequencies_cm1",
         }
     contract = {
-        "schema_version": 5,
+        "schema_version": (
+            5
+            if full_method == "dft"
+            and calculation_level != "uma_ranked"
+            and ranking_stage is None
+            else 6
+        ),
         "profile": profile,
         "dft": has_full_dft,
         "calculation_level": calculation_level,
         "columns": columns,
     }
-    if has_full_dft and thermochemistry is not None:
+    if has_full and thermochemistry is not None:
         to_dict = getattr(thermochemistry, "to_dict", None)
         if not callable(to_dict):
             raise TypeError("thermochemistry must provide to_dict()")
@@ -120,7 +180,11 @@ def attach_result_contract(
     dft: bool,
     calculation_level: str | None = None,
     include_terminal_solv_sp: bool = True,
+    screening_opt_stage: str = "xtb_opt",
+    include_dft_rank_sp: bool = True,
     thermochemistry: Any | None = None,
+    full_method: Literal["dft", "uma"] = "dft",
+    ranking_stage: str | None = None,
 ) -> pd.DataFrame:
     """Attach compact semantic result metadata to a dataframe in place.
 
@@ -132,12 +196,21 @@ def attach_result_contract(
         Workflow chemistry/result profile.
     dft : bool
         Whether the workflow includes DFT refinement.
-    calculation_level : {"low_cost", "dft_ranked", "full"} or None, optional
+    calculation_level : {"low_cost", "uma_ranked", "dft_ranked", "full"} or None,
+        optional
         Explicit workflow depth recorded in the canonical contract.
     include_terminal_solv_sp : bool, optional
         Whether a separate final solvent single point was calculated.
+    screening_opt_stage : {"xtb_opt", "uma_opt"}, optional
+        Screening optimization stage used for lower-tier result columns.
+    include_dft_rank_sp : bool, optional
+        Whether a full run includes the DFT ranking single point.
     thermochemistry : ThermochemistrySpec or None, optional
         Explicit molecular free-energy assembly recipe to record.
+    full_method : {"dft", "uma"}, optional
+        Calculator family used for final geometries and frequencies.
+    ranking_stage : str or None, optional
+        Explicit ranking stage, such as ``"uma_rank_sp"`` for a hybrid run.
 
     Returns
     -------
@@ -149,7 +222,11 @@ def attach_result_contract(
         dft=dft,
         calculation_level=calculation_level,
         include_terminal_solv_sp=include_terminal_solv_sp,
+        screening_opt_stage=screening_opt_stage,
+        include_dft_rank_sp=include_dft_rank_sp,
         thermochemistry=thermochemistry,
+        full_method=full_method,
+        ranking_stage=ranking_stage,
     )
     return df
 
@@ -231,8 +308,9 @@ def frequency_values(row: Mapping[str, Any] | pd.Series) -> list[float]:
     ----------
     row : mapping or pandas.Series
         One result row. Screening rows use
-        ``dft_freq-frequencies_cm1``; standard rows may instead contain a
-        full ``*-vibs`` normal-mode column.
+        ``dft_freq-frequencies_cm1`` or ``uma_freq-frequencies_cm1``;
+        standard rows may instead contain a full ``*-vibs`` normal-mode
+        column.
 
     Returns
     -------
@@ -250,7 +328,9 @@ def frequency_values(row: Mapping[str, Any] | pd.Series) -> list[float]:
         if isinstance(value, (list, tuple, np.ndarray)):
             return [float(item) for item in value]
 
-    vibration_columns = [column for column in row.keys() if str(column).endswith("-vibs")]
+    vibration_columns = [
+        column for column in row.keys() if str(column).endswith("-vibs")
+    ]
     for column in reversed(vibration_columns):
         value = row[column]
         if not isinstance(value, (list, tuple, np.ndarray)):
@@ -274,7 +354,7 @@ def free_energy_components(
     Parameters
     ----------
     df : pandas.DataFrame
-        Canonical DFT workflow result.
+        Canonical full workflow result with frequency thermochemistry.
     thermochemistry : ThermochemistrySpec or mapping or None, optional
         Explicit recipe. When omitted, use the recipe recorded in the
         dataframe's ``frust_results`` contract.
@@ -288,9 +368,23 @@ def free_energy_components(
     """
     recipe = _thermochemistry_mapping(df, thermochemistry)
     mode = str(recipe.get("mode", "")).strip().lower()
-    frequency_ge = get_result(df, "gibbs_energy", purpose="frequency")
-    frequency_ee = get_result(df, "electronic_energy", purpose="frequency")
-    analysis_ee = get_result(df, "electronic_energy", purpose="analysis")
+    frequency_ge_column = result_column(
+        df, "gibbs_energy", purpose="frequency", require_present=False
+    )
+    frequency_ee_column = result_column(
+        df, "electronic_energy", purpose="frequency", require_present=False
+    )
+    frequency_ge = pd.to_numeric(
+        df.get(frequency_ge_column, pd.Series(np.nan, index=df.index)),
+        errors="coerce",
+    )
+    frequency_ee = pd.to_numeric(
+        df.get(frequency_ee_column, pd.Series(np.nan, index=df.index)),
+        errors="coerce",
+    )
+    analysis_ee = pd.to_numeric(
+        get_result(df, "electronic_energy", purpose="analysis"), errors="coerce"
+    )
     thermal = frequency_ge - frequency_ee
     if mode == "frequency_gibbs":
         free_energy = frequency_ge

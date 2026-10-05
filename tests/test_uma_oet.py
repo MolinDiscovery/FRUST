@@ -130,6 +130,27 @@ class UmaOetTests(unittest.TestCase):
             )
             self.assertEqual(result.stdout.strip(), str(oet_root))
 
+    def test_explicit_oet_tools_overrides_dotenv_in_new_process(self):
+        with tempfile.TemporaryDirectory() as td:
+            tmp = Path(td)
+            configured = tmp / "configured"
+            pinned = tmp / "pinned"
+            configured.mkdir()
+            pinned.mkdir()
+            env_file = tmp / "frust.env"
+            env_file.write_text(f"OET_TOOLS={configured}\n", encoding="utf-8")
+            env = dict(os.environ)
+            env.update({"OET_TOOLS": str(pinned), "TOOLTOAD_DOTENV_PATH": str(env_file)})
+            result = subprocess.run(
+                [sys.executable, "-c", "from frust.config import get_oet_tools; print(get_oet_tools())"],
+                cwd=Path(__file__).resolve().parents[1],
+                env=env,
+                text=True,
+                capture_output=True,
+                check=True,
+            )
+            self.assertEqual(result.stdout.strip(), str(pinned))
+
     def test_get_oet_tools_missing_is_lazy_failure(self):
         env = dict(os.environ)
         env.pop("OET_TOOLS", None)
@@ -158,6 +179,28 @@ class UmaOetTests(unittest.TestCase):
             with self.subTest(value=value):
                 with self.assertRaises(ValueError):
                     parse_uma_spec(value)
+
+    def test_solvent_correction_is_explicit_in_orca_ext_params(self):
+        with tempfile.TemporaryDirectory() as td:
+            root = _fake_oet_root(Path(td))
+            spec = parse_uma_spec(
+                "omol@uma-s-1p1",
+                xtb_alpb="chloroform",
+                xtb_exe="/opt/xtb/bin/xtb",
+                inference_settings="batch",
+            )
+            block = uma_orca_block(spec, server=True, bind="127.0.0.1:12345", tools=root)
+
+        self.assertIn("--xtb-alpb chloroform --xtb-exe /opt/xtb/bin/xtb", block)
+        self.assertIn("--inference-settings batch", block)
+
+    def test_solvent_correction_rejects_unsupported_settings(self):
+        with self.assertRaisesRegex(ValueError, "only 'chloroform'"):
+            parse_uma_spec("omol", xtb_alpb="water")
+        with self.assertRaisesRegex(ValueError, "requires uma_xtb_alpb"):
+            parse_uma_spec("omol", xtb_exe="/opt/xtb/bin/xtb")
+        with self.assertRaisesRegex(ValueError, "uma_inference_settings"):
+            parse_uma_spec("omol", inference_settings="unknown")
 
     def test_server_orca_block_uses_oet_client_and_bind(self):
         with tempfile.TemporaryDirectory() as td:

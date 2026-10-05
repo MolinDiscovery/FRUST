@@ -1,0 +1,7 @@
+After Slurm job 65678046 completed, a separate kemi1 allocation on node066
+(Slurm job 65678076) ran:
+
+ps -p 700314 -o pid=,args= | grep -q oet_server
+
+Observed host: node066.cluster
+Observed result: server_absent (no matching process; check exit status 0)

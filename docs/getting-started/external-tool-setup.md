@@ -70,16 +70,24 @@ from FRUST and separate from ORCA.
 
 !!! info "Why FRUST uses a custom OET fork"
 
-    FRUST uses the MolinDiscovery OET fork because the g-xTB route was changed
-    to work with the newer g-xTB 2.0 architecture. Upstream OET's documented
-    g-xTB path is based on the older preliminary g-xTB setup, where ORCA's
-    wrapper route used numerical gradients. For FRUST we want ORCA to drive
-    optimizations while g-xTB 2.0 supplies the external energies and gradients.
+    The MolinDiscovery OET fork at `1b4fcda` has two FRUST-specific
+    capabilities. Its `oet_gxtb` wrapper calls the g-xTB 2.0 implementation
+    inside the modified `xtb` binary and returns energies and gradients to
+    ORCA. This bridges the earlier standalone `gxtb` interface to the g-xTB
+    2.0 executable. Direct `Stepper.gxtb(...)` uses the same executable
+    through Tooltoad.
 
-    The custom `oet_gxtb` wrapper does that bridge: ORCA calls `oet_gxtb`,
-    `oet_gxtb` calls the g-xTB 2.0 `xtb` binary from `GXTB_EXE`, and the
-    resulting energy/gradient information is passed back to ORCA. Direct
-    `Stepper.gxtb(...)` uses the same g-xTB 2.0 executable through Tooltoad.
+    The fork also accepts `--xtb-alpb chloroform` for UMA and adds the
+    GFN2-xTB ALPB-minus-gas energy **and gradient** correction to UMA. FRUST
+    writes the flag into ORCA's `%method Ext_Params`, so it is visible in the
+    saved input. See [UMA With FRUST](../external-tools/uma.md)
+    for the calculation formula and [UMA Method Choices For Catalyst
+    Screens](../catalyst-screens/uma-screening.md) for complete workflows.
+
+    For the documented UMA-S 1.2.1 workflow, use an OET runtime with
+    `fairchem-core` 2.23.0 and explicitly select `omol@uma-s-1p2p1`. The
+    FRUST Python environment does not by itself select the OET calculator's
+    FairChem version.
 
 Choose stable install paths:
 

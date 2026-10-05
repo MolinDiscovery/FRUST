@@ -25,6 +25,7 @@ _IDENTITY_COLUMNS = (
     "structure_type",
     "rpos",
     "cid",
+    "parent_uma_result_id",
     "charge",
     "multiplicity",
     "smiles",
@@ -71,7 +72,9 @@ def compact_result_dataframe(df: pd.DataFrame) -> pd.DataFrame:
     -------
     pandas.DataFrame
         Compact result containing identity, final structure, scalar energies,
-        full frequency values, termination flags, and provenance attrs.
+        full frequency values, termination flags, and provenance attrs. Full
+        UMA transition-state rows also retain final mode vectors so their
+        reaction coordinate remains reviewable.
     """
     contract = copy.deepcopy(df.attrs.get("frust_results", {}))
     columns = contract.get("columns", {}) if isinstance(contract, dict) else {}
@@ -101,10 +104,21 @@ def compact_result_dataframe(df: pd.DataFrame) -> pd.DataFrame:
         else [[] for _ in range(len(df))]
     )
     has_frequencies = any(frequency_rows)
+    keep_uma_modes = (
+        contract.get("profile") == "transition_state"
+        and contract.get("calculation_level") == "full"
+        and contract.get("dft") is False
+        and "uma_freq-vibs" in df.columns
+    )
+    if keep_uma_modes:
+        keep.append("uma_freq-vibs")
     if has_frequencies:
         df = df.copy()
-        df[COMPACT_FREQUENCY_COLUMN] = frequency_rows
-        keep.append(COMPACT_FREQUENCY_COLUMN)
+        frequency_column = columns["frequency"].get(
+            "frequencies", COMPACT_FREQUENCY_COLUMN
+        )
+        df[frequency_column] = frequency_rows
+        keep.append(frequency_column)
 
     retained_prefixes = {
         column.rsplit("-", 1)[0]
@@ -124,14 +138,14 @@ def compact_result_dataframe(df: pd.DataFrame) -> pd.DataFrame:
             frequency_contract = contract.setdefault("columns", {}).setdefault(
                 "frequency", {}
             )
-            frequency_contract["frequencies"] = COMPACT_FREQUENCY_COLUMN
+            frequency_contract["frequencies"] = frequency_column
         compact.attrs["frust_results"] = contract
     compact.attrs["frust_artifacts"] = {
         "schema_version": 1,
         "policy": "screening",
         "final_geometry": True,
         "frequency_values": bool(has_frequencies),
-        "vibration_displacements": False,
+        "vibration_displacements": keep_uma_modes,
         "calculator_files": False,
     }
     return compact

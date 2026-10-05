@@ -1,0 +1,160 @@
+{
+  "collected_files": [
+    "/lustre/hpc/kemi/jmni/results/uma-task06-smoke-20260930/alpb_full/workflow/calculations/transition_states/TS1__n_methyl_pyrrole__tmp_bcat__r2/init.dft_hessian.dft_ts_opt.dft_freq.dft_solv_sp.parquet"
+  ],
+  "compaction": {
+    "errors": [],
+    "n_removed_files": 0,
+    "n_targets": 0,
+    "removed_bytes": 0,
+    "targets": []
+  },
+  "errored_files": [],
+  "errors": [],
+  "failure_summary": [],
+  "missing_files": [],
+  "n_collected": 1,
+  "n_errored": 0,
+  "n_failures": 0,
+  "n_missing": 0,
+  "n_rows": 1,
+  "n_skipped": 0,
+  "n_targets": 1,
+  "output": "/lustre/hpc/kemi/jmni/results/uma-task06-smoke-20260930/alpb_full/workflow/calculations/transition_states/merged.parquet",
+  "require_normal_termination": true,
+  "skipped_files": [],
+  "target_retention": "all",
+  "timing": {
+    "errored_timing_files": [],
+    "missing_timing_targets": [],
+    "n_timing_files": 1,
+    "n_timing_groups": 5,
+    "slowest_groups": [
+      {
+        "elapsed_s": 4294.394153,
+        "finished_at": "2026-09-30T09:35:03Z",
+        "group": "init",
+        "job_id": "65689162",
+        "kind": "group",
+        "output_parquet": "init.parquet",
+        "output_rows": 1,
+        "resources": {
+          "memory_gb": 25.6,
+          "n_cores": 4
+        },
+        "schema_version": 1,
+        "stage_ids": [
+          "prepare",
+          "initial_prune",
+          "xtb_preopt",
+          "uma_sp",
+          "uma_sp_filter",
+          "uma_opt",
+          "dft_preopt"
+        ],
+        "started_at": "2026-09-30T08:23:29Z",
+        "submitted_at": "2026-09-30T08:22:50Z",
+        "target": "TS1__n_methyl_pyrrole__tmp_bcat__r2",
+        "workflow": "screen_ts"
+      },
+      {
+        "elapsed_s": 3008.738244,
+        "finished_at": "2026-09-30T11:33:41Z",
+        "group": "dft_freq",
+        "input_parquet": "init.dft_hessian.dft_ts_opt.parquet",
+        "input_rows": 1,
+        "job_id": "65689166",
+        "kind": "group",
+        "output_parquet": "init.dft_hessian.dft_ts_opt.dft_freq.parquet",
+        "output_rows": 1,
+        "resources": {
+          "memory_gb": 38.400000000000006,
+          "n_cores": 4
+        },
+        "schema_version": 1,
+        "stage_ids": [
+          "dft_freq"
+        ],
+        "started_at": "2026-09-30T10:43:32Z",
+        "submitted_at": "2026-09-30T08:22:50Z",
+        "target": "TS1__n_methyl_pyrrole__tmp_bcat__r2",
+        "workflow": "screen_ts"
+      },
+      {
+        "elapsed_s": 2855.520639,
+        "finished_at": "2026-09-30T10:23:17Z",
+        "group": "dft_hessian",
+        "input_parquet": "init.parquet",
+        "input_rows": 1,
+        "job_id": "65689163",
+        "kind": "group",
+        "output_parquet": "init.dft_hessian.parquet",
+        "output_rows": 1,
+        "resources": {
+          "memory_gb": 38.400000000000006,
+          "n_cores": 4
+        },
+        "schema_version": 1,
+        "stage_ids": [
+          "dft_hessian"
+        ],
+        "started_at": "2026-09-30T09:35:41Z",
+        "submitted_at": "2026-09-30T08:22:50Z",
+        "target": "TS1__n_methyl_pyrrole__tmp_bcat__r2",
+        "workflow": "screen_ts"
+      },
+      {
+        "elapsed_s": 1167.449554,
+        "finished_at": "2026-09-30T10:42:55Z",
+        "group": "dft_ts_opt",
+        "input_parquet": "init.dft_hessian.parquet",
+        "input_rows": 1,
+        "job_id": "65689164",
+        "kind": "group",
+        "output_parquet": "init.dft_hessian.dft_ts_opt.parquet",
+        "output_rows": 1,
+        "resources": {
+          "memory_gb": 25.6,
+          "n_cores": 4
+        },
+        "schema_version": 1,
+        "stage_ids": [
+          "dft_ts_opt"
+        ],
+        "started_at": "2026-09-30T10:23:27Z",
+        "submitted_at": "2026-09-30T08:22:50Z",
+        "target": "TS1__n_methyl_pyrrole__tmp_bcat__r2",
+        "workflow": "screen_ts"
+      },
+      {
+        "elapsed_s": 689.190963,
+        "finished_at": "2026-09-30T11:45:35Z",
+        "group": "dft_solv_sp",
+        "input_parquet": "init.dft_hessian.dft_ts_opt.dft_freq.parquet",
+        "input_rows": 1,
+        "job_id": "65689168",
+        "kind": "group",
+        "output_parquet": "init.dft_hessian.dft_ts_opt.dft_freq.dft_solv_sp.parquet",
+        "output_rows": 1,
+        "resources": {
+          "memory_gb": 25.6,
+          "n_cores": 4
+        },
+        "schema_version": 1,
+        "stage_ids": [
+          "dft_solv_sp"
+        ],
+        "started_at": "2026-09-30T11:34:06Z",
+        "submitted_at": "2026-09-30T08:22:50Z",
+        "target": "TS1__n_methyl_pyrrole__tmp_bcat__r2",
+        "workflow": "screen_ts"
+      }
+    ],
+    "timing_files": [
+      "/lustre/hpc/kemi/jmni/results/uma-task06-smoke-20260930/alpb_full/workflow/calculations/transition_states/TS1__n_methyl_pyrrole__tmp_bcat__r2/timing.json"
+    ],
+    "total_core_hours": 13.350326,
+    "total_elapsed_s": 12015.293553
+  },
+  "workflow": "screen_ts"
+}

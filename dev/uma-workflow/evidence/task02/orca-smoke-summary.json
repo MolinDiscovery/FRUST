@@ -1,0 +1,111 @@
+{
+  "normal_termination": true,
+  "energy_Eh": -76.4371690506,
+  "uma_spec": "omol@uma-s-1p2p1",
+  "uma_xtb_alpb": "chloroform",
+  "input": {
+    "options": {
+      "ExtOpt": null,
+      "Opt": null
+    },
+    "xtra_inp_str": null,
+    "constraint": false,
+    "save_step": true,
+    "save_files": [
+      "input.inp",
+      "orca.out"
+    ],
+    "lowest": null,
+    "read_files": null,
+    "use_last_hess": false,
+    "calc_hess": false,
+    "ts_mode": null,
+    "ts_active_atoms": null,
+    "ts_active_atoms_factor": null,
+    "recalc_hess": null,
+    "trust_radius": null,
+    "max_step": null,
+    "n_cores": 1,
+    "memory_gb": 2,
+    "generated_input_blocks": null,
+    "uma": "omol@uma-s-1p2p1",
+    "uma_task": "omol",
+    "uma_model": "uma-s-1p2p1",
+    "uma_server": true,
+    "uma_device": "cpu",
+    "uma_cache_dir": null,
+    "uma_offline": true,
+    "uma_server_cores": 1,
+    "uma_memory_per_thread_mib": 500,
+    "uma_keep_logs": "always",
+    "uma_log_dir": "/Users/jacobmolinnielsen/Developer/FrustActivationProject/FRUST/dev/uma-workflow/evidence/task02/orca-opt/server-logs",
+    "uma_xtb_alpb": "chloroform",
+    "uma_xtb_exe": "/opt/homebrew/Caskroom/miniconda/base/envs/UMA/bin/xtb",
+    "uma_inference_settings": "batch"
+  },
+  "calculator": {
+    "name": "orca",
+    "mode": "orca_external_uma",
+    "backend": "tooltoad.orca.orca_calculate",
+    "resources": {
+      "n_cores": 1,
+      "memory_gb": 2,
+      "uma_server_cores": 1,
+      "uma_memory_per_thread_mib": 500
+    },
+    "executables": {
+      "orca": {
+        "path": "/Users/jacobmolinnielsen/Library/orca_6_1_0/orca",
+        "configured": "/Users/jacobmolinnielsen/Library/orca_6_1_0/orca",
+        "source": "ORCA_EXE",
+        "resolved": true
+      },
+      "xtb": {
+        "path": "/opt/homebrew/Caskroom/miniconda/base/envs/UMA/bin/xtb",
+        "configured": "/opt/homebrew/Caskroom/miniconda/base/envs/UMA/bin/xtb",
+        "source": "XTB_EXE",
+        "resolved": true
+      },
+      "oet_client": {
+        "path": "/Users/jacobmolinnielsen/Library/orca-external-tools/bin/oet_client",
+        "configured": "/Users/jacobmolinnielsen/Library/orca-external-tools/bin/oet_client",
+        "source": "OET_TOOLS",
+        "resolved": true
+      },
+      "oet_server": {
+        "path": "/Users/jacobmolinnielsen/Library/orca-external-tools/bin/oet_server",
+        "configured": "/Users/jacobmolinnielsen/Library/orca-external-tools/bin/oet_server",
+        "source": "OET_TOOLS",
+        "resolved": true
+      }
+    },
+    "environment": {
+      "OPEN_MPI_DIR": {
+        "path": "/Users/jacobmolinnielsen/openmpi",
+        "configured": "/Users/jacobmolinnielsen/openmpi",
+        "source": "OPEN_MPI_DIR",
+        "resolved": true
+      },
+      "XTBPATH": {
+        "path": "/opt/homebrew/Caskroom/miniconda/base/envs/UMA/share/xtb",
+        "configured": "/opt/homebrew/Caskroom/miniconda/base/envs/UMA/share/xtb",
+        "source": "XTBPATH",
+        "resolved": true
+      }
+    },
+    "uma": {
+      "spec": "omol@uma-s-1p2p1",
+      "task": "omol",
+      "model": "uma-s-1p2p1",
+      "device": "cpu",
+      "cache_dir": null,
+      "offline": true,
+      "server": true,
+      "xtb_method": "GFN2-xTB",
+      "solvent_model": "ALPB",
+      "solvent": "chloroform",
+      "xtb_exe": "/opt/homebrew/Caskroom/miniconda/base/envs/UMA/bin/xtb",
+      "inference_settings": "batch"
+    }
+  }
+}

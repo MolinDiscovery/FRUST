@@ -1,0 +1,26 @@
+host=node066.cluster
+job=65658535
+node_list=node066
+oet_executable=/lustre/hpc/kemi/jmni/software/orca-external-tools/bin/oet_uma
+WARNING:root:If 'dataset_list' is provided in the config, the code assumes that each dataset maps to itself. Please use 'dataset_mapping' as 'dataset_list' is deprecated and will be removed in the future.
+Model files detected. Switching to offline mode.
+#
+# Number of atoms
+#
+3
+#
+# Total energy [Eh]
+#
+-7.642751493306e+01
+#
+# Gradient [Eh/Bohr] A1X, A1Y, A1Z, A2X, ...
+#
+-1.237076996397e-09
+-7.345144492632e-10
+ 7.668145000935e-02
+-4.253340885043e-02
+ 2.905842455547e-09
+-3.834072500467e-02
+ 4.253340885043e-02
+-2.171327784239e-09
+-3.834072500467e-02

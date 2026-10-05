@@ -1,0 +1,10 @@
+| 13> Ext_Params "-b 127.0.0.1:56971 -t omol -m uma-s-1p2p1 -d cpu -o True --xtb-alpb chloroform --xtb-exe /opt/homebrew/Caskroom/miniconda/base/envs/UMA/bin/xtb --inference-settings batch"
+         *                GEOMETRY OPTIMIZATION CYCLE   1            *
+FINAL SINGLE POINT ENERGY (From external program)       -76.430416747620
+         *                GEOMETRY OPTIMIZATION CYCLE   2            *
+         *                GEOMETRY OPTIMIZATION CYCLE   3            *
+         *                GEOMETRY OPTIMIZATION CYCLE   4            *
+         *                GEOMETRY OPTIMIZATION CYCLE   5            *
+                    ***        THE OPTIMIZATION HAS CONVERGED     ***
+FINAL SINGLE POINT ENERGY (From external program)       -76.437169050600
+                             ****ORCA TERMINATED NORMALLY****

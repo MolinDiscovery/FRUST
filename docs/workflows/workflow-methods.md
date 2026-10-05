@@ -1,19 +1,21 @@
 # Workflow Method Plans
 
 `ft.workflows` is the recommended high-level API for new FRUST runs that should
-move cleanly from a local test to cluster submission. It keeps three decisions
+move cleanly from a local test to cluster submission. It keeps four decisions
 separate:
 
 | Concept | Owns | Example |
 | --- | --- | --- |
 | `Workflow` | chemistry, targets, stage graph | `ft.workflows.screen_ts(...)` |
-| `MethodPlan` | calculator engines/options, solvent-SP policy, and thermochemistry recipe | `ft.workflows.methods.preset("r2scan-3c")` |
+| `ScreeningPlan` | GFN-FF preparation and g-xTB or UMA screening potential | `ft.workflows.methods.screening_preset("uma-alpb-chloroform")` |
+| `RankingPlan` | Optional UMA SP reranking after g-xTB optimization | `ft.workflows.methods.ranking_preset("uma-gas")` |
+| `MethodPlan` | Final UMA or DFT calculator options and thermochemistry recipe | `ft.workflows.methods.preset("uma-alpb-chloroform")` |
 | execution mode | job grouping | `single_job`, `dft_staged`, `fully_staged` |
 
 The same workflow and method can be used in both places:
 
 ```text
-same Workflow + same MethodPlan
+same Workflow + same ScreeningPlan + same MethodPlan
     -> local smoke test with wf.run(...)
     -> cluster production with wf.submit(...)
 ```
@@ -59,6 +61,29 @@ when the workflow runs.
 
 ## Method Plans
 
+For catalyst screens, choose the screening potential separately from the final
+method. For example:
+
+```python
+wf = ft.workflows.catalyst_screen(
+    csv_path="screen.csv",
+    ts_types=["TS1"],
+    screening="uma-alpb-chloroform",
+    method="wb97xd3-631g",
+    level="full",
+    include_dft_rank_sp=False,
+)
+
+wf.show_stages()[["branch", "stage", "engine", "solvent"]]
+```
+
+Here `uma_sp` selects conformers, `uma_opt` optimizes them with the same
+ALPB-corrected UMA potential, and ωB97 supplies the final barrier. Use
+`screening="uma-gas"` to omit the correction. The `ScreeningPlan` does not
+choose the TS guess profile; `spec_profile` does. See the
+[UMA method choices](../catalyst-screens/uma-screening.md) for all four paths,
+result tiers, and mode review.
+
 Built-in method plans are selected by name:
 
 ```python
@@ -80,17 +105,20 @@ because the calculation level is visible at the workflow construction site.
 
 ### Built-In Presets
 
-| preset name | DFT stages | solvent treatment | Use when |
+| preset name | Final stages | solvent treatment | Use when |
 | --- | --- | --- | --- |
+| `"uma-gas"` | UMA Hessian/OptTS/NumFreq for TSs; UMA Opt/NumFreq for minima | Gas UMA at every final stage | You want an UMA barrier and matching UMA references in gas phase. |
+| `"uma-alpb-chloroform"` | UMA Hessian/OptTS/NumFreq for TSs; UMA Opt/NumFreq for minima | UMA plus GFN2-xTB ALPB(chloroform) minus gas correction | You want an UMA barrier and matching UMA references in the corrected environment. |
 | `"r2scan-3c"` | ORCA `r2SCAN-3c` composite method | ORCA `r2SCAN-3c` single point with SMD chloroform | You want the compact composite-method workflow currently used in most new examples. |
 | `"wb97xd3-631g"` | ORCA `wB97X-D3/6-31G**` | ORCA `wB97X-D3/6-31+G**` single point with SMD chloroform | You want FRUST's legacy/default workflow behavior. |
 | `"r2scan-3c-solv"` | Solvent-inclusive ORCA `r2SCAN-3c` composite method | SMD chloroform in every DFT stage; no final solvent SP | You want the structure, frequencies, and ranking energies evaluated consistently in chloroform. |
 | `"wb97xd3-631g-solv"` | Solvent-inclusive ORCA `wB97X-D3/6-31G**` | SMD chloroform in every DFT stage; no final solvent SP | You want the conventional wB97X-D3 workflow evaluated consistently in chloroform. |
 | `"r2scan-def2svp"` | ORCA `R2SCAN/def2-SVP` | ORCA `R2SCAN/def2-SVPD` single point with SMD chloroform | You want a conventional R2SCAN/basis-set workflow instead of the `r2SCAN-3c` composite method. |
 
-The low-cost initialization stages are identical across presets. The existing
-gas-phase presets end with `dft_solv_sp`; the two `*-solv` presets omit that
-stage because their DFT calculations already include SMD chloroform.
+The final UMA presets require matching UMA screening and do not schedule a
+`dft_*` stage. The existing gas-phase DFT presets end with `dft_solv_sp`;
+the two `*-solv` DFT presets omit it because their DFT calculations already
+include SMD chloroform.
 
 The plan also records how molecular free energies are assembled:
 
@@ -115,6 +143,10 @@ from being silently mixed.
 | `xtb_preopt` | `xtb` | constrained GFNFF preoptimization |
 | `xtb_sp` | `gxtb` | direct g-xTB single point ranking |
 | `xtb_opt` | `gxtb` | constrained direct g-xTB optimization and conformer filtering |
+| `uma_sp` / `uma_opt` | `orca` with UMA | UMA screening single point and constrained optimization |
+| `uma_rank_sp` | `orca` with UMA | UMA single point on g-xTB optimized geometries; no UMA optimization |
+| `uma_hessian` / `uma_ts_opt` / `uma_freq` | `orca` with UMA | released TS Hessian, OptTS, and numerical frequencies for an UMA final barrier |
+| `uma_min_opt` | `orca` with UMA | final UMA minimum optimization before numerical frequencies |
 | `dft_rank_sp` | `orca` | DFT single point before DFT optimization |
 | `dft_preopt` | `orca` | constrained DFT preoptimization |
 | `dft_opt` | `orca` | DFT optimization for molecule workflows |
@@ -122,6 +154,12 @@ from being silently mixed.
 | `dft_ts_opt` | `orca` | ORCA `OptTS` |
 | `dft_freq` | `orca` | final frequency check |
 | `dft_solv_sp` | `orca` | final solvent single point for gas-phase presets only |
+
+For g-xTB → UMA SP → ωB97, `top_n` is the broad g-xTB cutoff and
+`uma_rank_top_n` is the later UMA cutoff. For a full UMA result,
+`ts_refine_n` controls how many distinct constrained UMA geometries proceed
+to released OptTS and NumFreq. These cutoffs belong to the workflow, so
+changing method presets does not change chemistry target expansion.
 
 `method.stages` is the reusable calculator map. To see which parts of that map
 a specific workflow will actually run, inspect the workflow:

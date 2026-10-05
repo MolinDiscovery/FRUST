@@ -1946,6 +1946,9 @@ class Stepper:
         uma_memory_per_thread_mib: int = 500,
         uma_keep_logs: bool | str = "on_failure",
         uma_log_dir: str | None = None,
+        uma_xtb_alpb: str | None = None,
+        uma_xtb_exe: str | None = None,
+        uma_inference_settings: str | None = None,
         ts_mode: tuple[str, ...] | list[str] | None = None,
         ts_active_atoms: tuple[str, ...] | list[str] | None = None,
         ts_active_atoms_factor: float | None = None,
@@ -2023,6 +2026,15 @@ class Stepper:
             uma_log_dir (str or None, optional): Directory for preserved UMA
                 server logs. If omitted, transient logs are written to a temp
                 directory and preserved failures are copied to ``UMA-logs``.
+            uma_xtb_alpb (str or None, optional): Add the GFN2-xTB ALPB solvent
+                correction to UMA energies and gradients. Currently accepts
+                ``"chloroform"``; ``None`` keeps gas-phase UMA.
+            uma_xtb_exe (str or None, optional): Normal xTB executable used
+                for the UMA solvent correction. Requires ``uma_xtb_alpb``.
+                If omitted, OET uses ``XTB_EXE`` or ``xtb`` on its path.
+            uma_inference_settings (str or None, optional): FairChem inference
+                mode: ``"default"`` or ``"turbo"`` use model compilation;
+                ``"batch"`` avoids it. ``None`` uses OET's ``"batch"`` default.
             ts_mode (sequence of str or None, optional): Chemical roles defining
                 the ORCA internal coordinate followed during ``OptTS``. Two
                 roles select a bond, three an angle, and four a dihedral. For
@@ -2300,13 +2312,21 @@ class Stepper:
             result.attrs["frust_steps"][prefix]["gxtb_exe_source"] = calc_gxtb["source"]
             return result
         
-        from frust.utils.uma import parse_uma_spec, uma_orca_block, uma_server as run_uma_server
+        from frust.utils.uma import (
+            current_uma_job_scope,
+            parse_uma_spec,
+            uma_orca_block,
+            uma_server as run_uma_server,
+        )
 
         spec = parse_uma_spec(
             uma,
             device=uma_device,
             cache_dir=uma_cache_dir,
             offline=uma_offline,
+            xtb_alpb=uma_xtb_alpb,
+            xtb_exe=uma_xtb_exe,
+            inference_settings=uma_inference_settings,
         )
 
         def uma_calculator(
@@ -2334,6 +2354,11 @@ class Stepper:
                     "cache_dir": spec.cache_dir,
                     "offline": spec.offline,
                     "server": server,
+                    "xtb_method": "GFN2-xTB" if spec.xtb_alpb else None,
+                    "solvent_model": "ALPB" if spec.xtb_alpb else None,
+                    "solvent": spec.xtb_alpb,
+                    "xtb_exe": spec.xtb_exe,
+                    "inference_settings": spec.inference_settings or "batch",
                 },
             )
 
@@ -2350,7 +2375,10 @@ class Stepper:
                 inp["xtra_inp_str"] = (xin + "\n\n" + client_block).strip() if xin else client_block
                 return inp
 
-            result = self._run_engine(df, self.orca_fn, prefix, build_orca_uma, save_step, lowest, save_files)
+            result = self._run_engine(
+                df, self.orca_fn, prefix, build_orca_uma, save_step, lowest,
+                save_files, use_last_hess,
+            )
             uma_input = {
                 "uma": uma,
                 "uma_task": spec.task,
@@ -2363,6 +2391,9 @@ class Stepper:
                 "uma_memory_per_thread_mib": int(uma_memory_per_thread_mib),
                 "uma_keep_logs": uma_keep_logs,
                 "uma_log_dir": _metadata_text(uma_log_dir),
+                "uma_xtb_alpb": spec.xtb_alpb,
+                "uma_xtb_exe": _metadata_text(spec.xtb_exe),
+                "uma_inference_settings": spec.inference_settings or "batch",
             }
             uma_input.update(input_extra or {})
             result.attrs.setdefault("frust_steps", {}).setdefault(prefix, {}).update(
@@ -2373,6 +2404,7 @@ class Stepper:
                     "uma_task": spec.task,
                     "uma_model": spec.model,
                     "uma_server": uma_server,
+                    "uma_xtb_alpb": spec.xtb_alpb,
                     "input": build_input_metadata(**uma_input),
                     "calculator": calculator,
                 }
@@ -2393,13 +2425,8 @@ class Stepper:
             return run_with_uma_block(client_block, uma_calculator(server=False))
 
         server_cores = uma_server_cores if uma_server_cores is not None else effective_n_cores
-        with run_uma_server(
-            log_dir=uma_log_dir,
-            keep_logs=uma_keep_logs,
-            use_gpu=uma_device == "cuda",
-            server_cores=server_cores,
-            memory_per_thread_mib=uma_memory_per_thread_mib,
-        ) as server_handle:
+
+        def run_on_server(server_handle):
             client_block = uma_orca_block(spec, server=True, bind=server_handle.bind)
             result = run_with_uma_block(
                 client_block,
@@ -2410,8 +2437,33 @@ class Stepper:
                         "uma_memory_per_thread_mib": int(uma_memory_per_thread_mib),
                     },
                 ),
-                input_extra={"uma_server_cores": int(server_cores)},
+                input_extra={
+                    "uma_server_cores": int(server_cores),
+                    "uma_server_pid": getattr(server_handle, "pid", None),
+                    "uma_server_hostname": getattr(server_handle, "hostname", None),
+                    "uma_server_bind": server_handle.bind,
+                },
             )
             if uma_keep_logs == "on_failure" and uma_result_failed(result):
                 server_handle.preserve()
             return result
+
+        job_scope = current_uma_job_scope()
+        if job_scope is not None:
+            server_handle = job_scope.acquire(
+                log_dir=uma_log_dir,
+                keep_logs=uma_keep_logs,
+                use_gpu=uma_device == "cuda",
+                server_cores=server_cores,
+                memory_per_thread_mib=uma_memory_per_thread_mib,
+            )
+            return run_on_server(server_handle)
+
+        with run_uma_server(
+            log_dir=uma_log_dir,
+            keep_logs=uma_keep_logs,
+            use_gpu=uma_device == "cuda",
+            server_cores=server_cores,
+            memory_per_thread_mib=uma_memory_per_thread_mib,
+        ) as server_handle:
+            return run_on_server(server_handle)
