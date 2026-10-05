@@ -52,7 +52,8 @@ Planning this must not embed molecules, start UMA, or run a calculator.
 
 ## Completion record
 
-Completed 2026-10-05, based on FRUST `0888f44` (local changes).
+Completed 2026-10-05, implementation revision `1b7ad19` on `feature/slurm-arrays`
+(based on FRUST `0888f44`).
 
 - Added the three options to `BaseWorkflow.submit`, an internal lightweight
   planner, `SubmissionRecord`, and compatible result fields. Scalars and complete
