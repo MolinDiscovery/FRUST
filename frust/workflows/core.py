@@ -40,6 +40,10 @@ from frust.cluster.executor import (
     update_executor_with_dependencies,
     update_executor_with_dependency,
 )
+from frust.cluster.submission import (
+    SubmissionLedger, _plan_submission, _submit_array_jobs,
+    _validate_array_scheduler_options, _validate_array_size,
+)
 from frust.cluster.naming import sanitize_tag
 from frust.results import ResultProfile, attach_result_contract
 from frust.schema import (
@@ -640,6 +644,9 @@ class BaseWorkflow:
         cluster: ClusterConfig,
         execution: ExecutionMode | None = None,
         stage_resources: dict[str, Resources] | None = None,
+        array: bool = False,
+        array_parallelism: int | Mapping[str, int] | None = None,
+        targets_per_task: int = 1,
         targets: Iterable[WorkflowTarget] | Iterable[int] | None = None,
         debug: bool = False,
         save_output_dir: bool = True,
@@ -682,6 +689,19 @@ class BaseWorkflow:
             ``"dft_opt"``, ``"dft_freq"``, and ``"dft_solv_sp"``; screen TS
             workflows usually use ``"init"``, ``"dft_hessian"``,
             ``"dft_ts_opt"``, ``"dft_freq"``, and ``"dft_solv_sp"``.
+        array : bool, optional
+            Submit worker jobs together as a Slurm array. Defaults to False,
+            preserving individual submission. Currently requires ``single_job``.
+        array_parallelism : int or mapping of str to int or None, optional
+            Maximum running elements per array, required when ``array=True``.
+            ``single_job`` requires one positive integer. Staged planning accepts
+            a complete stage-group mapping, but staged arrays are not enabled yet.
+            This is not a run-wide limit across separate arrays. Local array
+            submission waits for free execution slots before submitting more
+            workers, so this call can block until earlier workers finish.
+        targets_per_task : int, optional
+            Number of sequential targets per element. Currently only 1 is
+            executable; larger single-job batches are reserved for later support.
         targets : iterable of WorkflowTarget or int or None, optional
             Targets to submit. Integers select positions from ``wf.targets()``.
             If omitted, all workflow targets are submitted.
@@ -742,9 +762,34 @@ class BaseWorkflow:
         selected = self._select_targets(targets)
         mode = execution or ("dft_staged" if self.dft else "single_job")
         groups = self._stage_groups(mode)
+        planned_groups = []
+        planned_output = None
+        for group in groups:
+            group_name = "single_job" if mode == "single_job" else self._group_name(group)
+            planned_output = (
+                "final.parquet" if mode == "single_job"
+                else _next_parquet(planned_output, group_name)
+            )
+            planned_groups.append((
+                group_name,
+                _resource_for_group(group_name, group, stage_resources, default=DEFAULT_WORKFLOW_RESOURCES),
+                planned_output,
+            ))
+        plan = _plan_submission(
+            [target.tag for target in selected], planned_groups, execution=mode,
+            array=array, array_parallelism=array_parallelism, targets_per_task=targets_per_task,
+        )
+        if array:
+            _validate_array_scheduler_options(cluster)
+            _validate_array_size(cluster, len(plan[0].batches))
+            if mode != "single_job":
+                raise NotImplementedError("Staged arrays are not implemented yet; use array=False")
+            if targets_per_task != 1:
+                raise NotImplementedError("Target batching is not implemented yet; use targets_per_task=1")
         root = Path(out_dir)
         root.mkdir(parents=True, exist_ok=True)
-        executor = create_executor(cluster)
+        ledger = SubmissionLedger(root, plan, mode=mode, backend=cluster.backend, array=array)
+        executor = create_executor(cluster) if selected else None
         submitted_workflow = copy.copy(self)
         submitted_workflow._target_cache = None
         if hasattr(submitted_workflow, "dataframe"):
@@ -761,7 +806,44 @@ class BaseWorkflow:
         final_jobs: list[Any] = []
         expected_parquets: dict[str, str] = {}
 
-        for target in selected:
+        if array and selected:
+            resources = plan[0].resources
+            update_executor_with_dependency(
+                executor, cluster, resources,
+                job_name=f"{self.workflow_name}_workflow", dependency_job_id=None,
+            )
+            options = ExecutionOptions(
+                n_cores=resources.cpus,
+                mem_gb=orca_memory_gb(resources, orca_memory_fraction),
+                debug=debug, save_output_dir=save_output_dir,
+                work_dir=str(work_dir or cluster.work_dir) if (work_dir or cluster.work_dir) else None,
+                artifact_policy=artifact_policy,
+                uma_oet_tools=None if uma_oet_tools is None else str(uma_oet_tools),
+            )
+            arguments = []
+            for target in selected:
+                target_dir = root / target.tag
+                target_dir.mkdir(parents=True, exist_ok=True)
+                tags.append(target.tag)
+                save_dirs.append(str(target_dir))
+                expected_parquets[target.tag] = "final.parquet"
+                arguments.append((submitted_workflow, target, target_dir, options, utc_timestamp()))
+            try:
+                final_jobs = _submit_array_jobs(
+                    executor, cluster, _run_target_submitted_job, arguments,
+                    parallelism=plan[0].parallelism,
+                    on_submitted=lambda index, job: ledger.submitted("single_job", index, job),
+                    on_array_submitted=lambda jobs: ledger.submitted_many("single_job", dict(enumerate(jobs))),
+                )
+            except Exception as error:
+                ledger.failed("single_job", range(len(arguments)), error)
+                raise
+            job_ids = [job.job_id for job in final_jobs]
+            final_job_ids = list(dict.fromkeys(
+                record.array_job_id or record.job_id for record in ledger.records
+            ))
+
+        for target_index, target in enumerate([] if array else selected):
             target_dir = root / target.tag
             target_dir.mkdir(parents=True, exist_ok=True)
             tags.append(target.tag)
@@ -797,7 +879,8 @@ class BaseWorkflow:
                     uma_oet_tools=None if uma_oet_tools is None else str(uma_oet_tools),
                 )
                 submitted_at = utc_timestamp()
-                job = executor.submit(
+                job = ledger.submit(
+                    "single_job", target_index, executor,
                     _run_target_submitted_job,
                     submitted_workflow,
                     target,
@@ -842,7 +925,8 @@ class BaseWorkflow:
                     uma_oet_tools=None if uma_oet_tools is None else str(uma_oet_tools),
                 )
                 submitted_at = utc_timestamp()
-                job = executor.submit(
+                job = ledger.submit(
+                    group_name, target_index, executor,
                     _run_stage_group_submitted_job,
                     submitted_workflow,
                     target,
@@ -871,6 +955,11 @@ class BaseWorkflow:
         collection_output_path: Path | None = None
         collection_report_path: Path | None = None
         if collect and selected and final_job_ids:
+            if array:
+                if cluster.backend == "local":
+                    for job in final_jobs:
+                        job.wait()
+                executor = create_executor(cluster)
             collection_output_path = (
                 Path(collect_output)
                 if collect_output is not None
@@ -889,7 +978,7 @@ class BaseWorkflow:
                 dependency_job_ids=final_job_ids,
                 dependency_type="afterany",
             )
-            wait_jobs = final_jobs if cluster.backend == "local" else None
+            wait_jobs = final_jobs if cluster.backend == "local" and not array else None
             collection_job = executor.submit(
                 _collect_expected_outputs_submitted,
                 submitted_workflow,
@@ -904,6 +993,7 @@ class BaseWorkflow:
                 artifact_policy,
                 _defer_screening_cleanup,
             )
+            ledger.collected(collection_job)
             collection_job_id = getattr(
                 collection_job, "job_id", f"{self.workflow_name}_collect"
             )
@@ -914,6 +1004,9 @@ class BaseWorkflow:
             save_dirs=save_dirs,
             mode=f"{self.workflow_name}:{mode}",
             backend=cluster.backend,
+            records=list(ledger.records),
+            array_job_ids=list(dict.fromkeys(r.array_job_id for r in ledger.records if r.array_job_id)),
+            submission_path=str(ledger.path),
             collection_job_id=collection_job_id,
             collection_output=(
                 None if collection_output_path is None else str(collection_output_path)
