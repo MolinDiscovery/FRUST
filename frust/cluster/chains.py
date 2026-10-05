@@ -2,6 +2,7 @@ from __future__ import annotations
 
 import importlib
 import inspect
+from collections.abc import Mapping
 from pathlib import Path
 
 from frust.cluster.config import (
@@ -19,6 +20,17 @@ from frust.cluster.config import (
 from frust.cluster.executor import create_executor, update_executor_with_dependency
 from frust.cluster.inputs import prepare_chain_inputs
 from frust.cluster.naming import chain_save_dir, next_chain_parquet, sanitize_tag
+
+
+def _reject_array_options(array, parallelism, batch_size, retry):
+    if type(array) is not bool or type(retry) is not bool or type(batch_size) is not int:
+        raise ValueError('array/retry must be booleans and targets_per_task an integer')
+    if array or parallelism is not None or batch_size != 1 or retry:
+        raise NotImplementedError(
+            'Legacy chain stages have no validated attempt/output contract for arrays or retries. '
+            'Use ft.workflows.screen_ts(...).submit(execution="dft_staged", array=True, '
+            'array_parallelism=...) or another ft.workflows factory.'
+        )
 
 
 def _resolve_chain_definition(
@@ -116,6 +128,10 @@ def submit_chain_jobs(
     save_output_dir: bool = True,
     work_dir: str | Path | None = None,
     orca_memory_fraction: float = DEFAULT_ORCA_MEMORY_FRACTION,
+    array: bool = False,
+    array_parallelism: int | Mapping[str, int] | None = None,
+    targets_per_task: int = 1,
+    retry: bool = False,
 ) -> JobSubmissionResult:
     """Submit a dependent stage chain through submitit.
 
@@ -170,12 +186,16 @@ def submit_chain_jobs(
     orca_memory_fraction : float, optional
         Fraction of each stage's full Slurm memory allocation forwarded to
         ORCA through the stage function. Defaults to ``0.8``.
+    array, array_parallelism, targets_per_task, retry : optional
+        Only default values are supported by legacy chain callables. Use a
+        workflow factory's ``submit`` for tracked staged arrays and retries.
 
     Returns
     -------
     frust.cluster.config.JobSubmissionResult
         Summary of all submitted stage jobs for all prepared tags.
     """
+    _reject_array_options(array, array_parallelism, targets_per_task, retry)
     if composite_method is not None:
         conflicting = [
             name

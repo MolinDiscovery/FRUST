@@ -431,7 +431,7 @@ def _target_fingerprints(workflow, targets):
 
 
 @contextmanager
-def _submission_guard(root, plan, workflow, targets, cluster, *, mode, array, retry):
+def _submission_guard(root, plan, workflow, targets, cluster, *, mode, array, retry, preserve_screen_reuse=False):
     if retry and mode != 'single_job' and not array:
         raise NotImplementedError('Staged retries currently require array=True and rerun the complete chain')
     fingerprints = _target_fingerprints(workflow, targets) if mode == 'single_job' or array else {}
@@ -450,9 +450,8 @@ def _submission_guard(root, plan, workflow, targets, cluster, *, mode, array, re
                     raise ValueError(f'Existing artifacts for {target.tag}; use a new out_dir')
                 continue
             attempt, record = previous
-            # Existing staged screen restarts are validated by their manifest.
-            # Array/retry attempts remain protected until staged support lands.
-            if (mode != 'single_job' and attempt['mode'] != 'single_job'
+            # Existing screen restarts are validated by their scientific manifest.
+            if ((preserve_screen_reuse or (mode != 'single_job' and attempt['mode'] != 'single_job'))
                     and not array and not retry and not attempt.get('array')
                     and not attempt.get('previous_attempts')):
                 continue

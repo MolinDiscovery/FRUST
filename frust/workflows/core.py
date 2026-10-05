@@ -667,6 +667,8 @@ class BaseWorkflow:
         artifact_policy: ArtifactPolicy = "standard",
         uma_oet_tools: str | Path | None = None,
         _defer_screening_cleanup: bool = False,
+        _collect_targets: list[WorkflowTarget] | None = None,
+        _screen_manifest_validated: bool = False,
     ) -> JobSubmissionResult:
         """Submit selected workflow targets to a submitit cluster executor.
 
@@ -805,11 +807,12 @@ class BaseWorkflow:
             _validate_array_size(cluster, len(plan[0].batches))
         if not isinstance(retry, bool):
             raise ValueError("retry must be a boolean")
-        if retry and artifact_policy == "screening":
+        if retry and artifact_policy == "screening" and not _defer_screening_cleanup:
             raise NotImplementedError("Screen retries must use the screen reuse contract; direct retry is not supported")
         root = Path(out_dir)
         root.mkdir(parents=True, exist_ok=True)
-        with _submission_guard(root, plan, self, selected, cluster, mode=mode, array=array, retry=retry) as ledger:
+        with _submission_guard(root, plan, self, selected, cluster, mode=mode, array=array, retry=retry,
+                               preserve_screen_reuse=_screen_manifest_validated) as ledger:
             executor = create_executor(cluster) if selected else None
             submitted_workflow = copy.copy(self)
             submitted_workflow._target_cache = None
@@ -1032,16 +1035,17 @@ class BaseWorkflow:
                 collection_job = executor.submit(
                     _collect_expected_outputs_submitted,
                     submitted_workflow,
-                    selected,
+                    selected if _collect_targets is None else _collect_targets,
                     root,
-                    expected_parquets,
+                    expected_parquets if _collect_targets is None else dict.fromkeys(
+                        (target.tag for target in _collect_targets), plan[-1].output_name),
                     collection_output_path,
                     collection_report_path,
                     collect_require_normal_termination,
                     wait_jobs,
                     target_retention,
                     artifact_policy,
-                    _defer_screening_cleanup, ledger.attempt_id,
+                    _defer_screening_cleanup, ledger.attempt_id, _collect_targets is not None,
                 )
                 ledger.collected(collection_job)
                 collection_job_id = getattr(
@@ -2044,6 +2048,7 @@ def _collect_expected_outputs_submitted(
     artifact_policy: ArtifactPolicy = "standard",
     defer_screening_cleanup: bool = False,
     attempt_id: str | None = None,
+    collect_all_attempts: bool = False,
 ) -> CollectionJobResult:
     """Collect outputs while keeping the Submitit result pickle small."""
     try:
@@ -2065,7 +2070,7 @@ def _collect_expected_outputs_submitted(
                 artifact_policy,
                 False,
                 defer_screening_cleanup,
-                attempt_id,
+                None if collect_all_attempts else attempt_id,
             )
             payload = json.loads(Path(report).read_text())
             return CollectionJobResult(

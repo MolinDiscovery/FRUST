@@ -1,6 +1,8 @@
 from __future__ import annotations
 
 import inspect
+from collections.abc import Mapping
+from dataclasses import replace
 from pathlib import Path
 
 from frust.cluster.chains import submit_chain_jobs
@@ -34,6 +36,11 @@ def submit_jobs(
     select_mols: str | list[str] = "all",
     work_dir: str | Path | None = None,
     orca_memory_fraction: float = DEFAULT_ORCA_MEMORY_FRACTION,
+    array: bool = False,
+    array_parallelism: int | None = None,
+    targets_per_task: int = 1,
+    retry: bool = False,
+    targets=None,
 ) -> JobSubmissionResult:
     """Submit independent FRUST workflow jobs from a CSV input file.
 
@@ -74,6 +81,21 @@ def submit_jobs(
         Fraction of the full Slurm allocation forwarded to ORCA-capable
         pipeline stages. Defaults to ``0.8``; Slurm still receives the full
         ``resources.mem_gb`` allocation.
+    array : bool, optional
+        Submit one Slurm array, or bounded local workers. Defaults to False.
+        Tracked calls use ``out_dir/<target>/final.parquet`` and automatic
+        collection. Ordinary default calls retain their legacy flat filenames.
+    array_parallelism : int or None, optional
+        Positive maximum running elements, required with ``array=True``.
+    targets_per_task : int, optional
+        Sequential pipeline targets per element. Requires ``array=True`` for
+        values above 1. These pipelines use xTB/ordinary ORCA; they do not
+        provide UMA server sharing. ``run_mols`` treats the entire CSV as one
+        target; ``run_mols_per_rpos`` treats each prepared structure as a target.
+    retry : bool, optional
+        Retry selected failed tracked targets, preserving successful targets.
+    targets : iterable of int or WorkflowTarget or None, optional
+        Selection from the prepared targets, in input order by default.
 
     Returns
     -------
@@ -85,7 +107,28 @@ def submit_jobs(
     ValueError
         If the pipeline name is unsupported or the CSV input is invalid.
     """
+    from frust.cluster.submission import _plan_submission
+    _plan_submission([], [('single_job', resources, 'final.parquet')],
+                     execution='single_job', array=array, array_parallelism=array_parallelism,
+                     targets_per_task=targets_per_task)
+    if not isinstance(retry, bool):
+        raise ValueError('retry must be a boolean')
     prepared = prepare_pipeline_inputs(csv_path, pipeline, select_mols=select_mols)
+    if array or retry or targets is not None:
+        from frust.cluster.pipeline_workflow import _PipelineWorkflow
+        workflow = _PipelineWorkflow(pipeline, prepared, {
+            'n_confs': None if production and n_confs is None else n_confs,
+            'debug': debug, 'save_output_dir': save_output_dir, 'DFT': dft,
+            'select_mols': select_mols,
+        })
+        result = workflow.submit(
+            out_dir=out_dir, cluster=cluster, execution='single_job',
+            stage_resources={'single_job': resources}, array=array,
+            array_parallelism=array_parallelism, targets_per_task=targets_per_task,
+            retry=retry, targets=targets, debug=debug, save_output_dir=save_output_dir,
+            work_dir=work_dir, orca_memory_fraction=orca_memory_fraction,
+        )
+        return replace(result, mode=pipeline)
     pipeline_fn = load_pipeline(pipeline)
     sig = inspect.signature(pipeline_fn)
 
@@ -157,6 +200,10 @@ def submit_screen_chain(
     save_output_dir: bool = True,
     work_dir: str | Path | None = None,
     orca_memory_fraction: float = DEFAULT_ORCA_MEMORY_FRACTION,
+    array: bool = False,
+    array_parallelism: int | Mapping[str, int] | None = None,
+    targets_per_task: int = 1,
+    retry: bool = False,
 ) -> JobSubmissionResult:
     """Submit a screen-based TS chain for substrate/catalyst systems.
 
@@ -206,12 +253,18 @@ def submit_screen_chain(
     orca_memory_fraction : float, optional
         Fraction of each stage's Slurm allocation forwarded to ORCA. Defaults
         to ``0.8`` while Slurm retains the full requested allocation.
+    array, array_parallelism, targets_per_task, retry : optional
+        Legacy chains support only their defaults (False, None, 1, False).
+        For tracked staged arrays/retries use a workflow's ``submit`` method,
+        for example ``ft.workflows.screen_ts(...).submit(...)``.
 
     Returns
     -------
     frust.cluster.config.JobSubmissionResult
         Summary of the submitted screen-chain jobs.
     """
+    from frust.cluster.chains import _reject_array_options
+    _reject_array_options(array, array_parallelism, targets_per_task, retry)
     if composite_method is not None:
         conflicting = [
             name
