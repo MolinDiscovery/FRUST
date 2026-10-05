@@ -109,5 +109,3 @@ Implementation completed 2026-10-05 at `1b7ad19` on
   collection reports, and Slurm accounting. Run files and logs remain in the HPC
   run directory above; the dedicated HPC worktree remains available for the next
   tasks. The production checkout was not switched or edited.
-
-

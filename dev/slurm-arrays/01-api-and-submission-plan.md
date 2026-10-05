@@ -89,5 +89,3 @@ Completed 2026-10-05, implementation revision `1b7ad19` on `feature/slurm-arrays
   tests/test_workflows.py tests/test_cluster_screen_chain.py
   tests/test_screening_artifacts.py -q` passed at the Task 01 gate (82 tests).
   Task 02's expanded tests subsequently passed 91 tests.
-
-
