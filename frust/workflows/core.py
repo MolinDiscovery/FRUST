@@ -47,6 +47,7 @@ from frust.cluster.submission import (
     _submission_guard, _mutation_lock, _mark_completed, _target_outcomes, _submission_history,
     _ensure_collection_ready,
     _stage_outcome_path, _array_dependency, _submit_local_stages,
+    _record_afterany_completion,
 )
 from frust.cluster.naming import sanitize_tag
 from frust.results import ResultProfile, attach_result_contract
@@ -2047,6 +2048,10 @@ def _collect_expected_outputs_submitted(
     """Collect outputs while keeping the Submitit result pickle small."""
     try:
         with _mutation_lock(out_dir, wait=True):
+            for job in wait_jobs or []:
+                job.wait()
+            if attempt_id is not None:
+                _record_afterany_completion(out_dir, attempt_id)
             merged = _collect_expected_outputs(
                 workflow,
                 targets,

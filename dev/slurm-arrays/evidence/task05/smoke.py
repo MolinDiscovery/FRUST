@@ -77,6 +77,8 @@ if __name__ == '__main__':
         report = json.loads(Path(initial['collection_report']).read_text())
         assert report['retry_targets'] == ['B'], report
         (root/'initial-report.json').write_text(json.dumps(report,indent=2)+'\n')
+        blocked_job = next(record['job_id'] for record in initial['records'] if record['target']=='B' and record['group']=='dft_freq')
+        (root/'blocked-job.txt').write_text(subprocess.check_output(['scontrol','show','job',str(blocked_job)],text=True))
         (root/'retry-ready').touch()
         result = wf.submit(out_dir=root/'run',cluster=cluster,execution='dft_staged',
                            array=True,array_parallelism=1,targets=[1],retry=True,target_retention='all',
@@ -104,9 +106,11 @@ if __name__ == '__main__':
                        [str(initial['collection_job_id']),str(retry['collection_job_id'])])
         accounting = subprocess.check_output(['sacct','-j',ids,'--format=JobID,State,ExitCode,Start,End,ReqCPUS,ReqMem','-P'],text=True)
         blocked_job = next(record['job_id'] for record in initial['records'] if record['target']=='B' and record['group']=='dft_freq')
-        assert any(line.startswith(f'{blocked_job}|CANCELLED|') for line in accounting.splitlines()), accounting
+        blocked_info = (root/'blocked-job.txt').read_text()
+        assert 'JobState=CANCELLED' in blocked_info and 'Reason=DependencyNeverSatisfied' in blocked_info
+        assert 'ArrayTaskId=1' in blocked_info
         evidence = {'initial':initial,'retry':retry,'initial_report':old_report,'final_report':report,
-                    'accounting':accounting,'submitit_version':submitit.__version__,
+                    'accounting':accounting,'blocked_scheduler':blocked_info,'submitit_version':submitit.__version__,
                     'slurm_version':subprocess.check_output(['sinfo','--version'],text=True).strip()}
         (root/'verified.json').write_text(json.dumps(evidence,indent=2)+'\n')
         print(f'Verified matching dependencies, terminal cancellation, and retry: {root / "verified.json"}')

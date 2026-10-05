@@ -192,3 +192,27 @@ def test_interrupted_upstream_and_cancelled_descendant_report(tmp_path):
     assert outcomes['A']['upstream_status']=='interrupted'
     assert [stage['status'] for stage in outcomes['A']['stage_results']]==['interrupted','blocked','blocked']
     assert 'unknown' in outcomes['A']['stage_results'][0]['error']
+
+
+def test_afterany_collector_preserves_terminal_proof_for_unstarted_jobs(tmp_path):
+    from frust.cluster.submission import _completion_path, _record_afterany_completion, _attempt_terminal
+    workers = [ArrayExecutor([f'{100+i}_0',f'{100+i}_1',f'{100+i}_2']) for i in range(3)]
+    with patch('frust.workflows.core.create_executor',side_effect=workers):
+        result = StagedWorkflow().submit(out_dir=tmp_path,cluster=ClusterConfig(),execution='dft_staged',
+                                        array=True,array_parallelism=1,collect=False)
+    attempt = json.loads(Path(result.submission_path).read_text())
+    _record_afterany_completion(tmp_path,attempt['attempt_id'])
+    receipt = json.loads(_completion_path(tmp_path,attempt['attempt_id'],'dft_opt',1).read_text())
+    assert receipt['proof']=='afterany_collection' and receipt['job_id']=='101_1'
+    with patch('frust.cluster.submission._job_terminal',return_value=False):
+        assert _attempt_terminal(tmp_path,attempt)
+
+
+def test_terminal_cancelled_element_missing_from_submitit_accounting(tmp_path):
+    from types import SimpleNamespace
+    from frust.cluster.submission import _job_terminal
+    job = SimpleNamespace(paths=SimpleNamespace(result_pickle=tmp_path/'absent'),state='UNKNOWN')
+    api = SimpleNamespace(SlurmJob=lambda **kwargs:job)
+    with patch('frust.cluster.executor._load_submitit',return_value=api), \
+         patch('frust.cluster.submission.subprocess.run',return_value=SimpleNamespace(stdout='JobState=CANCELLED Reason=DependencyNeverSatisfied')):
+        assert _job_terminal({'backend':'slurm','log_dir':str(tmp_path)},'101_1')

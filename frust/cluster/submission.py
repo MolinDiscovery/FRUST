@@ -10,6 +10,7 @@ import time
 import hashlib
 import pickle
 import shutil
+import subprocess
 from contextlib import contextmanager
 from collections.abc import Mapping, Sequence
 from dataclasses import asdict, dataclass, replace
@@ -356,9 +357,26 @@ def _submit_local_stages(executors, plan, arguments, fn, ledger, on_blocked):
     return submitted
 
 
-def _mark_completed(root, attempt_id, group, index):
+def _mark_completed(root, attempt_id, group, index, **evidence):
     if attempt_id is not None:
-        _atomic_write_submission_json(_completion_path(root, attempt_id, group, index), {'finished_ns': time.time_ns()})
+        _atomic_write_submission_json(_completion_path(root, attempt_id, group, index),
+                                      {'finished_ns': time.time_ns(), **evidence})
+
+
+def _record_afterany_completion(root, attempt_id):
+    """Preserve terminal proof for staged elements that never started.
+
+    Only the automatic collector calls this after all worker dependencies end.
+    Slurm may omit invalid-dependency cancellations from sacct entirely.
+    """
+    for attempt in _submission_history(root):
+        if attempt['attempt_id'] != attempt_id or not attempt.get('array') or attempt['mode'] == 'single_job':
+            continue
+        for record in attempt['records']:
+            if record.get('job_id') is not None and not _completion_path(root, attempt_id, record['group'], record['batch_index']).exists():
+                _mark_completed(root, attempt_id, record['group'], record['batch_index'],
+                                proof='afterany_collection', job_id=record['job_id'],
+                                collection_job_id=attempt.get('collection_job_id'))
 
 
 def _job_terminal(attempt, job_id):
@@ -372,8 +390,17 @@ def _job_terminal(attempt, job_id):
         return True
     if attempt['backend'] != 'slurm':
         return False
+    terminal = {'COMPLETED', 'FAILED', 'CANCELLED', 'TIMEOUT', 'NODE_FAIL', 'OUT_OF_MEMORY', 'BOOT_FAIL', 'DEADLINE'}
     try:
-        return job.state in {'COMPLETED', 'FAILED', 'CANCELLED', 'TIMEOUT', 'NODE_FAIL', 'OUT_OF_MEMORY', 'BOOT_FAIL', 'DEADLINE'}
+        state = job.state
+        if state in terminal:
+            return True
+        if state != 'UNKNOWN':
+            return False
+        info = subprocess.run(['scontrol', 'show', 'job', str(job_id), '-o'],
+                              capture_output=True, text=True, timeout=10, check=True)
+        match = re.search(r'\bJobState=(\S+)', info.stdout)
+        return bool(match and match[1] in terminal)
     except Exception:
         return False
 
