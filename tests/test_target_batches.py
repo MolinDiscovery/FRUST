@@ -112,6 +112,23 @@ def test_runtime_reuse_compatible_and_outer_owner(tmp_path):
     assert current_uma_job_scope() is None
 
 
+def test_server_startup_failure_stops_batch(tmp_path):
+    wf = _TinyUmaWorkflow(method=_method())
+    @contextmanager
+    def server(**kwargs):
+        raise RuntimeError('startup failed')
+        yield
+    def run(*args):
+        current_uma_job_scope().acquire(log_dir=None, keep_logs='always', use_gpu=False,
+                                      server_cores=1, memory_per_thread_mib=500)
+    with patch('frust.utils.uma.uma_server', server) as start, \
+         patch('frust.workflows.core._run_target_job', run):
+        with pytest.raises(RuntimeError, match='unavailable'):
+            _run_target_batch_submitted_job(wf, _targets(wf), tmp_path, ExecutionOptions(), None, 'attempt', 0)
+    assert [r['status'] for r in _status(tmp_path)['targets']] == ['failed','unattempted','unattempted']
+    assert current_uma_job_scope() is None
+
+
 def test_array_uneven_batches_and_resources(tmp_path):
     executor = ArrayExecutor(['123_0','123_1'])
     with patch('frust.workflows.core.create_executor', return_value=executor):

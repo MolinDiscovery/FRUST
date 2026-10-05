@@ -1,0 +1,449 @@
+{
+  "revision": "a8793042cc71bc8911c564e55951820525b6e0b8",
+  "submitit_version": "1.5.2",
+  "slurm_version": "slurm 26.05.4",
+  "runtime": "/lustre/hpc/kemi/jmni/software/oet-uma-2p23-cpu",
+  "partition": "kemi1",
+  "submission": {
+    "job_ids": [
+      "65843239_0",
+      "65843239_1"
+    ],
+    "tags": [
+      "water_0",
+      "water_1",
+      "water_2",
+      "water_3"
+    ],
+    "save_dirs": [
+      "/lustre/hpc/kemi/jmni/results/slurm-arrays-task03-20261005/run/water_0",
+      "/lustre/hpc/kemi/jmni/results/slurm-arrays-task03-20261005/run/water_1",
+      "/lustre/hpc/kemi/jmni/results/slurm-arrays-task03-20261005/run/water_2",
+      "/lustre/hpc/kemi/jmni/results/slurm-arrays-task03-20261005/run/water_3"
+    ],
+    "mode": "uma_batch_smoke:single_job",
+    "backend": "slurm",
+    "collection_job_id": "65843240",
+    "collection_output": "/lustre/hpc/kemi/jmni/results/slurm-arrays-task03-20261005/run/merged.parquet",
+    "collection_report": "/lustre/hpc/kemi/jmni/results/slurm-arrays-task03-20261005/run/collection_report.json",
+    "records": [
+      {
+        "target": "water_0",
+        "group": "single_job",
+        "batch_index": 0,
+        "batch_targets": [
+          "water_0",
+          "water_1",
+          "water_2"
+        ],
+        "save_dir": "/lustre/hpc/kemi/jmni/results/slurm-arrays-task03-20261005/run/water_0",
+        "output_path": "/lustre/hpc/kemi/jmni/results/slurm-arrays-task03-20261005/run/water_0/final.parquet",
+        "attempt_id": "427d2b7016e94dbca3ac859004ecdb4c",
+        "status": "submitted",
+        "job_id": "65843239_0",
+        "array_job_id": "65843239",
+        "array_index": 0,
+        "error": null
+      },
+      {
+        "target": "water_1",
+        "group": "single_job",
+        "batch_index": 0,
+        "batch_targets": [
+          "water_0",
+          "water_1",
+          "water_2"
+        ],
+        "save_dir": "/lustre/hpc/kemi/jmni/results/slurm-arrays-task03-20261005/run/water_1",
+        "output_path": "/lustre/hpc/kemi/jmni/results/slurm-arrays-task03-20261005/run/water_1/final.parquet",
+        "attempt_id": "427d2b7016e94dbca3ac859004ecdb4c",
+        "status": "submitted",
+        "job_id": "65843239_0",
+        "array_job_id": "65843239",
+        "array_index": 0,
+        "error": null
+      },
+      {
+        "target": "water_2",
+        "group": "single_job",
+        "batch_index": 0,
+        "batch_targets": [
+          "water_0",
+          "water_1",
+          "water_2"
+        ],
+        "save_dir": "/lustre/hpc/kemi/jmni/results/slurm-arrays-task03-20261005/run/water_2",
+        "output_path": "/lustre/hpc/kemi/jmni/results/slurm-arrays-task03-20261005/run/water_2/final.parquet",
+        "attempt_id": "427d2b7016e94dbca3ac859004ecdb4c",
+        "status": "submitted",
+        "job_id": "65843239_0",
+        "array_job_id": "65843239",
+        "array_index": 0,
+        "error": null
+      },
+      {
+        "target": "water_3",
+        "group": "single_job",
+        "batch_index": 1,
+        "batch_targets": [
+          "water_3"
+        ],
+        "save_dir": "/lustre/hpc/kemi/jmni/results/slurm-arrays-task03-20261005/run/water_3",
+        "output_path": "/lustre/hpc/kemi/jmni/results/slurm-arrays-task03-20261005/run/water_3/final.parquet",
+        "attempt_id": "427d2b7016e94dbca3ac859004ecdb4c",
+        "status": "submitted",
+        "job_id": "65843239_1",
+        "array_job_id": "65843239",
+        "array_index": 1,
+        "error": null
+      }
+    ],
+    "array_job_ids": [
+      "65843239"
+    ],
+    "submission_path": "/lustre/hpc/kemi/jmni/results/slurm-arrays-task03-20261005/run/.frust/submissions/427d2b7016e94dbca3ac859004ecdb4c.json"
+  },
+  "batches": [
+    {
+      "schema_version": 1,
+      "attempt_id": "427d2b7016e94dbca3ac859004ecdb4c",
+      "batch_index": 0,
+      "job_id": "65843375",
+      "started_at": "2026-10-05T13:44:02Z",
+      "resources": {
+        "n_cores": 4,
+        "memory_gb": 25.6
+      },
+      "targets": [
+        {
+          "target": "water_0",
+          "status": "success",
+          "error": null,
+          "started_at": "2026-10-05T13:44:02Z",
+          "output_path": "/lustre/hpc/kemi/jmni/results/slurm-arrays-task03-20261005/run/water_0/final.parquet",
+          "row_count": 1,
+          "finished_at": "2026-10-05T13:45:18Z"
+        },
+        {
+          "target": "water_1",
+          "status": "failed",
+          "error": "RuntimeError: Deliberate middle-target failure",
+          "started_at": "2026-10-05T13:45:18Z",
+          "finished_at": "2026-10-05T13:45:18Z"
+        },
+        {
+          "target": "water_2",
+          "status": "success",
+          "error": null,
+          "started_at": "2026-10-05T13:45:18Z",
+          "output_path": "/lustre/hpc/kemi/jmni/results/slurm-arrays-task03-20261005/run/water_2/final.parquet",
+          "row_count": 1,
+          "finished_at": "2026-10-05T13:45:18Z"
+        }
+      ],
+      "error": "RuntimeError: Targets failed in batch 0: water_1",
+      "finished_at": "2026-10-05T13:45:20Z",
+      "elapsed_s": 77.502161,
+      "server_startup_s": 54.04748111078516,
+      "uma_server": {
+        "pid": 1528601,
+        "hostname": "node066.cluster",
+        "bind": "127.0.0.1:59621"
+      }
+    },
+    {
+      "schema_version": 1,
+      "attempt_id": "427d2b7016e94dbca3ac859004ecdb4c",
+      "batch_index": 1,
+      "job_id": "65843239",
+      "started_at": "2026-10-05T13:45:34Z",
+      "resources": {
+        "n_cores": 4,
+        "memory_gb": 25.6
+      },
+      "targets": [
+        {
+          "target": "water_3",
+          "status": "success",
+          "error": null,
+          "started_at": "2026-10-05T13:45:34Z",
+          "output_path": "/lustre/hpc/kemi/jmni/results/slurm-arrays-task03-20261005/run/water_3/final.parquet",
+          "row_count": 1,
+          "finished_at": "2026-10-05T13:45:54Z"
+        }
+      ],
+      "finished_at": "2026-10-05T13:45:56Z",
+      "elapsed_s": 21.657224,
+      "server_startup_s": 8.01740001887083,
+      "uma_server": {
+        "pid": 1528794,
+        "hostname": "node066.cluster",
+        "bind": "127.0.0.1:33355"
+      }
+    }
+  ],
+  "collection_report": {
+    "collected_files": [
+      "/lustre/hpc/kemi/jmni/results/slurm-arrays-task03-20261005/run/water_0/final.parquet",
+      "/lustre/hpc/kemi/jmni/results/slurm-arrays-task03-20261005/run/water_2/final.parquet",
+      "/lustre/hpc/kemi/jmni/results/slurm-arrays-task03-20261005/run/water_3/final.parquet"
+    ],
+    "compaction": {
+      "errors": [],
+      "n_removed_files": 0,
+      "n_targets": 0,
+      "removed_bytes": 0,
+      "targets": []
+    },
+    "errored_files": [],
+    "errors": [],
+    "failure_summary": [
+      {
+        "backend_column": null,
+        "backend_hint": null,
+        "error": "Expected workflow output was not found.",
+        "failed_nt_cols": [],
+        "failed_nt_values": {},
+        "failed_stage": null,
+        "file": "/lustre/hpc/kemi/jmni/results/slurm-arrays-task03-20261005/run/water_1/final.parquet",
+        "last_checkpoint": null,
+        "problem": "missing_output",
+        "row_index": null,
+        "source": "missing_files",
+        "target": "water_1",
+        "target_dir": "/lustre/hpc/kemi/jmni/results/slurm-arrays-task03-20261005/run/water_1"
+      }
+    ],
+    "missing_files": [
+      "/lustre/hpc/kemi/jmni/results/slurm-arrays-task03-20261005/run/water_1/final.parquet"
+    ],
+    "n_collected": 3,
+    "n_errored": 0,
+    "n_failures": 1,
+    "n_missing": 1,
+    "n_rows": 3,
+    "n_skipped": 0,
+    "n_targets": 4,
+    "output": "/lustre/hpc/kemi/jmni/results/slurm-arrays-task03-20261005/run/merged.parquet",
+    "require_normal_termination": true,
+    "skipped_files": [],
+    "target_retention": "all",
+    "timing": {
+      "errored_timing_files": [],
+      "missing_timing_targets": [
+        "water_1"
+      ],
+      "n_timing_files": 3,
+      "n_timing_groups": 3,
+      "slowest_groups": [
+        {
+          "elapsed_s": 75.361256,
+          "finished_at": "2026-10-05T13:45:18Z",
+          "group": "single_job",
+          "job_id": "65843375",
+          "kind": "group",
+          "output_parquet": "final.parquet",
+          "output_rows": 1,
+          "resources": {
+            "memory_gb": 25.6,
+            "n_cores": 4
+          },
+          "schema_version": 1,
+          "stage_ids": [
+            "prepare",
+            "uma_sp"
+          ],
+          "started_at": "2026-10-05T13:44:02Z",
+          "submitted_at": "2026-10-05T13:43:31Z",
+          "target": "water_0",
+          "workflow": "uma_batch_smoke"
+        },
+        {
+          "elapsed_s": 20.339915,
+          "finished_at": "2026-10-05T13:45:54Z",
+          "group": "single_job",
+          "job_id": "65843239",
+          "kind": "group",
+          "output_parquet": "final.parquet",
+          "output_rows": 1,
+          "resources": {
+            "memory_gb": 25.6,
+            "n_cores": 4
+          },
+          "schema_version": 1,
+          "stage_ids": [
+            "prepare",
+            "uma_sp"
+          ],
+          "started_at": "2026-10-05T13:45:34Z",
+          "submitted_at": "2026-10-05T13:43:31Z",
+          "target": "water_3",
+          "workflow": "uma_batch_smoke"
+        },
+        {
+          "elapsed_s": 0.635965,
+          "finished_at": "2026-10-05T13:45:18Z",
+          "group": "single_job",
+          "job_id": "65843375",
+          "kind": "group",
+          "output_parquet": "final.parquet",
+          "output_rows": 1,
+          "resources": {
+            "memory_gb": 25.6,
+            "n_cores": 4
+          },
+          "schema_version": 1,
+          "stage_ids": [
+            "prepare",
+            "uma_sp"
+          ],
+          "started_at": "2026-10-05T13:45:18Z",
+          "submitted_at": "2026-10-05T13:43:31Z",
+          "target": "water_2",
+          "workflow": "uma_batch_smoke"
+        }
+      ],
+      "timing_files": [
+        "/lustre/hpc/kemi/jmni/results/slurm-arrays-task03-20261005/run/water_0/timing.json",
+        "/lustre/hpc/kemi/jmni/results/slurm-arrays-task03-20261005/run/water_2/timing.json",
+        "/lustre/hpc/kemi/jmni/results/slurm-arrays-task03-20261005/run/water_3/timing.json"
+      ],
+      "total_core_hours": 0.107041,
+      "total_elapsed_s": 96.337136
+    },
+    "workflow": "uma_batch_smoke"
+  },
+  "servers": [
+    {
+      "options": {
+        "ExtOpt": null
+      },
+      "xtra_inp_str": null,
+      "constraint": false,
+      "save_step": false,
+      "save_files": [
+        "input.inp",
+        "orca.out"
+      ],
+      "lowest": null,
+      "read_files": null,
+      "use_last_hess": false,
+      "calc_hess": false,
+      "ts_mode": null,
+      "ts_active_atoms": null,
+      "ts_active_atoms_factor": null,
+      "recalc_hess": null,
+      "trust_radius": null,
+      "max_step": null,
+      "n_cores": 4,
+      "memory_gb": 25.6,
+      "generated_input_blocks": null,
+      "uma": "omol@uma-s-1p2p1",
+      "uma_task": "omol",
+      "uma_model": "uma-s-1p2p1",
+      "uma_server": true,
+      "uma_device": "cpu",
+      "uma_cache_dir": null,
+      "uma_offline": true,
+      "uma_server_cores": 4,
+      "uma_memory_per_thread_mib": 500,
+      "uma_keep_logs": "always",
+      "uma_log_dir": "/lustre/hpc/kemi/jmni/results/slurm-arrays-task03-20261005/server-logs",
+      "uma_xtb_alpb": null,
+      "uma_xtb_exe": null,
+      "uma_inference_settings": "batch",
+      "uma_server_pid": 1528601,
+      "uma_server_hostname": "node066.cluster",
+      "uma_server_bind": "127.0.0.1:59621"
+    },
+    {
+      "options": {
+        "ExtOpt": null
+      },
+      "xtra_inp_str": null,
+      "constraint": false,
+      "save_step": false,
+      "save_files": [
+        "input.inp",
+        "orca.out"
+      ],
+      "lowest": null,
+      "read_files": null,
+      "use_last_hess": false,
+      "calc_hess": false,
+      "ts_mode": null,
+      "ts_active_atoms": null,
+      "ts_active_atoms_factor": null,
+      "recalc_hess": null,
+      "trust_radius": null,
+      "max_step": null,
+      "n_cores": 4,
+      "memory_gb": 25.6,
+      "generated_input_blocks": null,
+      "uma": "omol@uma-s-1p2p1",
+      "uma_task": "omol",
+      "uma_model": "uma-s-1p2p1",
+      "uma_server": true,
+      "uma_device": "cpu",
+      "uma_cache_dir": null,
+      "uma_offline": true,
+      "uma_server_cores": 4,
+      "uma_memory_per_thread_mib": 500,
+      "uma_keep_logs": "always",
+      "uma_log_dir": "/lustre/hpc/kemi/jmni/results/slurm-arrays-task03-20261005/server-logs",
+      "uma_xtb_alpb": null,
+      "uma_xtb_exe": null,
+      "uma_inference_settings": "batch",
+      "uma_server_pid": 1528601,
+      "uma_server_hostname": "node066.cluster",
+      "uma_server_bind": "127.0.0.1:59621"
+    },
+    {
+      "options": {
+        "ExtOpt": null
+      },
+      "xtra_inp_str": null,
+      "constraint": false,
+      "save_step": false,
+      "save_files": [
+        "input.inp",
+        "orca.out"
+      ],
+      "lowest": null,
+      "read_files": null,
+      "use_last_hess": false,
+      "calc_hess": false,
+      "ts_mode": null,
+      "ts_active_atoms": null,
+      "ts_active_atoms_factor": null,
+      "recalc_hess": null,
+      "trust_radius": null,
+      "max_step": null,
+      "n_cores": 4,
+      "memory_gb": 25.6,
+      "generated_input_blocks": null,
+      "uma": "omol@uma-s-1p2p1",
+      "uma_task": "omol",
+      "uma_model": "uma-s-1p2p1",
+      "uma_server": true,
+      "uma_device": "cpu",
+      "uma_cache_dir": null,
+      "uma_offline": true,
+      "uma_server_cores": 4,
+      "uma_memory_per_thread_mib": 500,
+      "uma_keep_logs": "always",
+      "uma_log_dir": "/lustre/hpc/kemi/jmni/results/slurm-arrays-task03-20261005/server-logs",
+      "uma_xtb_alpb": null,
+      "uma_xtb_exe": null,
+      "uma_inference_settings": "batch",
+      "uma_server_pid": 1528794,
+      "uma_server_hostname": "node066.cluster",
+      "uma_server_bind": "127.0.0.1:33355"
+    }
+  ],
+  "log_checks": {
+    "starts": 2,
+    "stops": 2
+  },
+  "accounting": "JobID|State|ExitCode|AllocCPUS|ReqMem\n65843240|FAILED|1:0|2|2G\n65843240.batch|FAILED|1:0|2|\n65843240.extern|COMPLETED|0:0|2|\n65843240.0|FAILED|1:0|2|\n65843239_0|FAILED|1:0|4|32G\n65843239_0.batch|FAILED|1:0|4|\n65843239_0.extern|COMPLETED|0:0|4|\n65843239_0.0|FAILED|1:0|4|\n65843239_1|COMPLETED|0:0|4|32G\n65843239_1.batch|COMPLETED|0:0|4|\n65843239_1.extern|COMPLETED|0:0|4|\n65843239_1.0|COMPLETED|0:0|4|\n"
+}
