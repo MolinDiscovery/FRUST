@@ -4,10 +4,14 @@ Use the same workflow object for a local smoke test and a submitted production
 run. Method-aware TS profiles, chemistry targets, and stage definitions stay
 attached to that object.
 
+For arrays, start with [Slurm Arrays, One Example At A Time](arrays.md):
+ten targets can run as ten individual jobs, ten array elements, or two elements
+that each process five targets sequentially.
+
 ```python
 import frust as ft
 
-cluster = ft.ClusterConfig(
+cluster = ft.cluster.ClusterConfig(
     backend="slurm",
     partition="kemi1",
     log_dir="logs/r2scan-screen",
@@ -149,11 +153,11 @@ individual submitted targets.
 Use `backend="local"` to test submission wiring without Slurm:
 
 ```python
-local = ft.ClusterConfig(backend="local", log_dir="logs/local-screen")
+local = ft.cluster.ClusterConfig(backend="local", log_dir="logs/local-screen")
 result = wf.submit(
     out_dir="runs/local-screen",
     cluster=local,
-    execution="xtb_only",
+    execution="single_job",
     targets=[0],
 )
 ```

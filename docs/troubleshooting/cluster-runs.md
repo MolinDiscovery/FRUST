@@ -93,6 +93,35 @@ print(result.save_dirs)
 Use these fields to connect scheduler jobs, output directories, and generated
 tags.
 
+For arrays and batches, use `result.records`: `job_ids` and `tags` need not
+have the same length. Each record identifies a target, group, worker job, and
+actual Slurm array index when one exists. Inspect the separate
+`collection_job_id`; complete screens also have a `finalization_job_id`.
+
+## Array Failures And Safe Retries
+
+```python
+import json
+from pathlib import Path
+
+report = json.loads(Path(result.collection_report).read_text())
+report["retry_targets"]
+report["target_results"]
+```
+
+`retry_targets` lists targets needing another attempt. A `blocked` staged
+target could not continue after upstream failure; `interrupted` means the
+worker ended without recording a final outcome. Check Slurm accounting and
+logs to determine the cause. An absent parquet alone does not establish a
+timeout. Collection uses completion dependencies, so it can report failures
+after failed workers and cancelled descendants terminate.
+
+If a retry reports an active or unverified earlier attempt, inspect its jobs
+with `squeue`, `sacct`, and `scontrol show job`. Wait for the earlier collector
+or screen finalizer. Use explicit `retry=True` with a compatible tracked run;
+do not overwrite it through a new ordinary submission. See
+[Slurm Arrays](../cluster/arrays.md#results-and-retries) for runnable selections.
+
 ## After Jobs Finish
 
 Merge many parquet outputs before analysis:

@@ -91,6 +91,7 @@ nav:
           - g-xTB: external-tools/gxtb.md
       - Cluster:
           - Submission: cluster/submission.md
+          - Slurm Arrays: cluster/arrays.md
       - Development:
           - Workflow Architecture: development/workflow-architecture.md
           - Deriving TS Geometry Profiles: development/ts-spec-profiles.md

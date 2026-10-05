@@ -524,7 +524,7 @@ class CatalystScreenWorkflow:
     ) -> ScreenSubmissionResult:
         """Submit the complete catalyst screen and its analysis finalizer.
 
-        The method submits one calculation chain per target in each child
+        The method submits a calculation chain per target in each child
         branch. Barrier runs contain ``transition_states`` and ``references``;
         full-cycle runs additionally contain ``cycle_molecules`` and ``int3``.
         Every branch receives a collector, followed by one ``afterany``
@@ -658,6 +658,21 @@ class CatalystScreenWorkflow:
         >>> wf.show_stages(execution="dft_staged")[
         ...     ["branch", "group", "stage", "engine", "solvent"]
         ... ]
+
+        Submit arrays with up to two running elements in each branch/group:
+
+        >>> submission = wf.submit(
+        ...     out_dir="runs/screen", cluster=cluster,
+        ...     array=True, array_parallelism=2,
+        ... )
+
+        After the finalization job ends, retry targets listed in the branch
+        reports. Complete branches are recollected with earlier successes:
+
+        >>> retried = wf.submit(
+        ...     out_dir="runs/screen", cluster=cluster,
+        ...     array=True, array_parallelism=2, retry=True,
+        ... )
 
         Notes
         -----

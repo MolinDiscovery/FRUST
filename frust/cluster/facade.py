@@ -106,6 +106,20 @@ def submit_jobs(
     ------
     ValueError
         If the pipeline name is unsupported or the CSV input is invalid.
+
+    Examples
+    --------
+    Submit sequential batches of three prepared structures. Each element
+    receives four CPUs, eight GB, and a 120-minute timeout for its whole batch:
+
+    >>> import frust as ft
+    >>> result = ft.cluster.submit_jobs(
+    ...     csv_path="molecules.csv", pipeline="run_mols_per_rpos",
+    ...     select_mols=["ligand"], out_dir="runs/molecules", cluster=cluster,
+    ...     resources=ft.cluster.Resources(4, 8, 120),
+    ...     array=True, array_parallelism=2, targets_per_task=3,
+    ... )
+    >>> [(r.target, r.job_id) for r in result.records]
     """
     from frust.cluster.submission import _plan_submission
     _plan_submission([], [('single_job', resources, 'final.parquet')],

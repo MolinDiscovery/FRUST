@@ -685,7 +685,8 @@ class BaseWorkflow:
         execution : {"single_job", "dft_staged", "fully_staged"} or None, optional
             Job grouping strategy. If omitted, DFT workflows use
             ``"dft_staged"`` and non-DFT workflows use ``"single_job"``.
-            ``"single_job"`` submits one job per target. ``"dft_staged"`` keeps
+            By default ``"single_job"`` submits one job per target; arrays can
+            place several sequential targets in one element. ``"dft_staged"`` keeps
             initialization stages together, then submits dependent DFT-stage
             jobs. ``"fully_staged"`` submits one dependent job per stage.
         stage_resources : dict[str, Resources] or None, optional
@@ -777,7 +778,38 @@ class BaseWorkflow:
         frust.cluster.config.JobSubmissionResult
             Submitted scheduler job IDs, target tags, target save directories,
             workflow execution mode, backend, and automatic collection metadata
-            when ``collect=True``.
+            when ``collect=True``. ``records`` maps each target/group to its
+            worker job; several targets can share a job ID in a batch.
+            ``array_job_ids`` contains actual Slurm parents, excluding ordinary
+            single-element jobs and local workers. Wait for
+            ``collection_job_id`` before loading ``collection_output``.
+
+        Examples
+        --------
+        Ten targets with five targets per element create two worker jobs.
+        Each job gets eight CPUs, 32 GB, and a whole-batch 720-minute timeout:
+
+        >>> import frust as ft
+        >>> result = wf.submit(
+        ...     out_dir="runs/batched", cluster=cluster,
+        ...     execution="single_job", array=True, array_parallelism=2,
+        ...     targets_per_task=5,
+        ...     stage_resources={
+        ...         "single_job": ft.cluster.Resources(8, 32, 720),
+        ...     },
+        ... )
+        >>> [(r.target, r.job_id, r.array_index) for r in result.records]
+
+        Notes
+        -----
+        A target is one independently tracked piece of chemistry, potentially
+        containing several conformers. A stage is one step within that target.
+        An array element is one allocation, running either a stage group or
+        a sequential target batch. Collectors remain separate ordinary jobs.
+        A standalone retry's automatic collection contains its selection;
+        after it finishes, ``wf.collect(out_dir)`` collects the whole run.
+        Direct screening-policy retries require the composed screen's
+        finalization and reuse contract.
         """
         _validate_target_retention(target_retention)
         artifact_policy = validate_artifact_policy(artifact_policy)

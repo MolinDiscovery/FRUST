@@ -207,6 +207,11 @@ The keys in `stage_resources` come from the `group` column returned by
 `wf.show_stages(execution="dft_staged")`. Omitted groups use the workflow
 resource default.
 
+Add `array=True, array_parallelism=2` to use staged arrays. Each target waits
+for its own preceding group, and every group's array has its own limit of two
+running elements. The [array guide](../cluster/arrays.md) shows the complete
+target/job mapping and retry workflow.
+
 The automatic collector writes:
 
 ```text
