@@ -141,10 +141,11 @@ inspection of its owner before manual removal.
   not a claim of a live timeout/cancellation check.
   [Portable evidence](evidence/task04/slurm-verified.json) and
   [runnable scheduler fixture](evidence/task04/smoke.py) are committed.
-- Explicit retries currently support `BaseWorkflow.submit`, `single_job`, with
+- At this task's gate, explicit retries supported `BaseWorkflow.submit`, `single_job`, with
   standard artifacts. They rerun selected targets from the beginning; they do not
-  resume intermediate checkpoints. Staged retries and screen retry/reuse integration
-  remain for Tasks 05–06; existing staged screen manifest restart behavior remains.
+  resume intermediate checkpoints. Task 05 adds complete-chain staged array retries;
+  screen retry/reuse integration remains for Task 06. Existing staged screen
+  manifest restart behavior is preserved.
 - Legacy result directories remain collectable without attempt attribution. They
   cannot be adopted into the new safe retry contract; use a fresh output root.
 - Submission records with ambiguous/unverified scheduler acceptance stay blocked;
