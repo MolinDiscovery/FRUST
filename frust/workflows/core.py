@@ -42,7 +42,7 @@ from frust.cluster.executor import (
 )
 from frust.cluster.submission import (
     SubmissionLedger, _plan_submission, _submit_array_jobs,
-    _validate_array_scheduler_options, _validate_array_size,
+    _validate_array_scheduler_options, _validate_array_size, _atomic_write_submission_json,
 )
 from frust.cluster.naming import sanitize_tag
 from frust.results import ResultProfile, attach_result_contract
@@ -700,8 +700,11 @@ class BaseWorkflow:
             submission waits for free execution slots before submitting more
             workers, so this call can block until earlier workers finish.
         targets_per_task : int, optional
-            Number of sequential targets per element. Currently only 1 is
-            executable; larger single-job batches are reserved for later support.
+            Number of sequential targets per element; defaults to 1. Larger
+            batches share a lazy job-local UMA server in ``single_job`` mode.
+            Resources apply to the element and its timeout covers the whole
+            batch. Staged arrays require 1. Target exceptions are recorded and
+            independent targets continue, unless the server becomes unavailable.
         targets : iterable of WorkflowTarget or int or None, optional
             Targets to submit. Integers select positions from ``wf.targets()``.
             If omitted, all workflow targets are submitted.
@@ -784,8 +787,6 @@ class BaseWorkflow:
             _validate_array_size(cluster, len(plan[0].batches))
             if mode != "single_job":
                 raise NotImplementedError("Staged arrays are not implemented yet; use array=False")
-            if targets_per_task != 1:
-                raise NotImplementedError("Target batching is not implemented yet; use targets_per_task=1")
         root = Path(out_dir)
         root.mkdir(parents=True, exist_ok=True)
         ledger = SubmissionLedger(root, plan, mode=mode, backend=cluster.backend, array=array)
@@ -827,10 +828,21 @@ class BaseWorkflow:
                 tags.append(target.tag)
                 save_dirs.append(str(target_dir))
                 expected_parquets[target.tag] = "final.parquet"
-                arguments.append((submitted_workflow, target, target_dir, options, utc_timestamp()))
+            if targets_per_task == 1:
+                worker = _run_target_submitted_job
+                arguments = [(submitted_workflow, target, root / target.tag, options, utc_timestamp())
+                             for target in selected]
+            else:
+                worker = _run_target_batch_submitted_job
+                by_tag = {target.tag: target for target in selected}
+                arguments = [
+                    (submitted_workflow, [by_tag[tag] for tag in batch], root, options,
+                     utc_timestamp(), ledger.attempt_id, index)
+                    for index, batch in enumerate(plan[0].batches)
+                ]
             try:
                 final_jobs = _submit_array_jobs(
-                    executor, cluster, _run_target_submitted_job, arguments,
+                    executor, cluster, worker, arguments,
                     parallelism=plan[0].parallelism,
                     on_submitted=lambda index, job: ledger.submitted("single_job", index, job),
                     on_array_submitted=lambda jobs: ledger.submitted_many("single_job", dict(enumerate(jobs))),
@@ -1396,7 +1408,66 @@ def _uma_scope_for_stages(
     )
     if not uses_uma:
         return nullcontext()
-    return uma_job_server_scope(oet_tools=options.uma_oet_tools)
+    return uma_job_server_scope(oet_tools=options.uma_oet_tools, reuse=True)
+
+
+def _run_target_batch_submitted_job(
+    workflow, targets, root, options, submitted_at, attempt_id, batch_index,
+) -> list[WorkflowJobResult]:
+    """Run a sequential batch, preserving outputs and durable target outcomes."""
+    root = Path(root)
+    path = root / ".frust" / "batches" / attempt_id / f"{batch_index}.json"
+    started = monotonic_seconds()
+    records = [{"target": target.tag, "status": "unattempted", "error": None} for target in targets]
+    payload = {
+        "schema_version": 1, "attempt_id": attempt_id, "batch_index": batch_index,
+        "job_id": _current_job_id(), "started_at": utc_timestamp(),
+        "resources": _options_resources(options), "targets": records,
+    }
+    results = []
+    errors = []
+    scope = None
+    _atomic_write_submission_json(path, payload)
+    try:
+        with _uma_scope_for_stages(workflow, workflow._stage_defs(), options) as scope:
+            for target, record in zip(targets, records):
+                print(f"[FRUST batch {batch_index}] target={target.tag}", flush=True)
+                record.update(status="running", started_at=utc_timestamp())
+                _atomic_write_submission_json(path, payload)
+                try:
+                    df = _run_target_job(workflow, target, root / target.tag, options, submitted_at)
+                    record.update(
+                        status="success" if _all_normal_terminated(df) else "non_normal",
+                        output_path=str(root / target.tag / "final.parquet"), row_count=len(df),
+                    )
+                    results.append(WorkflowJobResult(target.tag, record["output_path"], len(df), record["status"]))
+                except Exception as error:
+                    record.update(status="failed", error=f"{type(error).__name__}: {error}")
+                    errors.append(target.tag)
+                except BaseException as error:
+                    record.update(status="interrupted", error=f"{type(error).__name__}: {error}")
+                    raise
+                finally:
+                    record["finished_at"] = utc_timestamp()
+                    _atomic_write_submission_json(path, payload)
+                if scope is not None:
+                    scope.ensure_healthy()
+            if errors:
+                raise RuntimeError(f"Targets failed in batch {batch_index}: {', '.join(errors)}")
+    except BaseException as error:
+        payload["error"] = f"{type(error).__name__}: {error}"
+        raise
+    finally:
+        payload.update(finished_at=utc_timestamp(), elapsed_s=elapsed_seconds(started))
+        if scope is not None:
+            payload["server_startup_s"] = scope._startup_elapsed_s
+            if scope._handle is not None:
+                payload["uma_server"] = {
+                    "pid": scope._handle.pid, "hostname": scope._handle.hostname,
+                    "bind": scope._handle.bind,
+                }
+        _atomic_write_submission_json(path, payload)
+    return results
 
 
 def _run_target_job(

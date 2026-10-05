@@ -174,16 +174,7 @@ class SubmissionLedger:
             "records": [asdict(record) for record in self.records],
             "collection_job_id": self.collection_job_id,
         }
-        fd, name = tempfile.mkstemp(dir=self.path.parent, suffix=".tmp")
-        try:
-            with os.fdopen(fd, "w") as handle:
-                json.dump(payload, handle, indent=2)
-                handle.write("\n")
-                handle.flush()
-                os.fsync(handle.fileno())
-            os.replace(name, self.path)
-        finally:
-            Path(name).unlink(missing_ok=True)
+        _atomic_write_submission_json(self.path, payload)
 
     def submitted(self, group, index, job):
         self.submitted_many(group, {index: job})
@@ -226,3 +217,18 @@ class SubmissionLedger:
     def collected(self, job):
         self.collection_job_id = job.job_id
         self._write()
+
+
+def _atomic_write_submission_json(path, payload):
+    path = Path(path)
+    path.parent.mkdir(parents=True, exist_ok=True)
+    fd, name = tempfile.mkstemp(dir=path.parent, suffix=".tmp")
+    try:
+        with os.fdopen(fd, "w") as handle:
+            json.dump(payload, handle, indent=2)
+            handle.write("\n")
+            handle.flush()
+            os.fsync(handle.fileno())
+        os.replace(name, path)
+    finally:
+        Path(name).unlink(missing_ok=True)

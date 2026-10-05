@@ -93,6 +93,8 @@ class UmaJobServerScope:
         self._stack = ExitStack()
         self._handle: UmaServerHandle | None = None
         self._settings: tuple[object, ...] | None = None
+        self._broken = False
+        self._startup_elapsed_s = 0.0
 
     def acquire(
         self,
@@ -125,6 +127,8 @@ class UmaJobServerScope:
         """
         if os.getpid() != self._owner_pid:
             raise RuntimeError("UMA job server scope cannot be reused after a process fork")
+        if self._broken:
+            raise RuntimeError("The job's UMA server is unavailable")
         if self._oet_tools is not None:
             os.environ["OET_TOOLS"] = self._oet_tools
         settings = (
@@ -136,15 +140,20 @@ class UmaJobServerScope:
             str(get_oet_tools()),
         )
         if self._handle is None:
-            self._handle = self._stack.enter_context(
-                uma_server(
+            started = time.monotonic()
+            try:
+                self._handle = self._stack.enter_context(uma_server(
                     log_dir=log_dir,
                     keep_logs=keep_logs,
                     use_gpu=use_gpu,
                     server_cores=server_cores,
                     memory_per_thread_mib=memory_per_thread_mib,
-                )
-            )
+                ))
+            except BaseException:
+                self._broken = True
+                raise
+            finally:
+                self._startup_elapsed_s = time.monotonic() - started
             self._settings = settings
         elif settings != self._settings:
             raise ValueError(
@@ -152,13 +161,29 @@ class UmaJobServerScope:
                 "log policy, and OET_TOOLS runtime"
             )
         else:
-            try:
-                ready = _healthz_ready(self._handle.bind)
-            except Exception as exc:
-                raise RuntimeError("The job's UMA server stopped before the next stage") from exc
-            if not ready:
-                raise RuntimeError("The job's UMA server stopped before the next stage")
+            self.ensure_healthy()
         return self._handle
+
+    def ensure_healthy(self) -> None:
+        """Check an acquired server before continuing with another target.
+
+        Raises
+        ------
+        RuntimeError
+            If startup failed, the server is unavailable, or the scope belongs
+            to another process. An unused lazy scope requires no server check.
+        """
+        if os.getpid() != self._owner_pid:
+            raise RuntimeError("UMA job server scope cannot be reused after a process fork")
+        if self._broken:
+            raise RuntimeError("The job's UMA server is unavailable")
+        if self._handle is not None:
+            try:
+                if not _healthz_ready(self._handle.bind):
+                    raise RuntimeError("UMA health check failed")
+            except Exception as exc:
+                self._broken = True
+                raise RuntimeError("The job's UMA server stopped before the next stage") from exc
 
     def close(self, exc_info=(None, None, None)) -> None:
         """Stop the job's server, preserving failure logs when appropriate."""
@@ -179,7 +204,7 @@ def current_uma_job_scope() -> UmaJobServerScope | None:
 
 
 @contextmanager
-def uma_job_server_scope(*, oet_tools: str | None = None):
+def uma_job_server_scope(*, oet_tools: str | None = None, reuse: bool = False):
     """Keep one UMA server available throughout a workflow stage group.
 
     Parameters
@@ -187,14 +212,26 @@ def uma_job_server_scope(*, oet_tools: str | None = None):
     oet_tools : str or None, optional
         Explicit OET runtime for this executing job. If omitted, use the
         configured ``OET_TOOLS`` environment variable.
+    reuse : bool, optional
+        Reuse an active scope with a compatible runtime. The outer owner alone
+        closes the server. Defaults to False, which rejects nested ownership.
 
     Yields
     ------
     UmaJobServerScope
         A lazily started server owner shared by UMA calls in the group.
     """
-    if current_uma_job_scope() is not None:
-        raise RuntimeError("A UMA job server scope is already active")
+    active = current_uma_job_scope()
+    if active is not None:
+        if not reuse:
+            raise RuntimeError("A UMA job server scope is already active")
+        if oet_tools is not None:
+            runtime = active._oet_tools or str(get_oet_tools())
+            if Path(oet_tools).resolve() != Path(runtime).resolve():
+                raise ValueError("Cannot reuse a UMA scope with a different OET runtime")
+        active.ensure_healthy()
+        yield active
+        return
     previous_oet = os.environ.get("OET_TOOLS")
     if oet_tools is not None:
         os.environ["OET_TOOLS"] = str(oet_tools)
