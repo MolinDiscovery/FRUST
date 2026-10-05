@@ -32,6 +32,9 @@ Collectors/finalizers are additional jobs and are excluded from these counts.
    Commit/push local library changes before updating the HPC checkout. If no
    cluster is available, preserve runnable checks and leave Slurm verification
    pending; do not claim mocks prove scheduler behavior.
+   Include the public CSV facade and a managed screen from Task 06: verify
+   branch collection, reference reuse, a partial finalizer, and a targeted
+   retry that retains earlier successful targets in the finalized bundle.
 4. Reuse earlier evidence when the implementation remains unchanged; rerun
    affected checks after relevant changes. Verify one target per element and observed concurrency with a tiny array.
    Verify a multi-target UMA element starts one server and cleans it up. Verify
