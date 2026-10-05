@@ -1,3 +1,5 @@
+import numpy as np
+
 from .models import ParsedProfile
 
 
@@ -198,8 +200,24 @@ def parse_profile(
                 "supported."
             )
 
+        if not isinstance(item, (tuple, list)) or len(item) < 2:
+            raise ValueError(
+                f"Invalid state entry {item!r}; expected (label, energy[, placement])."
+            )
         label = item[0]
-        energy = item[1]
+        raw_energy = item[1]
+        try:
+            energy = np.nan if raw_energy is None else float(raw_energy)
+        except (TypeError, ValueError, OverflowError) as exc:
+            raise ValueError(
+                f"Invalid energy for state {label!r}: {raw_energy!r}; "
+                "expected a number, np.nan, or None."
+            ) from exc
+        if np.isinf(energy):
+            raise ValueError(
+                f"Invalid energy for state {label!r}: infinity is not supported; "
+                "use np.nan or None for a missing energy."
+            )
         placement = item[2] if len(item) >= 3 else None
 
         entries.append((label, energy, placement))

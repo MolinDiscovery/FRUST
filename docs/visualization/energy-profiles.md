@@ -174,6 +174,69 @@ fig, ax = ft.plot_energy_profile(
     rename the labels consistently, or use `overlay="off"` if the pathways should
     be laid out independently.
 
+## Keep Gaps For Missing Energies
+
+| State | TMP | Pip |
+| --- | ---: | ---: |
+| Reactants | 0.0 | 0.0 |
+| TS1 | 27.7 | missing |
+| Int1 | 3.8 | 7.3 |
+| TS2 | 21.2 | 22.5 |
+| Product | -0.3 | -0.3 |
+
+```python
+import numpy as np
+import frust as ft
+
+profiles = {
+    "TMP": [("Reactants", 0.0), ("TS1", 27.7), ("Int1", 3.8),
+            ("TS2", 21.2), ("Product", -0.3)],
+    "Pip": [("Reactants", 0.0), ("TS1", np.nan), ("Int1", 7.3),
+            ("TS2", 22.5), ("Product", -0.3)],
+}
+
+fig, ax = ft.plot_energy_profile(
+    profiles,
+    annotate_energies=True,
+    overlay_annotate="energy",
+    show_state_labels=True,
+)
+```
+
+![An aligned overlay with a gap at Pip TS1](../assets/energy-profile-missing-data.png)
+
+These numbers are an illustrative subset of the p26 benchmark, not a complete
+atom-balanced profile. TMP keeps its full smooth curve. Pip has an isolated
+Reactants marker and a smooth Int1–TS2–Product run, with a gap at TS1. Shared
+energies still follow `same_energy_mode`; use `"show"` to label every available
+point even when its energy matches the first profile.
+
+`None` and `np.nan` express the same explicit missing point. FRUST keeps its
+state position and label, draws no marker or numerical annotation there, and
+never interpolates or connects across the gap. Consecutive missing points and
+missing first or last states work the same way. Infinity and malformed energies
+raise an error identifying the state.
+
+| Missing-data case | Plot behavior |
+| --- | --- |
+| One available state | An isolated marker with the usual available-energy annotation |
+| Entirely missing curve | No curve or markers; its configured legend entry remains |
+| Entirely missing panel | State labels and configured legend remain; y-limits stay finite using Matplotlib's default range on fresh axes |
+| Missing Product or reference energy | No additional Product-relative value or vertical reference connector; available original energies remain labelled |
+| Missing connector endpoint or intervening state | The main-to-product or side-path connector is omitted |
+
+With `show_state_labels=True`, all state names stay on the x-axis. With it
+disabled, missing-state names appear beneath their x-positions, while available
+states keep the existing annotation controls. Each overlay determines its own
+gaps and keeps its colour, alpha and interpolation style.
+
+!!! note "Explicit gaps need labelled entries"
+
+    Keep `("TS1", None)` to reserve TS1's position and show a gap. Removing the
+    tuple preserves the existing semantics of a shorter profile and does not
+    imply missing chemistry. FRUST does not inspect frequency or reaction-mode
+    quality flags; pass a missing energy when your analysis should exclude it.
+
 ## Add A Side Reaction
 
 Insert a `side-rxn` marker at the point where a side pathway branches away from
