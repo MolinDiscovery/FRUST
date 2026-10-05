@@ -84,7 +84,7 @@ def _plan_submission(
 def _validate_array_scheduler_options(cluster):
     extra = cluster.extra_slurm_parameters or {}
     conflicts = {str(key).lstrip("-").replace("_", "-") for key in extra}
-    conflicts &= {"array", "dependency", "array-parallelism", "map-count"}
+    conflicts &= {"array", "dependency", "array-parallelism", "map-count", "kill-on-invalid-dep"}
     if conflicts:
         raise ValueError(f"FRUST manages array and dependency options; remove: {sorted(conflicts)}")
 
@@ -217,6 +217,14 @@ class SubmissionLedger:
         ]
         self._write()
 
+    def blocked(self, group, index, error):
+        self.records = [
+            replace(record, status="blocked", error=error)
+            if record.group == group and record.batch_index == index else record
+            for record in self.records
+        ]
+        self._write()
+
     def submit(self, group, index, executor, fn, *args):
         try:
             job = executor.submit(fn, *args)
@@ -289,6 +297,65 @@ def _completion_path(root, attempt_id, group, index):
     return Path(root) / '.frust/completions' / attempt_id / f'{group}_{index}.json'
 
 
+def _stage_outcome_path(root, attempt_id, group, index):
+    return Path(root) / '.frust/stages' / attempt_id / group / f'{index}.json'
+
+
+def _array_dependency(jobs):
+    """Return a verified parent ID and dependency type without guessing indices."""
+    ids = [str(job.job_id) for job in jobs]
+    if len(ids) == 1 and re.fullmatch(r'\d+', ids[0]):
+        return ids[0], 'afterok'
+    matches = [re.fullmatch(r'(\d+)_(\d+)', job_id) for job_id in ids]
+    if (not matches or not all(matches)
+            or len({match[1] for match in matches}) != 1
+            or [int(match[2]) for match in matches] != list(range(len(ids)))):
+        raise RuntimeError('Submitit array IDs do not preserve planned element indices; inspect accepted jobs before retrying')
+    return matches[0][1], 'aftercorr'
+
+
+def _submit_local_stages(executors, plan, arguments, fn, ledger, on_blocked):
+    """Launch only ready local stages, with independent limits and no wait workers."""
+    states = [['pending'] * len(args) for args in arguments]
+    jobs = {}
+    submitted = []
+    while any('pending' in row or 'running' in row for row in states):
+        progress = False
+        for (group_index, index), job in list(jobs.items()):
+            if states[group_index][index] != 'running' or not job.done():
+                continue
+            try:
+                result = job.result()
+                succeeded = result.status == 'success'
+            except Exception:
+                succeeded = False
+            states[group_index][index] = 'success' if succeeded else 'failed'
+            progress = True
+        for group_index in reversed(range(len(plan))):
+            group = plan[group_index]
+            active = states[group_index].count('running')
+            for index, state in enumerate(states[group_index]):
+                if state != 'pending':
+                    continue
+                upstream = 'success' if group_index == 0 else states[group_index - 1][index]
+                if upstream in {'failed', 'blocked'}:
+                    error = f'Upstream group {plan[group_index - 1].name} did not succeed'
+                    on_blocked(group_index, index, error)
+                    ledger.blocked(group.name, index, error)
+                    states[group_index][index] = 'blocked'
+                    progress = True
+                elif upstream == 'success' and active < group.parallelism:
+                    job = ledger.submit(group.name, index, executors[group_index], fn, *arguments[group_index][index])
+                    jobs[group_index, index] = job
+                    submitted.append(job)
+                    states[group_index][index] = 'running'
+                    active += 1
+                    progress = True
+        if not progress:
+            time.sleep(0.05)
+    return submitted
+
+
 def _mark_completed(root, attempt_id, group, index):
     if attempt_id is not None:
         _atomic_write_submission_json(_completion_path(root, attempt_id, group, index), {'finished_ns': time.time_ns()})
@@ -338,9 +405,9 @@ def _target_fingerprints(workflow, targets):
 
 @contextmanager
 def _submission_guard(root, plan, workflow, targets, cluster, *, mode, array, retry):
-    if retry and (mode != 'single_job'):
-        raise NotImplementedError('Explicit retries currently require execution="single_job"')
-    fingerprints = _target_fingerprints(workflow, targets) if mode == 'single_job' else {}
+    if retry and mode != 'single_job' and not array:
+        raise NotImplementedError('Staged retries currently require array=True and rerun the complete chain')
+    fingerprints = _target_fingerprints(workflow, targets) if mode == 'single_job' or array else {}
     with _mutation_lock(root):
         latest = _latest_targets(root)
         outcomes = _target_outcomes(root)
@@ -369,8 +436,10 @@ def _submission_guard(root, plan, workflow, targets, cluster, *, mode, array, re
                 raise ValueError(f'{target.tag} has submission history; select failed targets with retry=True or use a new out_dir')
             if attempt.get('fingerprints', {}).get(target.tag) != fingerprints[target.tag]:
                 raise ValueError(f'Incompatible or legacy chemistry fingerprint for {target.tag}; use a new out_dir')
+            if attempt['mode'] != mode or [group['name'] for group in attempt['groups']] != [group.name for group in plan]:
+                raise ValueError(f'Incompatible execution groups for {target.tag}; use a new out_dir')
             import pandas as pd
-            final = directory / 'final.parquet'
+            final = Path(record['output_path'])
             if final.exists():
                 try:
                     frame = pd.read_parquet(final)
@@ -379,7 +448,7 @@ def _submission_guard(root, plan, workflow, targets, cluster, *, mode, array, re
                 if frame is not None:
                     nt = [name for name in frame if str(name).endswith('-NT')]
                     belongs = frame.attrs.get('frust_submission', {}).get('attempt_id') == attempt['attempt_id']
-                    target_failed = outcomes[target.tag].get('status') in {'failed', 'interrupted', 'unattempted'}
+                    target_failed = outcomes[target.tag].get('status') in {'failed', 'interrupted', 'unattempted', 'blocked'}
                     if belongs and not target_failed and (not nt or frame[nt].fillna(False).astype(bool).all().all()):
                         raise ValueError(f'Target {target.tag} already succeeded; exclude it from retry targets')
             predecessors[target.tag] = attempt['attempt_id']
@@ -402,6 +471,9 @@ def _submission_guard(root, plan, workflow, targets, cluster, *, mode, array, re
 def _target_outcomes(root, attempt_id=None, *, workers_finished=False):
     outcomes = {}
     for tag, (attempt, record) in _latest_targets(root, attempt_id).items():
+        if attempt.get('array') and attempt['mode'] != 'single_job':
+            outcomes[tag] = _staged_target_outcome(root, attempt, tag, workers_finished)
+            continue
         batch = Path(root) / '.frust/batches' / attempt['attempt_id'] / f"{record['batch_index']}.json"
         status = {}
         if batch.exists():
@@ -416,6 +488,31 @@ def _target_outcomes(root, attempt_id=None, *, workers_finished=False):
         outcomes[tag] = dict(status, target=tag, attempt_id=attempt['attempt_id'], job_id=record.get('job_id'),
                              output_path=record['output_path'], tracked=bool(attempt.get('fingerprints', {}).get(tag)))
     return outcomes
+
+
+def _staged_target_outcome(root, attempt, tag, workers_finished):
+    stages = []
+    for record in attempt['records']:
+        if record['target'] != tag:
+            continue
+        path = _stage_outcome_path(root, attempt['attempt_id'], record['group'], record['batch_index'])
+        status = json.loads(path.read_text()) if path.exists() else {}
+        finished = workers_finished or _completion_path(root, attempt['attempt_id'], record['group'], record['batch_index']).exists()
+        if status.get('status') == 'running' and (finished or _job_terminal(attempt, record.get('job_id'))):
+            status.update(status='interrupted', error='Worker terminated without a final group outcome; cause is unknown')
+        if not status:
+            status['status'] = 'missing' if finished else record['status']
+            if stages and stages[-1]['status'] not in {'success', 'running', 'planned', 'submitted'}:
+                status.update(status='blocked', error=f'Upstream group {stages[-1]["group"]} did not succeed')
+        stages.append(dict(status, group=record['group'], job_id=record.get('job_id'), output_path=record['output_path']))
+    final = stages[-1]
+    first_problem = next((stage for stage in stages if stage['status'] != 'success'), None)
+    outcome = dict(final, target=tag, attempt_id=attempt['attempt_id'],
+                   tracked=bool(attempt.get('fingerprints', {}).get(tag)), stage_results=stages)
+    if first_problem is not None:
+        outcome['failed_group'] = first_problem['group']
+        outcome['upstream_status'] = first_problem['status']
+    return outcome
 
 
 def _ensure_collection_ready(root, targets):

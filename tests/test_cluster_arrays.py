@@ -203,9 +203,9 @@ def test_array_limit_and_future_features_rejected_before_submission(tmp_path):
         with pytest.raises(ValueError, match="Select fewer targets"):
             _workflow().submit(out_dir=tmp_path / "size", cluster=ClusterConfig(max_array_size=2),
                                array=True, array_parallelism=2)
-        with pytest.raises(NotImplementedError, match="Staged arrays"):
+        with pytest.raises(ValueError, match="Staged arrays require"):
             _workflow().submit(out_dir=tmp_path / "staged", cluster=ClusterConfig(),
-                               execution="fully_staged", array=True, array_parallelism=2)
+                               execution="fully_staged", array=True, array_parallelism=2, targets_per_task=2)
     create.assert_not_called()
 
 

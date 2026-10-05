@@ -14,9 +14,10 @@ import json
 import os
 import shutil
 import tempfile
+import time
 from collections.abc import Mapping
 from contextlib import nullcontext
-from dataclasses import dataclass
+from dataclasses import dataclass, replace
 from pathlib import Path
 from typing import Any, Iterable, Literal
 
@@ -45,6 +46,7 @@ from frust.cluster.submission import (
     _validate_array_scheduler_options, _validate_array_size, _atomic_write_submission_json,
     _submission_guard, _mutation_lock, _mark_completed, _target_outcomes, _submission_history,
     _ensure_collection_ready,
+    _stage_outcome_path, _array_dependency, _submit_local_stages,
 )
 from frust.cluster.naming import sanitize_tag
 from frust.results import ResultProfile, attach_result_contract
@@ -693,15 +695,19 @@ class BaseWorkflow:
             workflows usually use ``"init"``, ``"dft_hessian"``,
             ``"dft_ts_opt"``, ``"dft_freq"``, and ``"dft_solv_sp"``.
         array : bool, optional
-            Submit worker jobs together as a Slurm array. Defaults to False,
-            preserving individual submission. Currently requires ``single_job``.
+            Submit worker jobs together as Slurm arrays. Defaults to False,
+            preserving individual submission. Staged modes submit one array per
+            group; each element waits for its own preceding element's success.
+            Slurm must support ``aftercorr`` and ``kill-on-invalid-dep=yes``;
+            invalid dependencies are cancelled so collection can finish.
         array_parallelism : int or mapping of str to int or None, optional
             Maximum running elements per array, required when ``array=True``.
-            ``single_job`` requires one positive integer. Staged planning accepts
-            a complete stage-group mapping, but staged arrays are not enabled yet.
+            ``single_job`` requires one positive integer. Staged modes accept one
+            integer for all groups or a complete mapping keyed by stage group.
             This is not a run-wide limit across separate arrays. Local array
             submission waits for free execution slots before submitting more
-            workers, so this call can block until earlier workers finish.
+            workers, so this call can block until earlier workers finish. Local
+            staged submission dispatches ready work until the entire chain ends.
         targets_per_task : int, optional
             Number of sequential targets per element; defaults to 1. Larger
             batches share a lazy job-local UMA server in ``single_job`` mode.
@@ -709,10 +715,13 @@ class BaseWorkflow:
             batch. Staged arrays require 1. Target exceptions are recorded and
             independent targets continue, unless the server becomes unavailable.
         retry : bool, optional
-            Explicitly retry selected failed targets in a compatible single-job
-            run. Earlier jobs and collection must be finished. Old target files
+            Explicitly retry selected failed targets in a compatible run.
+            Staged retries require ``array=True`` and rerun the complete selected
+            target chain; intermediate checkpoint resume is unsupported.
+            Earlier jobs and collection must be finished. Old target files
             are archived, successful targets are rejected, and resources/batch
-            size may change. Defaults to False; overlapping writes are blocked.
+            size may change within the mode's constraints. Execution groups must
+            match. Defaults to False; overlapping writes are blocked.
         targets : iterable of WorkflowTarget or int or None, optional
             Targets to submit. Integers select positions from ``wf.targets()``.
             If omitted, all workflow targets are submitted.
@@ -793,8 +802,6 @@ class BaseWorkflow:
         if array:
             _validate_array_scheduler_options(cluster)
             _validate_array_size(cluster, len(plan[0].batches))
-            if mode != "single_job":
-                raise NotImplementedError("Staged arrays are not implemented yet; use array=False")
         if not isinstance(retry, bool):
             raise ValueError("retry must be a boolean")
         if retry and artifact_policy == "screening":
@@ -819,7 +826,25 @@ class BaseWorkflow:
             final_jobs: list[Any] = []
             expected_parquets: dict[str, str] = {}
 
-            if array and selected:
+            if array and selected and mode != "single_job":
+                tags = [target.tag for target in selected]
+                save_dirs = [str(root / tag) for tag in tags]
+                for directory in save_dirs:
+                    Path(directory).mkdir(parents=True, exist_ok=True)
+                staged_options = ExecutionOptions(
+                    debug=debug, save_output_dir=save_output_dir,
+                    work_dir=str(work_dir or cluster.work_dir) if (work_dir or cluster.work_dir) else None,
+                    artifact_policy=artifact_policy,
+                    uma_oet_tools=None if uma_oet_tools is None else str(uma_oet_tools),
+                )
+                final_jobs, final_job_ids = _submit_staged_arrays(
+                    submitted_workflow, selected, root, cluster, plan, groups,
+                    ledger, executor, staged_options, orca_memory_fraction,
+                )
+                job_ids = [job.job_id for job in final_jobs]
+                expected_parquets = dict.fromkeys(tags, plan[-1].output_name)
+
+            elif array and selected:
                 resources = plan[0].resources
                 update_executor_with_dependency(
                     executor, cluster, resources,
@@ -1558,6 +1583,108 @@ def _run_target_submitted_job(
     return WorkflowJobResult(target.tag, str(Path(save_dir) / "final.parquet"), len(df), "success")
 
 
+def _submit_staged_arrays(workflow, targets, root, cluster, plan, groups, ledger,
+                          first_executor, base_options, memory_fraction):
+    """Submit matching stage arrays, or dispatch a ready-only local graph."""
+    executors = []
+    arguments = []
+    jobs = []
+    dependency_ids = []
+    upstream_id = None
+    dependency_type = 'afterok'
+    for group_index, (group_plan, stages) in enumerate(zip(plan, groups)):
+        executor = first_executor if group_index == 0 else create_executor(cluster)
+        executors.append(executor)
+        update_executor_with_dependencies(
+            executor, cluster, group_plan.resources,
+            job_name=f'{workflow.workflow_name}_{group_plan.name}',
+            dependency_job_ids=[] if upstream_id is None else [upstream_id],
+            dependency_type=dependency_type, kill_on_invalid_dependency=True,
+        )
+        options = replace(base_options, n_cores=group_plan.resources.cpus,
+                          mem_gb=orca_memory_gb(group_plan.resources, memory_fraction))
+        previous = None if group_index == 0 else plan[group_index - 1]
+        args = [
+            (workflow, target, [stage.id for stage in stages],
+             None if previous is None else previous.output_name,
+             group_plan.output_name, root / target.tag, options, utc_timestamp(),
+             group_index == len(plan) - 1, ledger.attempt_id, group_plan.name, index,
+             None if previous is None else previous.name)
+            for index, target in enumerate(targets)
+        ]
+        arguments.append(args)
+        if cluster.backend == 'slurm':
+            try:
+                submitted = _submit_array_jobs(
+                    executor, cluster, _run_stage_array_submitted_job, args,
+                    parallelism=group_plan.parallelism,
+                    on_submitted=lambda index, job: ledger.submitted(group_plan.name, index, job),
+                    on_array_submitted=lambda batch: ledger.submitted_many(group_plan.name, dict(enumerate(batch))),
+                )
+            except Exception as error:
+                ledger.failed(group_plan.name, range(len(args)), error)
+                raise RuntimeError(
+                    'Staged arrays require Slurm aftercorr and kill-on-invalid-dep=yes support. '
+                    'Submission failed; inspect accepted jobs and the scheduler error before retrying.'
+                ) from error
+            jobs.extend(submitted)
+            upstream_id, dependency_type = _array_dependency(submitted)
+            dependency_ids.append(upstream_id)
+    if cluster.backend == 'local':
+        def blocked(group_index, index, error):
+            group = plan[group_index].name
+            _atomic_write_submission_json(
+                _stage_outcome_path(root, ledger.attempt_id, group, index),
+                {'target': targets[index].tag, 'group': group, 'status': 'blocked',
+                 'error': error, 'finished_at': utc_timestamp()},
+            )
+            _mark_completed(root, ledger.attempt_id, group, index)
+        jobs = _submit_local_stages(executors, plan, arguments, _run_stage_array_submitted_job, ledger, blocked)
+        dependency_ids = [job.job_id for job in jobs]
+    return jobs, dependency_ids
+
+
+def _run_stage_array_submitted_job(workflow, target, stage_ids, input_parquet,
+                                  output_parquet, save_dir, options, submitted_at,
+                                  is_final_group, attempt_id, group, index, previous_group):
+    """Run one attributed stage and make scientific failure block descendants."""
+    root = Path(save_dir).parent
+    path = _stage_outcome_path(root, attempt_id, group, index)
+    payload = {'schema_version': 1, 'target': target.tag, 'group': group, 'attempt_id': attempt_id,
+               'status': 'running', 'started_at': utc_timestamp(), 'started_ns': time.time_ns(),
+               'job_id': _current_job_id(), 'resources': _options_resources(options)}
+    _atomic_write_submission_json(path, payload)
+    try:
+        if previous_group is not None:
+            upstream = _stage_outcome_path(root, attempt_id, previous_group, index)
+            if not upstream.exists() or json.loads(upstream.read_text()).get('status') != 'success':
+                payload.update(status='blocked', error=f'Upstream group {previous_group} has no validated success')
+                raise RuntimeError(payload['error'])
+        df = _run_stage_group_job(
+            workflow, target, stage_ids, input_parquet, output_parquet, save_dir,
+            options, submitted_at, is_final_group=is_final_group,
+            attempt_id=attempt_id, expected_input_group=previous_group,
+        )
+        payload.update(status='success' if _all_normal_terminated(df) else 'non_normal',
+                       output_path=str(Path(save_dir) / output_parquet), row_count=len(df))
+        if payload['status'] == 'non_normal':
+            payload['error'] = 'Scientific normal-termination checks failed'
+            raise RuntimeError(payload['error'])
+        return WorkflowJobResult(target.tag, payload['output_path'], len(df), 'success')
+    except Exception as error:
+        if payload['status'] == 'running':
+            payload.update(status='failed', error=f'{type(error).__name__}: {error}')
+        raise
+    except BaseException as error:
+        payload.update(status='interrupted', error=f'{type(error).__name__}: {error}')
+        raise
+    finally:
+        payload['finished_at'] = utc_timestamp()
+        payload['finished_ns'] = time.time_ns()
+        _atomic_write_submission_json(path, payload)
+        _mark_completed(root, attempt_id, group, index)
+
+
 def _run_stage_group_job(
     workflow: BaseWorkflow,
     target: WorkflowTarget,
@@ -1569,6 +1696,8 @@ def _run_stage_group_job(
     submitted_at: str | None = None,
     *,
     is_final_group: bool = False,
+    attempt_id: str | None = None,
+    expected_input_group: str | None = None,
 ) -> pd.DataFrame:
     """Run one submitted or staged-local stage group.
 
@@ -1601,6 +1730,10 @@ def _run_stage_group_job(
     input_df = (
         None if input_parquet is None else pd.read_parquet(target_dir / input_parquet)
     )
+    if input_df is not None and attempt_id is not None:
+        expected = {'attempt_id': attempt_id, 'target': target.tag, 'group': expected_input_group}
+        if input_df.attrs.get('frust_submission') != expected:
+            raise ValueError('Staged checkpoint attribution does not match this target, group, and attempt')
     stages_by_id = {stage.id: stage for stage in workflow._stage_defs()}
     stages = [stages_by_id[stage_id] for stage_id in stage_ids]
     group_name = workflow._group_name(stages)
@@ -1633,6 +1766,8 @@ def _run_stage_group_job(
         and _all_normal_terminated(df)
     ):
         df = compact_result_dataframe(df)
+    if attempt_id is not None:
+        df.attrs['frust_submission'] = {'attempt_id': attempt_id, 'target': target.tag, 'group': group_name}
     _atomic_write_parquet(df, target_dir / output_parquet)
     _write_target_timing(
         target_dir,
@@ -1762,7 +1897,7 @@ def _collect_expected_outputs(
             else root / target.tag / "final.parquet"
         )
         outcome = outcomes.setdefault(target.tag, {"target": target.tag})
-        if outcome.get("status") in {"failed", "interrupted", "unattempted", "running"}:
+        if outcome.get("status") in {"failed", "interrupted", "unattempted", "running", "blocked"}:
             missing_files.append(str(final_file))
             continue
         if not final_file.exists():
@@ -1820,9 +1955,12 @@ def _collect_expected_outputs(
     )
     for failure in failure_summary:
         outcome = outcomes.get(failure.get("target"), {})
-        if outcome.get("status") in {"failed", "interrupted", "unattempted", "stale", "running"}:
+        if outcome.get("status") in {"failed", "interrupted", "unattempted", "stale", "running", "blocked"}:
             failure.update(problem=outcome["status"], error=outcome.get("error"),
                            attempt_id=outcome.get("attempt_id"), job_id=outcome.get("job_id"))
+            if outcome.get('failed_group'):
+                failure['failed_group'] = outcome['failed_group']
+                failure['upstream_status'] = outcome['upstream_status']
     report_payload["target_results"] = [outcomes[target.tag] for target in targets]
     report_payload["retry_targets"] = [target.tag for target in targets
                                        if outcomes[target.tag].get("status") not in {"success", "running"}]

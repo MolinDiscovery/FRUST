@@ -135,11 +135,12 @@ class SubmissionRecord:
         Expected checkpoint or final parquet.
     attempt_id : str
         Unique submission attempt identity.
-    status : {"planned", "submitted", "submission_failed"}
+    status : {"planned", "submitted", "submission_failed", "blocked"}
         ``planned`` has not been submitted; ``submitted`` has an executor ID;
         ``submission_failed`` encountered a submission error. These describe
         submission only, not calculation success. A scheduler acceptance error
-        can be ambiguous; inspect the scheduler before resubmitting.
+        can be ambiguous; inspect the scheduler before resubmitting. ``blocked``
+        means a local descendant was not submitted because its predecessor failed.
     job_id : str or int or None, optional
         Actual executor job ID, available after submission.
     array_job_id : str or None, optional

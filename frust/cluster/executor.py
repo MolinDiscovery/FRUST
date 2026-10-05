@@ -112,6 +112,7 @@ def update_executor_with_dependencies(
     job_name: str,
     dependency_job_ids: Iterable[str | int] | None,
     dependency_type: str = "afterok",
+    kill_on_invalid_dependency: bool = False,
 ):
     """Apply resource settings and optional Slurm dependencies to an executor.
 
@@ -127,18 +128,23 @@ def update_executor_with_dependencies(
         Scheduler-visible job name.
     dependency_job_ids : iterable of str or int or None
         Upstream job identifiers. Empty or ``None`` means no dependency.
-    dependency_type : {"afterok", "afterany"}, optional
+    dependency_type : {"afterok", "afterany", "aftercorr"}, optional
         Slurm dependency condition. ``"afterok"`` starts the job only after all
         upstream jobs finish successfully. ``"afterany"`` starts the job after
         all upstream jobs finish in any state.
+        ``"aftercorr"`` starts each array element after its corresponding
+        upstream element succeeds.
+    kill_on_invalid_dependency : bool, optional
+        Ask Slurm to cancel jobs whose dependencies can never succeed. Used
+        for staged arrays so blocked descendants become terminal.
 
     Raises
     ------
     ValueError
         If ``dependency_type`` is not supported.
     """
-    if dependency_type not in {"afterok", "afterany"}:
-        raise ValueError("dependency_type must be 'afterok' or 'afterany'")
+    if dependency_type not in {"afterok", "afterany", "aftercorr"}:
+        raise ValueError("dependency_type must be 'afterok', 'afterany', or 'aftercorr'")
 
     params = {
         "cpus_per_task": resources.cpus,
@@ -154,5 +160,7 @@ def update_executor_with_dependencies(
         dependency_ids = [str(job_id) for job_id in (dependency_job_ids or [])]
         if dependency_ids:
             extra["dependency"] = f"{dependency_type}:{':'.join(dependency_ids)}"
+        if kill_on_invalid_dependency:
+            extra["kill-on-invalid-dep"] = "yes"
         params["slurm_additional_parameters"] = extra
     executor.update_parameters(**params)
