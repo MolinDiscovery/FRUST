@@ -143,6 +143,25 @@ def test_completed_target_with_deleted_output_is_missing(tmp_path):
     assert 'A' in report['retry_targets']
 
 
+def test_late_exception_with_normal_output_can_be_retried(tmp_path):
+    wf = _fixture(tmp_path/'ready')
+    root = tmp_path/'run'
+    with patch('frust.workflows.core.create_executor',return_value=ArrayExecutor(['123'])):
+        first = wf.submit(out_dir=root,cluster=ClusterConfig(),targets=[1],collect=False)
+    attempt = first.records[0].attempt_id
+    _mark_completed(root,attempt,'single_job',0)
+    df = pd.DataFrame({'calc-NT':[True]})
+    df.attrs['frust_submission'] = {'attempt_id':attempt,'target':'B'}
+    df.to_parquet(root/'B/final.parquet')
+    batch = root/'.frust/batches'/attempt/'0.json'
+    batch.parent.mkdir(parents=True)
+    batch.write_text(json.dumps({'targets':[{'target':'B','status':'failed','error':'late write failure'}]}))
+    with patch('frust.workflows.core.create_executor',return_value=ArrayExecutor(['124'])):
+        retry = wf.submit(out_dir=root,cluster=ClusterConfig(),targets=[1],retry=True,collect=False)
+    assert retry.records[0].attempt_id != attempt
+    assert not (root/'B/final.parquet').exists()
+
+
 def test_retry_rejects_chemistry_change_before_archiving(tmp_path):
     wf = _fixture(tmp_path/'ready')
     with patch('frust.workflows.core.create_executor',return_value=ArrayExecutor(['123'])):

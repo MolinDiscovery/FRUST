@@ -343,6 +343,7 @@ def _submission_guard(root, plan, workflow, targets, cluster, *, mode, array, re
     fingerprints = _target_fingerprints(workflow, targets) if mode == 'single_job' else {}
     with _mutation_lock(root):
         latest = _latest_targets(root)
+        outcomes = _target_outcomes(root)
         predecessors = {}
         checked = set()
         for target in targets:
@@ -378,7 +379,8 @@ def _submission_guard(root, plan, workflow, targets, cluster, *, mode, array, re
                 if frame is not None:
                     nt = [name for name in frame if str(name).endswith('-NT')]
                     belongs = frame.attrs.get('frust_submission', {}).get('attempt_id') == attempt['attempt_id']
-                    if belongs and (not nt or frame[nt].fillna(False).astype(bool).all().all()):
+                    target_failed = outcomes[target.tag].get('status') in {'failed', 'interrupted', 'unattempted'}
+                    if belongs and not target_failed and (not nt or frame[nt].fillna(False).astype(bool).all().all()):
                         raise ValueError(f'Target {target.tag} already succeeded; exclude it from retry targets')
             predecessors[target.tag] = attempt['attempt_id']
         ledger = SubmissionLedger(root, plan, mode=mode, backend=cluster.backend, array=array)
