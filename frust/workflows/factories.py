@@ -679,6 +679,14 @@ class RawMolsWorkflow(BaseWorkflow):
         self.dataframe = dataframe
         self.smiles = smiles
         self.prune_initial = prune_initial
+        self.uma_rank_top_n = 1
+        ranking = _ranking_stage(self.method)
+        self.include_dft_rank_sp = (
+            ranking == "dft_rank_sp"
+            if ranking is not None
+            else self.method.result_family == "dft"
+            and "uma_opt" not in self.method.stages
+        )
 
     def _input_df(self) -> pd.DataFrame:
         """Return the raw molecule workflow input table."""
@@ -775,6 +783,7 @@ class RawMolsWorkflow(BaseWorkflow):
             top_n=self.top_n,
             calculation_level=self.calculation_level,
             method=self.method,
+            include_dft_rank_sp=self.include_dft_rank_sp,
             include_terminal_solv_sp=self.method.include_terminal_solv_sp,
             prune_initial=self.prune_initial,
         )

@@ -444,3 +444,31 @@ def test_p13_parent_coverage_is_lightweight_and_contains_no_dft_stages(monkeypat
     assert not stages.stage.str.startswith("dft_").any()
     assert not any(stage.startswith("dft_") for stage in wf.method.stages)
     assert wf.n_confs == 200 and wf.top_n == 20 and wf.ranking_top_n == 1
+
+
+def test_raw_molecule_validation_uses_explicit_ranking_without_dft_flags(tmp_path):
+    from frust.workflows.factories import RawMolsWorkflow
+
+    methods = ft.workflows.methods
+    method = methods.apply_screening_plan(
+        methods.preset("uma-gas-opt-alpb-chloroform"),
+        methods.screening_preset("gxtb-default"),
+    ).with_ranking(methods.ranking_preset("uma-alpb-chloroform"))
+    wf = ft.workflows.raw_mols(
+        smiles=["CN1C=CC=C1"], method=method, calculation_level="full", top_n=3
+    )
+    target = workflow().children()["references"].targets()[0]
+    frame = prepared(None, target, save_dir=None, options=None)
+    with (
+        patch.object(RawMolsWorkflow, "_prepare_initial_df", return_value=frame),
+        patch("frust.workflows.core.Stepper", FakeStepper),
+        patch("frust.workflows.core._uma_scope_for_stages", return_value=nullcontext()),
+    ):
+        result = wf.run(out_dir=tmp_path)
+    assert result.cid.tolist() == [1]
+    assert (
+        result.attrs["frust_results"]["columns"]["ranking"]["electronic_energy"]
+        == "uma_rank_sp-EE"
+    )
+    assert result.attrs["frust_workflow"]["ranking_top_n"] == 1
+    assert not any(column.startswith("dft_") for column in result)
