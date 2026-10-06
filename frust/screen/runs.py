@@ -164,7 +164,7 @@ class ScreenRun:
         return self._level_table("barriers", level=level)
 
     def candidate_barriers(self) -> pd.DataFrame:
-        """Return one full UMA barrier per refined TS candidate.
+        """Return full barriers for UMA or explicitly ranked TS candidates.
 
         Returns
         -------
@@ -178,16 +178,17 @@ class ScreenRun:
             stationary points and TS mode review passed; ``"review"`` needs
             scientific review;
             ``"invalid"`` failed a quality or balance check; and
-            ``"incomplete"`` lacks a required result. Other method families
-            and non-full runs return an empty table.
+            ``"incomplete"`` lacks a required result. Non-full runs and
+            legacy DFT runs without explicit ranking return an empty table.
         """
+
         self._ensure_analysis()
         path = self.analysis_dir / "candidate_barriers.parquet"
         if not path.exists():
             manifest = self.manifest
-            if (
-                manifest.get("calculation_level") != "full"
-                or manifest.get("method", {}).get("result_family") != "uma"
+            if manifest.get("calculation_level") != "full" or (
+                manifest.get("method", {}).get("result_family") != "uma"
+                and not manifest.get("ranking")
             ):
                 return pd.DataFrame(
                     columns=[
@@ -871,8 +872,13 @@ def _state_rows(
         }
     )
     method_family = (
-        "uma" if calculation_level == "uma_ranked"
-        else str(method.get("result_family", "dft"))
+        "dft"
+        if calculation_level == "dft_ranked"
+        else (
+            "uma"
+            if calculation_level == "uma_ranked"
+            else str(method.get("result_family", "dft"))
+        )
     )
     calculator = protocol.get("calculator", {})
     nt_columns = normal_termination_columns(df)
@@ -1150,8 +1156,13 @@ def _build_barriers(
     }
     full = manifest.get("calculation_level", "full") == "full"
     method_family = (
-        "uma" if manifest.get("calculation_level") == "uma_ranked"
-        else str(manifest.get("method", {}).get("result_family", "dft"))
+        "dft"
+        if manifest.get("calculation_level") == "dft_ranked"
+        else (
+            "uma"
+            if manifest.get("calculation_level") == "uma_ranked"
+            else str(manifest.get("method", {}).get("result_family", "dft"))
+        )
     )
     targets = manifest.get("analysis_targets", [])
     rows: list[dict[str, Any]] = []
@@ -1195,6 +1206,7 @@ def _build_barriers(
             rpos=rpos,
             result_ids=result_ids or None,
             select_ts_candidates=method_family == "uma",
+            select_candidates=full and bool(manifest.get("ranking")),
         )
         if dimer_state is None:
             problems.extend(dimer_issues)
@@ -1325,9 +1337,9 @@ def _build_candidate_barriers(
         *selected_barriers.columns,
         "cid", "selected", "ts_review_status", "ts_quality_issues", "n_imag",
     ]
-    if (
-        manifest.get("calculation_level") != "full"
-        or manifest.get("method", {}).get("result_family") != "uma"
+    if manifest.get("calculation_level") != "full" or (
+        manifest.get("method", {}).get("result_family") != "uma"
+        and not manifest.get("ranking")
     ):
         return pd.DataFrame(columns=columns)
 
@@ -1407,6 +1419,7 @@ def _build_profiles(
                     and dimer_result_id is not None
                     else None
                 ),
+                select_candidates=full and bool(manifest.get("ranking")),
             )
             if problems:
                 resolved[label] = None
@@ -1538,6 +1551,7 @@ def _resolve_terms(
     rpos: int,
     result_ids: Mapping[str, str] | None = None,
     select_ts_candidates: bool = False,
+    select_candidates: bool = False,
 ) -> tuple[dict[str, pd.Series], list[str]]:
     selected: dict[str, pd.Series] = {}
     problems: list[str] = []
@@ -1564,7 +1578,16 @@ def _resolve_terms(
         if len(matches) == 0:
             problems.append(f"missing:{state_id}")
         elif len(matches) > 1:
-            if select_ts_candidates and state_id.startswith("TS"):
+            distinct_candidates = (
+                select_candidates
+                and "cid" in matches
+                and not matches["cid"].isna().any()
+                and not matches["cid"].duplicated().any()
+                and not matches["result_id"].duplicated().any()
+            )
+            if (
+                select_ts_candidates and state_id.startswith("TS")
+            ) or distinct_candidates:
                 ranked = matches.copy()
                 ranked["_quality_rank"] = ranked["quality_status"].map(
                     QUALITY_ORDER

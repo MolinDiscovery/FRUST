@@ -535,7 +535,8 @@ class ReferenceLibrary:
                     calculation_level=calculation_level,
                     result_family=method.result_family,
                     ranking_stage=(
-                        "uma_rank_sp" if "uma_rank_sp" in method.stages else None
+                        method.ranking_stage
+                        or ("uma_rank_sp" if "uma_rank_sp" in method.stages else None)
                     ),
                 )
             electronic_energy = float(
@@ -850,12 +851,16 @@ def _active_reference_method(
         else ["xtb_sp", "xtb_opt"]
     )
     stages = ["xtb_preopt", *screening]
-    if calculation_level in {"uma_ranked", "full"} and "uma_rank_sp" in method.stages:
-        stages.append("uma_rank_sp")
+    ranking = method.ranking_stage or (
+        "uma_rank_sp" if "uma_rank_sp" in method.stages else None
+    )
+    if calculation_level != "low_cost" and ranking is not None:
+        stages.append(ranking)
     if calculation_level == "dft_ranked" or (
         calculation_level == "full" and include_dft_rank_sp
     ):
-        stages.append("dft_rank_sp")
+        if "dft_rank_sp" not in stages:
+            stages.append("dft_rank_sp")
     if calculation_level == "full":
         if method.result_family == "uma":
             stages.extend(["uma_min_opt", "uma_freq"])
@@ -874,8 +879,18 @@ def _active_reference_method(
             method.include_terminal_solv_sp if calculation_level == "full" else False
         ),
     }
-    if method.result_family != "dft":
-        active["result_family"] = method.result_family
+    family = (
+        method.result_family
+        if calculation_level == "full"
+        else (
+            "uma"
+            if calculation_level == "uma_ranked"
+            or (calculation_level == "low_cost" and "uma_opt" in method.stages)
+            else "dft"
+        )
+    )
+    if family != "dft":
+        active["result_family"] = family
     return active
 
 

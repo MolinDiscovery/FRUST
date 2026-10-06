@@ -241,10 +241,10 @@ class RankingPlan:
     ----------
     name : str
         Human-readable ranking-plan name.
-    stage_id : {"uma_rank_sp"}
-        Distinct stage id used for UMA single points on already optimized
-        screening geometries. It is separate from ``uma_sp``, which ranks
-        preoptimization geometries in an UMA screening plan.
+    stage_id : {"uma_rank_sp", "dft_rank_sp"}
+        Distinct single-point stage on already optimized screening geometries.
+        Use ``uma_rank_sp`` for UMA and ``dft_rank_sp`` for conventional DFT.
+        Ranking does not choose the downstream validation calculator.
     calculator : CalculatorSpec
         Calculator settings for the ranking stage.
 
@@ -260,14 +260,22 @@ class RankingPlan:
     calculator: CalculatorSpec
 
     def __post_init__(self) -> None:
-        if self.stage_id != "uma_rank_sp":
-            raise ValueError("RankingPlan stage_id must be 'uma_rank_sp'")
+        if self.stage_id not in {"uma_rank_sp", "dft_rank_sp"}:
+            raise ValueError(
+                "RankingPlan stage_id must be 'uma_rank_sp' or 'dft_rank_sp'"
+            )
         if not isinstance(self.calculator, CalculatorSpec):
             raise TypeError("RankingPlan calculator must be a CalculatorSpec")
-        if self.calculator.engine != "orca" or "uma" not in self.calculator.kwargs:
-            raise ValueError("UMA ranking requires an ORCA UMA calculator")
-        if "Opt" in self.calculator.options or "OptTS" in self.calculator.options:
-            raise ValueError("UMA ranking requires a single-point calculator")
+        is_uma = "uma" in self.calculator.kwargs
+        if self.calculator.engine != "orca" or is_uma != (
+            self.stage_id == "uma_rank_sp"
+        ):
+            raise ValueError("Ranking stage must match its ORCA UMA or DFT calculator")
+        if any(
+            str(key).lower() in {"opt", "optts", "freq", "numfreq"}
+            for key in self.calculator.options
+        ):
+            raise ValueError("Ranking requires a single-point calculator")
 
     def to_dict(self, *, include_name: bool = True) -> dict[str, Any]:
         """Return a stable JSON-compatible ranking-plan description."""
@@ -310,6 +318,9 @@ class MethodPlan:
     result_family : {"dft", "uma"}, optional
         Final calculator family. Existing plans default to ``"dft"``. This
         distinguishes a full UMA characterization from DFT validation.
+    ranking_stage : {"uma_rank_sp", "dft_rank_sp"} or None, optional
+        Explicit single-point selection attached by :meth:`with_ranking`.
+        None retains the existing implicit ranking behavior.
 
     Notes
     -----
@@ -334,6 +345,7 @@ class MethodPlan:
     include_terminal_solv_sp: bool = True
     thermochemistry: ThermochemistrySpec | None = None
     result_family: Literal["dft", "uma"] = "dft"
+    ranking_stage: str | None = None
 
     def __post_init__(self) -> None:
         normalized: dict[str, CalculatorSpec] = {}
@@ -353,6 +365,10 @@ class MethodPlan:
             raise TypeError("thermochemistry must be a ThermochemistrySpec or None")
         if self.result_family not in {"dft", "uma"}:
             raise ValueError("result_family must be 'dft' or 'uma'")
+        if self.ranking_stage not in {None, "uma_rank_sp", "dft_rank_sp"}:
+            raise ValueError("ranking_stage must be 'uma_rank_sp' or 'dft_rank_sp'")
+        if self.ranking_stage is not None and self.ranking_stage not in self.stages:
+            raise ValueError("ranking_stage must be present in stages")
 
     def to_dict(self, *, include_name: bool = True) -> dict[str, Any]:
         """Return a stable JSON-compatible method-plan description.
@@ -376,6 +392,8 @@ class MethodPlan:
         }
         if self.result_family != "dft":
             payload["result_family"] = self.result_family
+        if self.ranking_stage is not None:
+            payload["ranking_stage"] = self.ranking_stage
         if include_name:
             payload["name"] = self.name
         return payload
@@ -455,6 +473,27 @@ class MethodPlan:
                 resolved_stage = stage_id
             updated[resolved_stage] = spec
         return dataclass_replace(self, stages=updated)
+
+    def with_ranking(self, ranking: RankingPlan) -> "MethodPlan":
+        """Attach single-point selection independently of validation.
+
+        Parameters
+        ----------
+        ranking : RankingPlan
+            UMA or DFT single-point calculator for optimized screening rows.
+
+        Returns
+        -------
+        MethodPlan
+            Copy recording the selected ranking stage and its calculator.
+        """
+        if not isinstance(ranking, RankingPlan):
+            raise TypeError("ranking must be a RankingPlan")
+        stages = dict(self.stages)
+        if self.ranking_stage is not None and self.ranking_stage != ranking.stage_id:
+            stages.pop(self.ranking_stage, None)
+        stages[ranking.stage_id] = ranking.calculator
+        return dataclass_replace(self, stages=stages, ranking_stage=ranking.stage_id)
 
     def with_stage(self, stage_id: str, spec: CalculatorSpec) -> "MethodPlan":
         """Return a copy with one stage spec replaced.
@@ -661,12 +700,14 @@ def screening_preset(name: str = "gxtb-default") -> ScreeningPlan:
 
 
 def ranking_preset(name: str) -> RankingPlan:
-    """Return a built-in UMA ranking plan.
+    """Return a built-in UMA or DFT single-point ranking plan.
 
     Parameters
     ----------
-    name : {"uma-gas", "uma-alpb-chloroform"}
-        UMA environment for a single point on g-xTB optimized geometries.
+    name : str
+        ``"uma-gas"`` or ``"uma-alpb-chloroform"`` for UMA, or a DFT method
+        preset such as ``"wb97xd3-631g"``. Evaluates optimized screening
+        geometries without choosing their downstream validation method.
 
     Returns
     -------
@@ -678,6 +719,16 @@ def ranking_preset(name: str) -> RankingPlan:
     try:
         return _RANKING_PRESETS[key]
     except KeyError as exc:
+        try:
+            method = preset(name)
+        except KeyError:
+            method = None
+        if method is not None and method.result_family == "dft":
+            return RankingPlan(
+                name=name,
+                stage_id="dft_rank_sp",
+                calculator=method.for_stage("dft_rank_sp"),
+            )
         available = ", ".join(sorted(_RANKING_PRESETS))
         raise KeyError(
             f"Unknown ranking preset {name!r}. Available: {available}"
@@ -711,7 +762,7 @@ def apply_screening_plan(method: MethodPlan, screening: ScreeningPlan) -> Method
     Parameters
     ----------
     method : MethodPlan
-        Downstream DFT plan.
+        Downstream UMA or DFT validation plan.
     screening : ScreeningPlan
         Low-cost plan whose three stages replace the corresponding entries in
         ``method``.
