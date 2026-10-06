@@ -455,7 +455,7 @@ def test_raw_molecule_validation_uses_explicit_ranking_without_dft_flags(tmp_pat
         methods.screening_preset("gxtb-default"),
     ).with_ranking(methods.ranking_preset("uma-alpb-chloroform"))
     wf = ft.workflows.raw_mols(
-        smiles=["CN1C=CC=C1"], method=method, calculation_level="full", top_n=3
+        smiles=["CN1C=CC=C1"], method=method, dft=True, top_n=3
     )
     target = workflow().children()["references"].targets()[0]
     frame = prepared(None, target, save_dir=None, options=None)
