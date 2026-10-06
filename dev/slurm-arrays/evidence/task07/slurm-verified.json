@@ -1,0 +1,738 @@
+{
+  "metadata": {
+    "revision": "b475acf515663ac7a78f93dd7d552d03634c8520",
+    "frust_version": "0.1.0",
+    "submitit_version": "1.5.2",
+    "backend": "slurm",
+    "partition": "kemi1",
+    "resources": {
+      "cpus": 1,
+      "mem_gb": 2,
+      "timeout_min": 5
+    },
+    "fixture": "Synthetic calculation results; production submission and finalization",
+    "slurm_version": "slurm 26.05.4"
+  },
+  "verification_revision": "b475acf515663ac7a78f93dd7d552d03634c8520",
+  "facade_array": {
+    "job_ids": [
+      "65848227_0",
+      "65848227_1"
+    ],
+    "tags": [
+      "pyrrole_ligand",
+      "benzene_ligand",
+      "toluene_ligand"
+    ],
+    "save_dirs": [
+      "/lustre/hpc/kemi/jmni/results/slurm-arrays-task07-20261005-v2/facade_array/pyrrole_ligand",
+      "/lustre/hpc/kemi/jmni/results/slurm-arrays-task07-20261005-v2/facade_array/benzene_ligand",
+      "/lustre/hpc/kemi/jmni/results/slurm-arrays-task07-20261005-v2/facade_array/toluene_ligand"
+    ],
+    "mode": "run_mols_per_rpos",
+    "backend": "slurm",
+    "collection_job_id": "65848228",
+    "collection_output": "/lustre/hpc/kemi/jmni/results/slurm-arrays-task07-20261005-v2/facade_array/merged.parquet",
+    "collection_report": "/lustre/hpc/kemi/jmni/results/slurm-arrays-task07-20261005-v2/facade_array/collection_report.json",
+    "records": [
+      {
+        "target": "pyrrole_ligand",
+        "group": "single_job",
+        "batch_index": 0,
+        "batch_targets": [
+          "pyrrole_ligand",
+          "benzene_ligand"
+        ],
+        "save_dir": "/lustre/hpc/kemi/jmni/results/slurm-arrays-task07-20261005-v2/facade_array/pyrrole_ligand",
+        "output_path": "/lustre/hpc/kemi/jmni/results/slurm-arrays-task07-20261005-v2/facade_array/pyrrole_ligand/final.parquet",
+        "attempt_id": "c42e1f69f8684bb68d3701b53cc62e0c",
+        "status": "submitted",
+        "job_id": "65848227_0",
+        "array_job_id": "65848227",
+        "array_index": 0,
+        "error": null
+      },
+      {
+        "target": "benzene_ligand",
+        "group": "single_job",
+        "batch_index": 0,
+        "batch_targets": [
+          "pyrrole_ligand",
+          "benzene_ligand"
+        ],
+        "save_dir": "/lustre/hpc/kemi/jmni/results/slurm-arrays-task07-20261005-v2/facade_array/benzene_ligand",
+        "output_path": "/lustre/hpc/kemi/jmni/results/slurm-arrays-task07-20261005-v2/facade_array/benzene_ligand/final.parquet",
+        "attempt_id": "c42e1f69f8684bb68d3701b53cc62e0c",
+        "status": "submitted",
+        "job_id": "65848227_0",
+        "array_job_id": "65848227",
+        "array_index": 0,
+        "error": null
+      },
+      {
+        "target": "toluene_ligand",
+        "group": "single_job",
+        "batch_index": 1,
+        "batch_targets": [
+          "toluene_ligand"
+        ],
+        "save_dir": "/lustre/hpc/kemi/jmni/results/slurm-arrays-task07-20261005-v2/facade_array/toluene_ligand",
+        "output_path": "/lustre/hpc/kemi/jmni/results/slurm-arrays-task07-20261005-v2/facade_array/toluene_ligand/final.parquet",
+        "attempt_id": "c42e1f69f8684bb68d3701b53cc62e0c",
+        "status": "submitted",
+        "job_id": "65848227_1",
+        "array_job_id": "65848227",
+        "array_index": 1,
+        "error": null
+      }
+    ],
+    "array_job_ids": [
+      "65848227"
+    ],
+    "submission_path": "/lustre/hpc/kemi/jmni/results/slurm-arrays-task07-20261005-v2/facade_array/.frust/submissions/c42e1f69f8684bb68d3701b53cc62e0c.json",
+    "scheduler": {
+      "65848227": "JobId=65848227 ArrayJobId=65848227 ArrayTaskId=0-1%2 ArrayTaskThrottle=2 JobName=run_mols_per_rpos_workflow\n   UserId=jmni(1475) GroupId=kemi(1000) MCS_label=N/A\n   Priority=114 Nice=0 Account=chemistry QOS=normal\n   JobState=PENDING Reason=None Dependency=(null)\n   Requeue=1 Restarts=0 BatchFlag=1 Reboot=0 ExitCode=0:0\n   RunTime=00:00:00 TimeLimit=00:05:00 TimeMin=N/A\n   SubmitTime=2026-10-05T20:06:46 EligibleTime=Unknown\n   AccrueTime=Unknown\n   StartTime=Unknown EndTime=Unknown Deadline=N/A\n   SuspendTime=None SecsPreSuspend=0 LastSchedEval=2026-10-05T20:06:46 Scheduler=Main\n   Partition=kemi1 AllocNode:Sid=fend05:1489652\n   ReqNodeList=(null) ExcNodeList=(null)\n   NodeList=\n   NumNodes=1-1 NumCPUs=1 NumTasks=1 CPUs/Task=1 ReqB:S:C:T=0:0:*:*\n   ReqTRES=cpu=1,mem=2G,node=1,billing=1\n   AllocTRES=(null)\n   Socks/Node=* NtasksPerN:B:S:C=1:0:*:1 CoreSpec=*\n   MinCPUsNode=1 MinMemoryNode=2G MinTmpDiskNode=0\n   Features=(null) DelayBoot=00:00:00\n   OverSubscribe=NO Exclusive=NO Contiguous=0 Licenses=(null) LicensesAlloc=(null) Network=(null)\n   Command=/lustre/hpc/kemi/jmni/results/slurm-arrays-task07-20261005-v2/logs/.submission_file_09a44735ce0e44788e1b23ac656dad6f.sh\n   SubmitLine=sbatch /lustre/hpc/kemi/jmni/results/slurm-arrays-task07-20261005-v2/logs/.submission_file_09a44735ce0e44788e1b23ac656dad6f.sh\n   WorkDir=/lustre/hpc/kemi/jmni/dev/FRUST-slurm-arrays-task07\n   StdErr=/lustre/hpc/kemi/jmni/results/slurm-arrays-task07-20261005-v2/logs/65848227_4294967294_0_log.err\n   StdIn=/dev/null\n   StdOut=/lustre/hpc/kemi/jmni/results/slurm-arrays-task07-20261005-v2/logs/65848227_4294967294_0_log.out\n   TresPerTask=cpu=1\n\n",
+      "65848228": "JobId=65848228 JobName=run_mols_per_rpos_collect\n   UserId=jmni(1475) GroupId=kemi(1000) MCS_label=N/A\n   Priority=114 Nice=0 Account=chemistry QOS=normal\n   JobState=PENDING Reason=Dependency Dependency=afterany:65848227_*(unfulfilled)\n   Requeue=1 Restarts=0 BatchFlag=1 Reboot=0 ExitCode=0:0\n   RunTime=00:00:00 TimeLimit=02:00:00 TimeMin=N/A\n   SubmitTime=2026-10-05T20:06:46 EligibleTime=Unknown\n   AccrueTime=Unknown\n   StartTime=Unknown EndTime=Unknown Deadline=N/A\n   SuspendTime=None SecsPreSuspend=0 LastSchedEval=2026-10-05T20:06:46 Scheduler=Main\n   Partition=kemi1 AllocNode:Sid=fend05:1489652\n   ReqNodeList=(null) ExcNodeList=(null)\n   NodeList=\n   NumNodes=1-1 NumCPUs=2 NumTasks=1 CPUs/Task=2 ReqB:S:C:T=0:0:*:*\n   ReqTRES=cpu=2,mem=4G,node=1,billing=2\n   AllocTRES=(null)\n   Socks/Node=* NtasksPerN:B:S:C=1:0:*:1 CoreSpec=*\n   MinCPUsNode=2 MinMemoryNode=4G MinTmpDiskNode=0\n   Features=(null) DelayBoot=00:00:00\n   OverSubscribe=NO Exclusive=NO Contiguous=0 Licenses=(null) LicensesAlloc=(null) Network=(null)\n   Command=/lustre/hpc/kemi/jmni/results/slurm-arrays-task07-20261005-v2/logs/.submission_file_5549cd77a932406f9244cf73cdcf9a23.sh\n   SubmitLine=sbatch /lustre/hpc/kemi/jmni/results/slurm-arrays-task07-20261005-v2/logs/.submission_file_5549cd77a932406f9244cf73cdcf9a23.sh\n   WorkDir=/lustre/hpc/kemi/jmni/dev/FRUST-slurm-arrays-task07\n   StdErr=/lustre/hpc/kemi/jmni/results/slurm-arrays-task07-20261005-v2/logs/65848228_0_log.err\n   StdIn=/dev/null\n   StdOut=/lustre/hpc/kemi/jmni/results/slurm-arrays-task07-20261005-v2/logs/65848228_0_log.out\n   TresPerTask=cpu=2\n\n"
+    }
+  },
+  "facade_individual": {
+    "job_ids": [
+      "65848229",
+      "65848230",
+      "65848231"
+    ],
+    "tags": [
+      "pyrrole_ligand",
+      "benzene_ligand",
+      "toluene_ligand"
+    ],
+    "save_dirs": [
+      "/lustre/hpc/kemi/jmni/results/slurm-arrays-task07-20261005-v2/facade_individual",
+      "/lustre/hpc/kemi/jmni/results/slurm-arrays-task07-20261005-v2/facade_individual",
+      "/lustre/hpc/kemi/jmni/results/slurm-arrays-task07-20261005-v2/facade_individual"
+    ],
+    "mode": "run_mols_per_rpos",
+    "backend": "slurm",
+    "collection_job_id": null,
+    "collection_output": null,
+    "collection_report": null,
+    "records": [],
+    "array_job_ids": [],
+    "submission_path": null,
+    "scheduler": {
+      "65848229": "JobId=65848229 JobName=run_mols_per_rpos_pyrrole_ligand\n   UserId=jmni(1475) GroupId=kemi(1000) MCS_label=N/A\n   Priority=114 Nice=0 Account=chemistry QOS=normal\n   JobState=PENDING Reason=Priority Dependency=(null)\n   Requeue=1 Restarts=0 BatchFlag=1 Reboot=0 ExitCode=0:0\n   RunTime=00:00:00 TimeLimit=00:05:00 TimeMin=N/A\n   SubmitTime=2026-10-05T20:06:46 EligibleTime=2026-10-05T20:06:46\n   AccrueTime=Unknown\n   StartTime=Unknown EndTime=Unknown Deadline=N/A\n   SuspendTime=None SecsPreSuspend=0 LastSchedEval=2026-10-05T20:06:46 Scheduler=Main\n   Partition=kemi1 AllocNode:Sid=fend05:1489652\n   ReqNodeList=(null) ExcNodeList=(null)\n   NodeList=\n   NumNodes=1-1 NumCPUs=1 NumTasks=1 CPUs/Task=1 ReqB:S:C:T=0:0:*:*\n   ReqTRES=cpu=1,mem=2G,node=1,billing=1\n   AllocTRES=(null)\n   Socks/Node=* NtasksPerN:B:S:C=1:0:*:1 CoreSpec=*\n   MinCPUsNode=1 MinMemoryNode=2G MinTmpDiskNode=0\n   Features=(null) DelayBoot=00:00:00\n   OverSubscribe=NO Exclusive=NO Contiguous=0 Licenses=(null) LicensesAlloc=(null) Network=(null)\n   Command=/lustre/hpc/kemi/jmni/results/slurm-arrays-task07-20261005-v2/logs/.submission_file_ec3a5389995a45298802558d27305cd6.sh\n   SubmitLine=sbatch /lustre/hpc/kemi/jmni/results/slurm-arrays-task07-20261005-v2/logs/.submission_file_ec3a5389995a45298802558d27305cd6.sh\n   WorkDir=/lustre/hpc/kemi/jmni/dev/FRUST-slurm-arrays-task07\n   StdErr=/lustre/hpc/kemi/jmni/results/slurm-arrays-task07-20261005-v2/logs/65848229_0_log.err\n   StdIn=/dev/null\n   StdOut=/lustre/hpc/kemi/jmni/results/slurm-arrays-task07-20261005-v2/logs/65848229_0_log.out\n   TresPerTask=cpu=1\n\n",
+      "65848230": "JobId=65848230 JobName=run_mols_per_rpos_benzene_ligand\n   UserId=jmni(1475) GroupId=kemi(1000) MCS_label=N/A\n   Priority=114 Nice=0 Account=chemistry QOS=normal\n   JobState=PENDING Reason=Priority Dependency=(null)\n   Requeue=1 Restarts=0 BatchFlag=1 Reboot=0 ExitCode=0:0\n   RunTime=00:00:00 TimeLimit=00:05:00 TimeMin=N/A\n   SubmitTime=2026-10-05T20:06:46 EligibleTime=2026-10-05T20:06:46\n   AccrueTime=Unknown\n   StartTime=Unknown EndTime=Unknown Deadline=N/A\n   SuspendTime=None SecsPreSuspend=0 LastSchedEval=2026-10-05T20:06:46 Scheduler=Main\n   Partition=kemi1 AllocNode:Sid=fend05:1489652\n   ReqNodeList=(null) ExcNodeList=(null)\n   NodeList=\n   NumNodes=1-1 NumCPUs=1 NumTasks=1 CPUs/Task=1 ReqB:S:C:T=0:0:*:*\n   ReqTRES=cpu=1,mem=2G,node=1,billing=1\n   AllocTRES=(null)\n   Socks/Node=* NtasksPerN:B:S:C=1:0:*:1 CoreSpec=*\n   MinCPUsNode=1 MinMemoryNode=2G MinTmpDiskNode=0\n   Features=(null) DelayBoot=00:00:00\n   OverSubscribe=NO Exclusive=NO Contiguous=0 Licenses=(null) LicensesAlloc=(null) Network=(null)\n   Command=/lustre/hpc/kemi/jmni/results/slurm-arrays-task07-20261005-v2/logs/.submission_file_0dada01c388d4b999c171c18d2717dfa.sh\n   SubmitLine=sbatch /lustre/hpc/kemi/jmni/results/slurm-arrays-task07-20261005-v2/logs/.submission_file_0dada01c388d4b999c171c18d2717dfa.sh\n   WorkDir=/lustre/hpc/kemi/jmni/dev/FRUST-slurm-arrays-task07\n   StdErr=/lustre/hpc/kemi/jmni/results/slurm-arrays-task07-20261005-v2/logs/65848230_0_log.err\n   StdIn=/dev/null\n   StdOut=/lustre/hpc/kemi/jmni/results/slurm-arrays-task07-20261005-v2/logs/65848230_0_log.out\n   TresPerTask=cpu=1\n\n",
+      "65848231": "JobId=65848231 JobName=run_mols_per_rpos_toluene_ligand\n   UserId=jmni(1475) GroupId=kemi(1000) MCS_label=N/A\n   Priority=114 Nice=0 Account=chemistry QOS=normal\n   JobState=PENDING Reason=Priority Dependency=(null)\n   Requeue=1 Restarts=0 BatchFlag=1 Reboot=0 ExitCode=0:0\n   RunTime=00:00:00 TimeLimit=00:05:00 TimeMin=N/A\n   SubmitTime=2026-10-05T20:06:47 EligibleTime=2026-10-05T20:06:47\n   AccrueTime=Unknown\n   StartTime=Unknown EndTime=Unknown Deadline=N/A\n   SuspendTime=None SecsPreSuspend=0 LastSchedEval=2026-10-05T20:06:47 Scheduler=Main\n   Partition=kemi1 AllocNode:Sid=fend05:1489652\n   ReqNodeList=(null) ExcNodeList=(null)\n   NodeList=\n   NumNodes=1-1 NumCPUs=1 NumTasks=1 CPUs/Task=1 ReqB:S:C:T=0:0:*:*\n   ReqTRES=cpu=1,mem=2G,node=1,billing=1\n   AllocTRES=(null)\n   Socks/Node=* NtasksPerN:B:S:C=1:0:*:1 CoreSpec=*\n   MinCPUsNode=1 MinMemoryNode=2G MinTmpDiskNode=0\n   Features=(null) DelayBoot=00:00:00\n   OverSubscribe=NO Exclusive=NO Contiguous=0 Licenses=(null) LicensesAlloc=(null) Network=(null)\n   Command=/lustre/hpc/kemi/jmni/results/slurm-arrays-task07-20261005-v2/logs/.submission_file_78735f7bab0940569bd322ae7e7d3617.sh\n   SubmitLine=sbatch /lustre/hpc/kemi/jmni/results/slurm-arrays-task07-20261005-v2/logs/.submission_file_78735f7bab0940569bd322ae7e7d3617.sh\n   WorkDir=/lustre/hpc/kemi/jmni/dev/FRUST-slurm-arrays-task07\n   StdErr=/lustre/hpc/kemi/jmni/results/slurm-arrays-task07-20261005-v2/logs/65848231_0_log.err\n   StdIn=/dev/null\n   StdOut=/lustre/hpc/kemi/jmni/results/slurm-arrays-task07-20261005-v2/logs/65848231_0_log.out\n   TresPerTask=cpu=1\n\n"
+    }
+  },
+  "screen_initial": {
+    "run_dir": "/lustre/hpc/kemi/jmni/results/slurm-arrays-task07-20261005-v2/screen",
+    "child_submissions": {
+      "transition_states": {
+        "job_ids": [
+          "65848232_0",
+          "65848232_1"
+        ],
+        "tags": [
+          "TS1__pyrrole__NMe__r2",
+          "TS2__pyrrole__NMe__r2"
+        ],
+        "save_dirs": [
+          "/lustre/hpc/kemi/jmni/results/slurm-arrays-task07-20261005-v2/screen/calculations/transition_states/TS1__pyrrole__NMe__r2",
+          "/lustre/hpc/kemi/jmni/results/slurm-arrays-task07-20261005-v2/screen/calculations/transition_states/TS2__pyrrole__NMe__r2"
+        ],
+        "mode": "screen_ts:single_job",
+        "backend": "slurm",
+        "collection_job_id": "65848233",
+        "collection_output": "/lustre/hpc/kemi/jmni/results/slurm-arrays-task07-20261005-v2/screen/calculations/transition_states/merged.parquet",
+        "collection_report": "/lustre/hpc/kemi/jmni/results/slurm-arrays-task07-20261005-v2/screen/calculations/transition_states/collection_report_529c31873e71404ea5673cc52edd2b8b.json",
+        "records": [
+          {
+            "target": "TS1__pyrrole__NMe__r2",
+            "group": "single_job",
+            "batch_index": 0,
+            "batch_targets": [
+              "TS1__pyrrole__NMe__r2"
+            ],
+            "save_dir": "/lustre/hpc/kemi/jmni/results/slurm-arrays-task07-20261005-v2/screen/calculations/transition_states/TS1__pyrrole__NMe__r2",
+            "output_path": "/lustre/hpc/kemi/jmni/results/slurm-arrays-task07-20261005-v2/screen/calculations/transition_states/TS1__pyrrole__NMe__r2/final.parquet",
+            "attempt_id": "7d11acc0ae7544d5a1809f161ba833f6",
+            "status": "submitted",
+            "job_id": "65848232_0",
+            "array_job_id": "65848232",
+            "array_index": 0,
+            "error": null
+          },
+          {
+            "target": "TS2__pyrrole__NMe__r2",
+            "group": "single_job",
+            "batch_index": 1,
+            "batch_targets": [
+              "TS2__pyrrole__NMe__r2"
+            ],
+            "save_dir": "/lustre/hpc/kemi/jmni/results/slurm-arrays-task07-20261005-v2/screen/calculations/transition_states/TS2__pyrrole__NMe__r2",
+            "output_path": "/lustre/hpc/kemi/jmni/results/slurm-arrays-task07-20261005-v2/screen/calculations/transition_states/TS2__pyrrole__NMe__r2/final.parquet",
+            "attempt_id": "7d11acc0ae7544d5a1809f161ba833f6",
+            "status": "submitted",
+            "job_id": "65848232_1",
+            "array_job_id": "65848232",
+            "array_index": 1,
+            "error": null
+          }
+        ],
+        "array_job_ids": [
+          "65848232"
+        ],
+        "submission_path": "/lustre/hpc/kemi/jmni/results/slurm-arrays-task07-20261005-v2/screen/calculations/transition_states/.frust/submissions/7d11acc0ae7544d5a1809f161ba833f6.json"
+      },
+      "references": {
+        "job_ids": [
+          "65848234_0",
+          "65848234_1"
+        ],
+        "tags": [
+          "HBpin-mol",
+          "HH"
+        ],
+        "save_dirs": [
+          "/lustre/hpc/kemi/jmni/results/slurm-arrays-task07-20261005-v2/screen/calculations/references/HBpin-mol",
+          "/lustre/hpc/kemi/jmni/results/slurm-arrays-task07-20261005-v2/screen/calculations/references/HH"
+        ],
+        "mode": "mols:single_job",
+        "backend": "slurm",
+        "collection_job_id": "65848235",
+        "collection_output": "/lustre/hpc/kemi/jmni/results/slurm-arrays-task07-20261005-v2/screen/calculations/references/computed.parquet",
+        "collection_report": "/lustre/hpc/kemi/jmni/results/slurm-arrays-task07-20261005-v2/screen/calculations/references/collection_report_529c31873e71404ea5673cc52edd2b8b.json",
+        "records": [
+          {
+            "target": "HBpin-mol",
+            "group": "single_job",
+            "batch_index": 0,
+            "batch_targets": [
+              "HBpin-mol"
+            ],
+            "save_dir": "/lustre/hpc/kemi/jmni/results/slurm-arrays-task07-20261005-v2/screen/calculations/references/HBpin-mol",
+            "output_path": "/lustre/hpc/kemi/jmni/results/slurm-arrays-task07-20261005-v2/screen/calculations/references/HBpin-mol/final.parquet",
+            "attempt_id": "d189a70e1a334daa812bd8af035e6600",
+            "status": "submitted",
+            "job_id": "65848234_0",
+            "array_job_id": "65848234",
+            "array_index": 0,
+            "error": null
+          },
+          {
+            "target": "HH",
+            "group": "single_job",
+            "batch_index": 1,
+            "batch_targets": [
+              "HH"
+            ],
+            "save_dir": "/lustre/hpc/kemi/jmni/results/slurm-arrays-task07-20261005-v2/screen/calculations/references/HH",
+            "output_path": "/lustre/hpc/kemi/jmni/results/slurm-arrays-task07-20261005-v2/screen/calculations/references/HH/final.parquet",
+            "attempt_id": "d189a70e1a334daa812bd8af035e6600",
+            "status": "submitted",
+            "job_id": "65848234_1",
+            "array_job_id": "65848234",
+            "array_index": 1,
+            "error": null
+          }
+        ],
+        "array_job_ids": [
+          "65848234"
+        ],
+        "submission_path": "/lustre/hpc/kemi/jmni/results/slurm-arrays-task07-20261005-v2/screen/calculations/references/.frust/submissions/d189a70e1a334daa812bd8af035e6600.json"
+      }
+    },
+    "finalization_job_id": "65848236",
+    "backend": "slurm",
+    "submitit_dir": "/lustre/hpc/kemi/jmni/results/slurm-arrays-task07-20261005-v2/screen/.submitit",
+    "scheduler": {
+      "65848232": "JobId=65848232 ArrayJobId=65848232 ArrayTaskId=0-1%1 ArrayTaskThrottle=1 JobName=screen_ts_workflow\n   UserId=jmni(1475) GroupId=kemi(1000) MCS_label=N/A\n   Priority=114 Nice=0 Account=chemistry QOS=normal\n   JobState=PENDING Reason=None Dependency=(null)\n   Requeue=1 Restarts=0 BatchFlag=1 Reboot=0 ExitCode=0:0\n   RunTime=00:00:00 TimeLimit=00:05:00 TimeMin=N/A\n   SubmitTime=2026-10-05T20:06:47 EligibleTime=Unknown\n   AccrueTime=Unknown\n   StartTime=Unknown EndTime=Unknown Deadline=N/A\n   SuspendTime=None SecsPreSuspend=0 LastSchedEval=2026-10-05T20:06:47 Scheduler=Main\n   Partition=kemi1 AllocNode:Sid=fend05:1489652\n   ReqNodeList=(null) ExcNodeList=(null)\n   NodeList=\n   NumNodes=1-1 NumCPUs=1 NumTasks=1 CPUs/Task=1 ReqB:S:C:T=0:0:*:*\n   ReqTRES=cpu=1,mem=2G,node=1,billing=1\n   AllocTRES=(null)\n   Socks/Node=* NtasksPerN:B:S:C=1:0:*:1 CoreSpec=*\n   MinCPUsNode=1 MinMemoryNode=2G MinTmpDiskNode=0\n   Features=(null) DelayBoot=00:00:00\n   OverSubscribe=NO Exclusive=NO Contiguous=0 Licenses=(null) LicensesAlloc=(null) Network=(null)\n   Command=/lustre/hpc/kemi/jmni/results/slurm-arrays-task07-20261005-v2/screen/.submitit/jobs/.submission_file_feebc84378844e029c5843bde1bbfb1b.sh\n   SubmitLine=sbatch /lustre/hpc/kemi/jmni/results/slurm-arrays-task07-20261005-v2/screen/.submitit/jobs/.submission_file_feebc84378844e029c5843bde1bbfb1b.sh\n   WorkDir=/lustre/hpc/kemi/jmni/dev/FRUST-slurm-arrays-task07\n   StdErr=\n   StdIn=/dev/null\n   StdOut=/lustre/hpc/kemi/jmni/results/slurm-arrays-task07-20261005-v2/screen/.submitit/jobs/65848232_4294967294_0_log.out\n   TresPerTask=cpu=1\n\n",
+      "65848233": "JobId=65848233 JobName=screen_ts_collect\n   UserId=jmni(1475) GroupId=kemi(1000) MCS_label=N/A\n   Priority=114 Nice=0 Account=chemistry QOS=normal\n   JobState=PENDING Reason=Dependency Dependency=afterany:65848232_*(unfulfilled)\n   Requeue=1 Restarts=0 BatchFlag=1 Reboot=0 ExitCode=0:0\n   RunTime=00:00:00 TimeLimit=00:05:00 TimeMin=N/A\n   SubmitTime=2026-10-05T20:06:47 EligibleTime=Unknown\n   AccrueTime=Unknown\n   StartTime=Unknown EndTime=Unknown Deadline=N/A\n   SuspendTime=None SecsPreSuspend=0 LastSchedEval=2026-10-05T20:06:47 Scheduler=Main\n   Partition=kemi1 AllocNode:Sid=fend05:1489652\n   ReqNodeList=(null) ExcNodeList=(null)\n   NodeList=\n   NumNodes=1-1 NumCPUs=1 NumTasks=1 CPUs/Task=1 ReqB:S:C:T=0:0:*:*\n   ReqTRES=cpu=1,mem=2G,node=1,billing=1\n   AllocTRES=(null)\n   Socks/Node=* NtasksPerN:B:S:C=1:0:*:1 CoreSpec=*\n   MinCPUsNode=1 MinMemoryNode=2G MinTmpDiskNode=0\n   Features=(null) DelayBoot=00:00:00\n   OverSubscribe=NO Exclusive=NO Contiguous=0 Licenses=(null) LicensesAlloc=(null) Network=(null)\n   Command=/lustre/hpc/kemi/jmni/results/slurm-arrays-task07-20261005-v2/screen/.submitit/jobs/.submission_file_85d08e52aaa347dd9a78917bd15cd55d.sh\n   SubmitLine=sbatch /lustre/hpc/kemi/jmni/results/slurm-arrays-task07-20261005-v2/screen/.submitit/jobs/.submission_file_85d08e52aaa347dd9a78917bd15cd55d.sh\n   WorkDir=/lustre/hpc/kemi/jmni/dev/FRUST-slurm-arrays-task07\n   StdErr=\n   StdIn=/dev/null\n   StdOut=/lustre/hpc/kemi/jmni/results/slurm-arrays-task07-20261005-v2/screen/.submitit/jobs/65848233_0_log.out\n   TresPerTask=cpu=1\n\n",
+      "65848234": "JobId=65848234 ArrayJobId=65848234 ArrayTaskId=0-1%1 ArrayTaskThrottle=1 JobName=mols_workflow\n   UserId=jmni(1475) GroupId=kemi(1000) MCS_label=N/A\n   Priority=114 Nice=0 Account=chemistry QOS=normal\n   JobState=PENDING Reason=None Dependency=(null)\n   Requeue=1 Restarts=0 BatchFlag=1 Reboot=0 ExitCode=0:0\n   RunTime=00:00:00 TimeLimit=00:05:00 TimeMin=N/A\n   SubmitTime=2026-10-05T20:06:47 EligibleTime=2026-10-05T20:06:48\n   AccrueTime=2026-10-05T20:06:47\n   StartTime=Unknown EndTime=Unknown Deadline=N/A\n   SuspendTime=None SecsPreSuspend=0 LastSchedEval=2026-10-05T20:06:47 Scheduler=Main\n   Partition=kemi1 AllocNode:Sid=fend05:1489652\n   ReqNodeList=(null) ExcNodeList=(null)\n   NodeList=\n   NumNodes=1-1 NumCPUs=1 NumTasks=1 CPUs/Task=1 ReqB:S:C:T=0:0:*:*\n   ReqTRES=cpu=1,mem=2G,node=1,billing=1\n   AllocTRES=(null)\n   Socks/Node=* NtasksPerN:B:S:C=1:0:*:1 CoreSpec=*\n   MinCPUsNode=1 MinMemoryNode=2G MinTmpDiskNode=0\n   Features=(null) DelayBoot=00:00:00\n   OverSubscribe=NO Exclusive=NO Contiguous=0 Licenses=(null) LicensesAlloc=(null) Network=(null)\n   Command=/lustre/hpc/kemi/jmni/results/slurm-arrays-task07-20261005-v2/screen/.submitit/jobs/.submission_file_7769f424f2d9442e96d70cc7fbb4200d.sh\n   SubmitLine=sbatch /lustre/hpc/kemi/jmni/results/slurm-arrays-task07-20261005-v2/screen/.submitit/jobs/.submission_file_7769f424f2d9442e96d70cc7fbb4200d.sh\n   WorkDir=/lustre/hpc/kemi/jmni/dev/FRUST-slurm-arrays-task07\n   StdErr=\n   StdIn=/dev/null\n   StdOut=/lustre/hpc/kemi/jmni/results/slurm-arrays-task07-20261005-v2/screen/.submitit/jobs/65848234_4294967294_0_log.out\n   TresPerTask=cpu=1\n\n",
+      "65848235": "JobId=65848235 JobName=mols_collect\n   UserId=jmni(1475) GroupId=kemi(1000) MCS_label=N/A\n   Priority=114 Nice=0 Account=chemistry QOS=normal\n   JobState=PENDING Reason=Dependency Dependency=afterany:65848234_*(unfulfilled)\n   Requeue=1 Restarts=0 BatchFlag=1 Reboot=0 ExitCode=0:0\n   RunTime=00:00:00 TimeLimit=00:05:00 TimeMin=N/A\n   SubmitTime=2026-10-05T20:06:47 EligibleTime=Unknown\n   AccrueTime=2026-10-05T20:06:47\n   StartTime=Unknown EndTime=Unknown Deadline=N/A\n   SuspendTime=None SecsPreSuspend=0 LastSchedEval=2026-10-05T20:06:47 Scheduler=Main\n   Partition=kemi1 AllocNode:Sid=fend05:1489652\n   ReqNodeList=(null) ExcNodeList=(null)\n   NodeList=\n   NumNodes=1-1 NumCPUs=1 NumTasks=1 CPUs/Task=1 ReqB:S:C:T=0:0:*:*\n   ReqTRES=cpu=1,mem=2G,node=1,billing=1\n   AllocTRES=(null)\n   Socks/Node=* NtasksPerN:B:S:C=1:0:*:1 CoreSpec=*\n   MinCPUsNode=1 MinMemoryNode=2G MinTmpDiskNode=0\n   Features=(null) DelayBoot=00:00:00\n   OverSubscribe=NO Exclusive=NO Contiguous=0 Licenses=(null) LicensesAlloc=(null) Network=(null)\n   Command=/lustre/hpc/kemi/jmni/results/slurm-arrays-task07-20261005-v2/screen/.submitit/jobs/.submission_file_fbf4e9bb676048bc92ce28ff9fc0a380.sh\n   SubmitLine=sbatch /lustre/hpc/kemi/jmni/results/slurm-arrays-task07-20261005-v2/screen/.submitit/jobs/.submission_file_fbf4e9bb676048bc92ce28ff9fc0a380.sh\n   WorkDir=/lustre/hpc/kemi/jmni/dev/FRUST-slurm-arrays-task07\n   StdErr=\n   StdIn=/dev/null\n   StdOut=/lustre/hpc/kemi/jmni/results/slurm-arrays-task07-20261005-v2/screen/.submitit/jobs/65848235_0_log.out\n   TresPerTask=cpu=1\n\n",
+      "65848236": "JobId=65848236 JobName=catalyst_screen_finalize\n   UserId=jmni(1475) GroupId=kemi(1000) MCS_label=N/A\n   Priority=114 Nice=0 Account=chemistry QOS=normal\n   JobState=PENDING Reason=Dependency Dependency=afterany:65848233(unfulfilled),afterany:65848235(unfulfilled)\n   Requeue=1 Restarts=0 BatchFlag=1 Reboot=0 ExitCode=0:0\n   RunTime=00:00:00 TimeLimit=00:05:00 TimeMin=N/A\n   SubmitTime=2026-10-05T20:06:47 EligibleTime=Unknown\n   AccrueTime=2026-10-05T20:06:47\n   StartTime=Unknown EndTime=Unknown Deadline=N/A\n   SuspendTime=None SecsPreSuspend=0 LastSchedEval=2026-10-05T20:06:47 Scheduler=Main\n   Partition=kemi1 AllocNode:Sid=fend05:1489652\n   ReqNodeList=(null) ExcNodeList=(null)\n   NodeList=\n   NumNodes=1-1 NumCPUs=1 NumTasks=1 CPUs/Task=1 ReqB:S:C:T=0:0:*:*\n   ReqTRES=cpu=1,mem=2G,node=1,billing=1\n   AllocTRES=(null)\n   Socks/Node=* NtasksPerN:B:S:C=1:0:*:1 CoreSpec=*\n   MinCPUsNode=1 MinMemoryNode=2G MinTmpDiskNode=0\n   Features=(null) DelayBoot=00:00:00\n   OverSubscribe=NO Exclusive=NO Contiguous=0 Licenses=(null) LicensesAlloc=(null) Network=(null)\n   Command=/lustre/hpc/kemi/jmni/results/slurm-arrays-task07-20261005-v2/screen/.submitit/control/.submission_file_d90473f31b5c488580b3b8567f6ae9df.sh\n   SubmitLine=sbatch /lustre/hpc/kemi/jmni/results/slurm-arrays-task07-20261005-v2/screen/.submitit/control/.submission_file_d90473f31b5c488580b3b8567f6ae9df.sh\n   WorkDir=/lustre/hpc/kemi/jmni/dev/FRUST-slurm-arrays-task07\n   StdErr=\n   StdIn=/dev/null\n   StdOut=/lustre/hpc/kemi/jmni/results/slurm-arrays-task07-20261005-v2/screen/.submitit/control/65848236_0_log.out\n   TresPerTask=cpu=1\n\n"
+    }
+  },
+  "screen_retry": {
+    "run_dir": "/lustre/hpc/kemi/jmni/results/slurm-arrays-task07-20261005-v2/screen",
+    "child_submissions": {
+      "transition_states": {
+        "job_ids": [
+          "65848265"
+        ],
+        "tags": [
+          "TS1__pyrrole__NMe__r2"
+        ],
+        "save_dirs": [
+          "/lustre/hpc/kemi/jmni/results/slurm-arrays-task07-20261005-v2/screen/calculations/transition_states/TS1__pyrrole__NMe__r2"
+        ],
+        "mode": "screen_ts:single_job",
+        "backend": "slurm",
+        "collection_job_id": "65848266",
+        "collection_output": "/lustre/hpc/kemi/jmni/results/slurm-arrays-task07-20261005-v2/screen/calculations/transition_states/merged.parquet",
+        "collection_report": "/lustre/hpc/kemi/jmni/results/slurm-arrays-task07-20261005-v2/screen/calculations/transition_states/collection_report_a55e5b22ed874a74a8db43cca8950e5b.json",
+        "records": [
+          {
+            "target": "TS1__pyrrole__NMe__r2",
+            "group": "single_job",
+            "batch_index": 0,
+            "batch_targets": [
+              "TS1__pyrrole__NMe__r2"
+            ],
+            "save_dir": "/lustre/hpc/kemi/jmni/results/slurm-arrays-task07-20261005-v2/screen/calculations/transition_states/TS1__pyrrole__NMe__r2",
+            "output_path": "/lustre/hpc/kemi/jmni/results/slurm-arrays-task07-20261005-v2/screen/calculations/transition_states/TS1__pyrrole__NMe__r2/final.parquet",
+            "attempt_id": "7de4f5b49f5045a9b6e3d83f907af0df",
+            "status": "submitted",
+            "job_id": "65848265",
+            "array_job_id": null,
+            "array_index": null,
+            "error": null
+          }
+        ],
+        "array_job_ids": [],
+        "submission_path": "/lustre/hpc/kemi/jmni/results/slurm-arrays-task07-20261005-v2/screen/calculations/transition_states/.frust/submissions/7de4f5b49f5045a9b6e3d83f907af0df.json"
+      }
+    },
+    "finalization_job_id": "65848267",
+    "backend": "slurm",
+    "submitit_dir": "/lustre/hpc/kemi/jmni/results/slurm-arrays-task07-20261005-v2/screen/.submitit",
+    "scheduler": {
+      "65848265": "JobId=65848265 JobName=screen_ts_workflow\n   UserId=jmni(1475) GroupId=kemi(1000) MCS_label=N/A\n   Priority=114 Nice=0 Account=chemistry QOS=normal\n   JobState=PENDING Reason=None Dependency=(null)\n   Requeue=1 Restarts=0 BatchFlag=1 Reboot=0 ExitCode=0:0\n   RunTime=00:00:00 TimeLimit=00:05:00 TimeMin=N/A\n   SubmitTime=2026-10-05T20:09:53 EligibleTime=2026-10-05T20:09:53\n   AccrueTime=Unknown\n   StartTime=Unknown EndTime=Unknown Deadline=N/A\n   SuspendTime=None SecsPreSuspend=0 LastSchedEval=2026-10-05T20:09:53 Scheduler=Main\n   Partition=kemi1 AllocNode:Sid=fend05:1494848\n   ReqNodeList=(null) ExcNodeList=(null)\n   NodeList=\n   NumNodes=1-1 NumCPUs=1 NumTasks=1 CPUs/Task=1 ReqB:S:C:T=0:0:*:*\n   ReqTRES=cpu=1,mem=2G,node=1,billing=1\n   AllocTRES=(null)\n   Socks/Node=* NtasksPerN:B:S:C=1:0:*:1 CoreSpec=*\n   MinCPUsNode=1 MinMemoryNode=2G MinTmpDiskNode=0\n   Features=(null) DelayBoot=00:00:00\n   OverSubscribe=NO Exclusive=NO Contiguous=0 Licenses=(null) LicensesAlloc=(null) Network=(null)\n   Command=/lustre/hpc/kemi/jmni/results/slurm-arrays-task07-20261005-v2/screen/.submitit/jobs/.submission_file_74c9dbcb3ffc4d628b091e2377f26fa7.sh\n   SubmitLine=sbatch /lustre/hpc/kemi/jmni/results/slurm-arrays-task07-20261005-v2/screen/.submitit/jobs/.submission_file_74c9dbcb3ffc4d628b091e2377f26fa7.sh\n   WorkDir=/lustre/hpc/kemi/jmni/dev/FRUST-slurm-arrays-task07\n   StdErr=\n   StdIn=/dev/null\n   StdOut=/lustre/hpc/kemi/jmni/results/slurm-arrays-task07-20261005-v2/screen/.submitit/jobs/65848265_0_log.out\n   TresPerTask=cpu=1\n\n",
+      "65848266": "JobId=65848266 JobName=screen_ts_collect\n   UserId=jmni(1475) GroupId=kemi(1000) MCS_label=N/A\n   Priority=114 Nice=0 Account=chemistry QOS=normal\n   JobState=PENDING Reason=Dependency Dependency=afterany:65848265(unfulfilled)\n   Requeue=1 Restarts=0 BatchFlag=1 Reboot=0 ExitCode=0:0\n   RunTime=00:00:00 TimeLimit=00:05:00 TimeMin=N/A\n   SubmitTime=2026-10-05T20:09:53 EligibleTime=Unknown\n   AccrueTime=Unknown\n   StartTime=Unknown EndTime=Unknown Deadline=N/A\n   SuspendTime=None SecsPreSuspend=0 LastSchedEval=2026-10-05T20:09:53 Scheduler=Main\n   Partition=kemi1 AllocNode:Sid=fend05:1494848\n   ReqNodeList=(null) ExcNodeList=(null)\n   NodeList=\n   NumNodes=1-1 NumCPUs=1 NumTasks=1 CPUs/Task=1 ReqB:S:C:T=0:0:*:*\n   ReqTRES=cpu=1,mem=2G,node=1,billing=1\n   AllocTRES=(null)\n   Socks/Node=* NtasksPerN:B:S:C=1:0:*:1 CoreSpec=*\n   MinCPUsNode=1 MinMemoryNode=2G MinTmpDiskNode=0\n   Features=(null) DelayBoot=00:00:00\n   OverSubscribe=NO Exclusive=NO Contiguous=0 Licenses=(null) LicensesAlloc=(null) Network=(null)\n   Command=/lustre/hpc/kemi/jmni/results/slurm-arrays-task07-20261005-v2/screen/.submitit/jobs/.submission_file_3d641f0e3f254ac5b8277dfeeee31d85.sh\n   SubmitLine=sbatch /lustre/hpc/kemi/jmni/results/slurm-arrays-task07-20261005-v2/screen/.submitit/jobs/.submission_file_3d641f0e3f254ac5b8277dfeeee31d85.sh\n   WorkDir=/lustre/hpc/kemi/jmni/dev/FRUST-slurm-arrays-task07\n   StdErr=\n   StdIn=/dev/null\n   StdOut=/lustre/hpc/kemi/jmni/results/slurm-arrays-task07-20261005-v2/screen/.submitit/jobs/65848266_0_log.out\n   TresPerTask=cpu=1\n\n",
+      "65848267": "JobId=65848267 JobName=catalyst_screen_finalize\n   UserId=jmni(1475) GroupId=kemi(1000) MCS_label=N/A\n   Priority=114 Nice=0 Account=chemistry QOS=normal\n   JobState=PENDING Reason=Dependency Dependency=afterany:65848266(unfulfilled)\n   Requeue=1 Restarts=0 BatchFlag=1 Reboot=0 ExitCode=0:0\n   RunTime=00:00:00 TimeLimit=00:05:00 TimeMin=N/A\n   SubmitTime=2026-10-05T20:09:53 EligibleTime=Unknown\n   AccrueTime=Unknown\n   StartTime=Unknown EndTime=Unknown Deadline=N/A\n   SuspendTime=None SecsPreSuspend=0 LastSchedEval=2026-10-05T20:09:53 Scheduler=Main\n   Partition=kemi1 AllocNode:Sid=fend05:1494848\n   ReqNodeList=(null) ExcNodeList=(null)\n   NodeList=\n   NumNodes=1-1 NumCPUs=1 NumTasks=1 CPUs/Task=1 ReqB:S:C:T=0:0:*:*\n   ReqTRES=cpu=1,mem=2G,node=1,billing=1\n   AllocTRES=(null)\n   Socks/Node=* NtasksPerN:B:S:C=1:0:*:1 CoreSpec=*\n   MinCPUsNode=1 MinMemoryNode=2G MinTmpDiskNode=0\n   Features=(null) DelayBoot=00:00:00\n   OverSubscribe=NO Exclusive=NO Contiguous=0 Licenses=(null) LicensesAlloc=(null) Network=(null)\n   Command=/lustre/hpc/kemi/jmni/results/slurm-arrays-task07-20261005-v2/screen/.submitit/control/.submission_file_50565d54e61d431e81ad4577f6258e2d.sh\n   SubmitLine=sbatch /lustre/hpc/kemi/jmni/results/slurm-arrays-task07-20261005-v2/screen/.submitit/control/.submission_file_50565d54e61d431e81ad4577f6258e2d.sh\n   WorkDir=/lustre/hpc/kemi/jmni/dev/FRUST-slurm-arrays-task07\n   StdErr=\n   StdIn=/dev/null\n   StdOut=/lustre/hpc/kemi/jmni/results/slurm-arrays-task07-20261005-v2/screen/.submitit/control/65848267_0_log.out\n   TresPerTask=cpu=1\n\n"
+    }
+  },
+  "screen_reuse": {
+    "run_dir": "/lustre/hpc/kemi/jmni/results/slurm-arrays-task07-20261005-v2/reused_screen",
+    "child_submissions": {
+      "transition_states": {
+        "job_ids": [
+          "65848295_0",
+          "65848295_1"
+        ],
+        "tags": [
+          "TS1__pyrrole__NMe__r2",
+          "TS2__pyrrole__NMe__r2"
+        ],
+        "save_dirs": [
+          "/lustre/hpc/kemi/jmni/results/slurm-arrays-task07-20261005-v2/reused_screen/calculations/transition_states/TS1__pyrrole__NMe__r2",
+          "/lustre/hpc/kemi/jmni/results/slurm-arrays-task07-20261005-v2/reused_screen/calculations/transition_states/TS2__pyrrole__NMe__r2"
+        ],
+        "mode": "screen_ts:single_job",
+        "backend": "slurm",
+        "collection_job_id": "65848296",
+        "collection_output": "/lustre/hpc/kemi/jmni/results/slurm-arrays-task07-20261005-v2/reused_screen/calculations/transition_states/merged.parquet",
+        "collection_report": "/lustre/hpc/kemi/jmni/results/slurm-arrays-task07-20261005-v2/reused_screen/calculations/transition_states/collection_report_4fef6f7c79854cf3a9ea2af21c19a4cb.json",
+        "records": [
+          {
+            "target": "TS1__pyrrole__NMe__r2",
+            "group": "single_job",
+            "batch_index": 0,
+            "batch_targets": [
+              "TS1__pyrrole__NMe__r2"
+            ],
+            "save_dir": "/lustre/hpc/kemi/jmni/results/slurm-arrays-task07-20261005-v2/reused_screen/calculations/transition_states/TS1__pyrrole__NMe__r2",
+            "output_path": "/lustre/hpc/kemi/jmni/results/slurm-arrays-task07-20261005-v2/reused_screen/calculations/transition_states/TS1__pyrrole__NMe__r2/final.parquet",
+            "attempt_id": "e5cf3962930e4c948677b84ab5ed7f39",
+            "status": "submitted",
+            "job_id": "65848295_0",
+            "array_job_id": "65848295",
+            "array_index": 0,
+            "error": null
+          },
+          {
+            "target": "TS2__pyrrole__NMe__r2",
+            "group": "single_job",
+            "batch_index": 1,
+            "batch_targets": [
+              "TS2__pyrrole__NMe__r2"
+            ],
+            "save_dir": "/lustre/hpc/kemi/jmni/results/slurm-arrays-task07-20261005-v2/reused_screen/calculations/transition_states/TS2__pyrrole__NMe__r2",
+            "output_path": "/lustre/hpc/kemi/jmni/results/slurm-arrays-task07-20261005-v2/reused_screen/calculations/transition_states/TS2__pyrrole__NMe__r2/final.parquet",
+            "attempt_id": "e5cf3962930e4c948677b84ab5ed7f39",
+            "status": "submitted",
+            "job_id": "65848295_1",
+            "array_job_id": "65848295",
+            "array_index": 1,
+            "error": null
+          }
+        ],
+        "array_job_ids": [
+          "65848295"
+        ],
+        "submission_path": "/lustre/hpc/kemi/jmni/results/slurm-arrays-task07-20261005-v2/reused_screen/calculations/transition_states/.frust/submissions/e5cf3962930e4c948677b84ab5ed7f39.json"
+      }
+    },
+    "finalization_job_id": "65848297",
+    "backend": "slurm",
+    "submitit_dir": "/lustre/hpc/kemi/jmni/results/slurm-arrays-task07-20261005-v2/reused_screen/.submitit",
+    "scheduler": {
+      "65848295": "JobId=65848295 ArrayJobId=65848295 ArrayTaskId=0-1%1 ArrayTaskThrottle=1 JobName=screen_ts_workflow\n   UserId=jmni(1475) GroupId=kemi(1000) MCS_label=N/A\n   Priority=114 Nice=0 Account=chemistry QOS=normal\n   JobState=PENDING Reason=None Dependency=(null)\n   Requeue=1 Restarts=0 BatchFlag=1 Reboot=0 ExitCode=0:0\n   RunTime=00:00:00 TimeLimit=00:05:00 TimeMin=N/A\n   SubmitTime=2026-10-05T20:12:15 EligibleTime=2026-10-05T20:12:16\n   AccrueTime=2026-10-05T20:12:15\n   StartTime=Unknown EndTime=Unknown Deadline=N/A\n   SuspendTime=None SecsPreSuspend=0 LastSchedEval=2026-10-05T20:12:15 Scheduler=Main\n   Partition=kemi1 AllocNode:Sid=fend05:1498789\n   ReqNodeList=(null) ExcNodeList=(null)\n   NodeList=\n   NumNodes=1-1 NumCPUs=1 NumTasks=1 CPUs/Task=1 ReqB:S:C:T=0:0:*:*\n   ReqTRES=cpu=1,mem=2G,node=1,billing=1\n   AllocTRES=(null)\n   Socks/Node=* NtasksPerN:B:S:C=1:0:*:1 CoreSpec=*\n   MinCPUsNode=1 MinMemoryNode=2G MinTmpDiskNode=0\n   Features=(null) DelayBoot=00:00:00\n   OverSubscribe=NO Exclusive=NO Contiguous=0 Licenses=(null) LicensesAlloc=(null) Network=(null)\n   Command=/lustre/hpc/kemi/jmni/results/slurm-arrays-task07-20261005-v2/reused_screen/.submitit/jobs/.submission_file_c8b8810af9d44e038e849250e86df279.sh\n   SubmitLine=sbatch /lustre/hpc/kemi/jmni/results/slurm-arrays-task07-20261005-v2/reused_screen/.submitit/jobs/.submission_file_c8b8810af9d44e038e849250e86df279.sh\n   WorkDir=/lustre/hpc/kemi/jmni/dev/FRUST-slurm-arrays-task07\n   StdErr=\n   StdIn=/dev/null\n   StdOut=/lustre/hpc/kemi/jmni/results/slurm-arrays-task07-20261005-v2/reused_screen/.submitit/jobs/65848295_4294967294_0_log.out\n   TresPerTask=cpu=1\n\n",
+      "65848296": "JobId=65848296 JobName=screen_ts_collect\n   UserId=jmni(1475) GroupId=kemi(1000) MCS_label=N/A\n   Priority=114 Nice=0 Account=chemistry QOS=normal\n   JobState=PENDING Reason=Dependency Dependency=afterany:65848295_*(unfulfilled)\n   Requeue=1 Restarts=0 BatchFlag=1 Reboot=0 ExitCode=0:0\n   RunTime=00:00:00 TimeLimit=00:05:00 TimeMin=N/A\n   SubmitTime=2026-10-05T20:12:15 EligibleTime=Unknown\n   AccrueTime=2026-10-05T20:12:15\n   StartTime=Unknown EndTime=Unknown Deadline=N/A\n   SuspendTime=None SecsPreSuspend=0 LastSchedEval=2026-10-05T20:12:15 Scheduler=Main\n   Partition=kemi1 AllocNode:Sid=fend05:1498789\n   ReqNodeList=(null) ExcNodeList=(null)\n   NodeList=\n   NumNodes=1-1 NumCPUs=1 NumTasks=1 CPUs/Task=1 ReqB:S:C:T=0:0:*:*\n   ReqTRES=cpu=1,mem=2G,node=1,billing=1\n   AllocTRES=(null)\n   Socks/Node=* NtasksPerN:B:S:C=1:0:*:1 CoreSpec=*\n   MinCPUsNode=1 MinMemoryNode=2G MinTmpDiskNode=0\n   Features=(null) DelayBoot=00:00:00\n   OverSubscribe=NO Exclusive=NO Contiguous=0 Licenses=(null) LicensesAlloc=(null) Network=(null)\n   Command=/lustre/hpc/kemi/jmni/results/slurm-arrays-task07-20261005-v2/reused_screen/.submitit/jobs/.submission_file_b578aa2d51e44ab88770b788c402feb4.sh\n   SubmitLine=sbatch /lustre/hpc/kemi/jmni/results/slurm-arrays-task07-20261005-v2/reused_screen/.submitit/jobs/.submission_file_b578aa2d51e44ab88770b788c402feb4.sh\n   WorkDir=/lustre/hpc/kemi/jmni/dev/FRUST-slurm-arrays-task07\n   StdErr=\n   StdIn=/dev/null\n   StdOut=/lustre/hpc/kemi/jmni/results/slurm-arrays-task07-20261005-v2/reused_screen/.submitit/jobs/65848296_0_log.out\n   TresPerTask=cpu=1\n\n",
+      "65848297": "JobId=65848297 JobName=catalyst_screen_finalize\n   UserId=jmni(1475) GroupId=kemi(1000) MCS_label=N/A\n   Priority=114 Nice=0 Account=chemistry QOS=normal\n   JobState=PENDING Reason=Dependency Dependency=afterany:65848296(unfulfilled)\n   Requeue=1 Restarts=0 BatchFlag=1 Reboot=0 ExitCode=0:0\n   RunTime=00:00:00 TimeLimit=00:05:00 TimeMin=N/A\n   SubmitTime=2026-10-05T20:12:16 EligibleTime=Unknown\n   AccrueTime=2026-10-05T20:12:16\n   StartTime=Unknown EndTime=Unknown Deadline=N/A\n   SuspendTime=None SecsPreSuspend=0 LastSchedEval=2026-10-05T20:12:16 Scheduler=Main\n   Partition=kemi1 AllocNode:Sid=fend05:1498789\n   ReqNodeList=(null) ExcNodeList=(null)\n   NodeList=\n   NumNodes=1-1 NumCPUs=1 NumTasks=1 CPUs/Task=1 ReqB:S:C:T=0:0:*:*\n   ReqTRES=cpu=1,mem=2G,node=1,billing=1\n   AllocTRES=(null)\n   Socks/Node=* NtasksPerN:B:S:C=1:0:*:1 CoreSpec=*\n   MinCPUsNode=1 MinMemoryNode=2G MinTmpDiskNode=0\n   Features=(null) DelayBoot=00:00:00\n   OverSubscribe=NO Exclusive=NO Contiguous=0 Licenses=(null) LicensesAlloc=(null) Network=(null)\n   Command=/lustre/hpc/kemi/jmni/results/slurm-arrays-task07-20261005-v2/reused_screen/.submitit/control/.submission_file_3c5b6e2309b1459b8726a4b10f1a4329.sh\n   SubmitLine=sbatch /lustre/hpc/kemi/jmni/results/slurm-arrays-task07-20261005-v2/reused_screen/.submitit/control/.submission_file_3c5b6e2309b1459b8726a4b10f1a4329.sh\n   WorkDir=/lustre/hpc/kemi/jmni/dev/FRUST-slurm-arrays-task07\n   StdErr=\n   StdIn=/dev/null\n   StdOut=/lustre/hpc/kemi/jmni/results/slurm-arrays-task07-20261005-v2/reused_screen/.submitit/control/65848297_0_log.out\n   TresPerTask=cpu=1\n\n"
+    }
+  },
+  "screen_report": {
+    "analysis": {
+      "analysis_levels": [
+        "low_cost"
+      ],
+      "barrier_quality": {
+        "ready": 2
+      },
+      "candidate_barrier_quality": {},
+      "dimer_reference_quality": {
+        "ready": 1
+      },
+      "generated_at": "2026-10-05T18:10:47Z",
+      "manifest_hash": "bcc91887704c3764cb3fc10425ec770fcc73113b96d910b23ea12132ff898742",
+      "n_barriers": 2,
+      "n_candidate_barriers": 0,
+      "n_dimer_candidates": 1,
+      "n_profile_states": 0,
+      "n_states": 6,
+      "schema_version": 1,
+      "state_quality": {
+        "ready": 6
+      }
+    },
+    "analysis_tiers": {
+      "levels": {},
+      "schema_version": 1
+    },
+    "artifact_cleanup": {
+      "errors": [],
+      "n_removed_targets": 4,
+      "removed_bytes": 43248,
+      "removed_targets": [
+        "/lustre/hpc/kemi/jmni/results/slurm-arrays-task07-20261005-v2/screen/calculations/transition_states/TS1__pyrrole__NMe__r2",
+        "/lustre/hpc/kemi/jmni/results/slurm-arrays-task07-20261005-v2/screen/calculations/transition_states/TS2__pyrrole__NMe__r2",
+        "/lustre/hpc/kemi/jmni/results/slurm-arrays-task07-20261005-v2/screen/calculations/references/HBpin-mol",
+        "/lustre/hpc/kemi/jmni/results/slurm-arrays-task07-20261005-v2/screen/calculations/references/HH"
+      ],
+      "retained_targets": []
+    },
+    "artifact_policy": "screening",
+    "branches": {
+      "references": {
+        "n_collected": 2,
+        "n_errored": 0,
+        "n_failures": 0,
+        "n_missing": 0,
+        "n_rows": 2,
+        "n_skipped": 0,
+        "n_targets": 2,
+        "output": "/lustre/hpc/kemi/jmni/results/slurm-arrays-task07-20261005-v2/screen/calculations/references/computed.parquet",
+        "target_retention": "compact_success",
+        "timing": {
+          "n_timing_files": 2,
+          "n_timing_groups": 2,
+          "total_core_hours": 0.001667,
+          "total_elapsed_s": 6.002607
+        },
+        "workflow": "mols"
+      },
+      "transition_states": {
+        "n_collected": 2,
+        "n_errored": 0,
+        "n_failures": 0,
+        "n_missing": 0,
+        "n_rows": 2,
+        "n_skipped": 0,
+        "n_targets": 2,
+        "output": "/lustre/hpc/kemi/jmni/results/slurm-arrays-task07-20261005-v2/screen/calculations/transition_states/merged.parquet",
+        "target_retention": "compact_success",
+        "timing": {
+          "n_timing_files": 2,
+          "n_timing_groups": 2,
+          "total_core_hours": 0.001668,
+          "total_elapsed_s": 6.00378
+        },
+        "workflow": "screen_ts"
+      }
+    },
+    "finalized_at": "2026-10-05T18:10:47Z",
+    "n_references_calculated": 2,
+    "n_references_not_published": 0,
+    "n_references_published": 2,
+    "n_references_reused": 2,
+    "overall_status": "success",
+    "reference_publication_report": "calculations/references/publication_report.json",
+    "schema_version": 2,
+    "submission": {
+      "transition_states": {
+        "array_job_ids": [],
+        "collection_job_id": "65848266",
+        "collection_output": "/lustre/hpc/kemi/jmni/results/slurm-arrays-task07-20261005-v2/screen/calculations/transition_states/merged.parquet",
+        "collection_report": "/lustre/hpc/kemi/jmni/results/slurm-arrays-task07-20261005-v2/screen/calculations/transition_states/collection_report_a55e5b22ed874a74a8db43cca8950e5b.json",
+        "job_ids": [
+          "65848265"
+        ],
+        "submission_path": "/lustre/hpc/kemi/jmni/results/slurm-arrays-task07-20261005-v2/screen/calculations/transition_states/.frust/submissions/7de4f5b49f5045a9b6e3d83f907af0df.json"
+      }
+    },
+    "submitit_cleanup": {
+      "path": "/lustre/hpc/kemi/jmni/results/slurm-arrays-task07-20261005-v2/screen/.submitit/jobs",
+      "removed_bytes": 70425
+    }
+  },
+  "reused_screen_report": {
+    "analysis": {
+      "analysis_levels": [
+        "low_cost"
+      ],
+      "barrier_quality": {
+        "ready": 2
+      },
+      "candidate_barrier_quality": {},
+      "dimer_reference_quality": {
+        "ready": 1
+      },
+      "generated_at": "2026-10-05T18:13:55Z",
+      "manifest_hash": "a108b167e85f6dee0870863437f1cbbef951daab700bd928aedc145db5e4984f",
+      "n_barriers": 2,
+      "n_candidate_barriers": 0,
+      "n_dimer_candidates": 1,
+      "n_profile_states": 0,
+      "n_states": 6,
+      "schema_version": 1,
+      "state_quality": {
+        "ready": 6
+      }
+    },
+    "analysis_tiers": {
+      "levels": {},
+      "schema_version": 1
+    },
+    "artifact_cleanup": {
+      "errors": [],
+      "n_removed_targets": 2,
+      "removed_bytes": 22144,
+      "removed_targets": [
+        "/lustre/hpc/kemi/jmni/results/slurm-arrays-task07-20261005-v2/reused_screen/calculations/transition_states/TS1__pyrrole__NMe__r2",
+        "/lustre/hpc/kemi/jmni/results/slurm-arrays-task07-20261005-v2/reused_screen/calculations/transition_states/TS2__pyrrole__NMe__r2"
+      ],
+      "retained_targets": []
+    },
+    "artifact_policy": "screening",
+    "branches": {
+      "transition_states": {
+        "n_collected": 2,
+        "n_errored": 0,
+        "n_failures": 0,
+        "n_missing": 0,
+        "n_rows": 2,
+        "n_skipped": 0,
+        "n_targets": 2,
+        "output": "/lustre/hpc/kemi/jmni/results/slurm-arrays-task07-20261005-v2/reused_screen/calculations/transition_states/merged.parquet",
+        "target_retention": "compact_success",
+        "timing": {
+          "n_timing_files": 2,
+          "n_timing_groups": 2,
+          "total_core_hours": 0.001668,
+          "total_elapsed_s": 6.003321
+        },
+        "workflow": "screen_ts"
+      }
+    },
+    "finalized_at": "2026-10-05T18:13:55Z",
+    "n_references_calculated": 0,
+    "n_references_not_published": 0,
+    "n_references_published": 0,
+    "n_references_reused": 4,
+    "overall_status": "success",
+    "reference_publication_report": "calculations/references/publication_report.json",
+    "schema_version": 2,
+    "submission": {
+      "transition_states": {
+        "array_job_ids": [
+          "65848295"
+        ],
+        "collection_job_id": "65848296",
+        "collection_output": "/lustre/hpc/kemi/jmni/results/slurm-arrays-task07-20261005-v2/reused_screen/calculations/transition_states/merged.parquet",
+        "collection_report": "/lustre/hpc/kemi/jmni/results/slurm-arrays-task07-20261005-v2/reused_screen/calculations/transition_states/collection_report_4fef6f7c79854cf3a9ea2af21c19a4cb.json",
+        "job_ids": [
+          "65848295_0",
+          "65848295_1"
+        ],
+        "submission_path": "/lustre/hpc/kemi/jmni/results/slurm-arrays-task07-20261005-v2/reused_screen/calculations/transition_states/.frust/submissions/e5cf3962930e4c948677b84ab5ed7f39.json"
+      }
+    },
+    "submitit_cleanup": {
+      "path": "/lustre/hpc/kemi/jmni/results/slurm-arrays-task07-20261005-v2/reused_screen/.submitit/jobs",
+      "removed_bytes": 25221
+    }
+  },
+  "retry_branch_report": {
+    "workflow": "screen_ts",
+    "output": "/lustre/hpc/kemi/jmni/results/slurm-arrays-task07-20261005-v2/screen/calculations/transition_states/merged.parquet",
+    "require_normal_termination": true,
+    "n_targets": 2,
+    "n_collected": 2,
+    "n_skipped": 0,
+    "n_missing": 0,
+    "n_errored": 0,
+    "n_rows": 2,
+    "collected_files": [
+      "/lustre/hpc/kemi/jmni/results/slurm-arrays-task07-20261005-v2/screen/calculations/transition_states/TS1__pyrrole__NMe__r2/final.parquet",
+      "/lustre/hpc/kemi/jmni/results/slurm-arrays-task07-20261005-v2/screen/calculations/transition_states/TS2__pyrrole__NMe__r2/final.parquet"
+    ],
+    "skipped_files": [],
+    "missing_files": [],
+    "errored_files": [],
+    "errors": [],
+    "timing": {
+      "n_timing_files": 2,
+      "n_timing_groups": 2,
+      "timing_files": [
+        "/lustre/hpc/kemi/jmni/results/slurm-arrays-task07-20261005-v2/screen/calculations/transition_states/TS1__pyrrole__NMe__r2/timing.json",
+        "/lustre/hpc/kemi/jmni/results/slurm-arrays-task07-20261005-v2/screen/calculations/transition_states/TS2__pyrrole__NMe__r2/timing.json"
+      ],
+      "missing_timing_targets": [],
+      "errored_timing_files": [],
+      "total_elapsed_s": 6.00378,
+      "total_core_hours": 0.001668,
+      "slowest_groups": [
+        {
+          "elapsed_s": 3.002371,
+          "finished_at": "2026-10-05T18:10:07Z",
+          "group": "single_job",
+          "job_id": "65848265",
+          "kind": "group",
+          "output_parquet": "final.parquet",
+          "output_rows": 1,
+          "resources": {
+            "memory_gb": 1.6,
+            "n_cores": 1
+          },
+          "schema_version": 1,
+          "stage_ids": [
+            "prepare",
+            "initial_prune",
+            "xtb_preopt",
+            "xtb_sp",
+            "xtb_opt",
+            "filter"
+          ],
+          "started_at": "2026-10-05T18:10:04Z",
+          "submitted_at": "2026-10-05T18:09:53Z",
+          "target": "TS1__pyrrole__NMe__r2",
+          "workflow": "screen_ts"
+        },
+        {
+          "elapsed_s": 3.001409,
+          "finished_at": "2026-10-05T18:07:49Z",
+          "group": "single_job",
+          "job_id": "65848232",
+          "kind": "group",
+          "output_parquet": "final.parquet",
+          "output_rows": 1,
+          "resources": {
+            "memory_gb": 1.6,
+            "n_cores": 1
+          },
+          "schema_version": 1,
+          "stage_ids": [
+            "prepare",
+            "initial_prune",
+            "xtb_preopt",
+            "xtb_sp",
+            "xtb_opt",
+            "filter"
+          ],
+          "started_at": "2026-10-05T18:07:46Z",
+          "submitted_at": "2026-10-05T18:06:47Z",
+          "target": "TS2__pyrrole__NMe__r2",
+          "workflow": "screen_ts"
+        }
+      ]
+    },
+    "target_results": [
+      {
+        "target": "TS1__pyrrole__NMe__r2",
+        "status": "success",
+        "error": null,
+        "started_at": "2026-10-05T18:10:04Z",
+        "output_path": "/lustre/hpc/kemi/jmni/results/slurm-arrays-task07-20261005-v2/screen/calculations/transition_states/TS1__pyrrole__NMe__r2/final.parquet",
+        "row_count": 1,
+        "finished_at": "2026-10-05T18:10:07Z",
+        "attempt_id": "7de4f5b49f5045a9b6e3d83f907af0df",
+        "job_id": "65848265",
+        "tracked": true,
+        "collected": true
+      },
+      {
+        "target": "TS2__pyrrole__NMe__r2",
+        "status": "success",
+        "error": null,
+        "started_at": "2026-10-05T18:07:46Z",
+        "output_path": "/lustre/hpc/kemi/jmni/results/slurm-arrays-task07-20261005-v2/screen/calculations/transition_states/TS2__pyrrole__NMe__r2/final.parquet",
+        "row_count": 1,
+        "finished_at": "2026-10-05T18:07:49Z",
+        "attempt_id": "7d11acc0ae7544d5a1809f161ba833f6",
+        "job_id": "65848232_1",
+        "tracked": true,
+        "collected": true
+      }
+    ],
+    "retry_targets": [],
+    "attempt_history": {
+      "TS1__pyrrole__NMe__r2": [
+        "7d11acc0ae7544d5a1809f161ba833f6",
+        "7de4f5b49f5045a9b6e3d83f907af0df"
+      ],
+      "TS2__pyrrole__NMe__r2": [
+        "7d11acc0ae7544d5a1809f161ba833f6"
+      ]
+    },
+    "n_failures": 0,
+    "failure_summary": [],
+    "target_retention": "compact_success",
+    "compaction": {
+      "n_targets": 0,
+      "n_removed_files": 0,
+      "removed_bytes": 0,
+      "targets": [],
+      "errors": []
+    }
+  },
+  "facade_intervals": [
+    {
+      "target": "toluene_ligand",
+      "start": 1791223639.1571877,
+      "finish": 1791223649.1590376,
+      "cpus": 1,
+      "memory_gb": 1.6,
+      "host": "node066.cluster",
+      "job_id": "65848227",
+      "array_job_id": "65848227",
+      "array_index": "1"
+    },
+    {
+      "target": "pyrrole_ligand",
+      "start": 1791223639.1791942,
+      "finish": 1791223649.1811068,
+      "cpus": 1,
+      "memory_gb": 1.6,
+      "host": "node066.cluster",
+      "job_id": "65848243",
+      "array_job_id": "65848227",
+      "array_index": "0"
+    },
+    {
+      "target": "benzene_ligand",
+      "start": 1791223649.2209685,
+      "finish": 1791223659.2229803,
+      "cpus": 1,
+      "memory_gb": 1.6,
+      "host": "node066.cluster",
+      "job_id": "65848243",
+      "array_job_id": "65848227",
+      "array_index": "0"
+    }
+  ],
+  "maximum_running_facade_targets": 2,
+  "accounting": "JobID|State|ExitCode|Start|End|ReqCPUS|ReqMem\n65848228|COMPLETED|0:0|2026-10-05T20:07:45|2026-10-05T20:07:46|2|4G\n65848228.batch|COMPLETED|0:0|2026-10-05T20:07:45|2026-10-05T20:07:46|2|\n65848228.extern|COMPLETED|0:0|2026-10-05T20:07:45|2026-10-05T20:07:46|2|\n65848228.0|COMPLETED|0:0|2026-10-05T20:07:45|2026-10-05T20:07:46|2|\n65848229|COMPLETED|0:0|2026-10-05T20:07:16|2026-10-05T20:07:29|1|2G\n65848229.batch|COMPLETED|0:0|2026-10-05T20:07:16|2026-10-05T20:07:29|2|\n65848229.extern|COMPLETED|0:0|2026-10-05T20:07:16|2026-10-05T20:07:29|2|\n65848229.0|COMPLETED|0:0|2026-10-05T20:07:18|2026-10-05T20:07:29|1|\n65848230|COMPLETED|0:0|2026-10-05T20:07:16|2026-10-05T20:07:29|1|2G\n65848230.batch|COMPLETED|0:0|2026-10-05T20:07:16|2026-10-05T20:07:29|2|\n65848230.extern|COMPLETED|0:0|2026-10-05T20:07:16|2026-10-05T20:07:29|2|\n65848230.0|COMPLETED|0:0|2026-10-05T20:07:18|2026-10-05T20:07:29|1|\n65848227_0|COMPLETED|0:0|2026-10-05T20:07:16|2026-10-05T20:07:39|1|2G\n65848227_0.batch|COMPLETED|0:0|2026-10-05T20:07:16|2026-10-05T20:07:39|2|\n65848227_0.extern|COMPLETED|0:0|2026-10-05T20:07:16|2026-10-05T20:07:39|2|\n65848227_0.0|COMPLETED|0:0|2026-10-05T20:07:18|2026-10-05T20:07:39|1|\n65848227_1|COMPLETED|0:0|2026-10-05T20:07:16|2026-10-05T20:07:29|1|2G\n65848227_1.batch|COMPLETED|0:0|2026-10-05T20:07:16|2026-10-05T20:07:29|2|\n65848227_1.extern|COMPLETED|0:0|2026-10-05T20:07:16|2026-10-05T20:07:29|2|\n65848227_1.0|COMPLETED|0:0|2026-10-05T20:07:18|2026-10-05T20:07:29|1|\n65848231|COMPLETED|0:0|2026-10-05T20:07:16|2026-10-05T20:07:29|1|2G\n65848231.batch|COMPLETED|0:0|2026-10-05T20:07:16|2026-10-05T20:07:29|2|\n65848231.extern|COMPLETED|0:0|2026-10-05T20:07:16|2026-10-05T20:07:29|2|\n65848231.0|COMPLETED|0:0|2026-10-05T20:07:18|2026-10-05T20:07:29|1|\n65848233|COMPLETED|0:0|2026-10-05T20:08:23|2026-10-05T20:08:25|1|2G\n65848233.batch|COMPLETED|0:0|2026-10-05T20:08:23|2026-10-05T20:08:25|2|\n65848233.extern|COMPLETED|0:0|2026-10-05T20:08:23|2026-10-05T20:08:25|2|\n65848233.0|COMPLETED|0:0|2026-10-05T20:08:24|2026-10-05T20:08:25|1|\n65848235|COMPLETED|0:0|2026-10-05T20:08:23|2026-10-05T20:08:25|1|2G\n65848235.batch|COMPLETED|0:0|2026-10-05T20:08:23|2026-10-05T20:08:25|2|\n65848235.extern|COMPLETED|0:0|2026-10-05T20:08:23|2026-10-05T20:08:25|2|\n65848235.0|COMPLETED|0:0|2026-10-05T20:08:24|2026-10-05T20:08:25|1|\n65848236|FAILED|1:0|2026-10-05T20:08:46|2026-10-05T20:08:48|1|2G\n65848236.batch|FAILED|1:0|2026-10-05T20:08:46|2026-10-05T20:08:48|2|\n65848236.extern|COMPLETED|0:0|2026-10-05T20:08:46|2026-10-05T20:08:48|2|\n65848236.0|FAILED|1:0|2026-10-05T20:08:46|2026-10-05T20:08:48|1|\n65848232_0|FAILED|1:0|2026-10-05T20:07:16|2026-10-05T20:07:22|1|2G\n65848232_0.batch|FAILED|1:0|2026-10-05T20:07:16|2026-10-05T20:07:22|2|\n65848232_0.extern|COMPLETED|0:0|2026-10-05T20:07:16|2026-10-05T20:07:22|2|\n65848232_0.0|FAILED|1:0|2026-10-05T20:07:18|2026-10-05T20:07:22|1|\n65848232_1|COMPLETED|0:0|2026-10-05T20:07:45|2026-10-05T20:07:50|1|2G\n65848232_1.batch|COMPLETED|0:0|2026-10-05T20:07:45|2026-10-05T20:07:50|2|\n65848232_1.extern|COMPLETED|0:0|2026-10-05T20:07:45|2026-10-05T20:07:50|2|\n65848232_1.0|COMPLETED|0:0|2026-10-05T20:07:45|2026-10-05T20:07:50|1|\n65848234_0|COMPLETED|0:0|2026-10-05T20:07:16|2026-10-05T20:07:22|1|2G\n65848234_0.batch|COMPLETED|0:0|2026-10-05T20:07:16|2026-10-05T20:07:22|2|\n65848234_0.extern|COMPLETED|0:0|2026-10-05T20:07:16|2026-10-05T20:07:22|2|\n65848234_0.0|COMPLETED|0:0|2026-10-05T20:07:18|2026-10-05T20:07:22|1|\n65848234_1|COMPLETED|0:0|2026-10-05T20:07:45|2026-10-05T20:07:50|1|2G\n65848234_1.batch|COMPLETED|0:0|2026-10-05T20:07:45|2026-10-05T20:07:50|2|\n65848234_1.extern|COMPLETED|0:0|2026-10-05T20:07:45|2026-10-05T20:07:50|2|\n65848234_1.0|COMPLETED|0:0|2026-10-05T20:07:45|2026-10-05T20:07:50|1|\n65848265|COMPLETED|0:0|2026-10-05T20:10:02|2026-10-05T20:10:07|1|2G\n65848265.batch|COMPLETED|0:0|2026-10-05T20:10:02|2026-10-05T20:10:07|2|\n65848265.extern|COMPLETED|0:0|2026-10-05T20:10:02|2026-10-05T20:10:07|2|\n65848265.0|COMPLETED|0:0|2026-10-05T20:10:03|2026-10-05T20:10:07|1|\n65848266|COMPLETED|0:0|2026-10-05T20:10:35|2026-10-05T20:10:37|1|2G\n65848266.batch|COMPLETED|0:0|2026-10-05T20:10:35|2026-10-05T20:10:37|2|\n65848266.extern|COMPLETED|0:0|2026-10-05T20:10:35|2026-10-05T20:10:37|2|\n65848266.0|COMPLETED|0:0|2026-10-05T20:10:36|2026-10-05T20:10:37|1|\n65848267|COMPLETED|0:0|2026-10-05T20:10:45|2026-10-05T20:10:47|1|2G\n65848267.batch|COMPLETED|0:0|2026-10-05T20:10:45|2026-10-05T20:10:47|2|\n65848267.extern|COMPLETED|0:0|2026-10-05T20:10:45|2026-10-05T20:10:47|2|\n65848267.0|COMPLETED|0:0|2026-10-05T20:10:45|2026-10-05T20:10:47|1|\n65848296|COMPLETED|0:0|2026-10-05T20:13:45|2026-10-05T20:13:46|1|2G\n65848296.batch|COMPLETED|0:0|2026-10-05T20:13:45|2026-10-05T20:13:46|2|\n65848296.extern|COMPLETED|0:0|2026-10-05T20:13:45|2026-10-05T20:13:46|2|\n65848296.0|COMPLETED|0:0|2026-10-05T20:13:45|2026-10-05T20:13:46|1|\n65848295_0|COMPLETED|0:0|2026-10-05T20:12:45|2026-10-05T20:12:49|1|2G\n65848295_0.batch|COMPLETED|0:0|2026-10-05T20:12:45|2026-10-05T20:12:49|2|\n65848295_0.extern|COMPLETED|0:0|2026-10-05T20:12:45|2026-10-05T20:12:49|2|\n65848295_0.0|COMPLETED|0:0|2026-10-05T20:12:45|2026-10-05T20:12:49|1|\n65848295_1|COMPLETED|0:0|2026-10-05T20:13:19|2026-10-05T20:13:24|1|2G\n65848295_1.batch|COMPLETED|0:0|2026-10-05T20:13:19|2026-10-05T20:13:24|2|\n65848295_1.extern|COMPLETED|0:0|2026-10-05T20:13:19|2026-10-05T20:13:24|2|\n65848295_1.0|COMPLETED|0:0|2026-10-05T20:13:20|2026-10-05T20:13:24|1|\n65848297|COMPLETED|0:0|2026-10-05T20:13:51|2026-10-05T20:13:55|1|2G\n65848297.batch|COMPLETED|0:0|2026-10-05T20:13:51|2026-10-05T20:13:55|2|\n65848297.extern|COMPLETED|0:0|2026-10-05T20:13:51|2026-10-05T20:13:55|2|\n65848297.0|COMPLETED|0:0|2026-10-05T20:13:53|2026-10-05T20:13:55|1|\n",
+  "completed_screen_retry": "rejected before submission"
+}

@@ -51,10 +51,16 @@ class ClusterConfig:
         they accept a ``work_dir`` argument.
     extra_slurm_parameters : dict[str, str] or None, optional
         Additional scheduler parameters forwarded as
-        ``slurm_additional_parameters``.
+        ``slurm_additional_parameters``. FRUST uses one node and one Python
+        worker per job; conflicting task/node counts are rejected. Allocated
+        CPUs are available to that worker's calculations.
     stderr_to_stdout : bool, optional
         Merge stderr into stdout. Screening submissions enable this for fewer
         per-job log files; standard submissions keep separate streams.
+    max_array_size : int or None, optional
+        Known cluster limit on elements in one array. When provided, FRUST
+        rejects larger arrays before submission. ``None`` lets Slurm validate
+        its own limit; FRUST never silently splits an array.
     """
 
     backend: str = "slurm"
@@ -63,6 +69,7 @@ class ClusterConfig:
     work_dir: str | Path | None = None
     extra_slurm_parameters: dict[str, str] | None = None
     stderr_to_stdout: bool = False
+    max_array_size: int | None = None
 
 
 @dataclass(frozen=True)
@@ -72,11 +79,12 @@ class JobSubmissionResult:
     Parameters
     ----------
     job_ids : list[str or int]
-        Scheduler or executor job identifiers in submission order.
+        Unique worker-job identifiers in submission order, excluding collection.
     tags : list[str]
-        Sanitized job tags used for naming and logging.
+        Target tags in selection order. In batched or staged runs these do not
+        correspond one-to-one with ``job_ids``; use ``records`` for that mapping.
     save_dirs : list[str]
-        Output directories associated with the submitted jobs.
+        Output directories associated with the selected targets.
     mode : str
         Submitted workflow mode, such as a pipeline name or chain preset.
     backend : str
@@ -88,6 +96,12 @@ class JobSubmissionResult:
         Path to the merged parquet written by the automatic collection job.
     collection_report : str or None, optional
         Path to the JSON report written by the automatic collection job.
+    records : list of SubmissionRecord, optional
+        Explicit target-to-job mappings, including stage group and attempt.
+    array_job_ids : list of str, optional
+        Actual Slurm array parent IDs. Ordinary jobs and local jobs have none.
+    submission_path : str or None, optional
+        Versioned submission metadata file; separate from scientific manifests.
     """
 
     job_ids: list[str | int]
@@ -98,6 +112,59 @@ class JobSubmissionResult:
     collection_job_id: str | int | None = None
     collection_output: str | None = None
     collection_report: str | None = None
+    records: list[SubmissionRecord] = field(default_factory=list)
+    array_job_ids: list[str] = field(default_factory=list)
+    submission_path: str | None = None
+
+
+@dataclass(frozen=True)
+class SubmissionRecord:
+    """Map one target and stage group to its submitted worker job.
+
+    Parameters
+    ----------
+    target : str
+        Stable target tag.
+    group : str
+        Execution stage-group name, such as ``single_job`` or ``dft_freq``.
+    batch_index : int
+        Position of the planned job within its stage group.
+    batch_targets : tuple of str
+        Target tags sharing that job, in execution order.
+    save_dir : str
+        Target output directory.
+    output_path : str
+        Expected checkpoint or final parquet.
+    attempt_id : str
+        Unique submission attempt identity.
+    status : {"planned", "submitted", "submission_failed", "blocked"}
+        ``planned`` has not been submitted; ``submitted`` has an executor ID;
+        ``submission_failed`` encountered a submission error. These describe
+        submission only, not calculation success. A scheduler acceptance error
+        can be ambiguous; inspect the scheduler before resubmitting. ``blocked``
+        means a local descendant was not submitted because its predecessor failed.
+    job_id : str or int or None, optional
+        Actual executor job ID, available after submission.
+    array_job_id : str or None, optional
+        Actual Slurm array parent ID; absent for ordinary or local jobs.
+    array_index : int or None, optional
+        Actual Slurm array element index; absent outside Slurm arrays.
+    error : str or None, optional
+        Submission error when status is ``submission_failed``.
+    """
+
+    target: str
+    group: str
+    batch_index: int
+    batch_targets: tuple[str, ...]
+    save_dir: str
+    output_path: str
+    attempt_id: str
+    status: str = "planned"
+    job_id: str | int | None = None
+    array_job_id: str | None = None
+    array_index: int | None = None
+    error: str | None = None
 
 
 DEFAULT_CUSTOM_STAGE_RESOURCES = Resources(cpus=4, mem_gb=20, timeout_min=720)

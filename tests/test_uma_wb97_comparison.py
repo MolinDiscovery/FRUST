@@ -242,6 +242,17 @@ def test_comparison_submit_plan_and_reference_reuse(tmp_path, monkeypatch):
         parent.barriers().iloc[0]["ts_result_id"]
     ]
     assert (tmp_path / "submitted/comparison/seeds").exists()
+    from test_public_arrays import Scheduler
+    scheduler = Scheduler()
+    with (
+        patch("frust.workflows.core.create_executor", side_effect=scheduler.create),
+        patch("frust.workflows.screening.create_executor", side_effect=scheduler.create),
+    ):
+        arrays = second.submit(out_dir=tmp_path / "submitted_arrays", cluster=cluster,
+                               execution="dft_staged", array=True, array_parallelism=2)
+    assert set(arrays.child_submissions) == {"transition_states"}
+    assert any(fn.__name__ == "_run_stage_array_submitted_job" for fn, _, _, _ in scheduler.calls)
+    assert arrays.child_submissions["transition_states"].records
     with pytest.raises(FileExistsError, match="different catalyst-screen"):
         ft.workflows.wb97_comparison(
             parent,

@@ -114,6 +114,65 @@ mode and all required reference minima pass quality checks.
     Use `screening="uma-alpb-chloroform", method="uma-alpb-chloroform"` for
     the corrected potential. Keep their outputs and reference stores separate.
 
+## Gas UMA Geometry With A Terminal Chloroform Single Point
+
+```python
+validation = ft.workflows.catalyst_screen(
+    **common,
+    screening="uma-gas",
+    method="uma-gas-opt-alpb-chloroform",
+    level="full",
+    ts_refine_n=3,
+)
+validation.show_stages()
+```
+
+| Structure | Final stages | Analysis energy | Thermal correction |
+| --- | --- | --- | --- |
+| TS candidates | Gas Hessian → gas OptTS → gas NumFreq → ALPB(chloroform) SP | `uma_solv_sp-EE` | `uma_freq-GE - uma_freq-EE` |
+| Reference minima | Gas Opt → gas NumFreq → ALPB(chloroform) SP | `uma_solv_sp-EE` | `uma_freq-GE - uma_freq-EE` |
+
+This preset uses pinned **UMA-S 1.2.1 OMol** throughout. Its gas optimization
+and frequency stages follow the gas-geometry/solvent-SP protocol used by
+`r2scan-3c`, with UMA and ALPB replacing DFT and SMD. The terminal single point
+evaluates each optimized gas geometry without further optimization:
+
+```text
+G = E[UMA + ALPB(chloroform)] + (G[UMA gas frequencies] - E[UMA gas frequencies])
+  = uma_solv_sp-EE + (uma_freq-GE - uma_freq-EE)
+```
+
+For example, solvent electronic energy −100.020 Hartree and gas-frequency
+energies G = −99.950, E = −100.000 Hartree give G = −99.970 Hartree.
+The same assembly applies to the substrate (`ligand`), each requested catalyst
+dimer alternative, HBpin, and H₂ references. Barrier analysis then subtracts
+the required reference free energies with their stoichiometric coefficients.
+Optimized coordinates remain `uma_ts_opt-oc` or `uma_min_opt-oc`; gas
+`uma_freq-vibs` supplies frequency and imaginary-mode characterization.
+
+!!! info "Keep each protocol in its own run directory"
+
+    Use gas screening with this mixed preset. `uma-gas` continues to use gas
+    frequency Gibbs energies; `uma-alpb-chloroform` continues to optimize and
+    characterize on the ALPB potential. Full UMA currently supports
+    `scope="barriers"`. Inspect imaginary modes before accepting TS barriers.
+
+To compare solvent UMA SP energies on **g-xTB geometries**, keep the existing
+screening-only reranking path in a separate run:
+
+```python
+comparison = ft.workflows.catalyst_screen(
+    **common,
+    screening="gxtb-default",
+    ranking="uma-alpb-chloroform",
+    level="uma_ranked",
+    uma_rank_top_n=3,
+)
+```
+
+This comparison uses `uma_rank_sp-EE` on `xtb_opt-oc` and reports electronic
+barriers (ΔE). It does not supply the gas UMA thermal correction needed for ΔG.
+
 ## Rerank g-xTB Geometries With UMA SP
 
 Use a broad g-xTB cutoff before a smaller UMA SP cutoff:

@@ -15,6 +15,8 @@ import frust as ft
 from frust.stepper import Stepper
 from frust.screen.runs import ScreenRun
 from frust.screen.references import ReferenceLibrary, reference_identity
+from frust.results import free_energy_components, result_column
+from frust.structures.specs import DIMER_STATES
 from frust.workflows.factories import MolsWorkflow, ScreenTSWorkflow
 
 
@@ -84,7 +86,9 @@ class _FakeStepper:
             df = df.iloc[: kwargs["lowest"]].copy()
         out = df.copy()
         out[f"{name}-EE"] = [
-            _ENERGIES[state] - (0.1 if name == "uma_freq" else 0.0) + 0.01 * cid
+            _ENERGIES[state] - (
+                0.1 if name == "uma_freq" else 0.2 if name == "uma_solv_sp" else 0.0
+            ) + 0.01 * cid
             for state, cid in zip(out["state_id"], out["cid"])
         ]
         out[f"{name}-oc"] = out["coords_embedded"]
@@ -108,7 +112,8 @@ def _run_full_uma(
     tmp_path, monkeypatch, *, environment="uma-gas", artifact_policy="standard"
 ) -> ScreenRun:
     workflow = ft.workflows.catalyst_screen(
-        dataframe=_components(), ts_types=["TS1"], screening=environment,
+        dataframe=_components(), ts_types=["TS1"],
+        screening="uma-gas" if environment == "uma-gas-opt-alpb-chloroform" else environment,
         method=environment, level="full", dimer_reference="dimer",
         top_n=2, ts_refine_n=2, prune_initial=False,
     )
@@ -482,3 +487,104 @@ def test_numfreq_parser_values_reach_uma_thermochemistry(tmp_path):
     assert result["uma_freq-GE"].iloc[0] == pytest.approx(-12.345678)
     assert result["uma_freq-EE"].iloc[0] == pytest.approx(-12.5)
     assert result["uma_freq-vibs"].iloc[0][0]["frequency"] == 38.0
+
+
+_MIXED_UMA = "uma-gas-opt-alpb-chloroform"
+
+
+def test_mixed_uma_stage_graphs_cover_ts_and_all_reference_alternatives():
+    workflow = ft.workflows.catalyst_screen(
+        dataframe=_components(), ts_types=["TS1", "TS2", "TS3", "TS4"],
+        screening="uma-gas", method=_MIXED_UMA, level="full",
+        dimer_reference="lowest",
+    )
+    children = workflow.children()
+    refs = children["references"]
+    assert {"ligand", "HBpin-mol", "HH", *DIMER_STATES} <= {
+        target.state_id for target in refs.targets()
+    }
+    for child, tail in (
+        (children["transition_states"], ["uma_hessian", "uma_ts_opt", "uma_freq", "uma_solv_sp"]),
+        (refs, ["uma_min_opt", "uma_freq", "uma_solv_sp"]),
+    ):
+        stages = child._stage_defs()
+        assert [stage.id for stage in stages][-len(tail):] == tail
+        assert not stages[-1].constraint
+        for stage in stages:
+            if stage.kind != "calc" or not stage.id.startswith("uma_"):
+                continue
+            spec = child.method.for_stage(stage.id)
+            assert spec.kwargs["uma"] == "omol@uma-s-1p2p1"
+            assert spec.kwargs.get("uma_xtb_alpb") == (
+                "chloroform" if stage.id == "uma_solv_sp" else None
+            )
+        assert child.method.for_stage("uma_solv_sp").options == {"ExtOpt": None}
+        for execution in ("single_job", "dft_staged", "fully_staged"):
+            assert [stage.id for group in child._stage_groups(execution) for stage in group] == [
+                stage.id for stage in stages
+            ]
+
+
+@pytest.mark.parametrize("artifact_policy", ["standard", "screening"])
+def test_mixed_uma_portable_energy_assembly_and_reference_cache(tmp_path, monkeypatch, artifact_policy):
+    run = _run_full_uma(
+        tmp_path, monkeypatch, environment=_MIXED_UMA, artifact_policy=artifact_policy
+    )
+    states = run.states()
+    assert set(states["energy_stage"]) == {"uma_solv_sp"}
+    assert set(states["solvation_model"]) == {"alpb"}
+    assert set(states["geometry_stage"]) == {"uma_ts_opt", "uma_min_opt"}
+    assert states["free_energy_hartree"].tolist() == pytest.approx(
+        states["electronic_energy_hartree"] + 0.1
+    )
+    barrier = run.barriers().iloc[0]
+    assert barrier["delta_e_kcal_mol"] == pytest.approx(0.2 * 627.5094740631)
+    assert barrier["delta_g_kcal_mol"] == pytest.approx(0.15 * 627.5094740631)
+    raw = pd.read_parquet(run.path / "calculations/transition_states/merged.parquet")
+    assert result_column(raw) == "uma_solv_sp-EE"
+    assert result_column(raw, "electronic_energy", purpose="frequency") == "uma_freq-EE"
+    components = free_energy_components(raw)
+    assert components["thermal_correction_hartree"].tolist() == pytest.approx([0.1, 0.1])
+    assert raw.attrs["frust_results"]["energy_protocol"]["frequency_calculator"]["kwargs"].get(
+        "uma_xtb_alpb"
+    ) is None
+    reopened = ScreenRun(run.path).refresh_analysis()
+    pd.testing.assert_frame_equal(run.barriers(), reopened.barriers())
+    pd.testing.assert_frame_equal(run.candidate_barriers(), reopened.candidate_barriers())
+
+
+def test_mixed_uma_cache_identity_and_wrong_frequency_provenance(tmp_path, monkeypatch):
+    workflow = ft.workflows.catalyst_screen(
+        dataframe=_components(), ts_types=["TS1"], screening="uma-gas",
+        method=_MIXED_UMA, level="full", dimer_reference="dimer",
+    )
+    target = next(t for t in workflow.children()["references"].targets() if t.state_id == "ligand")
+    key, identity = reference_identity(target, workflow.method, protocol=workflow._reference_protocol())
+    assert "uma_solv_sp" in identity["active_method"]["stages"]
+    gas = ft.workflows.methods.preset("uma-gas")
+    gas_key, _ = reference_identity(target, gas, protocol=workflow._reference_protocol())
+    assert key != gas_key
+    run = _run_full_uma(tmp_path, monkeypatch, environment=_MIXED_UMA)
+    refs = pd.read_parquet(run.path / "calculations/references/computed.parquet")
+    ligand = refs[refs["state_id"].eq("ligand")].copy()
+    library = ReferenceLibrary(tmp_path / "library").initialize()
+    library.publish(ligand, target, workflow.method, protocol=workflow._reference_protocol())
+    ligand.attrs["frust_results"]["energy_protocol"]["frequency_calculator"]["kwargs"][
+        "uma_xtb_alpb"
+    ] = "chloroform"
+    with pytest.raises(ValueError, match="UMA thermochemistry"):
+        library.publish(ligand, target, workflow.method, protocol=workflow._reference_protocol())
+
+
+def test_mixed_uma_barrier_rejects_incompatible_thermal_protocol(tmp_path, monkeypatch):
+    run = _run_full_uma(tmp_path, monkeypatch, environment=_MIXED_UMA)
+    path = run.path / "calculations/references/merged.parquet"
+    refs = pd.read_parquet(path)
+    refs.attrs["frust_results"]["energy_protocol"]["frequency_calculator"]["kwargs"][
+        "uma_xtb_alpb"
+    ] = "chloroform"
+    refs.to_parquet(path)
+    run.refresh_analysis()
+    barrier = run.barriers().iloc[0]
+    assert "mixed_electronic_energy_protocols" in barrier["quality_issues"]
+    assert pd.isna(barrier["delta_g_kcal_mol"])

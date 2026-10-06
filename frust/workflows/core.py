@@ -14,9 +14,10 @@ import json
 import os
 import shutil
 import tempfile
+import time
 from collections.abc import Mapping
 from contextlib import nullcontext
-from dataclasses import dataclass
+from dataclasses import dataclass, replace
 from pathlib import Path
 from typing import Any, Iterable, Literal
 
@@ -39,6 +40,14 @@ from frust.cluster.executor import (
     create_executor,
     update_executor_with_dependencies,
     update_executor_with_dependency,
+)
+from frust.cluster.submission import (
+    _plan_submission, _submit_array_jobs,
+    _validate_array_scheduler_options, _validate_array_size, _atomic_write_submission_json,
+    _submission_guard, _mutation_lock, _mark_completed, _target_outcomes, _submission_history,
+    _ensure_collection_ready,
+    _stage_outcome_path, _array_dependency, _submit_local_stages,
+    _record_afterany_completion,
 )
 from frust.cluster.naming import sanitize_tag
 from frust.results import ResultProfile, attach_result_contract
@@ -640,6 +649,10 @@ class BaseWorkflow:
         cluster: ClusterConfig,
         execution: ExecutionMode | None = None,
         stage_resources: dict[str, Resources] | None = None,
+        array: bool = False,
+        array_parallelism: int | Mapping[str, int] | None = None,
+        targets_per_task: int = 1,
+        retry: bool = False,
         targets: Iterable[WorkflowTarget] | Iterable[int] | None = None,
         debug: bool = False,
         save_output_dir: bool = True,
@@ -654,6 +667,8 @@ class BaseWorkflow:
         artifact_policy: ArtifactPolicy = "standard",
         uma_oet_tools: str | Path | None = None,
         _defer_screening_cleanup: bool = False,
+        _collect_targets: list[WorkflowTarget] | None = None,
+        _screen_manifest_validated: bool = False,
     ) -> JobSubmissionResult:
         """Submit selected workflow targets to a submitit cluster executor.
 
@@ -670,7 +685,8 @@ class BaseWorkflow:
         execution : {"single_job", "dft_staged", "fully_staged"} or None, optional
             Job grouping strategy. If omitted, DFT workflows use
             ``"dft_staged"`` and non-DFT workflows use ``"single_job"``.
-            ``"single_job"`` submits one job per target. ``"dft_staged"`` keeps
+            By default ``"single_job"`` submits one job per target; arrays can
+            place several sequential targets in one element. ``"dft_staged"`` keeps
             initialization stages together, then submits dependent DFT-stage
             jobs. ``"fully_staged"`` submits one dependent job per stage.
         stage_resources : dict[str, Resources] or None, optional
@@ -682,6 +698,34 @@ class BaseWorkflow:
             ``"dft_opt"``, ``"dft_freq"``, and ``"dft_solv_sp"``; screen TS
             workflows usually use ``"init"``, ``"dft_hessian"``,
             ``"dft_ts_opt"``, ``"dft_freq"``, and ``"dft_solv_sp"``.
+        array : bool, optional
+            Submit worker jobs together as Slurm arrays. Defaults to False,
+            preserving individual submission. Staged modes submit one array per
+            group; each element waits for its own preceding element's success.
+            Slurm must support ``aftercorr`` and ``kill-on-invalid-dep=yes``;
+            invalid dependencies are cancelled so collection can finish.
+        array_parallelism : int or mapping of str to int or None, optional
+            Maximum running elements per array, required when ``array=True``.
+            ``single_job`` requires one positive integer. Staged modes accept one
+            integer for all groups or a complete mapping keyed by stage group.
+            This is not a run-wide limit across separate arrays. Local array
+            submission waits for free execution slots before submitting more
+            workers, so this call can block until earlier workers finish. Local
+            staged submission dispatches ready work until the entire chain ends.
+        targets_per_task : int, optional
+            Number of sequential targets per element; defaults to 1. Larger
+            batches share a lazy job-local UMA server in ``single_job`` mode.
+            Resources apply to the element and its timeout covers the whole
+            batch. Staged arrays require 1. Target exceptions are recorded and
+            independent targets continue, unless the server becomes unavailable.
+        retry : bool, optional
+            Explicitly retry selected failed targets in a compatible run.
+            Staged retries require ``array=True`` and rerun the complete selected
+            target chain; intermediate checkpoint resume is unsupported.
+            Earlier jobs and collection must be finished. Old target files
+            are archived, successful targets are rejected, and resources/batch
+            size may change within the mode's constraints. Execution groups must
+            match. Defaults to False; overlapping writes are blocked.
         targets : iterable of WorkflowTarget or int or None, optional
             Targets to submit. Integers select positions from ``wf.targets()``.
             If omitted, all workflow targets are submitted.
@@ -734,7 +778,38 @@ class BaseWorkflow:
         frust.cluster.config.JobSubmissionResult
             Submitted scheduler job IDs, target tags, target save directories,
             workflow execution mode, backend, and automatic collection metadata
-            when ``collect=True``.
+            when ``collect=True``. ``records`` maps each target/group to its
+            worker job; several targets can share a job ID in a batch.
+            ``array_job_ids`` contains actual Slurm parents, excluding ordinary
+            single-element jobs and local workers. Wait for
+            ``collection_job_id`` before loading ``collection_output``.
+
+        Examples
+        --------
+        Ten targets with five targets per element create two worker jobs.
+        Each job gets eight CPUs, 32 GB, and a whole-batch 720-minute timeout:
+
+        >>> import frust as ft
+        >>> result = wf.submit(
+        ...     out_dir="runs/batched", cluster=cluster,
+        ...     execution="single_job", array=True, array_parallelism=2,
+        ...     targets_per_task=5,
+        ...     stage_resources={
+        ...         "single_job": ft.cluster.Resources(8, 32, 720),
+        ...     },
+        ... )
+        >>> [(r.target, r.job_id, r.array_index) for r in result.records]
+
+        Notes
+        -----
+        A target is one independently tracked piece of chemistry, potentially
+        containing several conformers. A stage is one step within that target.
+        An array element is one allocation, running either a stage group or
+        a sequential target batch. Collectors remain separate ordinary jobs.
+        A standalone retry's automatic collection contains its selection;
+        after it finishes, ``wf.collect(out_dir)`` collects the whole run.
+        Direct screening-policy retries require the composed screen's
+        finalization and reuse contract.
         """
         _validate_target_retention(target_retention)
         artifact_policy = validate_artifact_policy(artifact_policy)
@@ -742,192 +817,297 @@ class BaseWorkflow:
         selected = self._select_targets(targets)
         mode = execution or ("dft_staged" if self.dft else "single_job")
         groups = self._stage_groups(mode)
+        planned_groups = []
+        planned_output = None
+        for group in groups:
+            group_name = "single_job" if mode == "single_job" else self._group_name(group)
+            planned_output = (
+                "final.parquet" if mode == "single_job"
+                else _next_parquet(planned_output, group_name)
+            )
+            planned_groups.append((
+                group_name,
+                _resource_for_group(group_name, group, stage_resources, default=DEFAULT_WORKFLOW_RESOURCES),
+                planned_output,
+            ))
+        plan = _plan_submission(
+            [target.tag for target in selected], planned_groups, execution=mode,
+            array=array, array_parallelism=array_parallelism, targets_per_task=targets_per_task,
+        )
+        if array:
+            _validate_array_scheduler_options(cluster)
+            _validate_array_size(cluster, len(plan[0].batches))
+        if not isinstance(retry, bool):
+            raise ValueError("retry must be a boolean")
+        if retry and artifact_policy == "screening" and not _defer_screening_cleanup:
+            raise NotImplementedError("Screen retries must use the screen reuse contract; direct retry is not supported")
         root = Path(out_dir)
         root.mkdir(parents=True, exist_ok=True)
-        executor = create_executor(cluster)
-        submitted_workflow = copy.copy(self)
-        submitted_workflow._target_cache = None
-        if hasattr(submitted_workflow, "dataframe"):
-            submitted_workflow.dataframe = None
-        if hasattr(submitted_workflow, "csv_path"):
-            submitted_workflow.csv_path = None
-        if hasattr(submitted_workflow, "smiles"):
-            submitted_workflow.smiles = None
+        with _submission_guard(root, plan, self, selected, cluster, mode=mode, array=array, retry=retry,
+                               preserve_screen_reuse=_screen_manifest_validated) as ledger:
+            executor = create_executor(cluster) if selected else None
+            submitted_workflow = copy.copy(self)
+            submitted_workflow._target_cache = None
+            if hasattr(submitted_workflow, "dataframe"):
+                submitted_workflow.dataframe = None
+            if hasattr(submitted_workflow, "csv_path"):
+                submitted_workflow.csv_path = None
+            if hasattr(submitted_workflow, "smiles"):
+                submitted_workflow.smiles = None
 
-        job_ids: list[str | int] = []
-        tags: list[str] = []
-        save_dirs: list[str] = []
-        final_job_ids: list[str | int] = []
-        final_jobs: list[Any] = []
-        expected_parquets: dict[str, str] = {}
+            job_ids: list[str | int] = []
+            tags: list[str] = []
+            save_dirs: list[str] = []
+            final_job_ids: list[str | int] = []
+            final_jobs: list[Any] = []
+            expected_parquets: dict[str, str] = {}
 
-        for target in selected:
-            target_dir = root / target.tag
-            target_dir.mkdir(parents=True, exist_ok=True)
-            tags.append(target.tag)
-            save_dirs.append(str(target_dir))
-            last_job = None
-            current_parquet: str | None = None
-
-            if mode == "single_job":
-                resources = _resource_for_group(
-                    "single_job",
-                    groups[0],
-                    stage_resources,
-                    default=DEFAULT_WORKFLOW_RESOURCES,
+            if array and selected and mode != "single_job":
+                tags = [target.tag for target in selected]
+                save_dirs = [str(root / tag) for tag in tags]
+                for directory in save_dirs:
+                    Path(directory).mkdir(parents=True, exist_ok=True)
+                staged_options = ExecutionOptions(
+                    debug=debug, save_output_dir=save_output_dir,
+                    work_dir=str(work_dir or cluster.work_dir) if (work_dir or cluster.work_dir) else None,
+                    artifact_policy=artifact_policy,
+                    uma_oet_tools=None if uma_oet_tools is None else str(uma_oet_tools),
                 )
+                final_jobs, final_job_ids = _submit_staged_arrays(
+                    submitted_workflow, selected, root, cluster, plan, groups,
+                    ledger, executor, staged_options, orca_memory_fraction,
+                )
+                job_ids = [job.job_id for job in final_jobs]
+                expected_parquets = dict.fromkeys(tags, plan[-1].output_name)
+
+            elif array and selected:
+                resources = plan[0].resources
                 update_executor_with_dependency(
-                    executor,
-                    cluster,
-                    resources,
-                    job_name=f"{target.tag}_workflow",
-                    dependency_job_id=None,
+                    executor, cluster, resources,
+                    job_name=f"{self.workflow_name}_workflow", dependency_job_id=None,
                 )
                 options = ExecutionOptions(
                     n_cores=resources.cpus,
                     mem_gb=orca_memory_gb(resources, orca_memory_fraction),
-                    debug=debug,
-                    save_output_dir=save_output_dir,
-                    work_dir=(
-                        str(work_dir or cluster.work_dir)
-                        if (work_dir or cluster.work_dir)
-                        else None
-                    ),
+                    debug=debug, save_output_dir=save_output_dir,
+                    work_dir=str(work_dir or cluster.work_dir) if (work_dir or cluster.work_dir) else None,
                     artifact_policy=artifact_policy,
                     uma_oet_tools=None if uma_oet_tools is None else str(uma_oet_tools),
                 )
-                submitted_at = utc_timestamp()
-                job = executor.submit(
-                    _run_target_submitted_job,
-                    submitted_workflow,
-                    target,
-                    target_dir,
-                    options,
-                    submitted_at,
-                )
-                job_id = getattr(job, "job_id", f"{target.tag}_workflow")
-                job_ids.append(job_id)
-                final_job_ids.append(job_id)
-                final_jobs.append(job)
-                expected_parquets[target.tag] = "final.parquet"
-                continue
+                arguments = []
+                for target in selected:
+                    target_dir = root / target.tag
+                    target_dir.mkdir(parents=True, exist_ok=True)
+                    tags.append(target.tag)
+                    save_dirs.append(str(target_dir))
+                    expected_parquets[target.tag] = "final.parquet"
+                if targets_per_task == 1:
+                    worker = _run_target_submitted_job
+                    arguments = [(submitted_workflow, target, root / target.tag, options, utc_timestamp(), ledger.attempt_id, index)
+                                 for index, target in enumerate(selected)]
+                else:
+                    worker = _run_target_batch_submitted_job
+                    by_tag = {target.tag: target for target in selected}
+                    arguments = [
+                        (submitted_workflow, [by_tag[tag] for tag in batch], root, options,
+                         utc_timestamp(), ledger.attempt_id, index)
+                        for index, batch in enumerate(plan[0].batches)
+                    ]
+                try:
+                    final_jobs = _submit_array_jobs(
+                        executor, cluster, worker, arguments,
+                        parallelism=plan[0].parallelism,
+                        on_submitted=lambda index, job: ledger.submitted("single_job", index, job),
+                        on_array_submitted=lambda jobs: ledger.submitted_many("single_job", dict(enumerate(jobs))),
+                    )
+                except Exception as error:
+                    ledger.failed("single_job", range(len(arguments)), error)
+                    raise
+                job_ids = [job.job_id for job in final_jobs]
+                final_job_ids = list(dict.fromkeys(
+                    record.array_job_id or record.job_id for record in ledger.records
+                ))
 
-            for group_index, group in enumerate(groups):
-                group_name = self._group_name(group)
-                resources = _resource_for_group(
-                    group_name,
-                    group,
-                    stage_resources,
-                    default=DEFAULT_WORKFLOW_RESOURCES,
+            for target_index, target in enumerate([] if array else selected):
+                target_dir = root / target.tag
+                target_dir.mkdir(parents=True, exist_ok=True)
+                tags.append(target.tag)
+                save_dirs.append(str(target_dir))
+                last_job = None
+                current_parquet: str | None = None
+
+                if mode == "single_job":
+                    resources = _resource_for_group(
+                        "single_job",
+                        groups[0],
+                        stage_resources,
+                        default=DEFAULT_WORKFLOW_RESOURCES,
+                    )
+                    update_executor_with_dependency(
+                        executor,
+                        cluster,
+                        resources,
+                        job_name=f"{target.tag}_workflow",
+                        dependency_job_id=None,
+                    )
+                    options = ExecutionOptions(
+                        n_cores=resources.cpus,
+                        mem_gb=orca_memory_gb(resources, orca_memory_fraction),
+                        debug=debug,
+                        save_output_dir=save_output_dir,
+                        work_dir=(
+                            str(work_dir or cluster.work_dir)
+                            if (work_dir or cluster.work_dir)
+                            else None
+                        ),
+                        artifact_policy=artifact_policy,
+                        uma_oet_tools=None if uma_oet_tools is None else str(uma_oet_tools),
+                    )
+                    submitted_at = utc_timestamp()
+                    job = ledger.submit(
+                        "single_job", target_index, executor,
+                        _run_target_submitted_job,
+                        submitted_workflow,
+                        target,
+                        target_dir,
+                        options,
+                        submitted_at, ledger.attempt_id, target_index,
+                    )
+                    job_id = getattr(job, "job_id", f"{target.tag}_workflow")
+                    job_ids.append(job_id)
+                    final_job_ids.append(job_id)
+                    final_jobs.append(job)
+                    expected_parquets[target.tag] = "final.parquet"
+                    continue
+
+                for group_index, group in enumerate(groups):
+                    group_name = self._group_name(group)
+                    resources = _resource_for_group(
+                        group_name,
+                        group,
+                        stage_resources,
+                        default=DEFAULT_WORKFLOW_RESOURCES,
+                    )
+                    update_executor_with_dependency(
+                        executor,
+                        cluster,
+                        resources,
+                        job_name=f"{target.tag}_{group_name}",
+                        dependency_job_id=getattr(last_job, "job_id", None),
+                    )
+                    output_parquet = _next_parquet(current_parquet, group_name)
+                    options = ExecutionOptions(
+                        n_cores=resources.cpus,
+                        mem_gb=orca_memory_gb(resources, orca_memory_fraction),
+                        debug=debug,
+                        save_output_dir=save_output_dir,
+                        work_dir=(
+                            str(work_dir or cluster.work_dir)
+                            if (work_dir or cluster.work_dir)
+                            else None
+                        ),
+                        artifact_policy=artifact_policy,
+                        uma_oet_tools=None if uma_oet_tools is None else str(uma_oet_tools),
+                    )
+                    submitted_at = utc_timestamp()
+                    job = ledger.submit(
+                        group_name, target_index, executor,
+                        _run_stage_group_submitted_job,
+                        submitted_workflow,
+                        target,
+                        [stage.id for stage in group],
+                        current_parquet,
+                        output_parquet,
+                        target_dir,
+                        options,
+                        submitted_at,
+                        group_index == len(groups) - 1,
+                    )
+                    job_id = getattr(job, "job_id", f"{target.tag}_{group_name}")
+                    job_ids.append(job_id)
+                    last_job = job
+                    current_parquet = output_parquet
+
+                if last_job is not None and current_parquet is not None:
+                    final_job_id = getattr(
+                        last_job, "job_id", f"{target.tag}_{self._group_name(groups[-1])}"
+                    )
+                    final_job_ids.append(final_job_id)
+                    final_jobs.append(last_job)
+                    expected_parquets[target.tag] = current_parquet
+
+            collection_job_id: str | int | None = None
+            collection_output_path: Path | None = None
+            collection_report_path: Path | None = None
+            if collect and selected and final_job_ids:
+                if array:
+                    if cluster.backend == "local":
+                        for job in final_jobs:
+                            job.wait()
+                    executor = create_executor(cluster)
+                collection_output_path = (
+                    Path(collect_output)
+                    if collect_output is not None
+                    else (root / ".frust/retries" / ledger.attempt_id / "merged.parquet" if retry else root / "merged.parquet")
                 )
-                update_executor_with_dependency(
+                collection_report_path = (
+                    Path(collect_report)
+                    if collect_report is not None
+                    else (root / ".frust/retries" / ledger.attempt_id / "collection_report.json" if retry else root / "collection_report.json")
+                )
+                update_executor_with_dependencies(
                     executor,
                     cluster,
-                    resources,
-                    job_name=f"{target.tag}_{group_name}",
-                    dependency_job_id=getattr(last_job, "job_id", None),
+                    collect_resources or DEFAULT_COLLECTION_RESOURCES,
+                    job_name=f"{self.workflow_name}_collect",
+                    dependency_job_ids=final_job_ids,
+                    dependency_type="afterany",
                 )
-                output_parquet = _next_parquet(current_parquet, group_name)
-                options = ExecutionOptions(
-                    n_cores=resources.cpus,
-                    mem_gb=orca_memory_gb(resources, orca_memory_fraction),
-                    debug=debug,
-                    save_output_dir=save_output_dir,
-                    work_dir=(
-                        str(work_dir or cluster.work_dir)
-                        if (work_dir or cluster.work_dir)
-                        else None
-                    ),
-                    artifact_policy=artifact_policy,
-                    uma_oet_tools=None if uma_oet_tools is None else str(uma_oet_tools),
-                )
-                submitted_at = utc_timestamp()
-                job = executor.submit(
-                    _run_stage_group_submitted_job,
+                wait_jobs = final_jobs if cluster.backend == "local" and not array else None
+                collection_job = executor.submit(
+                    _collect_expected_outputs_submitted,
                     submitted_workflow,
-                    target,
-                    [stage.id for stage in group],
-                    current_parquet,
-                    output_parquet,
-                    target_dir,
-                    options,
-                    submitted_at,
-                    group_index == len(groups) - 1,
+                    selected if _collect_targets is None else _collect_targets,
+                    root,
+                    expected_parquets if _collect_targets is None else dict.fromkeys(
+                        (target.tag for target in _collect_targets), plan[-1].output_name),
+                    collection_output_path,
+                    collection_report_path,
+                    collect_require_normal_termination,
+                    wait_jobs,
+                    target_retention,
+                    artifact_policy,
+                    _defer_screening_cleanup, ledger.attempt_id, _collect_targets is not None,
                 )
-                job_id = getattr(job, "job_id", f"{target.tag}_{group_name}")
-                job_ids.append(job_id)
-                last_job = job
-                current_parquet = output_parquet
-
-            if last_job is not None and current_parquet is not None:
-                final_job_id = getattr(
-                    last_job, "job_id", f"{target.tag}_{self._group_name(groups[-1])}"
+                ledger.collected(collection_job)
+                collection_job_id = getattr(
+                    collection_job, "job_id", f"{self.workflow_name}_collect"
                 )
-                final_job_ids.append(final_job_id)
-                final_jobs.append(last_job)
-                expected_parquets[target.tag] = current_parquet
 
-        collection_job_id: str | int | None = None
-        collection_output_path: Path | None = None
-        collection_report_path: Path | None = None
-        if collect and selected and final_job_ids:
-            collection_output_path = (
-                Path(collect_output)
-                if collect_output is not None
-                else root / "merged.parquet"
+            return JobSubmissionResult(
+                job_ids=job_ids,
+                tags=tags,
+                save_dirs=save_dirs,
+                mode=f"{self.workflow_name}:{mode}",
+                backend=cluster.backend,
+                records=list(ledger.records),
+                array_job_ids=list(dict.fromkeys(r.array_job_id for r in ledger.records if r.array_job_id)),
+                submission_path=str(ledger.path),
+                collection_job_id=collection_job_id,
+                collection_output=(
+                    None if collection_output_path is None else str(collection_output_path)
+                ),
+                collection_report=(
+                    None if collection_report_path is None else str(collection_report_path)
+                ),
             )
-            collection_report_path = (
-                Path(collect_report)
-                if collect_report is not None
-                else root / "collection_report.json"
-            )
-            update_executor_with_dependencies(
-                executor,
-                cluster,
-                collect_resources or DEFAULT_COLLECTION_RESOURCES,
-                job_name=f"{self.workflow_name}_collect",
-                dependency_job_ids=final_job_ids,
-                dependency_type="afterany",
-            )
-            wait_jobs = final_jobs if cluster.backend == "local" else None
-            collection_job = executor.submit(
-                _collect_expected_outputs_submitted,
-                submitted_workflow,
-                selected,
-                root,
-                expected_parquets,
-                collection_output_path,
-                collection_report_path,
-                collect_require_normal_termination,
-                wait_jobs,
-                target_retention,
-                artifact_policy,
-                _defer_screening_cleanup,
-            )
-            collection_job_id = getattr(
-                collection_job, "job_id", f"{self.workflow_name}_collect"
-            )
-
-        return JobSubmissionResult(
-            job_ids=job_ids,
-            tags=tags,
-            save_dirs=save_dirs,
-            mode=f"{self.workflow_name}:{mode}",
-            backend=cluster.backend,
-            collection_job_id=collection_job_id,
-            collection_output=(
-                None if collection_output_path is None else str(collection_output_path)
-            ),
-            collection_report=(
-                None if collection_report_path is None else str(collection_report_path)
-            ),
-        )
 
     def collect(
         self,
         out_dir: str | Path,
         *,
         output: str | Path | None = None,
+        report: str | Path | None = None,
         require_normal_termination: bool = False,
         target_retention: TargetRetention = "all",
     ) -> pd.DataFrame:
@@ -941,7 +1121,10 @@ class BaseWorkflow:
             deepest staged parquet file, or ``final.parquet`` for single-job
             outputs.
         output : str or pathlib.Path or None, optional
-            Optional parquet path for the merged dataframe.
+            Merged dataframe path. Defaults to ``out_dir/merged.parquet``.
+        report : str or pathlib.Path or None, optional
+            Collection diagnostics, including ``retry_targets`` (failed or missing
+            target tags) and per-target outcomes. Defaults to collection_report.json.
         require_normal_termination : bool, optional
             If ``True``, skip target outputs where normal-termination columns
             ending in ``"-NT"`` are present and not all true.
@@ -964,43 +1147,23 @@ class BaseWorkflow:
         """
         _validate_target_retention(target_retention)
         root = Path(out_dir)
-        frames: list[pd.DataFrame] = []
-        files: list[Path] = []
-        skipped: list[Path] = []
-
-        for target in self.targets():
-            target_dir = root / target.tag
-            final_file = _deepest_parquet(target_dir)
-            if final_file is None:
-                continue
-            df = normalize_dataframe(pd.read_parquet(final_file))
-            if require_normal_termination and not _all_normal_terminated(df):
-                skipped.append(final_file)
-                continue
-            frames.append(df)
-            files.append(final_file)
-
-        if not frames:
-            raise FileNotFoundError(
-                f"No final workflow parquet files found under {root}"
+        targets = self.targets()
+        with _mutation_lock(root):
+            _ensure_collection_ready(root, targets)
+            outcomes = _target_outcomes(root)
+            expected = {}
+            for target in targets:
+                if target.tag in outcomes:
+                    expected[target.tag] = Path(outcomes[target.tag]['output_path']).name
+                else:
+                    deepest = _deepest_parquet(root / target.tag)
+                    expected[target.tag] = deepest.name if deepest is not None else 'final.parquet'
+            return _collect_expected_outputs(
+                self, targets, root, expected,
+                output if output is not None else root / 'merged.parquet',
+                report if report is not None else root / 'collection_report.json',
+                require_normal_termination, target_retention=target_retention,
             )
-
-        merged = pd.concat(frames, ignore_index=True)
-        merged.attrs.update(
-            merge_dataframe_attrs(
-                frames,
-                source_files=[str(path) for path in files],
-                skipped_files=[str(path) for path in skipped],
-            )
-        )
-        if output is not None:
-            out_path = Path(output)
-            out_path.parent.mkdir(parents=True, exist_ok=True)
-            merged.to_parquet(out_path)
-        if target_retention == "compact_success":
-            for path in files:
-                _compact_successful_target(path.parent, path)
-        return merged
 
     def _build_targets(self) -> list[WorkflowTarget]:
         """Build lightweight scientific targets for this workflow.
@@ -1303,7 +1466,67 @@ def _uma_scope_for_stages(
     )
     if not uses_uma:
         return nullcontext()
-    return uma_job_server_scope(oet_tools=options.uma_oet_tools)
+    return uma_job_server_scope(oet_tools=options.uma_oet_tools, reuse=True)
+
+
+def _run_target_batch_submitted_job(
+    workflow, targets, root, options, submitted_at, attempt_id, batch_index,
+) -> list[WorkflowJobResult]:
+    """Run a sequential batch, preserving outputs and durable target outcomes."""
+    root = Path(root)
+    path = root / ".frust" / "batches" / attempt_id / f"{batch_index}.json"
+    started = monotonic_seconds()
+    records = [{"target": target.tag, "status": "unattempted", "error": None} for target in targets]
+    payload = {
+        "schema_version": 1, "attempt_id": attempt_id, "batch_index": batch_index,
+        "job_id": _current_job_id(), "started_at": utc_timestamp(),
+        "resources": _options_resources(options), "targets": records,
+    }
+    results = []
+    errors = []
+    scope = None
+    _atomic_write_submission_json(path, payload)
+    try:
+        with _uma_scope_for_stages(workflow, workflow._stage_defs(), options) as scope:
+            for target, record in zip(targets, records):
+                print(f"[FRUST batch {batch_index}] target={target.tag}", flush=True)
+                record.update(status="running", started_at=utc_timestamp())
+                _atomic_write_submission_json(path, payload)
+                try:
+                    df = _run_target_job(workflow, target, root / target.tag, options, submitted_at, attempt_id)
+                    record.update(
+                        status="success" if _all_normal_terminated(df) else "non_normal",
+                        output_path=str(root / target.tag / "final.parquet"), row_count=len(df),
+                    )
+                    results.append(WorkflowJobResult(target.tag, record["output_path"], len(df), record["status"]))
+                except Exception as error:
+                    record.update(status="failed", error=f"{type(error).__name__}: {error}")
+                    errors.append(target.tag)
+                except BaseException as error:
+                    record.update(status="interrupted", error=f"{type(error).__name__}: {error}")
+                    raise
+                finally:
+                    record["finished_at"] = utc_timestamp()
+                    _atomic_write_submission_json(path, payload)
+                if scope is not None:
+                    scope.ensure_healthy()
+            if errors:
+                raise RuntimeError(f"Targets failed in batch {batch_index}: {', '.join(errors)}")
+    except BaseException as error:
+        payload["error"] = f"{type(error).__name__}: {error}"
+        raise
+    finally:
+        payload.update(finished_at=utc_timestamp(), elapsed_s=elapsed_seconds(started))
+        if scope is not None:
+            payload["server_startup_s"] = scope._startup_elapsed_s
+            if scope._handle is not None:
+                payload["uma_server"] = {
+                    "pid": scope._handle.pid, "hostname": scope._handle.hostname,
+                    "bind": scope._handle.bind,
+                }
+        _atomic_write_submission_json(path, payload)
+        _mark_completed(root, attempt_id, "single_job", batch_index)
+    return results
 
 
 def _run_target_job(
@@ -1312,6 +1535,7 @@ def _run_target_job(
     save_dir: str | Path | None,
     options: ExecutionOptions,
     submitted_at: str | None = None,
+    attempt_id: str | None = None,
 ) -> pd.DataFrame:
     """Run every workflow stage for one target.
 
@@ -1360,6 +1584,8 @@ def _run_target_job(
     append_workflow_timing(df.attrs, group_record)
     if options.artifact_policy == "screening" and _all_normal_terminated(df):
         df = compact_result_dataframe(df)
+    if attempt_id is not None:
+        df.attrs["frust_submission"] = {"attempt_id": attempt_id, "target": target.tag}
     if target_dir is not None:
         _atomic_write_parquet(df, target_dir / "final.parquet")
         _write_target_timing(
@@ -1382,22 +1608,118 @@ def _run_target_submitted_job(
     save_dir: str | Path,
     options: ExecutionOptions,
     submitted_at: str | None = None,
+    attempt_id: str | None = None,
+    batch_index: int = 0,
 ) -> WorkflowJobResult:
-    """Run one submitted target and return only compact status metadata."""
-    df = _run_target_job(
-        workflow,
-        target,
-        save_dir,
-        options,
-        submitted_at,
-    )
-    output = Path(save_dir) / "final.parquet"
-    return WorkflowJobResult(
-        target_id=target.tag,
-        output_path=str(output),
-        row_count=int(len(df)),
-        status="success",
-    )
+    """Run one target with compact status, attribution, and completion records."""
+    if attempt_id is not None:
+        return _run_target_batch_submitted_job(
+            workflow, [target], Path(save_dir).parent, options, submitted_at, attempt_id, batch_index,
+        )[0]
+    df = _run_target_job(workflow, target, save_dir, options, submitted_at)
+    return WorkflowJobResult(target.tag, str(Path(save_dir) / "final.parquet"), len(df), "success")
+
+
+def _submit_staged_arrays(workflow, targets, root, cluster, plan, groups, ledger,
+                          first_executor, base_options, memory_fraction):
+    """Submit matching stage arrays, or dispatch a ready-only local graph."""
+    executors = []
+    arguments = []
+    jobs = []
+    dependency_ids = []
+    upstream_id = None
+    dependency_type = 'afterok'
+    for group_index, (group_plan, stages) in enumerate(zip(plan, groups)):
+        executor = first_executor if group_index == 0 else create_executor(cluster)
+        executors.append(executor)
+        update_executor_with_dependencies(
+            executor, cluster, group_plan.resources,
+            job_name=f'{workflow.workflow_name}_{group_plan.name}',
+            dependency_job_ids=[] if upstream_id is None else [upstream_id],
+            dependency_type=dependency_type, kill_on_invalid_dependency=True,
+        )
+        options = replace(base_options, n_cores=group_plan.resources.cpus,
+                          mem_gb=orca_memory_gb(group_plan.resources, memory_fraction))
+        previous = None if group_index == 0 else plan[group_index - 1]
+        args = [
+            (workflow, target, [stage.id for stage in stages],
+             None if previous is None else previous.output_name,
+             group_plan.output_name, root / target.tag, options, utc_timestamp(),
+             group_index == len(plan) - 1, ledger.attempt_id, group_plan.name, index,
+             None if previous is None else previous.name)
+            for index, target in enumerate(targets)
+        ]
+        arguments.append(args)
+        if cluster.backend == 'slurm':
+            try:
+                submitted = _submit_array_jobs(
+                    executor, cluster, _run_stage_array_submitted_job, args,
+                    parallelism=group_plan.parallelism,
+                    on_submitted=lambda index, job: ledger.submitted(group_plan.name, index, job),
+                    on_array_submitted=lambda batch: ledger.submitted_many(group_plan.name, dict(enumerate(batch))),
+                )
+            except Exception as error:
+                ledger.failed(group_plan.name, range(len(args)), error)
+                raise RuntimeError(
+                    'Staged arrays require Slurm aftercorr and kill-on-invalid-dep=yes support. '
+                    'Submission failed; inspect accepted jobs and the scheduler error before retrying.'
+                ) from error
+            jobs.extend(submitted)
+            upstream_id, dependency_type = _array_dependency(submitted)
+            dependency_ids.append(upstream_id)
+    if cluster.backend == 'local':
+        def blocked(group_index, index, error):
+            group = plan[group_index].name
+            _atomic_write_submission_json(
+                _stage_outcome_path(root, ledger.attempt_id, group, index),
+                {'target': targets[index].tag, 'group': group, 'status': 'blocked',
+                 'error': error, 'finished_at': utc_timestamp()},
+            )
+            _mark_completed(root, ledger.attempt_id, group, index)
+        jobs = _submit_local_stages(executors, plan, arguments, _run_stage_array_submitted_job, ledger, blocked)
+        dependency_ids = [job.job_id for job in jobs]
+    return jobs, dependency_ids
+
+
+def _run_stage_array_submitted_job(workflow, target, stage_ids, input_parquet,
+                                  output_parquet, save_dir, options, submitted_at,
+                                  is_final_group, attempt_id, group, index, previous_group):
+    """Run one attributed stage and make scientific failure block descendants."""
+    root = Path(save_dir).parent
+    path = _stage_outcome_path(root, attempt_id, group, index)
+    payload = {'schema_version': 1, 'target': target.tag, 'group': group, 'attempt_id': attempt_id,
+               'status': 'running', 'started_at': utc_timestamp(), 'started_ns': time.time_ns(),
+               'job_id': _current_job_id(), 'resources': _options_resources(options)}
+    _atomic_write_submission_json(path, payload)
+    try:
+        if previous_group is not None:
+            upstream = _stage_outcome_path(root, attempt_id, previous_group, index)
+            if not upstream.exists() or json.loads(upstream.read_text()).get('status') != 'success':
+                payload.update(status='blocked', error=f'Upstream group {previous_group} has no validated success')
+                raise RuntimeError(payload['error'])
+        df = _run_stage_group_job(
+            workflow, target, stage_ids, input_parquet, output_parquet, save_dir,
+            options, submitted_at, is_final_group=is_final_group,
+            attempt_id=attempt_id, expected_input_group=previous_group,
+        )
+        payload.update(status='success' if _all_normal_terminated(df) else 'non_normal',
+                       output_path=str(Path(save_dir) / output_parquet), row_count=len(df))
+        if payload['status'] == 'non_normal':
+            payload['error'] = 'Scientific normal-termination checks failed'
+            raise RuntimeError(payload['error'])
+        return WorkflowJobResult(target.tag, payload['output_path'], len(df), 'success')
+    except Exception as error:
+        if payload['status'] == 'running':
+            payload.update(status='failed', error=f'{type(error).__name__}: {error}')
+        raise
+    except BaseException as error:
+        payload.update(status='interrupted', error=f'{type(error).__name__}: {error}')
+        raise
+    finally:
+        payload['finished_at'] = utc_timestamp()
+        payload['finished_ns'] = time.time_ns()
+        _atomic_write_submission_json(path, payload)
+        _mark_completed(root, attempt_id, group, index)
 
 
 def _run_stage_group_job(
@@ -1411,6 +1733,8 @@ def _run_stage_group_job(
     submitted_at: str | None = None,
     *,
     is_final_group: bool = False,
+    attempt_id: str | None = None,
+    expected_input_group: str | None = None,
 ) -> pd.DataFrame:
     """Run one submitted or staged-local stage group.
 
@@ -1443,6 +1767,10 @@ def _run_stage_group_job(
     input_df = (
         None if input_parquet is None else pd.read_parquet(target_dir / input_parquet)
     )
+    if input_df is not None and attempt_id is not None:
+        expected = {'attempt_id': attempt_id, 'target': target.tag, 'group': expected_input_group}
+        if input_df.attrs.get('frust_submission') != expected:
+            raise ValueError('Staged checkpoint attribution does not match this target, group, and attempt')
     stages_by_id = {stage.id: stage for stage in workflow._stage_defs()}
     stages = [stages_by_id[stage_id] for stage_id in stage_ids]
     group_name = workflow._group_name(stages)
@@ -1475,6 +1803,8 @@ def _run_stage_group_job(
         and _all_normal_terminated(df)
     ):
         df = compact_result_dataframe(df)
+    if attempt_id is not None:
+        df.attrs['frust_submission'] = {'attempt_id': attempt_id, 'target': target.tag, 'group': group_name}
     _atomic_write_parquet(df, target_dir / output_parquet)
     _write_target_timing(
         target_dir,
@@ -1541,6 +1871,7 @@ def _collect_expected_outputs(
     artifact_policy: ArtifactPolicy = "standard",
     return_dataframe: bool = True,
     defer_screening_cleanup: bool = False,
+    attempt_id: str | None = None,
 ) -> pd.DataFrame:
     """Collect exact expected workflow outputs and write a JSON report.
 
@@ -1593,6 +1924,7 @@ def _collect_expected_outputs(
     missing_files: list[str] = []
     errored_files: list[str] = []
     errors: list[dict[str, str]] = []
+    outcomes = _target_outcomes(root, attempt_id, workers_finished=attempt_id is not None)
 
     for target in targets:
         expected_name = expected_parquets.get(target.tag)
@@ -1601,15 +1933,26 @@ def _collect_expected_outputs(
             if expected_name
             else root / target.tag / "final.parquet"
         )
+        outcome = outcomes.setdefault(target.tag, {"target": target.tag})
+        if outcome.get("status") in {"failed", "interrupted", "unattempted", "running", "blocked"}:
+            missing_files.append(str(final_file))
+            continue
         if not final_file.exists():
+            outcome["status"] = "missing"
             missing_files.append(str(final_file))
             continue
         try:
             df = normalize_dataframe(pd.read_parquet(final_file))
         except Exception as exc:
+            outcome.update(status="unreadable", error=str(exc))
             errored_files.append(str(final_file))
             errors.append({"file": str(final_file), "error": str(exc)})
             continue
+        if outcome.get("tracked") and df.attrs.get("frust_submission", {}).get("attempt_id") != outcome["attempt_id"]:
+            outcome.update(status="stale", error="Output does not belong to the selected submission attempt")
+            missing_files.append(str(final_file))
+            continue
+        outcome["status"] = "success" if _all_normal_terminated(df) else "non_normal"
         if require_normal_termination and not _all_normal_terminated(df):
             skipped_files.append(str(final_file))
             continue
@@ -1621,6 +1964,7 @@ def _collect_expected_outputs(
         attr_frames.append(attr_frame)
         row_count += int(len(df))
         collected_files.append(str(final_file))
+        outcome["collected"] = True
 
     timing_report = _collect_timing_sidecars(root, targets)
     report_payload: dict[str, Any] = {
@@ -1646,6 +1990,23 @@ def _collect_expected_outputs(
         errors=errors,
         errored_files=errored_files,
     )
+    for failure in failure_summary:
+        outcome = outcomes.get(failure.get("target"), {})
+        if outcome.get("status") in {"failed", "interrupted", "unattempted", "stale", "running", "blocked"}:
+            failure.update(problem=outcome["status"], error=outcome.get("error"),
+                           attempt_id=outcome.get("attempt_id"), job_id=outcome.get("job_id"))
+            if outcome.get('failed_group'):
+                failure['failed_group'] = outcome['failed_group']
+                failure['upstream_status'] = outcome['upstream_status']
+    report_payload["target_results"] = [outcomes[target.tag] for target in targets]
+    report_payload["retry_targets"] = [target.tag for target in targets
+                                       if outcomes[target.tag].get("status") not in {"success", "running"}]
+    history = [(attempt['attempt_id'], {record['target'] for record in attempt['records']})
+               for attempt in _submission_history(root)]
+    report_payload["attempt_history"] = {
+        target.tag: [identity for identity, tags in history if target.tag in tags]
+        for target in targets
+    }
     report_payload["n_failures"] = len(failure_summary)
     report_payload["failure_summary"] = failure_summary
 
@@ -1684,7 +2045,9 @@ def _collect_expected_outputs(
     report_payload["compaction"] = compaction_report
 
     report_path.parent.mkdir(parents=True, exist_ok=True)
-    report_path.write_text(json.dumps(report_payload, indent=2, sort_keys=True))
+    _atomic_write_submission_json(report_path, report_payload)
+    from uuid import uuid4
+    _atomic_write_submission_json(root / '.frust/reports' / f'{uuid4().hex}.json', report_payload)
 
     if skipped_files or missing_files or errored_files:
         print(
@@ -1716,29 +2079,41 @@ def _collect_expected_outputs_submitted(
     target_retention: TargetRetention = "compact_success",
     artifact_policy: ArtifactPolicy = "standard",
     defer_screening_cleanup: bool = False,
+    attempt_id: str | None = None,
+    collect_all_attempts: bool = False,
 ) -> CollectionJobResult:
     """Collect outputs while keeping the Submitit result pickle small."""
-    merged = _collect_expected_outputs(
-        workflow,
-        targets,
-        out_dir,
-        expected_parquets,
-        output,
-        report,
-        require_normal_termination,
-        wait_jobs,
-        target_retention,
-        artifact_policy,
-        False,
-        defer_screening_cleanup,
-    )
-    payload = json.loads(Path(report).read_text())
-    return CollectionJobResult(
-        output_path=str(output),
-        report_path=str(report),
-        row_count=int(payload.get("n_rows", 0)),
-        status="success",
-    )
+    try:
+        with _mutation_lock(out_dir, wait=True):
+            for job in wait_jobs or []:
+                job.wait()
+            if attempt_id is not None:
+                _record_afterany_completion(out_dir, attempt_id)
+            merged = _collect_expected_outputs(
+                workflow,
+                targets,
+                out_dir,
+                expected_parquets,
+                output,
+                report,
+                require_normal_termination,
+                wait_jobs,
+                target_retention,
+                artifact_policy,
+                False,
+                defer_screening_cleanup,
+                None if collect_all_attempts else attempt_id,
+            )
+            payload = json.loads(Path(report).read_text())
+            return CollectionJobResult(
+                output_path=str(output),
+                report_path=str(report),
+                row_count=int(payload.get("n_rows", 0)),
+                status="success",
+            )
+
+    finally:
+        _mark_completed(out_dir, attempt_id, "collect", 0)
 
 
 def _collect_timing_sidecars(
@@ -2736,5 +3111,10 @@ def _attach_workflow_attrs(
             "geometry_stage": optimized_stage,
             "calculator": workflow.method.for_stage(analysis_stage).to_dict(),
         }
+        if analysis_stage == "uma_solv_sp":
+            contract["energy_protocol"]["frequency_calculator"] = (
+                workflow.method.for_stage("uma_freq").to_dict()
+            )
+            contract["energy_protocol"]["thermochemistry"] = contract["thermochemistry"]
     stamp_schema(df)
     return df

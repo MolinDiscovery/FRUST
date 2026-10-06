@@ -602,6 +602,123 @@ class PlotEnergyProfileTests(unittest.TestCase):
         self.assertTrue(same_color(text_colors["-2.0"], side_line_color))
 
 
+class MissingEnergyProfileTests(unittest.TestCase):
+    def plot(self, states, **kwargs):
+        fig, ax = plot_energy_profile(states, **kwargs)
+        self.addCleanup(lambda: plt.close(fig))
+        return ax
+
+    def test_gap_preserves_overlay_alignment_and_complete_curve(self):
+        complete = [("Reactants", 0), ("TS1", 27.7), ("Int1", 3.8),
+                    ("TS2", 21.2), ("Product", -0.3)]
+        incomplete = [("Reactants", 0), ("TS1", None), ("Int1", 7.3),
+                      ("TS2", 22.5), ("Product", -0.3)]
+        baseline = self.plot({"TMP": complete}, overlay_alpha=1)
+        ax = self.plot({"TMP": complete, "Pip": incomplete}, overlay_alpha=1)
+        np.testing.assert_array_equal(ax.lines[0].get_xydata(), baseline.lines[0].get_xydata())
+        self.assertTrue(same_color(ax.lines[0].get_color(), "C0"))
+        self.assertTrue(same_color(ax.lines[1].get_color(), "C1"))
+        self.assertEqual(ax.lines[1].get_xdata()[[0, -1]].tolist(), [2, 4])
+        np.testing.assert_array_equal(ax.collections[1].get_offsets(),
+                                      [[0, 0], [2, 7.3], [3, 22.5], [4, -0.3]])
+        self.assertEqual([t.get_text() for t in ax.get_xticklabels()],
+                         [state[0] for state in complete])
+        self.assertIn("7.3", [t.get_text() for t in ax.texts])
+        self.assertIn("22.5", [t.get_text() for t in ax.texts])
+        self.assertEqual([t.get_text() for t in ax.get_legend().texts], ["TMP", "Pip"])
+
+    def test_missing_runs_endpoints_and_isolated_points(self):
+        for missing in (None, np.nan):
+            for values, spans in (
+                ([0, missing, 2, 3], [(2, 3)]),
+                ([0, 1, missing, missing, 4, 5], [(0, 1), (4, 5)]),
+                ([missing, 1, 2, missing], [(1, 2)]),
+                ([missing, 1, missing], []),
+                ([missing, missing], []),
+            ):
+                with self.subTest(missing=missing, values=values):
+                    states = [(f"S{i}", e) for i, e in enumerate(values)]
+                    ax = self.plot(states, show_state_labels=True)
+                    self.assertEqual([(line.get_xdata()[0], line.get_xdata()[-1])
+                                      for line in ax.lines], spans)
+                    available = [(i, e) for i, e in enumerate(values)
+                                 if e is not None and np.isfinite(e)]
+                    offsets = [tuple(point) for collection in ax.collections
+                               for point in collection.get_offsets()]
+                    self.assertEqual(offsets, available)
+                    self.assertEqual(len(ax.texts), len(available))
+                    self.assertTrue(np.all(np.isfinite(ax.get_ylim())))
+                    self.assertLess(ax.get_xlim()[0], 0)
+                    self.assertGreater(ax.get_xlim()[1], len(values) - 1)
+                    self.assertEqual(len(ax.get_xticklabels()), len(values))
+
+    def test_omitted_tuple_retains_shorter_profile_semantics(self):
+        ax = self.plot({"ref": [("A", 0), ("TS", 3), ("Int", 1)],
+                        "shorter": [("A", 0), ("Int", 2)]})
+        self.assertEqual(ax.lines[1].get_xdata()[[0, -1]].tolist(), [0, 2])
+        np.testing.assert_array_equal(ax.collections[1].get_offsets(), [[0, 0], [2, 2]])
+
+    def test_all_missing_legend_and_default_single_labels(self):
+        ax = self.plot({"empty": [("A", None), ("Product", np.nan)]})
+        self.assertEqual(len(ax.lines), 0)
+        self.assertEqual(len(ax.collections), 0)
+        self.assertEqual(len(ax.texts), 0)
+        self.assertEqual([t.get_text() for t in ax.get_legend().texts], ["empty"])
+        ax = self.plot([("A", None), ("Product", None)], profile_label="empty")
+        self.assertEqual([t.get_text() for t in ax.texts], ["A", "Product"])
+        self.assertTrue(np.all(np.isfinite(ax.get_ylim())))
+
+    def test_invalid_energies_identify_state(self):
+        for energy in (np.inf, -np.inf, "broken", {}, [1, 2]):
+            with self.subTest(energy=energy), self.assertRaisesRegex(ValueError, "TS1"):
+                self.plot([("TS1", energy)], overlay="off")
+
+    def test_main_product_connector_requires_both_endpoints(self):
+        for anchor, product in ((None, 2), (1, None), (None, None)):
+            ax = self.plot([("A", 0), ("TS", anchor), "main-to-product",
+                            ("Product", product)], show_state_labels=True)
+            self.assertFalse(any(line.get_linestyle() == ":" for line in ax.lines))
+            self.assertTrue(all(np.all(np.isfinite(line.get_ydata())) for line in ax.lines))
+
+    def test_side_connectors_do_not_bridge_missing_intervening_states(self):
+        ax = self.plot([("A", 0), ("TS", None), ("Int", 2),
+                        "side-rxn@A#Side", ("SideTS", 4), ("SideInt", None),
+                        ("Product", -1), ("Product + Int", -2)], show_state_labels=True)
+        self.assertEqual(len(ax.lines), 0)
+        self.assertEqual([t.get_text() for t in ax.get_legend().texts], ["Side"])
+        offsets = [tuple(point) for c in ax.collections for point in c.get_offsets()]
+        self.assertIn((3, 4), offsets)
+        self.assertEqual(len(offsets), 5)
+
+    def test_side_run_survives_missing_main_product(self):
+        ax = self.plot([("A", 0), ("Int", 2), "side-rxn",
+                        ("SideTS", 4), ("SideInt", 3), ("Product", None),
+                        ("Product + Int", -2)], show_state_labels=True)
+        solid = [line for line in ax.lines if line.get_linestyle() == "-"]
+        self.assertEqual(len(solid), 2)
+        self.assertEqual(solid[1].get_xdata()[[0, -1]].tolist(), [2, 4.09])
+        self.assertEqual(sum(line.get_linestyle() == ":" for line in ax.lines), 1)
+        self.assertTrue(all("nan" not in t.get_text() for t in ax.texts))
+
+    def test_missing_product_reference_keeps_available_overlay_annotations(self):
+        for mode in ("hide", "tag", "show"):
+            for missing_profile in ("ref", "overlay"):
+                with self.subTest(mode=mode, missing_profile=missing_profile):
+                    profiles = {"ref": [("Cat", 1), ("Product", 3)],
+                                "overlay": [("Cat", 1), ("Product", 3)]}
+                    profiles[missing_profile][0] = ("Cat", None)
+                    ax = self.plot(profiles, product_reference=("Cat", "connector"),
+                                   same_energy_mode=mode)
+                    texts = [t.get_text() for t in ax.texts]
+                    self.assertEqual(texts.count("3.0"), 2)
+                    self.assertEqual(texts.count("(2.0)"), 1)
+                    self.assertNotIn("≡", texts)
+                    self.assertTrue(all("nan" not in text and "None" not in text for text in texts))
+        ax = self.plot({"ref": [("Cat", None), ("Product", None)],
+                        "overlay": [("Cat", 1), ("Product", 3)]}, product_reference="Cat")
+        self.assertIn("3.0\n(2.0)", [t.get_text() for t in ax.texts])
+
+
 class PlotRegressionOutliersTests(unittest.TestCase):
     def tearDown(self):
         plt.close("all")

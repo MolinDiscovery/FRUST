@@ -13,6 +13,10 @@ import matplotlib
 
 matplotlib.use("Agg")
 
+import matplotlib.pyplot as plt
+import numpy as np
+
+import frust as ft
 from frust.vis import plot_energy_profile
 
 
@@ -24,6 +28,49 @@ def _save(fig, name: str) -> Path:
     path.parent.mkdir(parents=True, exist_ok=True)
     fig.savefig(path, dpi=200, bbox_inches="tight")
     return path
+
+
+def build_missing_data_assets() -> list[Path]:
+    """Build the documented gap example and an illustrative panel comparison.
+
+    Returns
+    -------
+    list of Path
+        Saved example and comparison figures.
+    """
+    profiles = {
+        "TMP": [("Reactants", 0.0), ("TS1", 27.7), ("Int1", 3.8),
+                ("TS2", 21.2), ("Product", -0.3)],
+        "Pip": [("Reactants", 0.0), ("TS1", np.nan), ("Int1", 7.3),
+                ("TS2", 22.5), ("Product", -0.3)],
+    }
+    fig, _ = ft.plot_energy_profile(
+        profiles, annotate_energies=True, overlay_annotate="energy",
+        show_state_labels=True,
+    )
+    paths = [_save(fig, "energy-profile-missing-data.png")]
+    plt.close(fig)
+
+    labels = ["Reactants", "TS1", "Int1", "TS2", "Int2", "TS3", "Int3", "TS4", "Product"]
+    tmp = [0, 27.7, 3.8, 21.2, 4.7, 19.5, 6.9, 20.8, -0.3]
+    pip = [0, 29.1, 7.3, 22.5, 8.1, 21.6, 9.2, 24.0, -0.3]
+    fig, axes = plt.subplots(1, 3, figsize=(18, 4))
+    for ax, theory, gap in zip(axes, ["UMA", "WB97", "r²SCAN-3c"], [None, "TS1", "TS4"]):
+        panel = {
+            "TMP": list(zip(labels, tmp)),
+            "Pip": [(label, np.nan if label == gap else energy)
+                    for label, energy in zip(labels, pip)],
+        }
+        ft.plot_energy_profile(
+            panel, ax=ax, overlay_alpha=1, same_energy_mode="show",
+            state_label_rotation=45, font_size=9,
+        )
+        ax.set_title(theory)
+    fig.suptitle("Illustrative p26-style missing-data cases (not benchmark energies)")
+    fig.tight_layout()
+    paths.append(_save(fig, "energy-profile-missing-panels.png"))
+    plt.close(fig)
+    return paths
 
 
 def build_assets() -> list[Path]:
@@ -138,6 +185,7 @@ def build_assets() -> list[Path]:
     )
     paths.append(_save(fig, "energy-profile-side-reaction.png"))
 
+    paths.extend(build_missing_data_assets())
     return paths
 
 

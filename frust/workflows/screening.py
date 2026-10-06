@@ -9,6 +9,7 @@ import shutil
 import tempfile
 import time
 from collections.abc import Mapping
+from contextlib import contextmanager, nullcontext
 from copy import copy, deepcopy
 from dataclasses import dataclass, replace
 from datetime import datetime, timezone
@@ -24,6 +25,11 @@ from frust.artifacts import (
 )
 from frust.cluster.config import ClusterConfig, JobSubmissionResult, Resources
 from frust.cluster.executor import create_executor, update_executor_with_dependencies
+from frust.cluster.submission import (
+    _plan_submission, _mutation_lock, _job_terminal, _completion_path, _mark_completed,
+    _atomic_write_submission_json,
+    _validate_array_scheduler_options, _validate_array_size,
+)
 from frust.screen import expand as expand_screen
 from frust.screen import read as read_screen
 from frust.screen.cleanup import cleanup_submitit_jobs, initialize_submitit_directory
@@ -501,6 +507,11 @@ class CatalystScreenWorkflow:
         cluster: ClusterConfig,
         execution: str | None = None,
         stage_resources: dict[str, Resources] | None = None,
+        array: bool = False,
+        array_parallelism: int | Mapping[str, int] | None = None,
+        targets_per_task: int = 1,
+        retry: bool = False,
+        targets: Mapping[str, Any] | None = None,
         debug: bool = False,
         save_output_dir: bool = True,
         work_dir: str | Path | None = None,
@@ -513,7 +524,7 @@ class CatalystScreenWorkflow:
     ) -> ScreenSubmissionResult:
         """Submit the complete catalyst screen and its analysis finalizer.
 
-        The method submits one calculation chain per target in each child
+        The method submits a calculation chain per target in each child
         branch. Barrier runs contain ``transition_states`` and ``references``;
         full-cycle runs additionally contain ``cycle_molecules`` and ``int3``.
         Every branch receives a collector, followed by one ``afterany``
@@ -549,6 +560,29 @@ class CatalystScreenWorkflow:
             ``"init"``, ``"dft_opt"``, ``"dft_hessian"``, ``"dft_ts_opt"``,
             ``"dft_freq"``, and ``"dft_solv_sp"``. Missing groups use the
             child workflow defaults.
+        array : bool, optional
+            Submit separate arrays for each calculated branch and stage group.
+            Collectors and the finalizer remain ordinary control jobs.
+        array_parallelism : int or mapping of str to int or None, optional
+            Required positive limit with arrays. A staged mapping must contain
+            every group name across all branches. Limits apply per array, so
+            two branches each limited to 4 can run 8 elements together.
+        targets_per_task : int, optional
+            Sequential targets per element in single-job mode; staged modes
+            require 1. UMA targets share one server within a single-job batch.
+        retry : bool, optional
+            Retry failed targets in a compatible managed screen, after its
+            earlier finalizer ends. By default use each report's retry_targets.
+            Recollect complete branches before finalization, preserving earlier
+            successes, reference reuse decisions, and attempt records.
+            A successfully finalized screen requires a new output directory
+            for further calculations, including after target cleanup.
+        targets : mapping of str to iterable or None, optional
+            Retry-only branch-specific child target objects or positions, for example
+            {"transition_states": [0, 1]}. Omitted branches select no work when
+            a mapping is supplied. An empty mapping is an initial no-op.
+            Use child workflows for initial subsets. Reused references cannot
+            be submitted.
         debug : bool, optional
             Forward debugging output to structure generation and calculator
             stages.
@@ -627,6 +661,21 @@ class CatalystScreenWorkflow:
         ...     ["branch", "group", "stage", "engine", "solvent"]
         ... ]
 
+        Submit arrays with up to two running elements in each branch/group:
+
+        >>> submission = wf.submit(
+        ...     out_dir="runs/screen", cluster=cluster,
+        ...     array=True, array_parallelism=2,
+        ... )
+
+        After the finalization job ends, retry targets listed in the branch
+        reports. Complete branches are recollected with earlier successes:
+
+        >>> retried = wf.submit(
+        ...     out_dir="runs/screen", cluster=cluster,
+        ...     array=True, array_parallelism=2, retry=True,
+        ... )
+
         Notes
         -----
         The finalizer uses an ``afterany`` dependency so a partial portable
@@ -650,116 +699,144 @@ class CatalystScreenWorkflow:
                 "catalyst_screen requires save_output_dir=True so reference "
                 "calculator evidence remains portable"
             )
-        root = Path(out_dir)
-        root.mkdir(parents=True, exist_ok=True)
-        self._write_manifest(root, artifact_policy=artifact_policy)
-        submit_cluster = cluster
-        finalize_cluster = cluster
-        if artifact_policy == "screening":
-            submitit_dir = initialize_submitit_directory(root)
-            submit_cluster = replace(
-                cluster,
-                log_dir=submitit_dir / "jobs",
-                stderr_to_stdout=True,
-            )
-            finalize_cluster = replace(
-                cluster,
-                log_dir=submitit_dir / "control",
-                stderr_to_stdout=True,
-            )
-        children = self.children()
-        reference_items = [
-            item for item in self.targets() if item.branch == "references"
-        ]
-        self._snapshot_reused_references(
-            root,
-            reference_items,
-            artifact_policy=artifact_policy,
+        children, calculated, selected, limits = _screen_submission_plan(
+            self, out_dir, execution, stage_resources, array, array_parallelism,
+            targets_per_task, retry, targets,
         )
-        submissions: dict[str, JobSubmissionResult] = {}
-        dependency_ids: list[str | int] = []
-        wait_paths: list[str] = []
+        if not any(selected.values()):
+            if retry:
+                raise ValueError("No failed screen targets selected for retry")
+            return ScreenSubmissionResult(str(out_dir), {}, None, cluster.backend)
+        if array:
+            _validate_array_scheduler_options(cluster)
+            for branch_targets in selected.values():
+                _validate_array_size(cluster, (len(branch_targets) + targets_per_task - 1) // targets_per_task)
+        with _screen_submission_guard(out_dir, cluster, managed=array or retry, retry=retry) as attempt:
+            root = Path(out_dir)
+            root.mkdir(parents=True, exist_ok=True)
+            self._write_manifest(root, artifact_policy=artifact_policy)
+            if attempt:
+                _atomic_write_submission_json(attempt['_path'], attempt)
+            submit_cluster = cluster
+            finalize_cluster = cluster
+            if artifact_policy == "screening":
+                submitit_dir = initialize_submitit_directory(root)
+                submit_cluster = replace(
+                    cluster,
+                    log_dir=submitit_dir / "jobs",
+                    stderr_to_stdout=True,
+                )
+                finalize_cluster = replace(
+                    cluster,
+                    log_dir=submitit_dir / "control",
+                    stderr_to_stdout=True,
+                )
+            reference_items = [
+                item for item in self.targets() if item.branch == "references"
+            ]
+            if not retry:
+                self._snapshot_reused_references(
+                    root,
+                    reference_items,
+                    artifact_policy=artifact_policy,
+                )
+            submissions: dict[str, JobSubmissionResult] = {}
+            dependency_ids: list[str | int] = []
+            wait_paths: list[str] = []
 
-        for branch, workflow in children.items():
-            branch_dir = _branch_dir(root, branch)
-            branch_targets = None
-            collect_output = branch_dir / "merged.parquet"
-            if branch == "references":
-                branch_targets = [
-                    item.target
-                    for item in reference_items
-                    if item.action == "calculate"
-                ]
-                collect_output = branch_dir / "computed.parquet"
+            for branch, workflow in children.items():
+                branch_dir = _branch_dir(root, branch)
+                branch_targets = selected[branch]
+                collect_output = branch_dir / ("computed.parquet" if branch == "references" else "merged.parquet")
                 if not branch_targets:
-                    branch_dir.mkdir(parents=True, exist_ok=True)
-                    _write_verified_parquet(pd.DataFrame(), collect_output)
+                    previous_report = branch_dir / "collection_report.json"
+                    if retry and previous_report.exists():
+                        wait_paths.append(str(previous_report))
+                    elif not retry and branch == "references" and not calculated[branch]:
+                        branch_dir.mkdir(parents=True, exist_ok=True)
+                        _write_verified_parquet(pd.DataFrame(), collect_output)
                     continue
-            collect_report = branch_dir / "collection_report.json"
-            submission = workflow.submit(
-                out_dir=branch_dir,
-                cluster=submit_cluster,
-                execution=execution,
-                stage_resources=stage_resources,
-                targets=branch_targets,
-                debug=debug,
-                save_output_dir=save_output_dir,
-                work_dir=work_dir,
-                collect=True,
-                collect_output=collect_output,
-                collect_report=collect_report,
-                collect_require_normal_termination=collect_require_normal_termination,
-                collect_resources=collect_resources,
-                target_retention=target_retention,
-                artifact_policy=artifact_policy,
-                uma_oet_tools=uma_oet_tools,
-                _defer_screening_cleanup=artifact_policy == "screening",
-            )
-            submissions[branch] = submission
-            dependency_ids.append(
-                submission.collection_job_id or submission.job_ids[-1]
-            )
-            wait_paths.append(str(collect_report))
+                collect_report = branch_dir / (
+                    f"collection_report_{attempt['attempt_id']}.json" if attempt else "collection_report.json"
+                )
+                submission = workflow.submit(
+                    out_dir=branch_dir,
+                    cluster=submit_cluster,
+                    execution=execution,
+                    stage_resources=stage_resources,
+                    array=array, array_parallelism=limits[branch],
+                    targets_per_task=targets_per_task, retry=retry,
+                    _collect_targets=calculated[branch] if retry else None,
+                    _screen_manifest_validated=attempt is None,
+                    targets=branch_targets,
+                    debug=debug,
+                    save_output_dir=save_output_dir,
+                    work_dir=work_dir,
+                    collect=True,
+                    collect_output=collect_output,
+                    collect_report=collect_report,
+                    collect_require_normal_termination=collect_require_normal_termination,
+                    collect_resources=collect_resources,
+                    target_retention=target_retention,
+                    artifact_policy=artifact_policy,
+                    uma_oet_tools=uma_oet_tools,
+                    _defer_screening_cleanup=artifact_policy == "screening",
+                )
+                submissions[branch] = submission
+                dependency_ids.append(
+                    submission.collection_job_id or submission.job_ids[-1]
+                )
+                wait_paths.append(str(collect_report))
 
-        executor = create_executor(finalize_cluster)
-        update_executor_with_dependencies(
-            executor,
-            finalize_cluster,
-            finalize_resources or DEFAULT_FINALIZE_RESOURCES,
-            job_name="catalyst_screen_finalize",
-            dependency_job_ids=dependency_ids,
-            dependency_type="afterany",
-        )
-        finalizer_workflow = copy(self)
-        finalizer_workflow._components_cache = None
-        finalizer_workflow._systems_cache = None
-        finalizer_workflow._children_cache = None
-        final_job = executor.submit(
-            _finalize_submitted_run,
-            finalizer_workflow,
-            root,
-            wait_paths if cluster.backend == "local" else None,
-            wait_paths,
-            artifact_policy,
-            {
-                branch: {
-                    "job_ids": list(submission.job_ids),
-                    "collection_job_id": submission.collection_job_id,
-                    "collection_output": submission.collection_output,
-                    "collection_report": submission.collection_report,
-                }
-                for branch, submission in submissions.items()
-            },
-        )
-        return ScreenSubmissionResult(
-            run_dir=str(root),
-            child_submissions=submissions,
-            finalization_job_id=getattr(final_job, "job_id", None),
-            backend=cluster.backend,
-            submitit_dir=(
-                str(root / ".submitit") if artifact_policy == "screening" else None
-            ),
-        )
+            if attempt and cluster.backend == "local":
+                _wait_screen_collectors(submissions, submit_cluster.log_dir)
+            executor = create_executor(finalize_cluster)
+            update_executor_with_dependencies(
+                executor,
+                finalize_cluster,
+                finalize_resources or DEFAULT_FINALIZE_RESOURCES,
+                job_name="catalyst_screen_finalize",
+                dependency_job_ids=dependency_ids,
+                dependency_type="afterany",
+            )
+            finalizer_workflow = copy(self)
+            finalizer_workflow._components_cache = None
+            finalizer_workflow._systems_cache = None
+            finalizer_workflow._children_cache = None
+            final_job = executor.submit(
+                _finalize_submitted_run,
+                finalizer_workflow,
+                root,
+                wait_paths if cluster.backend == "local" and not attempt else None,
+                wait_paths,
+                artifact_policy,
+                {
+                    branch: {
+                        "job_ids": list(submission.job_ids),
+                        "collection_job_id": submission.collection_job_id,
+                        "collection_output": submission.collection_output,
+                        "collection_report": submission.collection_report,
+                        "submission_path": submission.submission_path,
+                        "array_job_ids": list(submission.array_job_ids),
+                    }
+                    for branch, submission in submissions.items()
+                },
+                None if attempt is None else attempt['attempt_id'],
+            )
+            if attempt:
+                attempt['job_id'] = final_job.job_id
+                attempt['log_dir'] = str(Path(finalize_cluster.log_dir).resolve())
+                _atomic_write_submission_json(attempt['_path'], attempt)
+            return ScreenSubmissionResult(
+                run_dir=str(root),
+                child_submissions=submissions,
+                finalization_job_id=getattr(final_job, "job_id", None),
+                backend=cluster.backend,
+                submitit_dir=(
+                    str(root / ".submitit") if artifact_policy == "screening" else None
+                ),
+            )
+
 
     def _reference_states(self) -> list[str]:
         dimer_states = (
@@ -1033,7 +1110,7 @@ class CatalystScreenWorkflow:
                     "manifest; choose a new out_dir"
                 )
             return
-        unexpected = [path for path in root.iterdir() if path.name != "manifest.json"]
+        unexpected = [path for path in root.iterdir() if path.name not in {"manifest.json", ".frust"}]
         if unexpected:
             raise FileExistsError(
                 f"Run directory {root} is not empty and has no compatible manifest; "
@@ -1414,6 +1491,7 @@ def _finalize_submitted_run(
     expected_report_paths: list[str] | None = None,
     artifact_policy: ArtifactPolicy = "standard",
     submission_status: Mapping[str, Any] | None = None,
+    attempt_id: str | None = None,
 ) -> FinalizationJobResult:
     if wait_paths:
         deadline = time.monotonic() + 3600
@@ -1422,18 +1500,27 @@ def _finalize_submitted_run(
             and time.monotonic() < deadline
         ):
             time.sleep(1)
-    report = _finalize_run(
-        workflow,
-        root,
-        expected_report_paths=expected_report_paths,
-        artifact_policy=artifact_policy,
-        submission_status=submission_status,
-    )
-    return FinalizationJobResult(
-        run_dir=str(root),
-        report_path=str(root / "run_report.json"),
-        status=str(report["overall_status"]),
-    )
+    try:
+        with _mutation_lock(root, wait=True) if attempt_id is not None else nullcontext():
+            if attempt_id is not None:
+                for raw_path in expected_report_paths or []:
+                    path = Path(raw_path)
+                    if path.exists():
+                        _atomic_write_submission_json(path.parent/'collection_report.json', json.loads(path.read_text()))
+            report = _finalize_run(
+                workflow,
+                root,
+                expected_report_paths=expected_report_paths,
+                artifact_policy=artifact_policy,
+                submission_status=submission_status,
+            )
+            return FinalizationJobResult(
+                run_dir=str(root),
+                report_path=str(root / "run_report.json"),
+                status=str(report["overall_status"]),
+            )
+    finally:
+        _mark_completed(root, attempt_id, 'screen_finalize', 0)
 
 
 def _finalize_run(
@@ -2176,3 +2263,103 @@ def _utc_now() -> str:
         .isoformat()
         .replace("+00:00", "Z")
     )
+
+
+def _screen_submission_plan(workflow, out_dir, execution, resources, array, parallelism, batch_size, retry, selection):
+    """Validate every branch before any job or scientific artifact is created."""
+    if type(retry) is not bool:
+        raise ValueError('retry must be a boolean')
+    children = workflow.children()
+    if selection is not None and (not isinstance(selection, Mapping) or set(selection) - set(children)):
+        raise ValueError(f'targets must map known branches to child targets: {list(children)}')
+    if selection and not retry:
+        raise ValueError('Screen targets= selects retry work; use a child workflow for initial subsets')
+    if retry:
+        path = Path(out_dir)/'manifest.json'
+        if not path.exists():
+            raise ValueError('Screen retry requires an existing compatible run manifest')
+        original = json.loads(path.read_text())
+        report_path = path.parent / 'run_report.json'
+        if report_path.exists() and json.loads(report_path.read_text()).get('overall_status') == 'success':
+            raise ValueError('Screen already finalized successfully; use a new out_dir')
+        calculated_ids = {entry['target_id'] for entry in original['reference_plan'] if entry['action']=='calculate'}
+    else:
+        calculated_ids = {item.target.target_id for item in workflow.targets()
+                          if item.branch=='references' and item.action=='calculate'}
+    calculated = {branch: [target for target in child.targets()
+                           if branch!='references' or target.target_id in calculated_ids]
+                  for branch, child in children.items()}
+    selected = {}
+    plans = {}
+    for branch, child in children.items():
+        mode = execution or ('dft_staged' if child.dft else 'single_job')
+        groups = child._stage_groups(mode)
+        plans[branch] = (mode, [('single_job' if mode=='single_job' else child._group_name(group),
+                                Resources(1,1,1), 'unused.parquet') for group in groups])
+        if retry and mode!='single_job' and not array:
+            raise NotImplementedError('Staged screen retries require array=True')
+        if selection is not None:
+            selected[branch] = child._select_targets(selection.get(branch, []))
+        elif retry and calculated[branch]:
+            report = _branch_dir(Path(out_dir),branch)/'collection_report.json'
+            if not report.exists():
+                raise ValueError(f'No completed collection report for retry branch {branch}')
+            failed = set(json.loads(report.read_text()).get('retry_targets', []))
+            selected[branch] = [target for target in calculated[branch] if target.tag in failed]
+        else:
+            selected[branch] = [] if retry else calculated[branch]
+        allowed = {target.tag for target in calculated[branch]}
+        if any(target.tag not in allowed for target in selected[branch]):
+            raise ValueError(f'Branch {branch} selection contains unknown or reused targets')
+    union = {name for _, groups in plans.values() for name, _, _ in groups}
+    if isinstance(parallelism, Mapping) and set(parallelism) != union:
+        raise ValueError(f'array_parallelism must specify exactly these screen stage groups: {sorted(union)}')
+    limits = {branch: {name:parallelism[name] for name, _, _ in groups} if isinstance(parallelism,Mapping) else parallelism
+              for branch, (_, groups) in plans.items()}
+    for branch, (mode, groups) in plans.items():
+        _plan_submission([target.tag for target in selected[branch]],groups,execution=mode,
+                         array=array,array_parallelism=limits[branch],targets_per_task=batch_size)
+    return children, calculated, selected, limits
+
+
+@contextmanager
+def _screen_submission_guard(out_dir, cluster, *, managed, retry):
+    """Reserve a managed screen until its finalizer has finished mutating it."""
+    root = Path(out_dir)
+    directory = root/'.frust/screen_submissions'
+    managed = managed or directory.exists()
+    if not managed:
+        yield None
+        return
+    with _mutation_lock(root):
+        history = sorted((json.loads(path.read_text()) for path in directory.glob('*.json')),
+                         key=lambda item:item['created_ns'])
+        for previous in history:
+            done = _completion_path(root,previous['attempt_id'],'screen_finalize',0).exists()
+            if not done and not _job_terminal(previous,previous.get('job_id')):
+                raise RuntimeError('Previous screen finalizer is active or unverified; overlapping screen writes are blocked')
+        if history and not retry:
+            raise ValueError('Managed screen already has submission history; use retry=True or a new out_dir')
+        if retry and not history:
+            raise ValueError('Screen retry requires managed submission history; use a new out_dir for legacy runs')
+        from uuid import uuid4
+        identity = uuid4().hex
+        attempt = {'attempt_id':identity,'created_ns':time.time_ns(),'backend':cluster.backend,
+                   'job_id':None,'log_dir':str(Path(cluster.log_dir).resolve()),
+                   '_path':str(directory/f'{identity}.json')}
+        old_report = root/'run_report.json'
+        if old_report.exists():
+            _atomic_write_submission_json(root/'.frust/screen_history'/identity/'run_report.json',json.loads(old_report.read_text()))
+        yield attempt
+
+
+def _wait_screen_collectors(submissions, log_dir):
+    from frust.cluster.executor import _load_submitit
+    submitit = _load_submitit()
+    for submission in submissions.values():
+        job = submitit.LocalJob(folder=log_dir,job_id=str(submission.collection_job_id))
+        deadline = time.monotonic()+3600
+        while not job.paths.result_pickle.exists():
+            if time.monotonic() >= deadline:
+                raise RuntimeError('Local screen collector did not finish within one hour')
+            time.sleep(.1)

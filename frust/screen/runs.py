@@ -863,6 +863,11 @@ def _state_rows(
         {
             "calculation_level": calculation_level,
             "calculator": protocol.get("calculator"),
+            **{
+                key: protocol[key]
+                for key in ("frequency_calculator", "thermochemistry")
+                if key in protocol
+            },
         }
     )
     method_family = (

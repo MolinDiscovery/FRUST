@@ -3,6 +3,7 @@
 from __future__ import annotations
 
 from contextlib import nullcontext
+from dataclasses import replace
 from pathlib import Path
 from unittest.mock import patch
 
@@ -188,3 +189,44 @@ def test_uma_orca_reuses_seed_hessian_and_includes_alpb_flag(tmp_path, monkeypat
     assert seen[0][0] == {"private_input.hess": "seed-data"}
     assert "--xtb-alpb chloroform" in seen[0][2]
     assert "inhess Read" in seen[0][2]
+
+
+@pytest.mark.parametrize("optimization_stage", ["uma_min_opt", "uma_ts_opt"])
+def test_terminal_alpb_sp_receives_optimized_gas_coordinates(tmp_path, monkeypatch, optimization_stage):
+    from frust.workflows.core import StageDef, _apply_calculator
+
+    oet = tmp_path / "oet"
+    (oet / "bin").mkdir(parents=True)
+    (oet / "bin" / "oet_uma").write_text("#!/bin/sh\n")
+    monkeypatch.setenv("OET_TOOLS", str(oet))
+    optimized = [[0.0, 0.0, 0.0], [0.0, 0.0, 0.74]]
+    calls = []
+
+    def fake_orca(atoms, coords, n_cores, scr, data2file, options, xtra_inp_str, memory, read_files):
+        calls.append((coords, options, xtra_inp_str))
+        result = {"normal_termination": True, "electronic_energy": -1.0}
+        if "Opt" in options or "OptTS" in options:
+            result["opt_coords"] = optimized
+        if "NumFreq" in options:
+            result["gibbs_energy"] = -0.95
+            result["vibrations"] = [{"frequency": 35.0}]
+        return result
+
+    step = Stepper(n_cores=1, memory_gb=2, output_base=tmp_path, save_output_dir=False)
+    step.orca_fn = fake_orca
+    frame = pd.DataFrame({
+        "substrate_name": ["test"], "atoms": [["H", "H"]],
+        "coords_embedded": [[[0, 0, 0], [0, 0, 1.2]]],
+    })
+    method = ft.workflows.methods.preset("uma-gas-opt-alpb-chloroform")
+    for name in (optimization_stage, "uma_freq", "uma_solv_sp"):
+        spec = method.for_stage(name)
+        spec = replace(spec, kwargs={**spec.kwargs, "uma_server": False})
+        frame = _apply_calculator(step, frame, StageDef(name, name), spec, uma_server_cores=1)
+    assert calls[1][0] == optimized
+    assert calls[2][0] == optimized
+    assert "--xtb-alpb" not in calls[0][2]
+    assert "--xtb-alpb" not in calls[1][2]
+    assert "--xtb-alpb chloroform" in calls[2][2]
+    assert calls[2][1] == {"ExtOpt": None}
+    assert frame[f"{optimization_stage}-oc"].iloc[0] == optimized

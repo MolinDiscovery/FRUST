@@ -21,7 +21,7 @@ def result_contract(
     *,
     dft: bool,
     calculation_level: str | None = None,
-    include_terminal_solv_sp: bool = True,
+    include_terminal_solv_sp: bool | None = None,
     screening_opt_stage: str = "xtb_opt",
     include_dft_rank_sp: bool = True,
     thermochemistry: Any | None = None,
@@ -43,10 +43,10 @@ def result_contract(
         ``"uma_ranked"`` to a UMA single point on that geometry,
         ``"dft_ranked"`` to the DFT single point on that geometry, and
         ``"full"`` to the final method's energy and frequency results.
-    include_terminal_solv_sp : bool, optional
-        Whether the DFT workflow includes a final solvent single point. When
-        ``False``, the final DFT frequency-stage electronic energy is the
-        analysis energy because all DFT stages already include solvent.
+    include_terminal_solv_sp : bool or None, optional
+        ``True`` selects ``dft_solv_sp`` or ``uma_solv_sp`` analysis energy;
+        ``False`` selects the frequency electronic energy. ``None`` defaults
+        to ``True`` for DFT and ``False`` for UMA, preserving existing contracts.
     screening_opt_stage : {"xtb_opt", "uma_opt"}, optional
         Optimization stage providing the low-cost energy and geometry.
     include_dft_rank_sp : bool, optional
@@ -70,6 +70,8 @@ def result_contract(
     dict
         Versioned mapping from semantic purposes to canonical columns.
     """
+    if include_terminal_solv_sp is None:
+        include_terminal_solv_sp = full_method == "dft"
     if calculation_level is None:
         calculation_level = (
             "full"
@@ -131,8 +133,8 @@ def result_contract(
         raise ValueError(f"Unknown result profile {profile!r}")
     frequency_stage = "dft_freq" if has_full_dft else "uma_freq"
     analysis_stage = (
-        "dft_solv_sp"
-        if has_full_dft and include_terminal_solv_sp
+        ("dft_solv_sp" if has_full_dft else "uma_solv_sp")
+        if has_full and include_terminal_solv_sp
         else frequency_stage if has_full else resolved_ranking_stage
     )
     columns: dict[str, dict[str, str]] = {
@@ -179,7 +181,7 @@ def attach_result_contract(
     *,
     dft: bool,
     calculation_level: str | None = None,
-    include_terminal_solv_sp: bool = True,
+    include_terminal_solv_sp: bool | None = None,
     screening_opt_stage: str = "xtb_opt",
     include_dft_rank_sp: bool = True,
     thermochemistry: Any | None = None,
@@ -199,8 +201,9 @@ def attach_result_contract(
     calculation_level : {"low_cost", "uma_ranked", "dft_ranked", "full"} or None,
         optional
         Explicit workflow depth recorded in the canonical contract.
-    include_terminal_solv_sp : bool, optional
+    include_terminal_solv_sp : bool or None, optional
         Whether a separate final solvent single point was calculated.
+        ``None`` defaults to ``True`` for DFT and ``False`` for UMA.
     screening_opt_stage : {"xtb_opt", "uma_opt"}, optional
         Screening optimization stage used for lower-tier result columns.
     include_dft_rank_sp : bool, optional

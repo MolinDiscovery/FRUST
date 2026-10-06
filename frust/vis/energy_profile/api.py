@@ -169,6 +169,11 @@ def plot_energy_profile(
     states
         Single profile as a sequence of ``(label, energy[, placement])`` entries,
         or multiple profiles as a mapping/list of ``(profile_name, states)``.
+        Energies may be ``np.nan`` or ``None`` to leave an explicit gap while
+        retaining the state's label and x-position. Contiguous available runs
+        use the normal smooth curve; isolated points use markers. Infinity and
+        malformed energies raise ValueError. Omitted tuples retain their
+        existing layout semantics and do not imply gaps.
         A string marker such as ``"side-rxn@int2@0.6#Side product"`` starts a
         side-reaction segment. Place ``"main-to-product@0.8"`` between the last
         continuous-path state and the final Product to draw the existing dotted
@@ -250,6 +255,18 @@ def plot_energy_profile(
         its referenced y-position. Later product-like states such as
         ``"Product + int2"`` are unchanged.
 
+    Notes
+    -----
+    Missing states have no marker or energy annotation. State labels remain on
+    the x-axis when `show_state_labels` is enabled (the overlay default);
+    otherwise missing-state names appear beneath their x-positions. Entirely
+    missing profiles keep their configured legend entries and state labels,
+    draw no data artists, and leave finite Matplotlib y-limits. Connectors are
+    skipped if either endpoint or an intervening state is missing. Product
+    reference annotations require both finite energies; missing reference
+    values never suppress available overlay Product annotations. Gaps are
+    determined independently for each profile.
+
     Returns
     -------
     tuple
@@ -257,6 +274,25 @@ def plot_energy_profile(
 
     Examples
     --------
+    Keep aligned states when Pip has a missing TS1 energy::
+
+        import numpy as np
+        import frust as ft
+
+        profiles = {
+            "TMP": [("Reactants", 0.0), ("TS1", 27.7), ("Int1", 3.8),
+                    ("TS2", 21.2), ("Product", -0.3)],
+            "Pip": [("Reactants", 0.0), ("TS1", np.nan), ("Int1", 7.3),
+                    ("TS2", 22.5), ("Product", -0.3)],
+        }
+        fig, ax = ft.plot_energy_profile(
+            profiles, annotate_energies=True, overlay_annotate="energy",
+            show_state_labels=True,
+        )
+
+    These illustrative p26 values are not a complete atom-balanced profile.
+    Pip's Reactants marker remains isolated; its Int1-to-Product run is smooth.
+
     Show a Product energy relative to both Dimer and Cat::
 
         states = [
@@ -380,7 +416,9 @@ def plot_energy_profile(
                     f"product_reference={product_reference_label!r} was not found in "
                     f"{profile_description}. Available labels: {available}."
                 )
-            else:
+            elif np.isfinite(E[main_product_idx]) and np.isfinite(
+                profile_energy_map[product_reference_key]
+            ):
                 product_relative_energy = (
                     float(E[main_product_idx])
                     - float(profile_energy_map[product_reference_key])
@@ -393,13 +431,18 @@ def plot_energy_profile(
             ref_e = ref_energy_map.get(key)
             matches_reference = (
                 ref_e is not None
+                and np.isfinite(ref_e)
                 and abs(float(energy) - float(ref_e)) <= float(same_energy_tol)
             )
             if (
                 matches_reference
-                and product_relative_energy is not None
+                and product_reference_key is not None
                 and entry_idx == main_product_idx
             ):
+                if product_relative_energy is None or not np.isfinite(
+                    ref_energy_map.get(product_reference_key, np.nan)
+                ):
+                    return False
                 ref_product_relative_energy = (
                     float(ref_e) - float(ref_energy_map[product_reference_key])
                 )
@@ -455,12 +498,38 @@ def plot_energy_profile(
             "marker": legend_marker,
         }
 
+        def _draw_segment(indices, color, point_count, scatter_indices=None):
+            indices = np.asarray(indices, dtype=int)
+            finite = np.isfinite(E[indices])
+            boundaries = np.flatnonzero(np.diff(np.r_[False, finite, False]))
+            for start, stop in boundaries.reshape(-1, 2):
+                run = indices[start:stop]
+                x_i, E_i = _dedup_for_interp(x[run], E[run])
+                if len(x_i) >= 2:
+                    xs = np.linspace(x_i.min(), x_i.max(), int(point_count))
+                    ax_.plot(
+                        xs, PchipInterpolator(x_i, E_i)(xs), marker="",
+                        alpha=a, linewidth=lw, color=color, zorder=z_line,
+                    )
+            scatter_indices = (
+                indices if scatter_indices is None
+                else np.asarray(scatter_indices, dtype=int)
+            )
+            available = scatter_indices[np.isfinite(E[scatter_indices])]
+            if len(available):
+                ax_.scatter(
+                    x[available], E[available], zorder=z_scatter,
+                    color=color, alpha=a, marker=legend_marker, s=30,
+                )
+
         def _draw_main_product_connector(
             anchor_idx,
             product_idx,
             connector_color,
             drop_frac,
         ):
+            if not np.all(np.isfinite(E[anchor_idx:product_idx + 1])):
+                return
             x0 = float(x[anchor_idx])
             y0 = float(E[anchor_idx])
             x1 = float(x[product_idx])
@@ -510,36 +579,9 @@ def plot_energy_profile(
                 if main_product_anchor_idx is None
                 else main_product_anchor_idx
             )
-            x_continuous = x[: continuous_end_idx + 1]
-            E_continuous = E[: continuous_end_idx + 1]
-            if len(x_continuous) >= 2:
-                x_i, E_i = _dedup_for_interp(x_continuous, E_continuous)
-                xs = np.linspace(x_i.min(), x_i.max(), int(n_points))
-                interp = PchipInterpolator(x_i, E_i)
-                Es = interp(xs)
-
-                ax_.plot(
-                    xs,
-                    Es,
-                    marker="",
-                    alpha=a,
-                    linewidth=lw,
-                    color=main_color,
-                    zorder=z_line,
-                )
-            m = marker if is_reference else (
-                overlay_markers.get(profile_name, marker)
-                if isinstance(overlay_markers, dict)
-                else marker
-            )
-            ax_.scatter(
-                x,
-                E,
-                zorder=z_scatter,
-                color=main_color,
-                alpha=a,
-                marker=m,
-                s=30,
+            _draw_segment(
+                range(continuous_end_idx + 1), main_color, n_points,
+                scatter_indices=range(len(entries)),
             )
             if show_main_to_product and main_product_anchor_idx is not None:
                 drop_frac = (
@@ -559,38 +601,8 @@ def plot_energy_profile(
 
             main_end = side_start_idx - 1
 
-            x_main = x[: main_end + 1]
-            E_main = E[: main_end + 1]
-            x_main_i, E_main_i = _dedup_for_interp(x_main, E_main)
-
-            xs_main = np.linspace(
-                x_main_i.min(), x_main_i.max(), max(2, int(n_points * 0.6))
-            )
-            interp_main = PchipInterpolator(x_main_i, E_main_i)
-            Es_main = interp_main(xs_main)
-
-            ax_.plot(
-                xs_main,
-                Es_main,
-                marker="",
-                alpha=a,
-                linewidth=lw,
-                color=main_color,
-                zorder=z_line
-            )
-            m = marker if is_reference else (
-                overlay_markers.get(profile_name, marker)
-                if isinstance(overlay_markers, dict)
-                else marker
-            )            
-            ax_.scatter(
-                x_main,
-                E_main,
-                zorder=z_scatter,
-                color=main_color,
-                alpha=a,
-                marker=m,
-                s=30,
+            _draw_segment(
+                range(main_end + 1), main_color, max(2, int(n_points * 0.6))
             )
 
             side_anchor_idx = main_end
@@ -622,84 +634,54 @@ def plot_energy_profile(
                 point_colors[idx] = side_color
             point_colors[main_product_idx] = main_color
 
-            x_side_main = x[side_idxs]
-            E_side_main = E[side_idxs]
-            x_side_i, E_side_i = _dedup_for_interp(x_side_main, E_side_main)
+            _draw_segment(side_idxs, side_color, max(2, int(n_points * 0.6)))
 
-            xs_side = np.linspace(
-                float(x_side_i.min()),
-                float(x_side_i.max()),
-                max(2, int(n_points * 0.6)),
-            )
-            interp_side = PchipInterpolator(x_side_i, E_side_i)
-            Es_side = interp_side(xs_side)
+            if np.all(np.isfinite(E[side_anchor_idx:side_start_idx + 1])):
+                x0 = float(x[side_anchor_idx])
+                y0 = float(E[side_anchor_idx])
+                x1c = float(x[side_start_idx])
+                y1c = float(E[side_start_idx])
 
-            ax_.plot(
-                xs_side,
-                Es_side,
-                marker="",
-                alpha=a,
-                linewidth=lw,
-                color=side_color,
-                zorder=z_line
-            )
-            m = marker if is_reference else (
-                overlay_markers.get(profile_name, marker)
-                if isinstance(overlay_markers, dict)
-                else marker
-            )            
-            ax_.scatter(
-                x_side_main,
-                E_side_main,
-                zorder=z_scatter,
-                color=side_color,
-                alpha=a,
-                marker=m,
-                s=30,
-            )
+                frac = (
+                    0.0
+                    if side_connector_rise_frac is None
+                    else float(side_connector_rise_frac)
+                )
+                frac = min(max(frac, 0.0), 1.0)
 
-            x0 = float(x[side_anchor_idx])
-            y0 = float(E[side_anchor_idx])
-            x1c = float(x[side_start_idx])
-            y1c = float(E[side_start_idx])
+                x_rise = x0 + frac * (x1c - x0)
 
-            frac = (
-                0.0
-                if side_connector_rise_frac is None
-                else float(side_connector_rise_frac)
-            )
-            frac = min(max(frac, 0.0), 1.0)
+                xs_flat = np.linspace(x0, x_rise, 60, endpoint=False)
+                ys_flat = np.full_like(xs_flat, y0, dtype=float)
 
-            x_rise = x0 + frac * (x1c - x0)
+                xs_rise = np.linspace(x_rise, x1c, 120)
+                denom = (x1c - x_rise)
+                if denom == 0:
+                    ys_rise = np.full_like(xs_rise, y1c, dtype=float)
+                else:
+                    t = (xs_rise - x_rise) / denom
+                    t = np.clip(t, 0.0, 1.0)
+                    s = t * t * (3.0 - 2.0 * t)
+                    ys_rise = y0 + (y1c - y0) * s
 
-            xs_flat = np.linspace(x0, x_rise, 60, endpoint=False)
-            ys_flat = np.full_like(xs_flat, y0, dtype=float)
+                xs_conn = np.concatenate([xs_flat, xs_rise])
+                ys_conn = np.concatenate([ys_flat, ys_rise])
 
-            xs_rise = np.linspace(x_rise, x1c, 120)
-            denom = (x1c - x_rise)
-            if denom == 0:
-                ys_rise = np.full_like(xs_rise, y1c, dtype=float)
-            else:
-                t = (xs_rise - x_rise) / denom
-                t = np.clip(t, 0.0, 1.0)
-                s = t * t * (3.0 - 2.0 * t)
-                ys_rise = y0 + (y1c - y0) * s
+                ax_.plot(
+                    xs_conn,
+                    ys_conn,
+                    linestyle=":",
+                    linewidth=3.0,
+                    alpha=a,
+                    marker="",
+                    color=side_color,
+                    zorder=z_conn
+                )
 
-            xs_conn = np.concatenate([xs_flat, xs_rise])
-            ys_conn = np.concatenate([ys_flat, ys_rise])
-
-            ax_.plot(
-                xs_conn,
-                ys_conn,
-                linestyle=":",
-                linewidth=3.0,
-                alpha=a,
-                marker="",
-                color=side_color,
-                zorder=z_conn
-            )
-
-            if show_main_to_product and len(x) >= 2:
+            if (
+                show_main_to_product and len(x) >= 2
+                and np.isfinite(E[main_product_idx])
+            ):
                 mp_color = "C0" if is_reference else main_color
                 _draw_main_product_connector(
                     main_end,
@@ -773,6 +755,8 @@ def plot_energy_profile(
 
         if do_annotate:
             for i, (xi, Ei, label) in enumerate(zip(x, E, names), start=1):
+                if not np.isfinite(Ei):
+                    continue
                 key = _norm_label(label)
                 is_dummy = dummy_substr.lower() in key
 
@@ -887,6 +871,15 @@ def plot_energy_profile(
                         ),
                     )
 
+        if not show_state_labels:
+            for xi, Ei, label in zip(x, E, names):
+                if not np.isfinite(Ei):
+                    ax_.annotate(
+                        str(label), (xi, 0), xycoords=ax_.get_xaxis_transform(),
+                        textcoords="offset points", xytext=(0, -state_label_pad),
+                        ha="center", va="top", fontsize=state_label_fontsize,
+                    )
+
         if is_reference:
             x_map = {}
             prod_xs = []
@@ -958,7 +951,7 @@ def plot_energy_profile(
     profile_legend_metas = []
 
     if not multi:
-        _, _, _, _, side_meta, _ = _plot_one(
+        ref_x_map, ref_prod_xs, _, ref_ordered, side_meta, _ = _plot_one(
             profile_name=None,
             profile_states=states,
             ax_=ax,
@@ -968,6 +961,8 @@ def plot_energy_profile(
             ref_energy_map=None,
             overlay_idx=0,
         )
+        if all(np.isfinite(entry[1]) for entry in parse_profile(states, side_token).entries):
+            ref_x_map = {}
         if side_meta is not None:
             side_legend_metas.append(side_meta)
     else:
@@ -1031,7 +1026,7 @@ def plot_energy_profile(
                 matched = False
                 for om in overlay_energy_maps:
                     oe = om.get(key) if om is not None else None
-                    if oe is None:
+                    if oe is None or not np.isfinite(oe) or not np.isfinite(ref_e):
                         continue
                     energies_match = (
                         abs(float(oe) - float(ref_e)) <= float(same_energy_tol)
@@ -1041,6 +1036,11 @@ def plot_energy_profile(
                         and product_reference_key is not None
                         and key == ref_main_product_key
                     ):
+                        if not (
+                            np.isfinite(ref_energy_map.get(product_reference_key, np.nan))
+                            and np.isfinite(om.get(product_reference_key, np.nan))
+                        ):
+                            continue
                         ref_relative_energy = (
                             float(ref_e)
                             - float(ref_energy_map[product_reference_key])

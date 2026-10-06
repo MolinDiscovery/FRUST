@@ -301,9 +301,9 @@ class MethodPlan:
     stages : mapping
         Mapping from workflow stage ids to :class:`CalculatorSpec` objects.
     include_terminal_solv_sp : bool, optional
-        Whether DFT workflow graphs should end with their separate
-        ``dft_solv_sp`` calculation. Set this to ``False`` when the DFT
-        ranking, optimization, and frequency stages already include solvent.
+        Whether full workflow graphs end with ``dft_solv_sp`` or
+        ``uma_solv_sp`` for the selected result family. Set this to ``False``
+        when ranking, optimization, and frequency stages already include solvent.
     thermochemistry : ThermochemistrySpec or None, optional
         Explicit rule used to assemble molecular free energies from the
         frequency and analysis stages.
@@ -317,7 +317,8 @@ class MethodPlan:
     stage explicitly sets ``StageDef.method_stage``. For example, the screen TS
     workflow asks for keys such as ``"xtb_preopt"``, ``"dft_hessian"``,
     ``"dft_ts_opt"``, and ``"dft_freq"``. Plans with
-    ``include_terminal_solv_sp=True`` also require ``"dft_solv_sp"``.
+    ``include_terminal_solv_sp=True`` also require ``"dft_solv_sp"`` or
+    ``"uma_solv_sp"`` for their result family.
 
     A method plan can contain more stages than a specific workflow will run.
     For example, the built-in ``"r2scan-3c"`` preset contains TS-specific keys
@@ -998,6 +999,10 @@ def preset(name: str) -> MethodPlan:
         - ``"uma-alpb-chloroform"``: use the same UMA model with the
           GFN2-xTB ALPB(chloroform) energy and gradient correction at every
           UMA stage.
+        - ``"uma-gas-opt-alpb-chloroform"``: optimize and characterize TSs
+          and reference minima with gas UMA, then evaluate UMA + ALPB(chloroform)
+          single points. Free energies add the gas-frequency thermal correction
+          to the solvent electronic energy.
 
     Returns
     -------
@@ -1085,6 +1090,7 @@ def _ensure_builtin_presets() -> None:
     register_preset("r2scan-def2svp", _r2scan_def2svp())
     for environment, solvent in (("gas", None), ("alpb-chloroform", "chloroform")):
         register_preset(f"uma-{environment}", _uma_full_method(environment, solvent))
+    register_preset("uma-gas-opt-alpb-chloroform", _uma_gas_opt_alpb_chloroform())
     _BUILTINS_REGISTERED = True
 
 
@@ -1347,6 +1353,25 @@ def _uma_full_method(environment: str, solvent: str | None) -> MethodPlan:
             "uma_min_opt": uma(job="opt", xtb_alpb=solvent),
             "uma_freq": uma(job="freq", xtb_alpb=solvent),
         },
+    )
+
+
+def _uma_gas_opt_alpb_chloroform() -> MethodPlan:
+    """Build gas UMA characterization followed by ALPB solvent energies.
+
+    Returns
+    -------
+    MethodPlan
+        Pinned UMA-S 1.2.1 OMol gas stages with a terminal chloroform
+        single point. Free energies use ``E_solvent + (G_gas - E_gas)``.
+    """
+    gas = _uma_full_method("gas", None)
+    return dataclass_replace(
+        gas,
+        name="uma-gas-opt-alpb-chloroform",
+        include_terminal_solv_sp=True,
+        thermochemistry=ThermochemistrySpec("electronic_plus_thermal"),
+        stages={**gas.stages, "uma_solv_sp": uma(job="sp", xtb_alpb="chloroform")},
     )
 
 

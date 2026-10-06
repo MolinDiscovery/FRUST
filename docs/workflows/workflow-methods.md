@@ -444,6 +444,14 @@ runs/screen_ts/
 For a DFT workflow, omitting `execution` also defaults to `dft_staged`. For a
 non-DFT workflow, omitting it defaults to `single_job`.
 
+To submit worker arrays, add `array=True, array_parallelism=2`. Each staged
+group receives its own array; the limit applies separately to each array.
+Single-job arrays can additionally use `targets_per_task=5` to run five
+targets sequentially in one allocation and share a compatible UMA server.
+Staged arrays require one target per element. See
+[Slurm Arrays](../cluster/arrays.md) for job counts, resource limits, result
+records, and explicit retries.
+
 Successful workflow targets keep only their final parquet and `timing.json` by
 default. Pass `target_retention="all"` to `wf.run(...)` or `wf.submit(...)`
 when you want to keep every intermediate checkpoint parquet.
