@@ -267,10 +267,11 @@ def test_uma_ranked_terminal_ties_and_missing_energy(tmp_path):
 def test_hybrid_rejects_incompatible_choices():
     with pytest.raises(ValueError, match="requires UMA ranking"):
         _workflow(ranking=None, level="uma_ranked")
-    with pytest.raises(ValueError, match="g-xTB screening"):
+    with pytest.raises(ValueError, match="Ranking requires level"):
         ft.workflows.catalyst_screen(
-            dataframe=_components(), screening="uma-gas", ranking="uma-gas",
-            level="full",
+            dataframe=_components(),
+            ranking="uma-gas",
+            level="dft_ranked",
         )
     with pytest.raises(ValueError, match="include_dft_rank_sp=False"):
         ft.workflows.catalyst_screen(

@@ -8,7 +8,7 @@ separate:
 | --- | --- | --- |
 | `Workflow` | chemistry, targets, stage graph | `ft.workflows.screen_ts(...)` |
 | `ScreeningPlan` | GFN-FF preparation and g-xTB or UMA screening potential | `ft.workflows.methods.screening_preset("uma-alpb-chloroform")` |
-| `RankingPlan` | Optional UMA SP reranking after g-xTB optimization | `ft.workflows.methods.ranking_preset("uma-gas")` |
+| `RankingPlan` | Optional UMA or DFT SP selection on optimized screening geometries | `ft.workflows.methods.ranking_preset("uma-alpb-chloroform")` |
 | `MethodPlan` | Final UMA or DFT calculator options and thermochemistry recipe | `ft.workflows.methods.preset("uma-alpb-chloroform")` |
 | execution mode | job grouping | `single_job`, `dft_staged`, `fully_staged` |
 
@@ -20,7 +20,81 @@ same Workflow + same ScreeningPlan + same MethodPlan
     -> cluster production with wf.submit(...)
 ```
 
-## One Screen TS Workflow
+## Screening, Selection and Validation
+
+```python
+import frust as ft
+
+wf = ft.workflows.catalyst_screen(
+    csv_path="screen.csv",
+    n_confs=200,
+    prune_initial=False,
+    screening="gxtb-default",
+    top_n=20,
+    ranking="uma-alpb-chloroform",
+    ranking_top_n=1,
+    method="uma-gas-opt-alpb-chloroform",
+    level="full",
+    scope="barriers",
+    dimer_reference="lowest",
+)
+
+wf.show_stages(detail="full")
+```
+
+This is one end-to-end workflow. The TS sequence is:
+
+```text
+200 requested guesses -> constrained GFN-FF Opt -> g-xTB SP
+-> keep 20 -> constrained g-xTB Opt -> UMA + ALPB(chloroform) SP
+-> keep 1 -> constrained gas UMA Opt -> unconstrained gas Hessian/OptTS/Freq
+-> terminal UMA + ALPB(chloroform) SP
+```
+
+`top_n` controls the earlier screening cutoff; `ranking_top_n` controls the
+finite-energy candidates passed to validation. Failed embeddings or calculations
+can leave fewer candidates. `prune_initial=False` disables the optional initial
+geometry pruning so every generated guess enters GFN-FF.
+
+Reference targets use the same screening and selection blocks, followed by
+unconstrained gas UMA minimum optimization, frequencies and the terminal solvent
+SP. Each dimer alternative remains a separate target. All candidates selected by
+ranking are validated; `ts_refine_n` instead controls the distinct candidates
+selected in native UMA screening runs without a separate ranking block.
+
+| Choice | Meaning | Examples |
+|---|---|---|
+| `screening` | Generate optimized candidate geometries | `gxtb-default`, `uma-gas` |
+| `ranking` | Evaluate those geometries and choose validation inputs | `uma-alpb-chloroform`, `wb97xd3-631g` |
+| `method` | Refine and characterize the selected inputs | `uma-gas-opt-alpb-chloroform`, `wb97xd3-631g` |
+
+Change only `method` to select DFT validation of UMA-ranked geometries, or change
+`ranking` to a DFT preset to select geometries for UMA validation. Ranking and
+validation may use different solvents. The UMA optimization, Hessian and frequency
+stages within validation must use one model and environment; the terminal SP may
+add ALPB(chloroform).
+
+!!! info "The selected geometry is the validation input"
+    Validation consumes the selected screening rows directly. No new guesses are
+    generated. The full stage table's `geometry_from` identifies the optimization
+    supplying each calculation's coordinates; a ranking SP does not replace that
+    geometry source.
+
+Full runs retain the screening result tiers separately from validated results:
+
+```python
+run = ft.screen.open_run("results")
+electronic_screen = run.barriers(level="uma_ranked")
+validated = run.barriers(level="full")
+```
+
+The screening tier contains electronic barriers, not calculated Gibbs barriers.
+Full gas UMA frequencies plus the terminal solvent SP assemble
+`G = E_solv + (G_freq - E_freq)`. TS1/TS3 corrections remain in the separate
+corrected-G column. `uma_rank_top_n` remains a compatible alias for
+`ranking_top_n`; conflicting values are rejected.
+
+### One Screen TS Workflow
 
 ```python
 import frust as ft
@@ -115,8 +189,10 @@ because the calculation level is visible at the workflow construction site.
 | `"wb97xd3-631g-solv"` | Solvent-inclusive ORCA `wB97X-D3/6-31G**` | SMD chloroform in every DFT stage; no final solvent SP | You want the conventional wB97X-D3 workflow evaluated consistently in chloroform. |
 | `"r2scan-def2svp"` | ORCA `R2SCAN/def2-SVP` | ORCA `R2SCAN/def2-SVPD` single point with SMD chloroform | You want a conventional R2SCAN/basis-set workflow instead of the `r2SCAN-3c` composite method. |
 
-The final UMA presets require matching UMA screening and do not schedule a
-`dft_*` stage. The existing gas-phase DFT presets end with `dft_solv_sp`;
+Without explicit ranking, final UMA presets require matching UMA screening.
+With explicit ranking, the selected optimized geometries feed directly into
+UMA validation. An UMA-only plan schedules no `dft_*` stage. The existing
+gas-phase DFT presets end with `dft_solv_sp`;
 the two `*-solv` DFT presets omit it because their DFT calculations already
 include SMD chloroform.
 

@@ -10,7 +10,7 @@ substrate,CN1C=CC=C1,n_methyl_pyrrole,2
 catalyst,CC1(C)CCCC(C)(C)N1C2=CC=CC=C2B,tmp_bcat,
 ```
 
-Save this as `screen.csv`. The four choices use the same TS1 chemistry;
+Save this as `screen.csv`. These choices use the same TS1 chemistry;
 calculator methods and candidate cutoffs change independently.
 
 | Choice | Screening and selection | Final barrier |
@@ -18,10 +18,39 @@ calculator methods and candidate cutoffs change independently.
 | UMA → ωB97 | UMA SP, then constrained UMA Opt; select one | ωB97 TS and references |
 | UMA final, one candidate | UMA SP, then constrained UMA Opt; refine one | UMA TS and references |
 | g-xTB → UMA SP → ωB97 | Constrained g-xTB Opt, then UMA SP reranking; no UMA Opt | ωB97 TS and references |
+| g-xTB → UMA SP → UMA | Constrained g-xTB Opt, solvent UMA SP selection, constrained gas UMA preoptimization | Gas UMA refinement and frequencies, terminal solvent UMA SP |
 | UMA final, several candidates | UMA SP, then constrained UMA Opt; refine several distinct geometries | UMA barrier for each acceptable TS candidate |
 
 `[C]` in the stage paths means the reactive core is constrained. The constraints
 come from the selected TS guess profile. Final `OptTS` searches release them.
+
+## g-xTB Screening With Independent UMA Validation
+
+For g-xTB geometries selected by UMA and then validated by UMA, use one native
+workflow:
+
+```python
+import frust as ft
+
+paired = ft.workflows.catalyst_screen(
+    csv_path="screen.csv",
+    n_confs=200,
+    prune_initial=False,
+    screening="gxtb-default",
+    top_n=20,
+    ranking="uma-alpb-chloroform",
+    ranking_top_n=1,
+    method="uma-gas-opt-alpb-chloroform",
+    level="full",
+)
+```
+
+The selected g-xTB geometry is the input to constrained gas UMA preoptimization.
+Hessian, OptTS and final numerical frequencies release the TS constraints;
+reference targets receive unconstrained minimum optimization and frequencies.
+The terminal SP adds ALPB(chloroform). `method` can independently select DFT
+validation instead. See [screening, selection and validation](../workflows/workflow-methods.md#screening-selection-and-validation)
+for the stage path and separate result tiers.
 
 ## UMA Screening With ωB97 Final Validation
 

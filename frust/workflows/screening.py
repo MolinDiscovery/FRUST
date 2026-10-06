@@ -136,7 +136,8 @@ class CatalystScreenWorkflow:
         reuse_policy: ReusePolicy = "approved",
         n_confs: int | None = None,
         top_n: int = 20,
-        uma_rank_top_n: int = 1,
+        uma_rank_top_n: int | None = None,
+        ranking_top_n: int | None = None,
         ts_refine_n: int = 3,
         prune_initial: bool | dict[str, Any] = True,
     ) -> None:
@@ -169,48 +170,71 @@ class CatalystScreenWorkflow:
             raise TypeError("ranking must be a RankingPlan, preset name, or None")
         if self.ranking is None and self.level == "uma_ranked":
             raise ValueError("level='uma_ranked' requires UMA ranking")
+        composed_method = apply_screening_plan(_coerce_method(method), self.screening)
         if self.ranking is not None:
-            if self.level not in {"uma_ranked", "full"}:
-                raise ValueError("UMA ranking requires level='uma_ranked' or 'full'")
-            if "xtb_opt" not in self.screening.stages:
-                raise ValueError("UMA ranking requires g-xTB screening")
+            ranked_level = (
+                "uma_ranked" if self.ranking.stage_id == "uma_rank_sp" else "dft_ranked"
+            )
+            if self.level not in {ranked_level, "full"}:
+                raise ValueError(f"Ranking requires level={ranked_level!r} or 'full'")
             if ranking_solvation != "method":
-                raise ValueError("ranking_solvation applies only to DFT ranking")
+                raise ValueError(
+                    "Explicit ranking presets define their solvent; use ranking_solvation='method'"
+                )
+            composed_method = composed_method.with_ranking(self.ranking)
         self.include_dft_rank_sp = (
-            "uma_opt" not in self.screening.stages and self.ranking is None
+            (
+                self.ranking.stage_id == "dft_rank_sp"
+                if self.ranking is not None
+                else composed_method.result_family == "dft"
+                and "uma_opt" not in self.screening.stages
+            )
             if include_dft_rank_sp is None
             else bool(include_dft_rank_sp)
         )
-        if self.ranking is not None and self.include_dft_rank_sp:
+        if (
+            self.ranking is not None
+            and self.ranking.stage_id == "uma_rank_sp"
+            and self.include_dft_rank_sp
+        ):
             raise ValueError("UMA ranking requires include_dft_rank_sp=False")
+        if (
+            self.ranking is not None
+            and self.ranking.stage_id == "dft_rank_sp"
+            and not self.include_dft_rank_sp
+        ):
+            raise ValueError("DFT ranking requires include_dft_rank_sp=True")
         self.spec_profile = str(spec_profile).strip().lower()
         self.spec_match = str(spec_match).strip().lower()
-        composed_method = apply_screening_plan(_coerce_method(method), self.screening)
-        if self.ranking is not None:
-            if composed_method.result_family != "dft":
-                raise ValueError("UMA reranking requires a DFT final method")
-            composed_method = composed_method.with_stage(
-                self.ranking.stage_id, self.ranking.calculator
-            )
         if composed_method.result_family == "uma" and self.level == "full":
             if scope != "barriers":
                 raise ValueError("Full UMA currently supports scope='barriers' only")
-            if "uma_opt" not in self.screening.stages:
+            if "uma_opt" not in self.screening.stages and self.ranking is None:
                 raise ValueError("Full UMA requires UMA screening in the same environment")
-            screening_potential = self.screening.stages["uma_opt"].kwargs
-            final_potential = composed_method.for_stage("uma_freq").kwargs
-            if any(
-                screening_potential.get(key) != final_potential.get(key)
-                for key in ("uma", "uma_xtb_alpb")
-            ):
-                raise ValueError("Full UMA screening and final stages must use one model and environment")
-            if self.include_dft_rank_sp:
+            if self.ranking is None:
+                screening_potential = self.screening.stages["uma_opt"].kwargs
+                final_potential = composed_method.for_stage("uma_freq").kwargs
+                if any(
+                    screening_potential.get(key) != final_potential.get(key)
+                    for key in ("uma", "uma_xtb_alpb")
+                ):
+                    raise ValueError(
+                        "Full UMA screening and final stages must use one model and environment"
+                    )
+            if self.include_dft_rank_sp and self.ranking is None:
                 raise ValueError("Full UMA does not include DFT ranking")
             if ranking_solvation != "method":
                 raise ValueError("ranking_solvation applies only to DFT ranking")
             self.method = composed_method
             self.ranking_solvation = {
                 "requested": "method", "model": None, "solvent": None
+            }
+        elif self.ranking is not None or composed_method.result_family == "uma":
+            self.method = composed_method
+            self.ranking_solvation = {
+                "requested": "method",
+                "model": None,
+                "solvent": None,
             }
         else:
             self.method, self.ranking_solvation = with_ranking_solvation(
@@ -241,9 +265,21 @@ class CatalystScreenWorkflow:
         self.reuse_policy = reuse_policy
         self.n_confs = n_confs
         self.top_n = int(top_n)
-        self.uma_rank_top_n = int(uma_rank_top_n)
+        if (
+            ranking_top_n is not None
+            and uma_rank_top_n is not None
+            and ranking_top_n != uma_rank_top_n
+        ):
+            raise ValueError(
+                "ranking_top_n and its legacy alias uma_rank_top_n disagree"
+            )
+        count = ranking_top_n if ranking_top_n is not None else uma_rank_top_n
+        if count is not None and (isinstance(count, bool) or int(count) != count):
+            raise ValueError("ranking_top_n must be a positive integer")
+        self.uma_rank_top_n = int(1 if count is None else count)
+        self.ranking_top_n = self.uma_rank_top_n
         if self.uma_rank_top_n < 1:
-            raise ValueError("uma_rank_top_n must be positive")
+            raise ValueError("ranking_top_n (uma_rank_top_n) must be positive")
         self.ts_refine_n = int(ts_refine_n)
         if self.ts_refine_n < 1:
             raise ValueError("ts_refine_n must be positive")
@@ -367,6 +403,7 @@ class CatalystScreenWorkflow:
         if self.ranking is not None:
             result.attrs["ranking"] = self.ranking.to_dict()
             result.attrs["uma_rank_top_n"] = self.uma_rank_top_n
+            result.attrs["ranking_top_n"] = self.ranking_top_n
         result.attrs["ranking_solvation"] = self.ranking_solvation
         result.attrs["thermochemistry"] = (
             None
@@ -837,7 +874,6 @@ class CatalystScreenWorkflow:
                 ),
             )
 
-
     def _reference_states(self) -> list[str]:
         dimer_states = (
             list(DIMER_STATES)
@@ -852,10 +888,13 @@ class CatalystScreenWorkflow:
     def _analysis_levels(self) -> tuple[CalculationLevel, ...]:
         """Return calculation tiers available from the requested workflow."""
         if self.ranking is not None:
+            ranked_level = (
+                "uma_ranked" if self.ranking.stage_id == "uma_rank_sp" else "dft_ranked"
+            )
             return (
-                ("low_cost", "uma_ranked", "full")
+                ("low_cost", ranked_level, "full")
                 if self.level == "full"
-                else ("low_cost", "uma_ranked")
+                else ("low_cost", ranked_level)
             )
         if self.level == "full":
             return (
@@ -877,12 +916,21 @@ class CatalystScreenWorkflow:
             "workflow": "frust.workflows.mols::v2",
             "calculation_level": level,
             "screening_fingerprint": self.screening.fingerprint(),
-            "ranking_solvation": self.ranking_solvation,
+            "ranking_solvation": (
+                {
+                    "requested": "method",
+                    "model": None,
+                    "solvent": None,
+                    "applied": False,
+                }
+                if self.ranking is not None and level == "low_cost"
+                else self.ranking_solvation
+            ),
             "n_confs": self.n_confs,
             "top_n": self.top_n,
             "prune_initial": self.prune_initial,
         }
-        if self.ranking is not None and level in {"uma_ranked", "full"}:
+        if self.ranking is not None and level != "low_cost":
             protocol["ranking_fingerprint"] = self.ranking.fingerprint()
             protocol["uma_rank_top_n"] = self.uma_rank_top_n
         if level == "full" and not self.include_dft_rank_sp:
@@ -1073,6 +1121,7 @@ class CatalystScreenWorkflow:
             manifest["ranking"] = self.ranking.to_dict()
             manifest["ranking_fingerprint"] = self.ranking.fingerprint()
             manifest["uma_rank_top_n"] = self.uma_rank_top_n
+            manifest["ranking_top_n"] = self.ranking_top_n
         if self.method.result_family == "uma":
             manifest["ts_refine_n"] = self.ts_refine_n
         signature_keys = [
@@ -1337,7 +1386,8 @@ def catalyst_screen(
     reuse_policy: ReusePolicy = "approved",
     n_confs: int | None = None,
     top_n: int = 20,
-    uma_rank_top_n: int = 1,
+    uma_rank_top_n: int | None = None,
+    ranking_top_n: int | None = None,
     ts_refine_n: int = 3,
     prune_initial: bool | dict[str, Any] = True,
 ) -> CatalystScreenWorkflow:
@@ -1381,9 +1431,10 @@ def catalyst_screen(
         ``"uma-alpb-chloroform"`` characterize TS and reference minima with
         UMA; DFT presets retain independent DFT validation.
     ranking : RankingPlan, str, or None, optional
-        Optional ``"uma-gas"`` or ``"uma-alpb-chloroform"`` single-point
-        reranking after g-xTB optimization. The ``"full"`` result still uses
-        the selected DFT method; no UMA optimization is run.
+        Single-point selection on optimized screening geometries. Choose
+        ``"uma-gas"``, ``"uma-alpb-chloroform"``, or a DFT method preset such
+        as ``"wb97xd3-631g"``. Selected rows proceed directly into the UMA or
+        DFT validation chosen by ``method``; no guesses are regenerated.
     ranking_solvation : str, optional
         Solvation for DFT single points on screened geometries. ``"method"``
         inherits the method's analysis solvent, ``"gas"`` disables implicit
@@ -1400,9 +1451,10 @@ def catalyst_screen(
     spec_match : {"prefer-exact", "exact"}, optional
         Profile resolution policy for TS/INT3 guesses.
     include_dft_rank_sp : bool or None, optional
-        Include the ωB97 ranking single point in a ``"full"`` run. The
-        default is ``False`` for UMA screening or UMA reranking and ``True``
-        for plain g-xTB screening;
+        Legacy switch for the validation method's DFT ranking single point.
+        Explicit DFT ranking enables it; explicit UMA ranking disables it.
+        Otherwise the default is False for full UMA or UMA screening and
+        True for DFT validation after plain g-xTB screening;
         ``"dft_ranked"`` always runs the ranking point.
     scope : {"barriers", "full_cycle"}, optional
         ``"barriers"`` calculates the dependencies of the four supplied
@@ -1434,12 +1486,19 @@ def catalyst_screen(
     top_n : int, optional
         Number retained by the low-cost screen. With UMA reranking, this is
         the broad g-xTB cutoff before the UMA single points.
-    uma_rank_top_n : int, optional
-        Number of UMA-ranked candidates advanced to final ωB97 refinement.
-        Defaults to one and is independent of ``top_n``.
+    ranking_top_n : int or None, optional
+        Number of finite-energy ranked candidates passed into validation.
+        Defaults to one. ``top_n`` is the earlier screening cutoff. For full
+        UMA, each selected TS receives constrained UMA preoptimization before
+        constraints are released for Hessian, OptTS and frequency stages.
+    uma_rank_top_n : int or None, optional
+        Legacy alias for ``ranking_top_n``. Both names may be provided only
+        when their values agree.
     ts_refine_n : int, optional
         Maximum distinct UMA optimized TS candidates sent to Hessian,
-        released ``OptTS``, and final numerical frequencies in a full UMA run.
+        released ``OptTS``, and final numerical frequencies in a full UMA run
+        without explicit ranking. With ranking, ``ranking_top_n`` controls
+        the candidates carried into validation.
     prune_initial : bool or dict, optional
         Initial conformer-pruning configuration forwarded to child workflows.
 
@@ -1479,6 +1538,7 @@ def catalyst_screen(
         n_confs=n_confs,
         top_n=top_n,
         uma_rank_top_n=uma_rank_top_n,
+        ranking_top_n=ranking_top_n,
         ts_refine_n=ts_refine_n,
         prune_initial=prune_initial,
     )

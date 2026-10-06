@@ -161,6 +161,9 @@ class StageDef:
     prune_options : dict, optional
         Options forwarded to :meth:`frust.stepper.Stepper.prune_conformers`
         when ``kind="prune"``.
+    geometry_from : str or None, optional
+        Optimization stage supplying input coordinates. ``"embedded"`` uses
+        ``coords_embedded``; None preserves legacy latest-coordinate behavior.
     """
 
     id: str
@@ -175,6 +178,7 @@ class StageDef:
     use_last_hess: bool = False
     save_files: list[str] | None = None
     prune_options: dict[str, Any] | None = None
+    geometry_from: str | None = None
 
 
 @dataclass(frozen=True)
@@ -471,6 +475,7 @@ class BaseWorkflow:
                             "prune_options": _format_planned_mapping(
                                 stage.prune_options
                             ),
+                            "geometry_from": stage.geometry_from,
                         }
                     )
                 rows.append(row)
@@ -499,6 +504,7 @@ class BaseWorkflow:
                     "use_last_hess",
                     "save_files",
                     "prune_options",
+                    "geometry_from",
                 ]
             )
         return pd.DataFrame(rows, columns=columns)
@@ -2814,6 +2820,23 @@ def _apply_calculator(
             f"Calculator stage {stage.id!r} with lowest= must set rank_by={stage.id!r}; "
             "use an explicit filter stage to rank by a different calculation"
         )
+    if stage.geometry_from is not None:
+        geometry_column = (
+            "coords_embedded"
+            if stage.geometry_from == "embedded"
+            else output_column(stage.geometry_from, "opt_coords")
+        )
+        if geometry_column not in df:
+            raise ValueError(
+                f"Stage {stage.id!r} requires geometry column {geometry_column!r}"
+            )
+        # Stepper consumes the final coordinate column; bind it explicitly here.
+        df = df[
+            [column for column in df if column != geometry_column] + [geometry_column]
+        ].copy()
+        inputs = dict(df.attrs.get("frust_geometry_inputs", {}))
+        inputs[stage.id] = geometry_column
+        df.attrs["frust_geometry_inputs"] = inputs
     kwargs = {
         "name": stage.id,
         "options": spec.options,
@@ -2884,7 +2907,7 @@ def _run_stage_calculation(
             raise ValueError(f"Filter stage {stage.id!r} must define rank_by")
         input_rows = len(df)
         energy_col = output_column(stage.rank_by, "electronic_energy")
-        if stage.id == "uma_rank_filter":
+        if stage.id in {"uma_rank_filter", "dft_rank_filter"}:
             energies = pd.to_numeric(df[energy_col], errors="coerce")
             df = df.loc[np.isfinite(energies)].copy()
         result = lowest_energy_rows(
@@ -3067,8 +3090,12 @@ def _attach_workflow_attrs(
     if workflow.result_profile == "transition_state" and workflow.method.result_family == "uma":
         df.attrs["frust_workflow"]["ts_refine_n"] = int(workflow.ts_refine_n)
         df.attrs["frust_workflow"]["screen_top_n"] = int(workflow.top_n)
-    if "uma_rank_sp" in workflow.method.stages:
-        df.attrs["frust_workflow"]["ranking_stage"] = "uma_rank_sp"
+    ranking_stage = workflow.method.ranking_stage or (
+        "uma_rank_sp" if "uma_rank_sp" in workflow.method.stages else None
+    )
+    if ranking_stage is not None:
+        df.attrs["frust_workflow"]["ranking_stage"] = ranking_stage
+        df.attrs["frust_workflow"]["ranking_top_n"] = int(workflow.uma_rank_top_n)
         df.attrs["frust_workflow"]["uma_rank_top_n"] = int(
             workflow.uma_rank_top_n
         )
@@ -3096,9 +3123,7 @@ def _attach_workflow_attrs(
             ),
             include_dft_rank_sp=bool(getattr(workflow, "include_dft_rank_sp", True)),
             thermochemistry=workflow.method.thermochemistry,
-            ranking_stage=(
-                "uma_rank_sp" if "uma_rank_sp" in workflow.method.stages else None
-            ),
+            ranking_stage=(ranking_stage),
         )
         contract = df.attrs["frust_results"]
         analysis_column = str(contract["columns"]["analysis"]["electronic_energy"])
