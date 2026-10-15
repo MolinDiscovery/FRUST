@@ -32,6 +32,7 @@ from frust.cluster.submission import (
 )
 from frust.screen import expand as expand_screen
 from frust.screen import read as read_screen
+from frust.screen.core import _read_explicit_systems
 from frust.screen.cleanup import cleanup_submitit_jobs, initialize_submitit_directory
 from frust.screen.references import ReferenceLibrary, ReferenceRecord, ReusePolicy
 from frust.screen.runs import ScreenRun, _resolve_terms, _state_rows, build_analysis
@@ -120,6 +121,7 @@ class CatalystScreenWorkflow:
         *,
         csv_path: str | Path | None = None,
         dataframe: pd.DataFrame | None = None,
+        systems: str | Path | pd.DataFrame | None = None,
         ts_types: tuple[str, ...] | list[str] = ("TS1", "TS2", "TS3", "TS4"),
         screening: ScreeningPlan | str = "gxtb-default",
         level: CalculationLevel = "full",
@@ -141,8 +143,8 @@ class CatalystScreenWorkflow:
         ts_refine_n: int = 3,
         prune_initial: bool | dict[str, Any] = True,
     ) -> None:
-        if (csv_path is None) == (dataframe is None):
-            raise ValueError("Provide exactly one of csv_path or dataframe")
+        if sum(value is not None for value in (csv_path, dataframe, systems)) != 1:
+            raise ValueError("Provide exactly one of csv_path, dataframe, or systems")
         if scope not in {"barriers", "full_cycle"}:
             raise ValueError("scope must be 'barriers' or 'full_cycle'")
         if dimer_reference not in {"lowest", *DIMER_STATES}:
@@ -284,6 +286,8 @@ class CatalystScreenWorkflow:
         self.prune_initial = prune_initial
         self._components_cache: pd.DataFrame | None = None
         self._systems_cache: pd.DataFrame | None = None
+        if systems is not None:
+            self._systems_cache, self._components_cache = _read_explicit_systems(systems)
         self._children_cache: dict[str, Any] | None = None
 
     def components(self) -> pd.DataFrame:
@@ -1369,6 +1373,7 @@ def catalyst_screen(
     *,
     csv_path: str | Path | None = None,
     dataframe: pd.DataFrame | None = None,
+    systems: str | Path | pd.DataFrame | None = None,
     ts_types: tuple[str, ...] | list[str] = ("TS1", "TS2", "TS3", "TS4"),
     screening: ScreeningPlan | str = "gxtb-default",
     level: CalculationLevel = "full",
@@ -1402,9 +1407,15 @@ def catalyst_screen(
     ----------
     csv_path : str or pathlib.Path or None, optional
         Component CSV containing substrate and catalyst rows. Provide exactly
-        one of ``csv_path`` and ``dataframe``.
+        one of ``csv_path``, ``dataframe``, and ``systems``.
     dataframe : pandas.DataFrame or None, optional
         In-memory component table with ``role`` and ``smiles`` columns.
+    systems : str, pathlib.Path, or pandas.DataFrame or None, optional
+        Explicit shortlisted systems, as a CSV path or dataframe containing
+        ``system_name``, ``substrate_name``, ``catalyst_name``,
+        ``substrate_smiles``, ``catalyst_smiles``, and ``rpos``. Only those
+        pairs and sites are calculated; reference components are deduplicated
+        from the selected rows. No substrate/catalyst cross-product is made.
     ts_types : sequence of str, optional
         Transition-state families to calculate. Supported built-ins are
         ``"TS1"``, ``"TS2"``, ``"TS3"``, and ``"TS4"``.
@@ -1521,6 +1532,7 @@ def catalyst_screen(
     return CatalystScreenWorkflow(
         csv_path=csv_path,
         dataframe=dataframe,
+        systems=systems,
         ts_types=ts_types,
         screening=screening,
         level=level,

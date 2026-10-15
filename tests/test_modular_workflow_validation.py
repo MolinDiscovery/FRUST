@@ -524,20 +524,20 @@ def test_full_uma_cycle_is_balanced_and_keeps_intermediate_geometry(
         assert set(references.loc[references.reference_id.notna(), "cid"]) == {0}
 
 
-def test_full_cycle_children_preserve_selected_systems():
-    from frust.workflows.screening import CatalystScreenWorkflow
-
-    class Shortlist(CatalystScreenWorkflow):
-        def systems(self):
-            return super().systems().iloc[:1].copy()
-
+@pytest.mark.parametrize("from_csv", [False, True])
+def test_full_cycle_children_preserve_selected_systems(tmp_path, from_csv):
     inputs = pd.concat([
         components(),
         pd.DataFrame(dict(role=["catalyst"], smiles=["BC1=C(N(CC)CC)C=CC=C1"],
                           compound_name=["NEt"])),
     ], ignore_index=True)
-    wf = Shortlist(
-        dataframe=inputs, scope="full_cycle", screening="uma-gas", method="uma-gas"
+    selected_systems = ft.screen.expand(ft.screen.read(inputs)).iloc[:1].copy()
+    source = selected_systems
+    if from_csv:
+        source = tmp_path / "selected.csv"
+        selected_systems.to_csv(source, index=False)
+    wf = ft.workflows.catalyst_screen(
+        systems=source, scope="full_cycle", screening="uma-gas", method="uma-gas"
     )
     selected = wf.systems().system_name.iloc[0]
     plan = wf.plan()
@@ -546,6 +546,36 @@ def test_full_cycle_children_preserve_selected_systems():
     assert dependent.groupby("branch").size().to_dict() == {
         "transition_states": 4, "cycle_molecules": 3, "int3": 1,
     }
+    assert len(wf.components()) == 2
+    assert len(plan[plan.branch.eq("references")]) == 7
+    assert set(wf.components().compound_name) == {"pyrrole", "NMe"}
+    expected = pd.read_csv(source) if from_csv else selected_systems.reset_index(drop=True)
+    pd.testing.assert_frame_equal(wf.systems(), expected)
+
+
+def test_explicit_systems_reject_ambiguous_inputs_and_conflicting_identities():
+    systems = ft.screen.expand(ft.screen.read(components()))
+    with pytest.raises(ValueError, match="exactly one"):
+        workflow(systems=systems)
+    with pytest.raises(ValueError, match="missing required columns"):
+        workflow(dataframe=None, systems=systems.drop(columns="rpos"))
+    changed = pd.concat([systems, systems.assign(catalyst_smiles="B")], ignore_index=True)
+    with pytest.raises(ValueError, match="Conflicting SMILES"):
+        workflow(dataframe=None, systems=changed)
+    with pytest.raises(ValueError, match="non-missing"):
+        workflow(dataframe=None, systems=systems.assign(rpos=None))
+
+
+def test_explicit_sites_are_preserved_with_deduplicated_reference_components():
+    systems = ft.screen.expand(ft.screen.read(components()))
+    systems = pd.concat([systems, systems.assign(rpos=3)], ignore_index=True)
+    wf = workflow(dataframe=None, systems=systems, scope="full_cycle",
+                  ts_types=["TS1", "TS2", "TS3", "TS4"])
+    plan = wf.plan()
+    assert plan.branch.value_counts().to_dict() == {
+        "transition_states": 8, "references": 7, "cycle_molecules": 6, "int3": 2,
+    }
+    assert wf.components().query("role == 'substrate'").rpos.tolist() == ["2;3"]
 
 
 @pytest.mark.parametrize("all_invalid", [False, True])

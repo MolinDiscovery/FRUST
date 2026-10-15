@@ -59,6 +59,28 @@ result = wf.submit(
 
 ## High-Throughput Catalyst Screens
 
+Submit an exact shortlist with `systems=` instead of rebuilding the component
+cross-product:
+
+```python
+screen = ft.workflows.catalyst_screen(
+    systems="selected_systems.csv",
+    screening="gxtb-default",
+    ranking="uma-alpb-chloroform",
+    ranking_top_n=3,
+    method="uma-gas-opt-alpb-chloroform",
+    level="full",
+    scope="full_cycle",
+)
+```
+
+The CSV contains `system_name`, `substrate_name`, `catalyst_name`,
+`substrate_smiles`, `catalyst_smiles`, and `rpos`. For example, two selected
+rows can request different catalysts for different substrates; FRUST runs
+only those pairs and sites and derives shared reference components from them.
+`systems=` also accepts an in-memory dataframe. Provide exactly one of
+`systems`, component `csv_path`, and component `dataframe`.
+
 Use the opt-in screening artifact policy on the composed catalyst-screen
 workflow:
 

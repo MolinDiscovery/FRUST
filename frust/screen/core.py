@@ -9,6 +9,7 @@ from typing import Any
 import pandas as pd
 
 from frust.tsguess import create_ts_guess_dataframes as create_tsguess_dataframes
+from frust.tsguess.matching import parse_rpos_value
 from frust.tsguess2 import create_ts_guess_dataframes as create_tsguess2_dataframes
 
 ROLE_ALIASES = {"substrate": "substrate", "sub": "substrate", "catalyst": "catalyst", "cat": "catalyst"}
@@ -169,6 +170,46 @@ def create_ts_guesses(
             }
         )
     return create(systems, **kwargs)
+
+
+def _read_explicit_systems(
+    source: str | Path | pd.DataFrame,
+) -> tuple[pd.DataFrame, pd.DataFrame]:
+    """Read selected systems and derive their deduplicated reference components."""
+    systems = source.copy() if isinstance(source, pd.DataFrame) else pd.read_csv(source)
+    required = {
+        "system_name", "substrate_name", "catalyst_name", "substrate_smiles",
+        "catalyst_smiles", "rpos",
+    }
+    missing = sorted(required - set(systems.columns))
+    if missing:
+        raise ValueError("systems input is missing required columns: " + ", ".join(missing))
+    if systems.empty or systems[list(required)].apply(
+        lambda column: column.map(_is_missing)
+    ).any().any():
+        raise ValueError("systems input must contain non-missing identities and reactive sites")
+    for name, group in systems.groupby("system_name", sort=False):
+        identities = group[["substrate_name", "catalyst_name"]].drop_duplicates()
+        if len(identities) != 1:
+            raise ValueError(f"Conflicting component identities for system {name!r}")
+    components = []
+    for role in ("substrate", "catalyst"):
+        for name, group in systems.groupby(f"{role}_name", sort=False):
+            smiles = group[f"{role}_smiles"].unique()
+            if len(smiles) != 1:
+                raise ValueError(f"Conflicting SMILES for {role} {name!r}")
+            sites = (
+                sorted({
+                    site for value in group["rpos"]
+                    for site in parse_rpos_value(value, smiles[0])
+                })
+                if role == "substrate" else []
+            )
+            components.append({
+                "role": role, "compound_name": name, "smiles": smiles[0],
+                "rpos": ";".join(map(str, sites)) if sites else pd.NA,
+            })
+    return systems.reset_index(drop=True), read(pd.DataFrame(components), strict=True)
 
 
 def _normalize_role(value: object) -> str | None:
