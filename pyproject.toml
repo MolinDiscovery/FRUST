@@ -31,7 +31,7 @@ cluster = [
 ]
 notebooks = [
     "ipython",
-    "py3Dmol",
+    "py3Dmol==2.5.5",
 ]
 docs = [
     "mkdocs-material",
