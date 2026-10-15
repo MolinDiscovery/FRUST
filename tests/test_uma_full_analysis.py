@@ -303,12 +303,7 @@ def test_unbalanced_uma_barrier_has_no_energy(tmp_path, monkeypatch):
     ).all()
 
 
-def test_full_uma_rejects_unsupported_scope_and_mixed_plan():
-    with pytest.raises(ValueError, match="scope='barriers'"):
-        ft.workflows.catalyst_screen(
-            dataframe=_components(), screening="uma-gas", method="uma-gas",
-            level="full", scope="full_cycle",
-        )
+def test_full_uma_rejects_mixed_plan():
     with pytest.raises(ValueError, match="one model and environment"):
         ft.workflows.catalyst_screen(
             dataframe=_components(), screening="uma-gas",

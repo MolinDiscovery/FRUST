@@ -1419,6 +1419,9 @@ def _build_profiles(
                     and dimer_result_id is not None
                     else None
                 ),
+                select_ts_candidates=(
+                    full and manifest.get("method", {}).get("result_family") == "uma"
+                ),
                 select_candidates=full and bool(manifest.get("ranking")),
             )
             if problems:

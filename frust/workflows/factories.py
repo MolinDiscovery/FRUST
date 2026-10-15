@@ -1233,6 +1233,8 @@ class Int3Workflow(BaseWorkflow):
         """Return the explicit or method-derived INT3 geometry profile."""
         if self.spec_profile != "auto":
             return self.spec_profile
+        if self.method.result_family == "uma":
+            return "omol-uma-s-1p2p1/gas"
         return profile_for_geometry_stage(self.method, "dft_opt")
 
     @property
@@ -1328,7 +1330,34 @@ class Int3Workflow(BaseWorkflow):
                         rank_by="dft_rank_sp",
                     )
                 )
-        if self.calculation_level == "full":
+        if self.calculation_level == "full" and self.method.result_family == "uma":
+            if self.include_dft_rank_sp and ranking is None:
+                raise ValueError("Full UMA minima cannot include implicit DFT ranking")
+            if ranking is None:
+                if screening_opt != "uma_opt":
+                    raise ValueError(
+                        "Full UMA minima require UMA screening or explicit ranking"
+                    )
+                _validate_uma_potential(
+                    self.method, ("uma_sp", "uma_opt", "uma_min_opt", "uma_freq")
+                )
+            stages.append(
+                StageDef(
+                    "uma_preopt",
+                    "constrained UMA preoptimization",
+                    method_stage="uma_min_opt",
+                    constraint=True,
+                    lowest=None if ranking is not None else 1,
+                    rank_by="uma_preopt",
+                )
+            )
+            stages.extend(
+                _uma_validation_stages(
+                    self.method, ts=False, selected_candidates=ranking is not None
+                )
+            )
+            return _connect_geometry_inputs(stages, self.method)
+        elif self.calculation_level == "full":
             stages.extend(
                 _int3_dft_refinement_stages(
                     include_terminal_solv_sp=self.method.include_terminal_solv_sp,
@@ -1720,7 +1749,8 @@ def int3(
         ``"uma-alpb-chloroform"``.
     spec_profile : str, optional
         Geometry-reference profile used for INT3 construction. ``"auto"``
-        selects it from the DFT optimization method and environment.
+        selects the reviewed UMA gas profile for UMA final methods, or the
+        DFT optimization method and environment for DFT final methods.
     spec_match : {"prefer-exact", "exact"}, optional
         Profile matching policy. ``"prefer-exact"`` may fall back to the
         other environment from the same method family; ``"exact"`` requires
@@ -1728,19 +1758,22 @@ def int3(
     n_confs : int or None, optional
         Conformer count for initial INT3 embedding.
     top_n : int, optional
-        Number of low-cost optimized structures kept before the DFT pre-SP
-        cutoff.
+        Number of candidates retained by the low-cost geometry screen.
     dft : bool, optional
-        If ``True``, include constrained DFT preoptimization, INT3 DFT
-        optimization, and frequency stages. Gas-phase presets also include a
-        terminal solvent single point; solvent-inclusive presets do not. If
-        ``False``, stop after the DFT pre-SP cutoff and keep the lowest-energy
-        row.
-    calculation_level : {"low_cost", "dft_ranked", "full"} or None, optional
-        Explicit workflow depth. When set, it takes precedence over ``dft``.
+        Legacy workflow-depth switch. ``True`` requests full refinement with
+        the selected final method, UMA or DFT; ``False`` requests DFT-ranked
+        screening. Prefer ``calculation_level`` for explicit method plans.
+    calculation_level : {"low_cost", "uma_ranked", "dft_ranked", "full"} or None, optional
+        ``"low_cost"`` stops after geometry screening, ``"uma_ranked"``
+        selects by an explicit UMA ranking stage, ``"dft_ranked"`` selects
+        by a DFT single point, and ``"full"`` adds constrained
+        preoptimization, unconstrained minimum optimization, frequencies,
+        and any terminal solvent single point specified by the final method.
+        When set, this takes precedence over ``dft``.
     include_dft_rank_sp : bool or None, optional
-        Include the DFT ranking single point in a full run. Defaults to
-        ``False`` for UMA screening and ``True`` otherwise.
+        Include a DFT ranking single point in a full run. ``None`` follows an
+        explicit ranking plan; otherwise it defaults to ``False`` for UMA
+        screening or UMA final methods and ``True`` for DFT after g-xTB.
     prune_initial : bool or dict, optional
         If ``False``, leave the initial INT3 conformer ensemble unchanged. If
         ``True``, insert PRISM pruning immediately after ``prepare`` using the

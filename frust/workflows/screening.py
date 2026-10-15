@@ -34,7 +34,7 @@ from frust.screen import expand as expand_screen
 from frust.screen import read as read_screen
 from frust.screen.cleanup import cleanup_submitit_jobs, initialize_submitit_directory
 from frust.screen.references import ReferenceLibrary, ReferenceRecord, ReusePolicy
-from frust.screen.runs import ScreenRun, build_analysis
+from frust.screen.runs import ScreenRun, _resolve_terms, _state_rows, build_analysis
 from frust.schema import normal_termination_columns
 from frust.structures import StructureTarget
 from frust.structures.specs import DIMER_STATES
@@ -207,8 +207,6 @@ class CatalystScreenWorkflow:
         self.spec_profile = str(spec_profile).strip().lower()
         self.spec_match = str(spec_match).strip().lower()
         if composed_method.result_family == "uma" and self.level == "full":
-            if scope != "barriers":
-                raise ValueError("Full UMA currently supports scope='barriers' only")
             if "uma_opt" not in self.screening.stages and self.ranking is None:
                 raise ValueError("Full UMA requires UMA screening in the same environment")
             if self.ranking is None:
@@ -305,9 +303,10 @@ class CatalystScreenWorkflow:
         """Return the homogeneous workflows coordinated by this run."""
         if self._children_cache is None:
             components = self.components()
+            systems = self.systems()
             children: dict[str, Any] = {
                 "transition_states": ScreenTSWorkflow(
-                    dataframe=components,
+                    dataframe=systems,
                     ts_types=self.ts_types,
                     method=self.method,
                     spec_profile=self.spec_profile,
@@ -334,7 +333,7 @@ class CatalystScreenWorkflow:
             }
             if self.scope == "full_cycle":
                 children["cycle_molecules"] = MolsWorkflow(
-                    dataframe=components,
+                    dataframe=systems,
                     select_mols=["int1", "int2", "HBpin-ligand"],
                     method=self.method,
                     include_dft_rank_sp=self.include_dft_rank_sp,
@@ -345,7 +344,7 @@ class CatalystScreenWorkflow:
                     prune_initial=self.prune_initial,
                 )
                 children["int3"] = Int3Workflow(
-                    dataframe=components,
+                    dataframe=systems,
                     method=self.method,
                     spec_profile=self.spec_profile,
                     spec_match=self.spec_match,
@@ -1459,8 +1458,9 @@ def catalyst_screen(
     scope : {"barriers", "full_cycle"}, optional
         ``"barriers"`` calculates the dependencies of the four supplied
         barrier equations. ``"full_cycle"`` adds every state needed for the
-        balanced catalytic-cycle profile. Full UMA currently supports
-        ``"barriers"`` only.
+        balanced catalytic-cycle profile, including catalyst, int1, int2,
+        INT3, and borylated product states. Both UMA and DFT final methods
+        support either scope.
     dimer_reference : {"lowest", "dimer", "dimer_bh_bridged", "dimer_eight_membered"}, optional
         Catalyst dimer used in barrier and profile equations. ``"lowest"``
         calculates all three topologies and strictly selects the lowest
@@ -1583,6 +1583,44 @@ def _finalize_submitted_run(
         _mark_completed(root, attempt_id, 'screen_finalize', 0)
 
 
+def _reference_publication_frame(
+    workflow: CatalystScreenWorkflow, frame: pd.DataFrame, target: StructureTarget
+) -> pd.DataFrame:
+    """Select a reference with the same quality and energy rules as analysis."""
+    if len(frame) <= 1:
+        return frame
+    states = _state_rows(
+        frame,
+        source="references",
+        recipe=(
+            workflow.method.thermochemistry.to_dict()
+            if workflow.method.thermochemistry is not None else None
+        ),
+        reviews={},
+        calculation_level=workflow.level,
+        method=workflow.method.to_dict(),
+    )
+    selected, problems = _resolve_terms(
+        states,
+        {target.state_id: 1.0},
+        system_name=target.system.system_name,
+        substrate_name=target.system.substrate_name,
+        catalyst_name=target.system.catalyst_name,
+        rpos=target.rpos,
+        select_candidates=True,
+    )
+    if problems:
+        raise ValueError(f"Cannot select reference candidate: {';'.join(problems)}")
+    candidate = selected[target.state_id]
+    result = frame.iloc[[int(candidate["source_row"])]].copy()
+    result.attrs["frust_reference_selection"] = {
+        "input_rows": len(frame),
+        "selected_result_id": str(candidate["result_id"]),
+        "quality_status": str(candidate["quality_status"]),
+    }
+    return result
+
+
 def _finalize_run(
     workflow: CatalystScreenWorkflow,
     root: Path,
@@ -1678,14 +1716,16 @@ def _finalize_run(
                 }
             )
             continue
-        frame = pd.read_parquet(result_path).copy()
+        frame = pd.read_parquet(result_path).reset_index(drop=True)
         reference_id: str | None = None
         validation_status: str | None = None
         publication_status = "published"
         publication_issue = ""
+        selected_frame = None
         try:
+            selected_frame = _reference_publication_frame(workflow, frame, target)
             local_record = local_library.publish(
-                frame,
+                selected_frame,
                 target,
                 workflow.method,
                 protocol=workflow._reference_protocol(),
@@ -1708,7 +1748,7 @@ def _finalize_run(
             )
             if shared_library is not None:
                 shared_library.publish(
-                    frame,
+                    selected_frame,
                     target,
                     workflow.method,
                     protocol=workflow._reference_protocol(),
@@ -1717,7 +1757,9 @@ def _finalize_run(
                     source_target_dir=target_dir,
                     artifact_policy=artifact_policy,
                 )
-        frame["reference_id"] = reference_id
+        frame["reference_id"] = None
+        if reference_id is not None:
+            frame.loc[selected_frame.index, "reference_id"] = reference_id
         frame["reference_source"] = "calculated"
         computed_frames.append(frame)
         computed_sources.append(result_path)
@@ -2070,7 +2112,9 @@ def _finalize_nested_tiers(
                 "n_targets": len(child.targets()),
                 "n_snapshots": len(frames),
                 "n_rows": int(len(merged)),
-                "complete": int(len(merged)) == len(child.targets()),
+                "complete": {target.target_id for target in child.targets()}.issubset(
+                    set(merged.get("structure_id", pd.Series(dtype=str)))
+                ),
                 "path": str((tier_dir / "merged.parquet").relative_to(root)),
             }
         report["levels"][level] = level_report
