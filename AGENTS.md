@@ -2,6 +2,14 @@
 
 Use `conda activate UMA` to test things in this project. It should have most packages / software.
 
+## Local Agent Artifacts
+
+Put agent-generated scratch plans, research, profiling tools, and run evidence
+in the root `autodev/` directory. It is local-only and ignored by Git; do not
+force-add its contents. Keep the user's numbered development notebooks and
+their required support files in `dev/`. Production code, maintained docs, and
+regression tests belong in their normal tracked locations.
+
 When making new git branches, don't use something like codex/new-feature, instead use something like feature/new-feature.
 
 ## Mounted Filesystems
