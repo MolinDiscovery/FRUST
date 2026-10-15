@@ -1,0 +1,198 @@
+{
+  "date": "2026-10-15",
+  "scope": "Separate Chrome 153 browser, 30-cell vibration grids; no notebook writes or calculation reruns.",
+  "original_2_4_2": {
+    "elapsed_seconds": 301.1,
+    "fresh": {
+      "heap_mb": 16.64,
+      "pending_callbacks": 90,
+      "first_viewer_geometry_counter": 8,
+      "first_model_picking_shapes": 240,
+      "buffers_created_minus_deleted": 1805
+    },
+    "after_playback": {
+      "heap_mb": 325.03,
+      "pending_callbacks": 90,
+      "first_viewer_geometry_counter": 20948,
+      "first_model_picking_shapes": 64800,
+      "buffers_created_minus_deleted": 3457224
+    }
+  },
+  "upgraded_2_5_5_resource_cleanup": {
+    "elapsed_seconds": 300.1,
+    "fresh": {
+      "heap_mb": 16.45,
+      "pending_callbacks": 30,
+      "first_viewer_geometry_counter": 2,
+      "first_model_picking_shapes": 264,
+      "buffers_created_minus_deleted": 540
+    },
+    "after_playback": {
+      "heap_mb": 16.89,
+      "pending_callbacks": 30,
+      "first_viewer_geometry_counter": 2,
+      "first_model_picking_shapes": 264,
+      "buffers_created_minus_deleted": 540
+    }
+  },
+  "cached_engine_before_resume_guard": [
+    {
+      "cachedOld": true,
+      "requestedNew": 0,
+      "callbacks": 90,
+      "perViewerFps": 53.36448535922141,
+      "elapsed": 5007.699999999255
+    },
+    {
+      "cachedOld": false,
+      "requestedNew": 1,
+      "callbacks": 30,
+      "perViewerFps": 19.593338264992823,
+      "elapsed": 5001.699999999255
+    }
+  ],
+  "cached_engine_after_resume_guard": [
+    {
+      "cachedOld": true,
+      "requestedNew": 0,
+      "callbacks": 30,
+      "perViewerFps": 19.58863858962386,
+      "elapsed": 5002.89999999851
+    },
+    {
+      "cachedOld": false,
+      "requestedNew": 1,
+      "callbacks": 30,
+      "perViewerFps": 19.58668105687257,
+      "elapsed": 5003.400000002235
+    }
+  ],
+  "fixed_cadence_gpu_comparison": [
+    {
+      "version": "2.4.2",
+      "guard": false,
+      "renderer": "ANGLE (Apple, ANGLE Metal Renderer: Apple M3 Max, Unspecified Version)",
+      "canvas": [
+        3040,
+        4960
+      ],
+      "buffer": [
+        3040,
+        4960
+      ],
+      "viewport": [
+        760,
+        620
+      ],
+      "antialias": true,
+      "ratio": 2,
+      "wallMs": 17.534285714424083,
+      "jsMs": 17.51857142868851,
+      "gpuMs": 9.971510285714286,
+      "draws": 7200,
+      "bytes": 58975040,
+      "creates": 26400,
+      "deletes": 0,
+      "frames": 2400
+    },
+    {
+      "version": "2.4.2",
+      "guard": true,
+      "renderer": "ANGLE (Apple, ANGLE Metal Renderer: Apple M3 Max, Unspecified Version)",
+      "canvas": [
+        3040,
+        4960
+      ],
+      "buffer": [
+        3040,
+        4960
+      ],
+      "viewport": [
+        760,
+        620
+      ],
+      "antialias": true,
+      "ratio": 2,
+      "wallMs": 15.485714285767504,
+      "jsMs": 15.472857142825212,
+      "gpuMs": 8.850301285714286,
+      "draws": 7200,
+      "bytes": 58975040,
+      "creates": 26400,
+      "deletes": 26400,
+      "frames": 2400
+    },
+    {
+      "version": "2.5.5",
+      "guard": false,
+      "renderer": "ANGLE (Apple, ANGLE Metal Renderer: Apple M3 Max, Unspecified Version)",
+      "canvas": [
+        3040,
+        4960
+      ],
+      "buffer": [
+        3040,
+        4960
+      ],
+      "viewport": [
+        760,
+        620
+      ],
+      "antialias": true,
+      "ratio": 2,
+      "wallMs": 15.771428571641446,
+      "jsMs": 15.76285714299551,
+      "gpuMs": 9.444620285714285,
+      "draws": 7200,
+      "bytes": 58975040,
+      "creates": 26400,
+      "deletes": 0,
+      "frames": 2400
+    },
+    {
+      "version": "2.5.5",
+      "guard": true,
+      "renderer": "ANGLE (Apple, ANGLE Metal Renderer: Apple M3 Max, Unspecified Version)",
+      "canvas": [
+        3040,
+        4960
+      ],
+      "buffer": [
+        3040,
+        4960
+      ],
+      "viewport": [
+        760,
+        620
+      ],
+      "antialias": true,
+      "ratio": 2,
+      "wallMs": 17.76428571439215,
+      "jsMs": 17.752857142952937,
+      "gpuMs": 9.783950114285714,
+      "draws": 7200,
+      "bytes": 58975040,
+      "creates": 26400,
+      "deletes": 26400,
+      "frames": 2400
+    }
+  ],
+  "validation": {
+    "frust_fast_passed": 518,
+    "slow_deselected": 13,
+    "focused_post_install_passed": 109,
+    "same_frame_screenshots": "pixel-identical",
+    "interaction_checks": [
+      "independent rotation",
+      "zoom",
+      "distance measurement",
+      "angle measurement"
+    ]
+  },
+  "upstream_issue": "https://github.com/3dmol/3Dmol.js/issues/860",
+  "limitations": [
+    "GPU timer measurements are not system-wide iStat percentages.",
+    "Old outputs can still retain viewers through upstream event listeners.",
+    "Geometry counters and allocation/deletion counts are not physical VRAM measurements."
+  ]
+}
