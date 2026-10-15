@@ -352,7 +352,8 @@ def test_native_arrays_keep_the_validation_chain_without_preparation(tmp_path, s
             return SimpleNamespace(job_id="mock-job")
 
     fake = FakeExecutor()
-    wf = workflow(scope=scope)
+    initial = workflow(scope=scope)
+    wf = workflow(dataframe=None, systems=initial.systems(), scope=scope)
     cluster = ft.cluster.ClusterConfig(
         backend="slurm", partition="chem", log_dir=tmp_path / "logs"
     )
@@ -394,6 +395,9 @@ def test_native_arrays_keep_the_validation_chain_without_preparation(tmp_path, s
     assert manifest["ranking_top_n"] == 1
     assert manifest["analysis_levels"] == ["low_cost", "uma_ranked", "full"]
     assert manifest["reference_store_configured"] is False
+    finalizer = next(args[0] for function, args, _ in fake.submissions
+                     if function.__name__ == "_finalize_submitted_run")
+    pd.testing.assert_frame_equal(finalizer.plan(), wf.plan())
     if scope == "full_cycle":
         assert "int3" in submitted.child_submissions
         assert any("uma_preopt" in chain and "uma_min_opt" in chain for chain in chains)
@@ -576,6 +580,44 @@ def test_explicit_sites_are_preserved_with_deduplicated_reference_components():
         "transition_states": 8, "references": 7, "cycle_molecules": 6, "int3": 2,
     }
     assert wf.components().query("role == 'substrate'").rpos.tolist() == ["2;3"]
+
+
+def test_explicit_inputs_survive_cache_invalidation_and_serialization():
+    import cloudpickle
+
+    systems = ft.screen.expand(ft.screen.read(components()))
+    second = systems.assign(
+        system_name="benzene__NEt", substrate_name="benzene",
+        substrate_smiles="c1ccccc1", catalyst_name="NEt",
+        catalyst_smiles="BC1=C(N(CC)CC)C=CC=C1", rpos=0,
+    )
+    selected = pd.concat([systems, second], ignore_index=True)
+    wf = workflow(dataframe=None, systems=selected, scope="full_cycle")
+    expected = wf.plan()
+    wf._components_cache = wf._systems_cache = wf._children_cache = None
+    restored = cloudpickle.loads(cloudpickle.dumps(wf))
+    pd.testing.assert_frame_equal(restored.systems(), selected)
+    pd.testing.assert_frame_equal(restored.plan(), expected)
+
+
+def test_pending_finalizer_recovers_legacy_explicit_inputs_from_manifest(tmp_path):
+    from frust.workflows.screening import _finalize_submitted_run
+
+    systems = ft.screen.expand(ft.screen.read(components()))
+    wf = workflow(dataframe=None, systems=systems, scope="full_cycle")
+    wf._write_manifest(tmp_path)
+    expected = wf.plan()
+    wf.dataframe = None
+    del wf._selected_systems
+    wf._components_cache = wf._systems_cache = wf._children_cache = None
+
+    def finalized(recovered, root, **kwargs):
+        pd.testing.assert_frame_equal(recovered.plan(), expected)
+        return {"overall_status": "success"}
+
+    with patch("frust.workflows.screening._finalize_run", side_effect=finalized):
+        result = _finalize_submitted_run(wf, tmp_path, None)
+    assert result.status == "success"
 
 
 @pytest.mark.parametrize("all_invalid", [False, True])

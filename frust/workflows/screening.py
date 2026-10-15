@@ -286,8 +286,11 @@ class CatalystScreenWorkflow:
         self.prune_initial = prune_initial
         self._components_cache: pd.DataFrame | None = None
         self._systems_cache: pd.DataFrame | None = None
+        self._selected_systems: pd.DataFrame | None = None
         if systems is not None:
             self._systems_cache, self._components_cache = _read_explicit_systems(systems)
+            self._selected_systems = self._systems_cache.copy()
+            self.dataframe = self._components_cache.copy()
         self._children_cache: dict[str, Any] | None = None
 
     def components(self) -> pd.DataFrame:
@@ -300,7 +303,10 @@ class CatalystScreenWorkflow:
     def systems(self) -> pd.DataFrame:
         """Return expanded substrate/catalyst systems."""
         if self._systems_cache is None:
-            self._systems_cache = expand_screen(self.components())
+            selected = getattr(self, "_selected_systems", None)
+            self._systems_cache = (
+                selected.copy() if selected is not None else expand_screen(self.components())
+            )
         return self._systems_cache.copy()
 
     def children(self) -> dict[str, Any]:
@@ -1574,6 +1580,11 @@ def _finalize_submitted_run(
             time.sleep(1)
     try:
         with _mutation_lock(root, wait=True) if attempt_id is not None else nullcontext():
+            if workflow.csv_path is None and workflow.dataframe is None:
+                # Recover explicit inputs from jobs serialized before inputs survived cache clearing.
+                manifest = json.loads((root / "manifest.json").read_text())
+                workflow.dataframe = pd.DataFrame(manifest["components"])
+                workflow._selected_systems = pd.DataFrame(manifest["systems"])
             if attempt_id is not None:
                 for raw_path in expected_report_paths or []:
                     path = Path(raw_path)
