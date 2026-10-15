@@ -169,6 +169,38 @@ For public examples, use `ft.workflows.<factory>(...)` and
 `ft.workflows.methods.<helper>(...)`. Do not expose private workflow helpers as
 the documented API.
 
+## Method-Independent Workflow Behavior
+
+FRUST is a modular package. Shared workflow features should work across
+supported theories and calculator engines wherever the required capabilities
+exist. Generalization is part of implementing a shared feature; it should not
+depend on the user separately requesting UMA, DFT, or another supported method.
+
+For example, retaining three candidates for validation should mean that all
+three receive the requested validation stages, whether the final method is UMA
+or DFT. The screening winner need not remain the validation winner: final
+selection should use the common quality and final-energy rules. Candidate
+counts, filtering, result retention, collection, and analysis are shared
+workflow policies, even when the calculators differ.
+
+* Define shared behavior and parameter names by their scientific operation,
+  rather than by the theory that first needed them. Prefer one consistent
+  candidate-selection contract over separate UMA-only and DFT-only controls.
+* Keep screening, ranking, and final validation independently composable.
+  Changing the final theory must preserve target identities, selected input
+  geometries, candidate-count semantics, and applicable shared policies.
+* Put calculator differences in method plans or explicit capability checks.
+  A genuine requirement, such as support for a Hessian, TS optimization, or
+  thermochemistry, may restrict a stage. An existing theory-specific code
+  branch or historical default is not itself a reason for a restriction.
+* When adding or changing shared behavior, inspect the equivalent paths for
+  other supported methods and test the same user-visible contract across
+  representative method combinations. Use lightweight stage-plan and mocked
+  execution tests where actual calculations are unnecessary.
+* Do not mark a shared feature complete merely because one theory works.
+  Document genuine unsupported capabilities and remaining implementation gaps
+  explicitly, including their consequences for the public API and workflows.
+
 ## Molecular And Structural Examples
 
 Choose the representation that matches the concept being taught:
