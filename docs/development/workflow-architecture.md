@@ -214,7 +214,7 @@ pruning a normal local/cluster workflow stage.
 | mode | Stage grouping | Typical use |
 | --- | --- | --- |
 | `single_job` | all stages in one group | small tests or non-DFT workflows |
-| `dft_staged` | initialization group, then DFT stages split out | normal production DFT |
+| `dft_staged` | initialization and constrained preparation, then final validation operations split out | full UMA or DFT validation |
 | `fully_staged` | one group per stage | debugging or unusual resource tuning |
 
 `BaseWorkflow._stage_groups(...)` owns this grouping. Avoid adding a new
@@ -328,3 +328,22 @@ Targeted checks:
 conda run -n UMA pytest tests/test_workflow_methods.py tests/test_workflows.py tests/test_public_api.py -q
 conda run -n UMA mkdocs build --strict
 ```
+
+### Shared candidate and validation contracts
+
+`MethodPlan.validation_roles` binds scientific operations to calculator keys;
+existing plans resolve their historical keys automatically. For example,
+`frequencies` can bind to `dft_freq`, `uma_freq`, or a custom calculator key.
+Chemistry factories share validation construction while retaining separate TS,
+minimum, and INT3 preparation. The configured calculator must support each
+requested operation; inspection rejects an unsupported TS search or frequency
+calculation before structure embedding.
+
+The resolved graph records operation and phase on each stage. It supplies final
+geometry, energy, frequency, and thermal bindings in `df.attrs["frust_results"]`
+and compact candidate-policy provenance in `df.attrs["frust_workflow"]`.
+Scheduler grouping and TS-mode retention use these meanings rather than a
+calculator-family switch. Legacy stored column names remain valid.
+
+The ad10 acceptance gate includes a bounded real cluster run. Local contract
+and serialization tests do not establish scheduler or HPC-runtime compatibility.

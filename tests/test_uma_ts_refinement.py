@@ -45,7 +45,7 @@ def test_full_uma_ts_plan_releases_constraints_and_keeps_one_potential(environme
     assert stages.set_index("stage").loc["uma_ts_opt", "use_last_hess"]
     assert workflow._stage_defs()[-3].read_files == ["input.hess"]
     assert workflow.resolved_spec_profile == "omol-uma-s-1p2p1/gas"
-    assert len(workflow._stage_groups("dft_staged")) == 1
+    assert len(workflow._stage_groups("dft_staged")) == 4
     for stage in ("uma_sp", "uma_opt", "uma_hessian", "uma_ts_opt", "uma_freq"):
         spec = workflow.method.for_stage(stage)
         assert spec.kwargs["uma"] == "omol@uma-s-1p2p1"

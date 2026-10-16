@@ -55,6 +55,8 @@ from frust.workflows.methods import (
     with_ranking_solvation,
 )
 
+from frust.workflows.policies import _resolve_count
+
 ScreenScope = Literal["barriers", "full_cycle"]
 DimerReference = Literal[
     "lowest",
@@ -140,7 +142,8 @@ class CatalystScreenWorkflow:
         top_n: int = 20,
         uma_rank_top_n: int | None = None,
         ranking_top_n: int | None = None,
-        ts_refine_n: int = 3,
+        validation_top_n: int | None = None,
+        ts_refine_n: int | None = None,
         prune_initial: bool | dict[str, Any] = True,
     ) -> None:
         if sum(value is not None for value in (csv_path, dataframe, systems)) != 1:
@@ -188,7 +191,7 @@ class CatalystScreenWorkflow:
             (
                 self.ranking.stage_id == "dft_rank_sp"
                 if self.ranking is not None
-                else composed_method.result_family == "dft"
+                else "dft_rank_sp" in composed_method.stages
                 and "uma_opt" not in self.screening.stages
             )
             if include_dft_rank_sp is None
@@ -209,20 +212,13 @@ class CatalystScreenWorkflow:
         self.spec_profile = str(spec_profile).strip().lower()
         self.spec_match = str(spec_match).strip().lower()
         if composed_method.result_family == "uma" and self.level == "full":
-            if "uma_opt" not in self.screening.stages and self.ranking is None:
-                raise ValueError("Full UMA requires UMA screening in the same environment")
-            if self.ranking is None:
+            if self.ranking is None and validation_top_n is None and "uma_opt" in self.screening.stages:
                 screening_potential = self.screening.stages["uma_opt"].kwargs
-                final_potential = composed_method.for_stage("uma_freq").kwargs
-                if any(
-                    screening_potential.get(key) != final_potential.get(key)
-                    for key in ("uma", "uma_xtb_alpb")
-                ):
-                    raise ValueError(
-                        "Full UMA screening and final stages must use one model and environment"
-                    )
-            if self.include_dft_rank_sp and self.ranking is None:
-                raise ValueError("Full UMA does not include DFT ranking")
+                final_potential = composed_method.for_stage(
+                    composed_method.resolved_validation_roles()["frequencies"]).kwargs
+                if any(screening_potential.get(key) != final_potential.get(key)
+                       for key in ("uma", "uma_xtb_alpb")):
+                    raise ValueError("Full UMA screening and final stages must use one model and environment")
             if ranking_solvation != "method":
                 raise ValueError("ranking_solvation applies only to DFT ranking")
             self.method = composed_method
@@ -265,24 +261,14 @@ class CatalystScreenWorkflow:
         self.reuse_policy = reuse_policy
         self.n_confs = n_confs
         self.top_n = int(top_n)
-        if (
-            ranking_top_n is not None
-            and uma_rank_top_n is not None
-            and ranking_top_n != uma_rank_top_n
-        ):
-            raise ValueError(
-                "ranking_top_n and its legacy alias uma_rank_top_n disagree"
-            )
-        count = ranking_top_n if ranking_top_n is not None else uma_rank_top_n
-        if count is not None and (isinstance(count, bool) or int(count) != count):
-            raise ValueError("ranking_top_n must be a positive integer")
-        self.uma_rank_top_n = int(1 if count is None else count)
+        count = _resolve_count(validation_top_n=validation_top_n,
+                               ranking_top_n=ranking_top_n,
+                               uma_rank_top_n=uma_rank_top_n,
+                               ts_refine_n=ts_refine_n)
+        self.validation_top_n = validation_top_n
+        self.uma_rank_top_n = count or 1
         self.ranking_top_n = self.uma_rank_top_n
-        if self.uma_rank_top_n < 1:
-            raise ValueError("ranking_top_n (uma_rank_top_n) must be positive")
-        self.ts_refine_n = int(ts_refine_n)
-        if self.ts_refine_n < 1:
-            raise ValueError("ts_refine_n must be positive")
+        self.ts_refine_n = 3 if ts_refine_n is None else int(ts_refine_n)
         self.prune_initial = prune_initial
         self._components_cache: pd.DataFrame | None = None
         self._systems_cache: pd.DataFrame | None = None
@@ -292,6 +278,12 @@ class CatalystScreenWorkflow:
             self._selected_systems = self._systems_cache.copy()
             self.dataframe = self._components_cache.copy()
         self._children_cache: dict[str, Any] | None = None
+
+    def __setstate__(self, state):
+        """Restore pending finalizers without changing their historical policy."""
+        self.__dict__.update(state)
+        self.__dict__.setdefault("validation_top_n", None)
+        self.__dict__.setdefault("_legacy_validation_grouping", "validation_top_n" not in state)
 
     def components(self) -> pd.DataFrame:
         """Return the normalized component table."""
@@ -324,8 +316,9 @@ class CatalystScreenWorkflow:
                     include_dft_rank_sp=self.include_dft_rank_sp,
                     n_confs=self.n_confs,
                     top_n=self.top_n,
-                    uma_rank_top_n=self.uma_rank_top_n,
-                    ts_refine_n=self.ts_refine_n,
+                    uma_rank_top_n=self.uma_rank_top_n if self.ranking is not None else None,
+                    validation_top_n=self.validation_top_n,
+                    ts_refine_n=None if self.validation_top_n is not None else self.ts_refine_n,
                     calculation_level=self.level,
                     prune_initial=self.prune_initial,
                 ),
@@ -336,7 +329,8 @@ class CatalystScreenWorkflow:
                     include_dft_rank_sp=self.include_dft_rank_sp,
                     n_confs=self.n_confs,
                     top_n=self.top_n,
-                    uma_rank_top_n=self.uma_rank_top_n,
+                    uma_rank_top_n=self.uma_rank_top_n if self.ranking is not None else None,
+                    validation_top_n=self.validation_top_n,
                     calculation_level=self.level,
                     prune_initial=self.prune_initial,
                 ),
@@ -349,7 +343,8 @@ class CatalystScreenWorkflow:
                     include_dft_rank_sp=self.include_dft_rank_sp,
                     n_confs=self.n_confs,
                     top_n=self.top_n,
-                    uma_rank_top_n=self.uma_rank_top_n,
+                    uma_rank_top_n=self.uma_rank_top_n if self.ranking is not None else None,
+                    validation_top_n=self.validation_top_n,
                     calculation_level=self.level,
                     prune_initial=self.prune_initial,
                 )
@@ -361,10 +356,14 @@ class CatalystScreenWorkflow:
                     include_dft_rank_sp=self.include_dft_rank_sp,
                     n_confs=self.n_confs,
                     top_n=self.top_n,
-                    uma_rank_top_n=self.uma_rank_top_n,
+                    uma_rank_top_n=self.uma_rank_top_n if self.ranking is not None else None,
+                    validation_top_n=self.validation_top_n,
                     calculation_level=self.level,
                     prune_initial=self.prune_initial,
                 )
+            if getattr(self, "_legacy_validation_grouping", False):
+                for child in children.values():
+                    child._legacy_validation_grouping = True
             self._children_cache = children
         return dict(self._children_cache)
 
@@ -942,6 +941,8 @@ class CatalystScreenWorkflow:
         if self.ranking is not None and level != "low_cost":
             protocol["ranking_fingerprint"] = self.ranking.fingerprint()
             protocol["uma_rank_top_n"] = self.uma_rank_top_n
+        if level == "full" and self.validation_top_n is not None and self.ranking is None:
+            protocol["validation_top_n"] = self.validation_top_n
         if level == "full" and not self.include_dft_rank_sp:
             protocol["include_dft_rank_sp"] = False
         return protocol
@@ -1131,6 +1132,8 @@ class CatalystScreenWorkflow:
             manifest["ranking_fingerprint"] = self.ranking.fingerprint()
             manifest["uma_rank_top_n"] = self.uma_rank_top_n
             manifest["ranking_top_n"] = self.ranking_top_n
+        if self.validation_top_n is not None:
+            manifest["validation_top_n"] = self.validation_top_n
         if self.method.result_family == "uma":
             manifest["ts_refine_n"] = self.ts_refine_n
         signature_keys = [
@@ -1156,6 +1159,8 @@ class CatalystScreenWorkflow:
             signature_keys.append("ts_refine_n")
         if self.ranking is not None:
             signature_keys.extend(["ranking_fingerprint", "uma_rank_top_n"])
+        if self.validation_top_n is not None and self.ranking is None:
+            signature_keys.append("validation_top_n")
         manifest["run_signature"] = _json_hash(
             {key: manifest[key] for key in signature_keys}
         )
@@ -1398,7 +1403,8 @@ def catalyst_screen(
     top_n: int = 20,
     uma_rank_top_n: int | None = None,
     ranking_top_n: int | None = None,
-    ts_refine_n: int = 3,
+    validation_top_n: int | None = None,
+    ts_refine_n: int | None = None,
     prune_initial: bool | dict[str, Any] = True,
 ) -> CatalystScreenWorkflow:
     """Create an end-to-end catalyst-screen workflow.
@@ -1503,6 +1509,15 @@ def catalyst_screen(
     top_n : int, optional
         Number retained by the low-cost screen. With UMA reranking, this is
         the broad g-xTB cutoff before the UMA single points.
+    validation_top_n : int or None, optional
+        Maximum finite-energy candidates entering final validation per target,
+        for minima, TSs, and INT3 with either UMA or DFT. For example, ``3``
+        retains up to three candidates and validates all of them. Select by
+        explicit ranking if configured, otherwise implicit DFT ranking or
+        screening energy. The broad ``top_n`` screening cutoff still applies.
+        Requires ``level="full"``. ``None`` preserves historical cutoffs.
+        Explicit ``ranking_top_n``, ``uma_rank_top_n``, or ``ts_refine_n``
+        values must agree with this count when supplied together.
     ranking_top_n : int or None, optional
         Number of finite-energy ranked candidates passed into validation.
         Defaults to one. ``top_n`` is the earlier screening cutoff. For full
@@ -1511,7 +1526,7 @@ def catalyst_screen(
     uma_rank_top_n : int or None, optional
         Legacy alias for ``ranking_top_n``. Both names may be provided only
         when their values agree.
-    ts_refine_n : int, optional
+    ts_refine_n : int or None, optional
         Maximum distinct UMA optimized TS candidates sent to Hessian,
         released ``OptTS``, and final numerical frequencies in a full UMA run
         without explicit ranking. With ranking, ``ranking_top_n`` controls
@@ -1557,6 +1572,7 @@ def catalyst_screen(
         top_n=top_n,
         uma_rank_top_n=uma_rank_top_n,
         ranking_top_n=ranking_top_n,
+        validation_top_n=validation_top_n,
         ts_refine_n=ts_refine_n,
         prune_initial=prune_initial,
     )

@@ -164,6 +164,16 @@ class StageDef:
     geometry_from : str or None, optional
         Optimization stage supplying input coordinates. ``"embedded"`` uses
         ``coords_embedded``; None preserves legacy latest-coordinate behavior.
+    operation : str or None, optional
+        Scientific operation, such as ``"minimum_optimization"`` (relax a
+        minimum), ``"hessian_seed"`` (seed TS curvature), ``"ts_search"``
+        (locate a saddle point), ``"frequencies"`` (characterize vibrations),
+        ``"analysis_single_point"`` (evaluate final electronic energy), or
+        ``"candidate_selection"`` (retain finite lowest-energy inputs).
+    phase : {"screening", "ranking", "validation"} or None, optional
+        ``"screening"`` generates low-cost candidates, ``"ranking"`` compares
+        screening geometries, and ``"validation"`` selects and characterizes
+        the retained candidates with the final method.
     """
 
     id: str
@@ -179,6 +189,8 @@ class StageDef:
     save_files: list[str] | None = None
     prune_options: dict[str, Any] | None = None
     geometry_from: str | None = None
+    operation: str | None = None
+    phase: str | None = None
 
 
 @dataclass(frozen=True)
@@ -285,6 +297,12 @@ class BaseWorkflow:
         self.dft = dft
         self._target_cache: list[WorkflowTarget] | None = None
 
+    def __setstate__(self, state):
+        """Restore submitted workflows saved before candidate-policy controls."""
+        self.__dict__.update(state)
+        self.__dict__.setdefault("validation_top_n", None)
+        self.__dict__.setdefault("_legacy_validation_grouping", "validation_top_n" not in state)
+
     def targets(self) -> list[WorkflowTarget]:
         """Return the workflow's scientific targets.
 
@@ -381,10 +399,10 @@ class BaseWorkflow:
         ----------
         execution : {"single_job", "dft_staged", "fully_staged"} or None, optional
             Execution grouping to inspect. ``None`` uses the same default as
-            ``submit(...)``: DFT workflows use ``"dft_staged"`` and non-DFT
+            ``submit(...)``: full validation workflows use ``"dft_staged"`` and lower-depth
             workflows use ``"single_job"``. ``"single_job"`` runs all stages in
             one job per target, ``"dft_staged"`` keeps initialization together
-            and splits DFT stages into dependent jobs, and ``"fully_staged"``
+            and splits validation operations into dependent jobs, and ``"fully_staged"``
             splits every stage into its own dependent job.
         detail : {"summary", "full"}, optional
             Level of planned configuration to return. ``"summary"`` keeps the
@@ -448,6 +466,8 @@ class BaseWorkflow:
                     "stage": stage.id,
                     "calculation": stage.name,
                     "kind": stage.kind,
+                    "operation": stage.operation,
+                    "phase": stage.phase,
                     "method_key": method_key if stage.kind == "calc" else None,
                     "engine": _stage_engine(stage, spec),
                     "options": options_text,
@@ -485,6 +505,8 @@ class BaseWorkflow:
             "stage",
             "calculation",
             "kind",
+            "operation",
+            "phase",
             "method_key",
             "engine",
             "options",
@@ -689,12 +711,12 @@ class BaseWorkflow:
             Shared executor configuration, such as Slurm partition, log
             directory, and optional scratch ``work_dir``.
         execution : {"single_job", "dft_staged", "fully_staged"} or None, optional
-            Job grouping strategy. If omitted, DFT workflows use
-            ``"dft_staged"`` and non-DFT workflows use ``"single_job"``.
+            Job grouping strategy. If omitted, full validation workflows use
+            ``"dft_staged"`` and lower-depth workflows use ``"single_job"``.
             By default ``"single_job"`` submits one job per target; arrays can
             place several sequential targets in one element. ``"dft_staged"`` keeps
-            initialization stages together, then submits dependent DFT-stage
-            jobs. ``"fully_staged"`` submits one dependent job per stage.
+            initialization stages together, then submits dependent validation-stage
+            jobs for either UMA or DFT. ``"fully_staged"`` submits one dependent job per stage.
         stage_resources : dict[str, Resources] or None, optional
             Optional resource overrides by stage-group name. Missing groups use
             ``Resources(cpus=4, mem_gb=20, timeout_min=720)``. Call
@@ -1287,7 +1309,7 @@ class BaseWorkflow:
         list of list of StageDef
             Stage groups. Each group runs serially in one local section or one
             submitted job. ``"dft_staged"`` keeps initialization together and
-            splits out known DFT stages for DFT workflows.
+            splits final validation operations for either UMA or DFT.
         """
         stages = self._stage_defs()
         if execution == "single_job":
@@ -1302,15 +1324,17 @@ class BaseWorkflow:
         if not self.dft:
             return [stages]
 
-        dft_stage_ids = {
-            "dft_hessian",
-            "dft_ts_opt",
-            "dft_freq",
-            "dft_solv_sp",
-            "dft_opt",
+        split_operations = {
+            "minimum_optimization", "hessian_seed", "ts_search",
+            "frequencies", "analysis_single_point",
         }
+        legacy_ids = {"dft_hessian", "dft_ts_opt", "dft_freq", "dft_solv_sp", "dft_opt"}
         first_split = next(
-            (idx for idx, stage in enumerate(stages) if stage.id in dft_stage_ids),
+            (idx for idx, stage in enumerate(stages)
+             if (not getattr(self, "_legacy_validation_grouping", False)
+                 and stage.phase == "validation" and stage.operation in split_operations)
+             or ((stage.operation is None or getattr(self, "_legacy_validation_grouping", False))
+                 and stage.id in legacy_ids)),
             len(stages),
         )
         groups: list[list[StageDef]] = []
@@ -2907,7 +2931,7 @@ def _run_stage_calculation(
             raise ValueError(f"Filter stage {stage.id!r} must define rank_by")
         input_rows = len(df)
         energy_col = output_column(stage.rank_by, "electronic_energy")
-        if stage.id in {"uma_rank_filter", "dft_rank_filter"}:
+        if stage.operation == "candidate_selection" or stage.id in {"uma_rank_filter", "dft_rank_filter"}:
             energies = pd.to_numeric(df[energy_col], errors="coerce")
             df = df.loc[np.isfinite(energies)].copy()
         result = lowest_energy_rows(
@@ -3086,8 +3110,39 @@ def _attach_workflow_attrs(
             "result_profile": workflow.result_profile,
         }
     )
+    stages = workflow._stage_defs()
+    validation = [
+        stage
+        for stage in stages
+        if stage.phase == "validation" and stage.kind == "calc"
+    ]
+    if validation:
+        first = stages.index(validation[0])
+        boundary = next(
+            (stage for stage in validation if stage.lowest is not None), None
+        )
+        if boundary is None:
+            boundary = next(
+                (stage for stage in reversed(stages[:first]) if stage.kind == "filter"),
+                None,
+            )
+        if boundary is not None:
+            from frust.workflows.policies import CandidatePolicy
+
+            df.attrs["frust_workflow"]["candidate_policy"] = CandidatePolicy(
+                count=boundary.lowest,
+                energy_stage=boundary.rank_by,
+                boundary=boundary.id,
+                diversity=any(
+                    stage.kind == "prune" and stage.id == "uma_refine_prune"
+                    for stage in stages
+                ),
+            ).to_dict()
     structure_options = workflow._structure_build_kwargs()
-    if workflow.result_profile == "transition_state" and workflow.method.result_family == "uma":
+    if (
+        workflow.result_profile == "transition_state"
+        and workflow.method.result_family == "uma"
+    ):
         df.attrs["frust_workflow"]["ts_refine_n"] = int(workflow.ts_refine_n)
         df.attrs["frust_workflow"]["screen_top_n"] = int(workflow.top_n)
     ranking_stage = workflow.method.ranking_stage or (
@@ -3096,9 +3151,7 @@ def _attach_workflow_attrs(
     if ranking_stage is not None:
         df.attrs["frust_workflow"]["ranking_stage"] = ranking_stage
         df.attrs["frust_workflow"]["ranking_top_n"] = int(workflow.uma_rank_top_n)
-        df.attrs["frust_workflow"]["uma_rank_top_n"] = int(
-            workflow.uma_rank_top_n
-        )
+        df.attrs["frust_workflow"]["uma_rank_top_n"] = int(workflow.uma_rank_top_n)
         df.attrs["frust_workflow"]["screen_top_n"] = int(workflow.top_n)
     if "spec_profile" in structure_options:
         df.attrs["frust_workflow"]["guess_profile"] = structure_options["spec_profile"]
@@ -3126,6 +3179,21 @@ def _attach_workflow_attrs(
             ranking_stage=(ranking_stage),
         )
         contract = df.attrs["frust_results"]
+        if calculation_level == "full" and validation:
+            by_operation = {stage.operation: stage.id for stage in validation}
+            geometry = (
+                by_operation.get("ts_search") or by_operation["minimum_optimization"]
+            )
+            frequency = by_operation["frequencies"]
+            analysis = by_operation.get("analysis_single_point", frequency)
+            contract["columns"]["optimized"] = {"coords": f"{geometry}-oc"}
+            contract["columns"]["analysis"] = {"electronic_energy": f"{analysis}-EE"}
+            contract["columns"]["frequency"] = {
+                "gibbs_energy": f"{frequency}-GE",
+                "electronic_energy": f"{frequency}-EE",
+                "frequencies": f"{frequency}-frequencies_cm1",
+            }
+            contract["stage_roles"] = by_operation
         analysis_column = str(contract["columns"]["analysis"]["electronic_energy"])
         analysis_stage = analysis_column.removesuffix("-EE")
         optimized_column = str(contract["columns"]["optimized"]["coords"])
@@ -3136,10 +3204,14 @@ def _attach_workflow_attrs(
             "geometry_stage": optimized_stage,
             "calculator": workflow.method.for_stage(analysis_stage).to_dict(),
         }
-        if analysis_stage == "uma_solv_sp":
+        if (
+            calculation_level == "full"
+            and validation
+            and workflow.method.include_terminal_solv_sp
+        ):
             contract["energy_protocol"]["frequency_calculator"] = (
-                workflow.method.for_stage("uma_freq").to_dict()
+                workflow.method.for_stage(frequency).to_dict()
             )
-            contract["energy_protocol"]["thermochemistry"] = contract["thermochemistry"]
+            contract["energy_protocol"]["thermochemistry"] = contract.get("thermochemistry")
     stamp_schema(df)
     return df

@@ -231,11 +231,60 @@ from being silently mixed.
 | `dft_freq` | `orca` | final frequency check |
 | `dft_solv_sp` | `orca` | final solvent single point for gas-phase presets only |
 
-For g-xTB → UMA SP → ωB97, `top_n` is the broad g-xTB cutoff and
-`uma_rank_top_n` is the later UMA cutoff. For a full UMA result,
-`ts_refine_n` controls how many distinct constrained UMA geometries proceed
-to released OptTS and NumFreq. These cutoffs belong to the workflow, so
-changing method presets does not change chemistry target expansion.
+Validate three candidates with either final method:
+
+```python
+import frust as ft
+
+wf = ft.workflows.catalyst_screen(
+    csv_path="screen.csv",
+    screening="gxtb-default",
+    ranking="uma-gas",
+    method="r2scan-3c",  # Or "uma-gas" with the same candidate policy.
+    top_n=20,
+    validation_top_n=3,
+)
+wf.show_stages()[["branch", "stage", "phase", "operation", "lowest"]]
+```
+
+| Setting | Meaning |
+| --- | --- |
+| `top_n=20` | Broad screening pool, before optional reranking |
+| `validation_top_n=3` | Up to three finite-energy candidates enter final validation for each target |
+| `ranking_top_n=3` | Existing count after explicit single-point reranking; `uma_rank_top_n` is its legacy alias |
+| `ts_refine_n=3` | Legacy distinct-geometry cutoff for direct UMA TS refinement without explicit reranking |
+
+Every retained candidate receives all required validation stages. Final analysis
+selects by quality and then final free energy, so the final winner can differ
+from the screening or reranking winner. `run.candidate_barriers()` retains the
+other TS candidates for review. This applies to UMA and DFT, including ordinary
+minima and INT3 reference selection. Without explicit reranking, the validation
+boundary uses an enabled implicit DFT ranking single point or the screening
+optimization energy. Direct UMA TS refinement retains its geometry-diversity
+pruning before selection.
+
+!!! info "Existing defaults and aliases"
+    Omitting `validation_top_n` preserves the historical selection boundaries.
+    When explicit counts are supplied together, `validation_top_n` must agree
+    with `ranking_top_n`, `uma_rank_top_n`, and `ts_refine_n`. Conflicting counts
+    raise an error. Without explicit reranking, use `validation_top_n` to set the
+    validation ensemble. Fewer candidates may survive failed or nonfinite results
+    or diversity pruning. None of these settings changes chemistry target expansion.
+
+`phase` describes screening, optional ranking, or final validation. `operation`
+identifies the scientific action, such as TS search or frequencies. The existing
+execution name `dft_staged` now groups validation by these operations for UMA and
+DFT: constrained preparation stays in `init`, followed by separate optimization,
+Hessian, TS-search, frequency, and optional analysis-energy groups as applicable.
+Existing DFT group names remain the same; UMA groups use their UMA stage names.
+Use `show_stages()` before choosing resource overrides or array limits.
+
+Compact (`artifact_policy="screening"`) full TS results retain the final mode
+vectors for either method so `run.plot_vibration(...)` can display the reaction
+coordinate. Minimum results retain scalar frequencies without mode vectors.
+Older compact bundles that omitted vectors remain readable, but regeneration is
+needed to recover their missing modes. Retaining vectors increases storage in
+proportion to the number of atoms, modes, and retained TS candidates.
 
 `method.stages` is the reusable calculator map. To see which parts of that map
 a specific workflow will actually run, inspect the workflow:
