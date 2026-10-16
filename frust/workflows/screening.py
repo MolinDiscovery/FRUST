@@ -32,9 +32,10 @@ from frust.cluster.submission import (
 )
 from frust.screen import expand as expand_screen
 from frust.screen import read as read_screen
+from frust.screen.core import _read_explicit_systems
 from frust.screen.cleanup import cleanup_submitit_jobs, initialize_submitit_directory
 from frust.screen.references import ReferenceLibrary, ReferenceRecord, ReusePolicy
-from frust.screen.runs import ScreenRun, build_analysis
+from frust.screen.runs import ScreenRun, _resolve_terms, _state_rows, build_analysis
 from frust.schema import normal_termination_columns
 from frust.structures import StructureTarget
 from frust.structures.specs import DIMER_STATES
@@ -53,6 +54,8 @@ from frust.workflows.methods import (
     screening_preset,
     with_ranking_solvation,
 )
+
+from frust.workflows.policies import _resolve_count
 
 ScreenScope = Literal["barriers", "full_cycle"]
 DimerReference = Literal[
@@ -120,6 +123,7 @@ class CatalystScreenWorkflow:
         *,
         csv_path: str | Path | None = None,
         dataframe: pd.DataFrame | None = None,
+        systems: str | Path | pd.DataFrame | None = None,
         ts_types: tuple[str, ...] | list[str] = ("TS1", "TS2", "TS3", "TS4"),
         screening: ScreeningPlan | str = "gxtb-default",
         level: CalculationLevel = "full",
@@ -138,11 +142,12 @@ class CatalystScreenWorkflow:
         top_n: int = 20,
         uma_rank_top_n: int | None = None,
         ranking_top_n: int | None = None,
-        ts_refine_n: int = 3,
+        validation_top_n: int | None = None,
+        ts_refine_n: int | None = None,
         prune_initial: bool | dict[str, Any] = True,
     ) -> None:
-        if (csv_path is None) == (dataframe is None):
-            raise ValueError("Provide exactly one of csv_path or dataframe")
+        if sum(value is not None for value in (csv_path, dataframe, systems)) != 1:
+            raise ValueError("Provide exactly one of csv_path, dataframe, or systems")
         if scope not in {"barriers", "full_cycle"}:
             raise ValueError("scope must be 'barriers' or 'full_cycle'")
         if dimer_reference not in {"lowest", *DIMER_STATES}:
@@ -186,7 +191,7 @@ class CatalystScreenWorkflow:
             (
                 self.ranking.stage_id == "dft_rank_sp"
                 if self.ranking is not None
-                else composed_method.result_family == "dft"
+                else "dft_rank_sp" in composed_method.stages
                 and "uma_opt" not in self.screening.stages
             )
             if include_dft_rank_sp is None
@@ -207,22 +212,13 @@ class CatalystScreenWorkflow:
         self.spec_profile = str(spec_profile).strip().lower()
         self.spec_match = str(spec_match).strip().lower()
         if composed_method.result_family == "uma" and self.level == "full":
-            if scope != "barriers":
-                raise ValueError("Full UMA currently supports scope='barriers' only")
-            if "uma_opt" not in self.screening.stages and self.ranking is None:
-                raise ValueError("Full UMA requires UMA screening in the same environment")
-            if self.ranking is None:
+            if self.ranking is None and validation_top_n is None and "uma_opt" in self.screening.stages:
                 screening_potential = self.screening.stages["uma_opt"].kwargs
-                final_potential = composed_method.for_stage("uma_freq").kwargs
-                if any(
-                    screening_potential.get(key) != final_potential.get(key)
-                    for key in ("uma", "uma_xtb_alpb")
-                ):
-                    raise ValueError(
-                        "Full UMA screening and final stages must use one model and environment"
-                    )
-            if self.include_dft_rank_sp and self.ranking is None:
-                raise ValueError("Full UMA does not include DFT ranking")
+                final_potential = composed_method.for_stage(
+                    composed_method.resolved_validation_roles()["frequencies"]).kwargs
+                if any(screening_potential.get(key) != final_potential.get(key)
+                       for key in ("uma", "uma_xtb_alpb")):
+                    raise ValueError("Full UMA screening and final stages must use one model and environment")
             if ranking_solvation != "method":
                 raise ValueError("ranking_solvation applies only to DFT ranking")
             self.method = composed_method
@@ -258,35 +254,36 @@ class CatalystScreenWorkflow:
                 for key, value in (g_corrections_kcal_mol or {}).items()
             },
         }
-        configured_store = reference_store or os.environ.get("FRUST_REFERENCE_STORE")
+        configured_store = reference_store or os.environ.get("FRUST_REFERENCE_STORE", "").strip() or None
         self.reference_store = (
             None if configured_store is None else Path(configured_store)
         )
         self.reuse_policy = reuse_policy
         self.n_confs = n_confs
         self.top_n = int(top_n)
-        if (
-            ranking_top_n is not None
-            and uma_rank_top_n is not None
-            and ranking_top_n != uma_rank_top_n
-        ):
-            raise ValueError(
-                "ranking_top_n and its legacy alias uma_rank_top_n disagree"
-            )
-        count = ranking_top_n if ranking_top_n is not None else uma_rank_top_n
-        if count is not None and (isinstance(count, bool) or int(count) != count):
-            raise ValueError("ranking_top_n must be a positive integer")
-        self.uma_rank_top_n = int(1 if count is None else count)
+        count = _resolve_count(validation_top_n=validation_top_n,
+                               ranking_top_n=ranking_top_n,
+                               uma_rank_top_n=uma_rank_top_n,
+                               ts_refine_n=ts_refine_n)
+        self.validation_top_n = validation_top_n
+        self.uma_rank_top_n = count or 1
         self.ranking_top_n = self.uma_rank_top_n
-        if self.uma_rank_top_n < 1:
-            raise ValueError("ranking_top_n (uma_rank_top_n) must be positive")
-        self.ts_refine_n = int(ts_refine_n)
-        if self.ts_refine_n < 1:
-            raise ValueError("ts_refine_n must be positive")
+        self.ts_refine_n = 3 if ts_refine_n is None else int(ts_refine_n)
         self.prune_initial = prune_initial
         self._components_cache: pd.DataFrame | None = None
         self._systems_cache: pd.DataFrame | None = None
+        self._selected_systems: pd.DataFrame | None = None
+        if systems is not None:
+            self._systems_cache, self._components_cache = _read_explicit_systems(systems)
+            self._selected_systems = self._systems_cache.copy()
+            self.dataframe = self._components_cache.copy()
         self._children_cache: dict[str, Any] | None = None
+
+    def __setstate__(self, state):
+        """Restore pending finalizers without changing their historical policy."""
+        self.__dict__.update(state)
+        self.__dict__.setdefault("validation_top_n", None)
+        self.__dict__.setdefault("_legacy_validation_grouping", "validation_top_n" not in state)
 
     def components(self) -> pd.DataFrame:
         """Return the normalized component table."""
@@ -298,16 +295,20 @@ class CatalystScreenWorkflow:
     def systems(self) -> pd.DataFrame:
         """Return expanded substrate/catalyst systems."""
         if self._systems_cache is None:
-            self._systems_cache = expand_screen(self.components())
+            selected = getattr(self, "_selected_systems", None)
+            self._systems_cache = (
+                selected.copy() if selected is not None else expand_screen(self.components())
+            )
         return self._systems_cache.copy()
 
     def children(self) -> dict[str, Any]:
         """Return the homogeneous workflows coordinated by this run."""
         if self._children_cache is None:
             components = self.components()
+            systems = self.systems()
             children: dict[str, Any] = {
                 "transition_states": ScreenTSWorkflow(
-                    dataframe=components,
+                    dataframe=systems,
                     ts_types=self.ts_types,
                     method=self.method,
                     spec_profile=self.spec_profile,
@@ -315,8 +316,9 @@ class CatalystScreenWorkflow:
                     include_dft_rank_sp=self.include_dft_rank_sp,
                     n_confs=self.n_confs,
                     top_n=self.top_n,
-                    uma_rank_top_n=self.uma_rank_top_n,
-                    ts_refine_n=self.ts_refine_n,
+                    uma_rank_top_n=self.uma_rank_top_n if self.ranking is not None else None,
+                    validation_top_n=self.validation_top_n,
+                    ts_refine_n=None if self.validation_top_n is not None else self.ts_refine_n,
                     calculation_level=self.level,
                     prune_initial=self.prune_initial,
                 ),
@@ -327,35 +329,41 @@ class CatalystScreenWorkflow:
                     include_dft_rank_sp=self.include_dft_rank_sp,
                     n_confs=self.n_confs,
                     top_n=self.top_n,
-                    uma_rank_top_n=self.uma_rank_top_n,
+                    uma_rank_top_n=self.uma_rank_top_n if self.ranking is not None else None,
+                    validation_top_n=self.validation_top_n,
                     calculation_level=self.level,
                     prune_initial=self.prune_initial,
                 ),
             }
             if self.scope == "full_cycle":
                 children["cycle_molecules"] = MolsWorkflow(
-                    dataframe=components,
+                    dataframe=systems,
                     select_mols=["int1", "int2", "HBpin-ligand"],
                     method=self.method,
                     include_dft_rank_sp=self.include_dft_rank_sp,
                     n_confs=self.n_confs,
                     top_n=self.top_n,
-                    uma_rank_top_n=self.uma_rank_top_n,
+                    uma_rank_top_n=self.uma_rank_top_n if self.ranking is not None else None,
+                    validation_top_n=self.validation_top_n,
                     calculation_level=self.level,
                     prune_initial=self.prune_initial,
                 )
                 children["int3"] = Int3Workflow(
-                    dataframe=components,
+                    dataframe=systems,
                     method=self.method,
                     spec_profile=self.spec_profile,
                     spec_match=self.spec_match,
                     include_dft_rank_sp=self.include_dft_rank_sp,
                     n_confs=self.n_confs,
                     top_n=self.top_n,
-                    uma_rank_top_n=self.uma_rank_top_n,
+                    uma_rank_top_n=self.uma_rank_top_n if self.ranking is not None else None,
+                    validation_top_n=self.validation_top_n,
                     calculation_level=self.level,
                     prune_initial=self.prune_initial,
                 )
+            if getattr(self, "_legacy_validation_grouping", False):
+                for child in children.values():
+                    child._legacy_validation_grouping = True
             self._children_cache = children
         return dict(self._children_cache)
 
@@ -933,6 +941,8 @@ class CatalystScreenWorkflow:
         if self.ranking is not None and level != "low_cost":
             protocol["ranking_fingerprint"] = self.ranking.fingerprint()
             protocol["uma_rank_top_n"] = self.uma_rank_top_n
+        if level == "full" and self.validation_top_n is not None and self.ranking is None:
+            protocol["validation_top_n"] = self.validation_top_n
         if level == "full" and not self.include_dft_rank_sp:
             protocol["include_dft_rank_sp"] = False
         return protocol
@@ -1122,6 +1132,8 @@ class CatalystScreenWorkflow:
             manifest["ranking_fingerprint"] = self.ranking.fingerprint()
             manifest["uma_rank_top_n"] = self.uma_rank_top_n
             manifest["ranking_top_n"] = self.ranking_top_n
+        if self.validation_top_n is not None:
+            manifest["validation_top_n"] = self.validation_top_n
         if self.method.result_family == "uma":
             manifest["ts_refine_n"] = self.ts_refine_n
         signature_keys = [
@@ -1147,6 +1159,8 @@ class CatalystScreenWorkflow:
             signature_keys.append("ts_refine_n")
         if self.ranking is not None:
             signature_keys.extend(["ranking_fingerprint", "uma_rank_top_n"])
+        if self.validation_top_n is not None and self.ranking is None:
+            signature_keys.append("validation_top_n")
         manifest["run_signature"] = _json_hash(
             {key: manifest[key] for key in signature_keys}
         )
@@ -1370,6 +1384,7 @@ def catalyst_screen(
     *,
     csv_path: str | Path | None = None,
     dataframe: pd.DataFrame | None = None,
+    systems: str | Path | pd.DataFrame | None = None,
     ts_types: tuple[str, ...] | list[str] = ("TS1", "TS2", "TS3", "TS4"),
     screening: ScreeningPlan | str = "gxtb-default",
     level: CalculationLevel = "full",
@@ -1388,7 +1403,8 @@ def catalyst_screen(
     top_n: int = 20,
     uma_rank_top_n: int | None = None,
     ranking_top_n: int | None = None,
-    ts_refine_n: int = 3,
+    validation_top_n: int | None = None,
+    ts_refine_n: int | None = None,
     prune_initial: bool | dict[str, Any] = True,
 ) -> CatalystScreenWorkflow:
     """Create an end-to-end catalyst-screen workflow.
@@ -1403,9 +1419,15 @@ def catalyst_screen(
     ----------
     csv_path : str or pathlib.Path or None, optional
         Component CSV containing substrate and catalyst rows. Provide exactly
-        one of ``csv_path`` and ``dataframe``.
+        one of ``csv_path``, ``dataframe``, and ``systems``.
     dataframe : pandas.DataFrame or None, optional
         In-memory component table with ``role`` and ``smiles`` columns.
+    systems : str, pathlib.Path, or pandas.DataFrame or None, optional
+        Explicit shortlisted systems, as a CSV path or dataframe containing
+        ``system_name``, ``substrate_name``, ``catalyst_name``,
+        ``substrate_smiles``, ``catalyst_smiles``, and ``rpos``. Only those
+        pairs and sites are calculated; reference components are deduplicated
+        from the selected rows. No substrate/catalyst cross-product is made.
     ts_types : sequence of str, optional
         Transition-state families to calculate. Supported built-ins are
         ``"TS1"``, ``"TS2"``, ``"TS3"``, and ``"TS4"``.
@@ -1459,8 +1481,9 @@ def catalyst_screen(
     scope : {"barriers", "full_cycle"}, optional
         ``"barriers"`` calculates the dependencies of the four supplied
         barrier equations. ``"full_cycle"`` adds every state needed for the
-        balanced catalytic-cycle profile. Full UMA currently supports
-        ``"barriers"`` only.
+        balanced catalytic-cycle profile, including catalyst, int1, int2,
+        INT3, and borylated product states. Both UMA and DFT final methods
+        support either scope.
     dimer_reference : {"lowest", "dimer", "dimer_bh_bridged", "dimer_eight_membered"}, optional
         Catalyst dimer used in barrier and profile equations. ``"lowest"``
         calculates all three topologies and strictly selects the lowest
@@ -1486,6 +1509,15 @@ def catalyst_screen(
     top_n : int, optional
         Number retained by the low-cost screen. With UMA reranking, this is
         the broad g-xTB cutoff before the UMA single points.
+    validation_top_n : int or None, optional
+        Maximum finite-energy candidates entering final validation per target,
+        for minima, TSs, and INT3 with either UMA or DFT. For example, ``3``
+        retains up to three candidates and validates all of them. Select by
+        explicit ranking if configured, otherwise implicit DFT ranking or
+        screening energy. The broad ``top_n`` screening cutoff still applies.
+        Requires ``level="full"``. ``None`` preserves historical cutoffs.
+        Explicit ``ranking_top_n``, ``uma_rank_top_n``, or ``ts_refine_n``
+        values must agree with this count when supplied together.
     ranking_top_n : int or None, optional
         Number of finite-energy ranked candidates passed into validation.
         Defaults to one. ``top_n`` is the earlier screening cutoff. For full
@@ -1494,7 +1526,7 @@ def catalyst_screen(
     uma_rank_top_n : int or None, optional
         Legacy alias for ``ranking_top_n``. Both names may be provided only
         when their values agree.
-    ts_refine_n : int, optional
+    ts_refine_n : int or None, optional
         Maximum distinct UMA optimized TS candidates sent to Hessian,
         released ``OptTS``, and final numerical frequencies in a full UMA run
         without explicit ranking. With ranking, ``ranking_top_n`` controls
@@ -1521,6 +1553,7 @@ def catalyst_screen(
     return CatalystScreenWorkflow(
         csv_path=csv_path,
         dataframe=dataframe,
+        systems=systems,
         ts_types=ts_types,
         screening=screening,
         level=level,
@@ -1539,6 +1572,7 @@ def catalyst_screen(
         top_n=top_n,
         uma_rank_top_n=uma_rank_top_n,
         ranking_top_n=ranking_top_n,
+        validation_top_n=validation_top_n,
         ts_refine_n=ts_refine_n,
         prune_initial=prune_initial,
     )
@@ -1562,6 +1596,11 @@ def _finalize_submitted_run(
             time.sleep(1)
     try:
         with _mutation_lock(root, wait=True) if attempt_id is not None else nullcontext():
+            if workflow.csv_path is None and workflow.dataframe is None:
+                # Recover explicit inputs from jobs serialized before inputs survived cache clearing.
+                manifest = json.loads((root / "manifest.json").read_text())
+                workflow.dataframe = pd.DataFrame(manifest["components"])
+                workflow._selected_systems = pd.DataFrame(manifest["systems"])
             if attempt_id is not None:
                 for raw_path in expected_report_paths or []:
                     path = Path(raw_path)
@@ -1581,6 +1620,44 @@ def _finalize_submitted_run(
             )
     finally:
         _mark_completed(root, attempt_id, 'screen_finalize', 0)
+
+
+def _reference_publication_frame(
+    workflow: CatalystScreenWorkflow, frame: pd.DataFrame, target: StructureTarget
+) -> pd.DataFrame:
+    """Select a reference with the same quality and energy rules as analysis."""
+    if len(frame) <= 1:
+        return frame
+    states = _state_rows(
+        frame,
+        source="references",
+        recipe=(
+            workflow.method.thermochemistry.to_dict()
+            if workflow.method.thermochemistry is not None else None
+        ),
+        reviews={},
+        calculation_level=workflow.level,
+        method=workflow.method.to_dict(),
+    )
+    selected, problems = _resolve_terms(
+        states,
+        {target.state_id: 1.0},
+        system_name=target.system.system_name,
+        substrate_name=target.system.substrate_name,
+        catalyst_name=target.system.catalyst_name,
+        rpos=target.rpos,
+        select_candidates=True,
+    )
+    if problems:
+        raise ValueError(f"Cannot select reference candidate: {';'.join(problems)}")
+    candidate = selected[target.state_id]
+    result = frame.iloc[[int(candidate["source_row"])]].copy()
+    result.attrs["frust_reference_selection"] = {
+        "input_rows": len(frame),
+        "selected_result_id": str(candidate["result_id"]),
+        "quality_status": str(candidate["quality_status"]),
+    }
+    return result
 
 
 def _finalize_run(
@@ -1678,14 +1755,16 @@ def _finalize_run(
                 }
             )
             continue
-        frame = pd.read_parquet(result_path).copy()
+        frame = pd.read_parquet(result_path).reset_index(drop=True)
         reference_id: str | None = None
         validation_status: str | None = None
         publication_status = "published"
         publication_issue = ""
+        selected_frame = None
         try:
+            selected_frame = _reference_publication_frame(workflow, frame, target)
             local_record = local_library.publish(
-                frame,
+                selected_frame,
                 target,
                 workflow.method,
                 protocol=workflow._reference_protocol(),
@@ -1708,7 +1787,7 @@ def _finalize_run(
             )
             if shared_library is not None:
                 shared_library.publish(
-                    frame,
+                    selected_frame,
                     target,
                     workflow.method,
                     protocol=workflow._reference_protocol(),
@@ -1717,7 +1796,9 @@ def _finalize_run(
                     source_target_dir=target_dir,
                     artifact_policy=artifact_policy,
                 )
-        frame["reference_id"] = reference_id
+        frame["reference_id"] = None
+        if reference_id is not None:
+            frame.loc[selected_frame.index, "reference_id"] = reference_id
         frame["reference_source"] = "calculated"
         computed_frames.append(frame)
         computed_sources.append(result_path)
@@ -2070,7 +2151,9 @@ def _finalize_nested_tiers(
                 "n_targets": len(child.targets()),
                 "n_snapshots": len(frames),
                 "n_rows": int(len(merged)),
-                "complete": int(len(merged)) == len(child.targets()),
+                "complete": {target.target_id for target in child.targets()}.issubset(
+                    set(merged.get("structure_id", pd.Series(dtype=str)))
+                ),
                 "path": str((tier_dir / "merged.parquet").relative_to(root)),
             }
         report["levels"][level] = level_report

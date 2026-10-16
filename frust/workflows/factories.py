@@ -47,8 +47,76 @@ from frust.workflows.methods import (
     screening_preset,
 )
 from frust.workflows.spec_profiles import profile_for_geometry_stage
+from frust.workflows.policies import _resolve_count
+from frust.workflows.validation import _validation_stages
 
 SplitMode = Literal["per_input", "per_rpos"]
+
+
+def _finalize_stage_defs(stages, method, *, validation_top_n=None, full=False):
+    """Apply an explicit validation boundary and annotate the resolved graph."""
+    if full and validation_top_n is not None:
+        first = next(i for i, stage in enumerate(stages) if stage.phase == "validation")
+        boundary = next(
+            (
+                i
+                for i in range(first - 1, -1, -1)
+                if stages[i].kind == "filter"
+                and stages[i].id
+                in {"uma_rank_filter", "dft_rank_filter", "uma_refine_filter"}
+            ),
+            None,
+        )
+        if boundary is None:
+            rank = next(
+                stage.id for stage in reversed(stages[:first]) if stage.kind == "calc"
+            )
+            stages.insert(
+                first,
+                StageDef(
+                    "validation_filter",
+                    "validation candidate selection",
+                    kind="filter",
+                    lowest=validation_top_n,
+                    rank_by=rank,
+                    operation="candidate_selection",
+                    phase="validation",
+                ),
+            )
+        else:
+            stages[boundary] = replace(
+                stages[boundary],
+                lowest=validation_top_n,
+                operation="candidate_selection",
+                phase="validation",
+            )
+        stages = [
+            (
+                replace(stage, lowest=None)
+                if stage.kind == "calc" and stage.phase == "validation"
+                else stage
+            )
+            for stage in stages
+        ]
+    annotated = []
+    for stage in _connect_geometry_inputs(stages, method):
+        operation = stage.operation
+        if operation is None:
+            operation = {
+                "prepare": "prepare",
+                "prune": "diversity_pruning",
+                "filter": "candidate_selection",
+            }.get(stage.kind)
+            if operation is None:
+                spec = method.for_stage(stage.method_stage or stage.id)
+                operation = (
+                    "minimum_optimization"
+                    if spec.supports_operation("minimum_optimization")
+                    else "single_point"
+                )
+        phase = stage.phase or ("ranking" if "rank" in stage.id else "screening")
+        annotated.append(replace(stage, operation=operation, phase=phase))
+    return annotated
 
 
 def _screen_ts_specs_for_backend(backend: str) -> dict[str, Any]:
@@ -149,93 +217,134 @@ def _validate_uma_potential(method: MethodPlan, stage_ids: tuple[str, ...]) -> N
         raise ValueError("Full UMA stages must use one model and environment")
 
 
-def _uma_validation_stages(
-    method: MethodPlan,
+def _complete_stage_graph(
+    stages,
+    method,
     *,
-    ts: bool,
-    preopt: bool = False,
-    selected_candidates: bool = False,
-) -> list[StageDef]:
-    """Build characterization independently of screening and ranking."""
-    ids = (
-        ("uma_hessian", "uma_ts_opt", "uma_freq") if ts else ("uma_min_opt", "uma_freq")
+    profile,
+    calculation_level,
+    include_dft_rank_sp,
+    ranking_top_n=1,
+    validation_top_n=None,
+    ts_refine_n=3,
+):
+    """Compose selection and characterization without calculator-family branches."""
+    for stage in stages:
+        if stage.kind == "calc":
+            method.for_stage(stage.method_stage or stage.id)
+    _, screening_opt = _screening_stage_ids(method)
+    ranking = _ranking_stage(method)
+    full = calculation_level == "full"
+    if validation_top_n is not None and not full:
+        raise ValueError("validation_top_n requires a full calculation level")
+    if calculation_level == "uma_ranked" and ranking != "uma_rank_sp":
+        raise ValueError("uma_ranked requires an UMA ranking plan")
+    if ranking is not None and calculation_level == "low_cost":
+        raise ValueError("Ranking requires a ranked or full calculation level")
+    if ranking == "uma_rank_sp" and full and include_dft_rank_sp:
+        raise ValueError("UMA reranking requires include_dft_rank_sp=False")
+    if ranking is not None:
+        stages.extend(_ranking_stages(ranking, ranking_top_n))
+    implicit_rank = ranking is None and (
+        calculation_level == "dft_ranked" or (full and include_dft_rank_sp)
     )
-    if ts and preopt:
-        ids = ("uma_min_opt", *ids)
-    _validate_uma_potential(method, ids)
-    if ts:
-        stages = (
-            [
+    if implicit_rank:
+        stages.append(_dft_rank_sp_stage())
+        if full and screening_opt == "uma_opt":
+            stages.append(
                 StageDef(
-                    "uma_preopt",
-                    "constrained UMA preoptimization",
-                    method_stage="uma_min_opt",
-                    constraint=True,
+                    "dft_rank_filter",
+                    "DFT single-point selection",
+                    kind="filter",
+                    lowest=1,
+                    rank_by="dft_rank_sp",
                 )
-            ]
-            if preopt
-            else []
+            )
+    if full:
+        roles = method.resolved_validation_roles()
+        direct_ts = (
+            profile == "transition_state"
+            and ranking is None
+            and screening_opt == "uma_opt"
+            and roles.get("ts_search") == "uma_ts_opt"
         )
+        if direct_ts:
+            screen = method.for_stage(screening_opt).kwargs
+            final = method.for_stage(roles["ts_search"]).kwargs
+            same_potential = all(screen.get(key) == final.get(key)
+                                 for key in ("uma", "uma_xtb_alpb"))
+            if not same_potential and validation_top_n is None:
+                raise ValueError("Full UMA stages must use one model and environment")
+            direct_ts = same_potential
+        if direct_ts:
+            _validate_uma_potential(
+                method, ("uma_sp", "uma_opt", "uma_hessian", "uma_ts_opt", "uma_freq")
+            )
+            stages.extend(
+                [
+                    StageDef(
+                        "uma_refine_prune",
+                        "UMA geometry diversity selection",
+                        kind="prune",
+                        prune_options=normalize_pruning_options(
+                            dict(
+                                modes=("rmsd",),
+                                coords_col="uma_opt-oc",
+                                energy_col="uma_opt-EE",
+                            )
+                        ),
+                    ),
+                    StageDef(
+                        "uma_refine_filter",
+                        "UMA TS candidate selection",
+                        kind="filter",
+                        lowest=validation_top_n or ts_refine_n,
+                        rank_by="uma_opt",
+                        operation="candidate_selection",
+                    ),
+                ]
+            )
         stages.extend(
-            [
-                StageDef(
-                    "uma_hessian",
-                    "UMA numerical Hessian seed",
-                    read_files=["input.hess"],
-                ),
-                StageDef(
-                    "uma_ts_opt",
-                    "UMA transition-state optimization",
-                    use_last_hess=True,
-                ),
-                StageDef("uma_freq", "UMA final numerical frequencies"),
-            ]
+            _validation_stages(
+                method,
+                profile=profile,
+                preopt=profile != "minimum" and not direct_ts,
+                selected_candidates=ranking is not None,
+            )
         )
     else:
-        stages = [
-            StageDef(
-                "uma_min_opt",
-                "UMA minimum optimization",
-                lowest=None if selected_candidates else 1,
-                rank_by="uma_min_opt",
-            ),
-            StageDef("uma_freq", "UMA numerical frequencies"),
-        ]
-    if method.include_terminal_solv_sp:
-        stages.append(StageDef("uma_solv_sp", "UMA solvent single point"))
-    return stages
+        rank = ranking or ("dft_rank_sp" if implicit_rank else screening_opt)
+        stages.append(
+            StageDef("filter", "filter", kind="filter", lowest=1, rank_by=rank)
+        )
+    return _finalize_stage_defs(
+        stages, method, validation_top_n=validation_top_n, full=full
+    )
 
 
 def _molecule_stage_defs(
     *,
     top_n: int,
     uma_rank_top_n: int = 1,
+    validation_top_n: int | None = None,
     calculation_level: CalculationLevel,
     method: MethodPlan,
     include_dft_rank_sp: bool = True,
     include_terminal_solv_sp: bool = True,
     prune_initial: bool | dict[str, Any] | None = False,
 ) -> list[StageDef]:
-    """Compose molecule screening, optional ranking, and validation blocks."""
+    """Compose molecule screening and shared candidate/validation blocks."""
     screening_sp, screening_opt = _screening_stage_ids(method)
     ranking = _ranking_stage(method)
-    if calculation_level == "uma_ranked" and ranking != "uma_rank_sp":
-        raise ValueError("uma_ranked requires an UMA ranking plan")
-    if ranking == "uma_rank_sp" and calculation_level == "full" and include_dft_rank_sp:
-        raise ValueError("UMA reranking requires include_dft_rank_sp=False")
     stages = [
         StageDef("prepare", "prepare", kind="prepare"),
         StageDef("xtb_preopt", "xtb_preopt", n_cores=2),
-        StageDef(
-            screening_sp,
-            "UMA single point" if screening_sp == "uma_sp" else "xtb_sp",
-            n_cores=2,
-        ),
+        StageDef(screening_sp, "screening single point", n_cores=2),
     ]
     if screening_sp == "uma_sp" or ranking is not None:
         stages.append(
             StageDef(
-                "uma_sp_filter" if screening_sp == "uma_sp" else "xtb_sp_filter",
+                screening_sp.removesuffix("_sp") + "_sp_filter",
                 "screening single-point selection",
                 kind="filter",
                 lowest=top_n,
@@ -245,69 +354,21 @@ def _molecule_stage_defs(
     stages.append(
         StageDef(
             screening_opt,
-            "UMA optimization" if screening_opt == "uma_opt" else "xTB optimization",
+            "screening optimization",
             lowest=top_n,
             rank_by=screening_opt,
             n_cores=2,
         )
     )
-    if ranking is not None:
-        stages.extend(_ranking_stages(ranking, uma_rank_top_n))
-    if calculation_level == "full" and method.result_family == "uma":
-        if ranking is None:
-            if screening_opt != "uma_opt":
-                raise ValueError(
-                    "Full UMA minima require UMA screening or explicit ranking"
-                )
-            if include_dft_rank_sp:
-                raise ValueError("Full UMA minima cannot include implicit DFT ranking")
-            _validate_uma_potential(
-                method, ("uma_sp", "uma_opt", "uma_min_opt", "uma_freq")
-            )
-        stages.extend(
-            _uma_validation_stages(
-                method, ts=False, selected_candidates=ranking is not None
-            )
-        )
-    else:
-        if ranking is None and (
-            calculation_level == "dft_ranked"
-            or (calculation_level == "full" and include_dft_rank_sp)
-        ):
-            stages.append(StageDef("dft_rank_sp", "DFT ranking single point"))
-            if calculation_level == "full" and screening_opt == "uma_opt":
-                stages.append(
-                    StageDef(
-                        "dft_rank_filter",
-                        "DFT single-point selection",
-                        kind="filter",
-                        lowest=1,
-                        rank_by="dft_rank_sp",
-                    )
-                )
-        if calculation_level == "full":
-            stages.extend(
-                [
-                    StageDef(
-                        "dft_opt",
-                        "DFT minimum optimization",
-                        lowest=None if ranking is not None else 1,
-                        rank_by="dft_opt",
-                    ),
-                    StageDef("dft_freq", "DFT frequencies"),
-                ]
-            )
-            if include_terminal_solv_sp:
-                stages.append(StageDef("dft_solv_sp", "DFT solvent single point"))
-        else:
-            rank_by = ranking or (
-                "dft_rank_sp" if calculation_level == "dft_ranked" else screening_opt
-            )
-            stages.append(
-                StageDef("filter", "filter", kind="filter", lowest=1, rank_by=rank_by)
-            )
-    stages = _with_initial_prune(stages, prune_initial)
-    return _connect_geometry_inputs(stages, method) if ranking is not None else stages
+    return _complete_stage_graph(
+        _with_initial_prune(stages, prune_initial),
+        method,
+        profile="minimum",
+        calculation_level=calculation_level,
+        include_dft_rank_sp=include_dft_rank_sp,
+        ranking_top_n=uma_rank_top_n,
+        validation_top_n=validation_top_n,
+    )
 
 
 def _screening_stage_ids(method: MethodPlan) -> tuple[str, str]:
@@ -395,6 +456,17 @@ class MolsWorkflow(BaseWorkflow):
         Conformer count passed to ``Stepper.build_initial_df``.
     top_n : int, optional
         Number of rows kept after ranking/filtering stages.
+    validation_top_n : int or None, optional
+        Maximum finite-energy candidates entering final validation per target.
+        For example, ``3`` sends up to three candidates through every required
+        validation stage for either UMA or DFT. Selection uses explicit ranking,
+        otherwise the implicit ranking single point or screening optimization.
+        Requires full calculation depth. ``None`` preserves historical cutoffs.
+        This count is separate from the broad screening limit ``top_n``.
+    ranking_top_n : int or None, optional
+        Candidate count after explicit single-point reranking. When supplied
+        with ``validation_top_n``, the counts must agree. Without explicit
+        reranking this setting does not replace the validation boundary.
     dft : bool, optional
         If ``True``, add DFT optimization and frequency stages. Gas-phase
         presets also add a terminal solvent single point; solvent-inclusive
@@ -430,13 +502,21 @@ class MolsWorkflow(BaseWorkflow):
         method: MethodPlan | str | None = None,
         screening: ScreeningPlan | str | None = None,
         n_confs: int | None = None,
+        validation_top_n: int | None = None,
+        ranking_top_n: int | None = None,
         top_n: int = 20,
-        uma_rank_top_n: int = 1,
+        uma_rank_top_n: int | None = None,
         dft: bool = True,
         calculation_level: CalculationLevel | None = None,
         include_dft_rank_sp: bool | None = None,
         prune_initial: bool | dict[str, Any] = True,
     ) -> None:
+        count = _resolve_count(validation_top_n=validation_top_n,
+                               ranking_top_n=ranking_top_n,
+                               uma_rank_top_n=uma_rank_top_n,
+                               ts_refine_n=None)
+        self.validation_top_n = validation_top_n
+        self.uma_rank_top_n = count or 1
         self.calculation_level = _calculation_level(
             calculation_level,
             dft=dft,
@@ -453,14 +533,13 @@ class MolsWorkflow(BaseWorkflow):
         self.smiles = smiles
         self.split = split
         self.select_mols = select_mols
-        self.uma_rank_top_n = int(uma_rank_top_n)
         if self.uma_rank_top_n < 1:
             raise ValueError("uma_rank_top_n must be positive")
         self.include_dft_rank_sp = (
             (
                 _ranking_stage(self.method) == "dft_rank_sp"
                 if _ranking_stage(self.method) is not None
-                else self.method.result_family == "dft"
+                else "dft_rank_sp" in self.method.stages
                 and "uma_opt" not in self.method.stages
             )
             if include_dft_rank_sp is None
@@ -592,6 +671,7 @@ class MolsWorkflow(BaseWorkflow):
         """Return molecule workflow stages."""
         return _molecule_stage_defs(
             top_n=self.top_n,
+            validation_top_n=self.validation_top_n,
             uma_rank_top_n=self.uma_rank_top_n,
             calculation_level=self.calculation_level,
             method=self.method,
@@ -627,6 +707,17 @@ class RawMolsWorkflow(BaseWorkflow):
         Conformer count passed to ``Stepper.build_initial_df``.
     top_n : int, optional
         Number of rows kept after ranking/filtering stages.
+    validation_top_n : int or None, optional
+        Maximum finite-energy candidates entering final validation per target.
+        For example, ``3`` sends up to three candidates through every required
+        validation stage for either UMA or DFT. Selection uses explicit ranking,
+        otherwise the implicit ranking single point or screening optimization.
+        Requires full calculation depth. ``None`` preserves historical cutoffs.
+        This count is separate from the broad screening limit ``top_n``.
+    ranking_top_n : int or None, optional
+        Candidate count after explicit single-point reranking. When supplied
+        with ``validation_top_n``, the counts must agree. Without explicit
+        reranking this setting does not replace the validation boundary.
     dft : bool, optional
         If ``True``, add DFT optimization, frequency, and solvent stages. If
         ``False``, end with a lowest-energy filter after xTB stages.
@@ -659,11 +750,19 @@ class RawMolsWorkflow(BaseWorkflow):
         smiles: list[str] | None = None,
         method: MethodPlan | str | None = None,
         n_confs: int | None = None,
+        validation_top_n: int | None = None,
+        ranking_top_n: int | None = None,
         top_n: int = 10,
         dft: bool = False,
         calculation_level: CalculationLevel | None = None,
         prune_initial: bool | dict[str, Any] = False,
     ) -> None:
+        count = _resolve_count(validation_top_n=validation_top_n,
+                               ranking_top_n=ranking_top_n,
+                               uma_rank_top_n=None,
+                               ts_refine_n=None)
+        self.validation_top_n = validation_top_n
+        self.uma_rank_top_n = count or 1
         self.calculation_level = _calculation_level(
             calculation_level,
             dft=dft,
@@ -679,12 +778,11 @@ class RawMolsWorkflow(BaseWorkflow):
         self.dataframe = dataframe
         self.smiles = smiles
         self.prune_initial = prune_initial
-        self.uma_rank_top_n = 1
         ranking = _ranking_stage(self.method)
         self.include_dft_rank_sp = (
             ranking == "dft_rank_sp"
             if ranking is not None
-            else self.method.result_family == "dft"
+            else "dft_rank_sp" in self.method.stages
             and "uma_opt" not in self.method.stages
         )
 
@@ -781,8 +879,10 @@ class RawMolsWorkflow(BaseWorkflow):
         """Return raw molecule workflow stages."""
         return _molecule_stage_defs(
             top_n=self.top_n,
+            validation_top_n=self.validation_top_n,
             calculation_level=self.calculation_level,
             method=self.method,
+            uma_rank_top_n=self.uma_rank_top_n,
             include_dft_rank_sp=self.include_dft_rank_sp,
             include_terminal_solv_sp=self.method.include_terminal_solv_sp,
             prune_initial=self.prune_initial,
@@ -811,14 +911,22 @@ class ScreenTSWorkflow(BaseWorkflow):
         method: MethodPlan | str | None = None,
         screening: ScreeningPlan | str | None = None,
         n_confs: int | None = None,
+        validation_top_n: int | None = None,
+        ranking_top_n: int | None = None,
         top_n: int = 20,
-        ts_refine_n: int = 3,
-        uma_rank_top_n: int = 1,
+        ts_refine_n: int | None = None,
+        uma_rank_top_n: int | None = None,
         dft: bool = True,
         calculation_level: CalculationLevel | None = None,
         include_dft_rank_sp: bool | None = None,
         prune_initial: bool | dict[str, Any] = True,
     ) -> None:
+        count = _resolve_count(validation_top_n=validation_top_n,
+                               ranking_top_n=ranking_top_n,
+                               uma_rank_top_n=uma_rank_top_n,
+                               ts_refine_n=ts_refine_n)
+        self.validation_top_n = validation_top_n
+        self.uma_rank_top_n = count or 1
         self.calculation_level = _calculation_level(
             calculation_level,
             dft=dft,
@@ -833,10 +941,9 @@ class ScreenTSWorkflow(BaseWorkflow):
         self.csv_path = csv_path
         self.dataframe = dataframe
         self.ts_types = tuple(str(ts_type).upper() for ts_type in ts_types)
-        self.ts_refine_n = int(ts_refine_n)
+        self.ts_refine_n = 3 if ts_refine_n is None else int(ts_refine_n)
         if self.ts_refine_n < 1:
             raise ValueError("ts_refine_n must be positive")
-        self.uma_rank_top_n = int(uma_rank_top_n)
         if self.uma_rank_top_n < 1:
             raise ValueError("uma_rank_top_n must be positive")
         self.ts_backend = str(ts_backend).strip().lower()
@@ -846,7 +953,7 @@ class ScreenTSWorkflow(BaseWorkflow):
             (
                 _ranking_stage(self.method) == "dft_rank_sp"
                 if _ranking_stage(self.method) is not None
-                else self.method.result_family == "dft"
+                else "dft_rank_sp" in self.method.stages
                 and "uma_opt" not in self.method.stages
             )
             if include_dft_rank_sp is None
@@ -860,7 +967,7 @@ class ScreenTSWorkflow(BaseWorkflow):
             return self.spec_profile
         if self.method.result_family == "uma":
             return "omol-uma-s-1p2p1/gas"
-        return profile_for_geometry_stage(self.method, "dft_ts_opt")
+        return profile_for_geometry_stage(self.method, self.method.resolved_validation_roles()["ts_search"])
 
     @property
     def resolved_spec_profile(self) -> str:
@@ -1009,109 +1116,16 @@ class ScreenTSWorkflow(BaseWorkflow):
         return metadata.get("ts_type") or metadata.get("state_id")
 
     def _stage_defs(self) -> list[StageDef]:
-        """Compose constrained screening, selection and TS validation."""
-        _, screening_opt = _screening_stage_ids(self.method)
-        ranking = _ranking_stage(self.method)
-        if ranking is not None and self.calculation_level not in {
-            "uma_ranked",
-            "dft_ranked",
-            "full",
-        }:
-            raise ValueError("Ranking requires a ranked or full calculation level")
-        if (
-            ranking == "uma_rank_sp"
-            and self.calculation_level == "full"
-            and self.include_dft_rank_sp
-        ):
-            raise ValueError("UMA reranking requires include_dft_rank_sp=False")
-        if self.calculation_level == "uma_ranked" and ranking != "uma_rank_sp":
-            raise ValueError("uma_ranked requires an UMA ranking plan")
+        """Compose constrained screening, candidate selection and TS validation."""
         stages = _ts_screening_stages(
-            self.top_n,
-            method=self.method,
-            prune_initial=self.prune_initial,
-            ranking_active=ranking is not None,
-        )
-        if ranking is not None:
-            stages.extend(_ranking_stages(ranking, self.uma_rank_top_n))
-        if self.calculation_level == "full" and self.method.result_family == "uma":
-            if ranking is None:
-                if screening_opt != "uma_opt":
-                    raise ValueError(
-                        "Full UMA TS refinement requires UMA screening or explicit ranking"
-                    )
-                if self.include_dft_rank_sp:
-                    raise ValueError(
-                        "Full UMA TS refinement cannot include implicit DFT ranking"
-                    )
-                _validate_uma_potential(
-                    self.method,
-                    ("uma_sp", "uma_opt", "uma_hessian", "uma_ts_opt", "uma_freq"),
-                )
-                stages.extend(
-                    [
-                        StageDef(
-                            "uma_refine_prune",
-                            "UMA geometry diversity selection",
-                            kind="prune",
-                            prune_options=normalize_pruning_options(
-                                {
-                                    "modes": ("rmsd",),
-                                    "coords_col": "uma_opt-oc",
-                                    "energy_col": "uma_opt-EE",
-                                }
-                            ),
-                        ),
-                        StageDef(
-                            "uma_refine_filter",
-                            "UMA TS candidate selection",
-                            kind="filter",
-                            lowest=self.ts_refine_n,
-                            rank_by="uma_opt",
-                        ),
-                    ]
-                )
-            preopt = ranking is not None
-            stages.extend(_uma_validation_stages(self.method, ts=True, preopt=preopt))
-        else:
-            if ranking is None and (
-                self.calculation_level == "dft_ranked"
-                or (self.calculation_level == "full" and self.include_dft_rank_sp)
-            ):
-                stages.append(_dft_rank_sp_stage())
-                if self.calculation_level == "full" and screening_opt == "uma_opt":
-                    stages.append(
-                        StageDef(
-                            "dft_rank_filter",
-                            "DFT single-point selection",
-                            kind="filter",
-                            lowest=1,
-                            rank_by="dft_rank_sp",
-                        )
-                    )
-            if self.calculation_level == "full":
-                stages.extend(
-                    _ts_dft_refinement_stages(
-                        include_terminal_solv_sp=self.method.include_terminal_solv_sp,
-                        selected_candidates=ranking is not None,
-                    )
-                )
-            else:
-                rank_by = ranking or (
-                    "dft_rank_sp"
-                    if self.calculation_level == "dft_ranked"
-                    else screening_opt
-                )
-                stages.append(
-                    StageDef(
-                        "filter", "filter", kind="filter", lowest=1, rank_by=rank_by
-                    )
-                )
-        return (
-            _connect_geometry_inputs(stages, self.method)
-            if ranking is not None
-            else stages
-        )
+            self.top_n, method=self.method, prune_initial=self.prune_initial,
+            ranking_active=_ranking_stage(self.method) is not None)
+        return _complete_stage_graph(
+            stages, self.method, profile="transition_state",
+            calculation_level=self.calculation_level,
+            include_dft_rank_sp=self.include_dft_rank_sp,
+            ranking_top_n=self.uma_rank_top_n, validation_top_n=self.validation_top_n,
+            ts_refine_n=self.ts_refine_n)
 
 
 class SeededWb97TSWorkflow(ScreenTSWorkflow):
@@ -1162,7 +1176,7 @@ class SeededWb97TSWorkflow(ScreenTSWorkflow):
         from dataclasses import replace
 
         refinement = _ts_dft_refinement_stages(
-            include_terminal_solv_sp=self.method.include_terminal_solv_sp
+            method=self.method, include_terminal_solv_sp=self.method.include_terminal_solv_sp
         )
         refinement[0] = replace(refinement[0], lowest=None, rank_by=None)
         return [
@@ -1192,13 +1206,21 @@ class Int3Workflow(BaseWorkflow):
         method: MethodPlan | str | None = None,
         screening: ScreeningPlan | str | None = None,
         n_confs: int | None = None,
+        validation_top_n: int | None = None,
+        ranking_top_n: int | None = None,
         top_n: int = 20,
-        uma_rank_top_n: int = 1,
+        uma_rank_top_n: int | None = None,
         dft: bool = True,
         calculation_level: CalculationLevel | None = None,
         include_dft_rank_sp: bool | None = None,
         prune_initial: bool | dict[str, Any] = True,
     ) -> None:
+        count = _resolve_count(validation_top_n=validation_top_n,
+                               ranking_top_n=ranking_top_n,
+                               uma_rank_top_n=uma_rank_top_n,
+                               ts_refine_n=None)
+        self.validation_top_n = validation_top_n
+        self.uma_rank_top_n = count or 1
         self.calculation_level = _calculation_level(
             calculation_level,
             dft=dft,
@@ -1214,14 +1236,13 @@ class Int3Workflow(BaseWorkflow):
         self.dataframe = dataframe
         self.spec_profile = str(spec_profile).strip().lower()
         self.spec_match = str(spec_match).strip().lower()
-        self.uma_rank_top_n = int(uma_rank_top_n)
         if self.uma_rank_top_n < 1:
             raise ValueError("uma_rank_top_n must be positive")
         self.include_dft_rank_sp = (
             (
                 _ranking_stage(self.method) == "dft_rank_sp"
                 if _ranking_stage(self.method) is not None
-                else self.method.result_family == "dft"
+                else "dft_rank_sp" in self.method.stages
                 and "uma_opt" not in self.method.stages
             )
             if include_dft_rank_sp is None
@@ -1233,7 +1254,9 @@ class Int3Workflow(BaseWorkflow):
         """Return the explicit or method-derived INT3 geometry profile."""
         if self.spec_profile != "auto":
             return self.spec_profile
-        return profile_for_geometry_stage(self.method, "dft_opt")
+        if self.method.result_family == "uma":
+            return "omol-uma-s-1p2p1/gas"
+        return profile_for_geometry_stage(self.method, self.method.resolved_validation_roles()["minimum_optimization"])
 
     @property
     def resolved_spec_profile(self) -> str:
@@ -1292,73 +1315,15 @@ class Int3Workflow(BaseWorkflow):
         return "INT3"
 
     def _stage_defs(self) -> list[StageDef]:
-        """Return the dedicated INT3 screening and refinement graph."""
-        _, screening_opt = _screening_stage_ids(self.method)
-        ranking = _ranking_stage(self.method)
+        """Compose constrained INT3 screening and minimum characterization."""
         stages = _ts_screening_stages(
-            self.top_n,
-            method=self.method,
-            prune_initial=self.prune_initial,
-            ranking_active=ranking is not None,
-        )
-        if ranking is not None:
-            if self.calculation_level not in {"uma_ranked", "dft_ranked", "full"}:
-                raise ValueError("Ranking requires a ranked or full calculation level")
-            if (
-                ranking == "uma_rank_sp"
-                and self.calculation_level == "full"
-                and self.include_dft_rank_sp
-            ):
-                raise ValueError("UMA reranking requires include_dft_rank_sp=False")
-            stages.extend(_ranking_stages(ranking, self.uma_rank_top_n))
-        elif self.calculation_level == "uma_ranked":
-            raise ValueError("uma_ranked requires an UMA ranking plan")
-        if ranking is None and (
-            self.calculation_level == "dft_ranked"
-            or (self.calculation_level == "full" and self.include_dft_rank_sp)
-        ):
-            stages.append(_dft_rank_sp_stage())
-            if self.calculation_level == "full" and screening_opt == "uma_opt":
-                stages.append(
-                    StageDef(
-                        "dft_rank_filter",
-                        "DFT single-point selection",
-                        kind="filter",
-                        lowest=1,
-                        rank_by="dft_rank_sp",
-                    )
-                )
-        if self.calculation_level == "full":
-            stages.extend(
-                _int3_dft_refinement_stages(
-                    include_terminal_solv_sp=self.method.include_terminal_solv_sp,
-                    selected_candidates=ranking is not None,
-                )
-            )
-        else:
-            rank_by = ranking or (
-                "uma_rank_sp"
-                if self.calculation_level == "uma_ranked"
-                else (
-                    "dft_rank_sp"
-                    if self.calculation_level == "dft_ranked"
-                    else screening_opt
-                )
-            )
-            stages.append(
-                StageDef(
-                    "filter",
-                    "filter",
-                    kind="filter",
-                    lowest=1,
-                    rank_by=rank_by,
-                )
-            )
-        return (
-            _connect_geometry_inputs(stages, self.method)
-            if ranking is not None
-            else stages
-        )
+            self.top_n, method=self.method, prune_initial=self.prune_initial,
+            ranking_active=_ranking_stage(self.method) is not None)
+        return _complete_stage_graph(
+            stages, self.method, profile="constrained_minimum",
+            calculation_level=self.calculation_level,
+            include_dft_rank_sp=self.include_dft_rank_sp,
+            ranking_top_n=self.uma_rank_top_n, validation_top_n=self.validation_top_n)
 
 
 def mols(
@@ -1371,6 +1336,8 @@ def mols(
     method: MethodPlan | str | None = None,
     screening: ScreeningPlan | str | None = None,
     n_confs: int | None = None,
+    validation_top_n: int | None = None,
+    ranking_top_n: int | None = None,
     top_n: int = 20,
     dft: bool = True,
     calculation_level: CalculationLevel | None = None,
@@ -1424,6 +1391,17 @@ def mols(
         Conformer count for initial dataframe preparation.
     top_n : int, optional
         Number of rows retained by ranking/filtering stages.
+    validation_top_n : int or None, optional
+        Maximum finite-energy candidates entering final validation per target.
+        For example, ``3`` sends up to three candidates through every required
+        validation stage for either UMA or DFT. Selection uses explicit ranking,
+        otherwise the implicit ranking single point or screening optimization.
+        Requires full calculation depth. ``None`` preserves historical cutoffs.
+        This count is separate from the broad screening limit ``top_n``.
+    ranking_top_n : int or None, optional
+        Candidate count after explicit single-point reranking. When supplied
+        with ``validation_top_n``, the counts must agree. Without explicit
+        reranking this setting does not replace the validation boundary.
     dft : bool, optional
         Include DFT optimization and frequency stages when ``True``. Gas-phase
         presets also include a terminal solvent single point; solvent-inclusive
@@ -1478,6 +1456,8 @@ def mols(
         screening=screening,
         n_confs=n_confs,
         top_n=top_n,
+        validation_top_n=validation_top_n,
+        ranking_top_n=ranking_top_n,
         dft=dft,
         calculation_level=calculation_level,
         include_dft_rank_sp=include_dft_rank_sp,
@@ -1492,6 +1472,8 @@ def raw_mols(
     smiles: list[str] | None = None,
     method: MethodPlan | str | None = None,
     n_confs: int | None = None,
+    validation_top_n: int | None = None,
+    ranking_top_n: int | None = None,
     top_n: int = 10,
     dft: bool = False,
     prune_initial: bool | dict[str, Any] = False,
@@ -1519,6 +1501,17 @@ def raw_mols(
         Conformer count for initial dataframe preparation.
     top_n : int, optional
         Number of rows retained by ranking/filtering stages.
+    validation_top_n : int or None, optional
+        Maximum finite-energy candidates entering final validation per target.
+        For example, ``3`` sends up to three candidates through every required
+        validation stage for either UMA or DFT. Selection uses explicit ranking,
+        otherwise the implicit ranking single point or screening optimization.
+        Requires full calculation depth. ``None`` preserves historical cutoffs.
+        This count is separate from the broad screening limit ``top_n``.
+    ranking_top_n : int or None, optional
+        Candidate count after explicit single-point reranking. When supplied
+        with ``validation_top_n``, the counts must agree. Without explicit
+        reranking this setting does not replace the validation boundary.
     dft : bool, optional
         Include DFT optimization, frequency, and solvent stages when ``True``.
     prune_initial : bool or dict, optional
@@ -1553,6 +1546,8 @@ def raw_mols(
         method=method,
         n_confs=n_confs,
         top_n=top_n,
+        validation_top_n=validation_top_n,
+        ranking_top_n=ranking_top_n,
         dft=dft,
         prune_initial=prune_initial,
     )
@@ -1569,8 +1564,10 @@ def screen_ts(
     spec_profile: str = "auto",
     spec_match: str = "prefer-exact",
     n_confs: int | None = None,
+    validation_top_n: int | None = None,
+    ranking_top_n: int | None = None,
     top_n: int = 20,
-    ts_refine_n: int = 3,
+    ts_refine_n: int | None = None,
     dft: bool = True,
     calculation_level: CalculationLevel | None = None,
     include_dft_rank_sp: bool | None = None,
@@ -1622,9 +1619,20 @@ def screen_ts(
     top_n : int, optional
         Number of low-cost optimized TS guesses kept before the DFT pre-SP
         cutoff.
-    ts_refine_n : int, optional
+    ts_refine_n : int or None, optional
         Maximum number of geometrically distinct UMA optimized candidates to
         carry into Hessian, unconstrained TS search, and final frequencies.
+    validation_top_n : int or None, optional
+        Maximum finite-energy candidates entering final validation per target.
+        For example, ``3`` sends up to three candidates through every required
+        validation stage for either UMA or DFT. Selection uses explicit ranking,
+        otherwise the implicit ranking single point or screening optimization.
+        Requires full calculation depth. ``None`` preserves historical cutoffs.
+        This count is separate from the broad screening limit ``top_n``.
+    ranking_top_n : int or None, optional
+        Candidate count after explicit single-point reranking. When supplied
+        with ``validation_top_n``, the counts must agree. Without explicit
+        reranking this setting does not replace the validation boundary.
     dft : bool, optional
         Legacy switch for ``calculation_level="full"``. A DFT method adds
         constrained preoptimization, Hessian, ``OptTS``, and frequencies. An
@@ -1677,6 +1685,8 @@ def screen_ts(
         spec_match=spec_match,
         n_confs=n_confs,
         top_n=top_n,
+        validation_top_n=validation_top_n,
+        ranking_top_n=ranking_top_n,
         ts_refine_n=ts_refine_n,
         dft=dft,
         calculation_level=calculation_level,
@@ -1694,6 +1704,8 @@ def int3(
     spec_profile: str = "auto",
     spec_match: str = "prefer-exact",
     n_confs: int | None = None,
+    validation_top_n: int | None = None,
+    ranking_top_n: int | None = None,
     top_n: int = 20,
     dft: bool = True,
     calculation_level: CalculationLevel | None = None,
@@ -1720,7 +1732,8 @@ def int3(
         ``"uma-alpb-chloroform"``.
     spec_profile : str, optional
         Geometry-reference profile used for INT3 construction. ``"auto"``
-        selects it from the DFT optimization method and environment.
+        selects the reviewed UMA gas profile for UMA final methods, or the
+        DFT optimization method and environment for DFT final methods.
     spec_match : {"prefer-exact", "exact"}, optional
         Profile matching policy. ``"prefer-exact"`` may fall back to the
         other environment from the same method family; ``"exact"`` requires
@@ -1728,19 +1741,33 @@ def int3(
     n_confs : int or None, optional
         Conformer count for initial INT3 embedding.
     top_n : int, optional
-        Number of low-cost optimized structures kept before the DFT pre-SP
-        cutoff.
+        Number of candidates retained by the low-cost geometry screen.
+    validation_top_n : int or None, optional
+        Maximum finite-energy candidates entering final validation per target.
+        For example, ``3`` sends up to three candidates through every required
+        validation stage for either UMA or DFT. Selection uses explicit ranking,
+        otherwise the implicit ranking single point or screening optimization.
+        Requires full calculation depth. ``None`` preserves historical cutoffs.
+        This count is separate from the broad screening limit ``top_n``.
+    ranking_top_n : int or None, optional
+        Candidate count after explicit single-point reranking. When supplied
+        with ``validation_top_n``, the counts must agree. Without explicit
+        reranking this setting does not replace the validation boundary.
     dft : bool, optional
-        If ``True``, include constrained DFT preoptimization, INT3 DFT
-        optimization, and frequency stages. Gas-phase presets also include a
-        terminal solvent single point; solvent-inclusive presets do not. If
-        ``False``, stop after the DFT pre-SP cutoff and keep the lowest-energy
-        row.
-    calculation_level : {"low_cost", "dft_ranked", "full"} or None, optional
-        Explicit workflow depth. When set, it takes precedence over ``dft``.
+        Legacy workflow-depth switch. ``True`` requests full refinement with
+        the selected final method, UMA or DFT; ``False`` requests DFT-ranked
+        screening. Prefer ``calculation_level`` for explicit method plans.
+    calculation_level : {"low_cost", "uma_ranked", "dft_ranked", "full"} or None, optional
+        ``"low_cost"`` stops after geometry screening, ``"uma_ranked"``
+        selects by an explicit UMA ranking stage, ``"dft_ranked"`` selects
+        by a DFT single point, and ``"full"`` adds constrained
+        preoptimization, unconstrained minimum optimization, frequencies,
+        and any terminal solvent single point specified by the final method.
+        When set, this takes precedence over ``dft``.
     include_dft_rank_sp : bool or None, optional
-        Include the DFT ranking single point in a full run. Defaults to
-        ``False`` for UMA screening and ``True`` otherwise.
+        Include a DFT ranking single point in a full run. ``None`` follows an
+        explicit ranking plan; otherwise it defaults to ``False`` for UMA
+        screening or UMA final methods and ``True`` for DFT after g-xTB.
     prune_initial : bool or dict, optional
         If ``False``, leave the initial INT3 conformer ensemble unchanged. If
         ``True``, insert PRISM pruning immediately after ``prepare`` using the
@@ -1772,6 +1799,8 @@ def int3(
         spec_match=spec_match,
         n_confs=n_confs,
         top_n=top_n,
+        validation_top_n=validation_top_n,
+        ranking_top_n=ranking_top_n,
         dft=dft,
         calculation_level=calculation_level,
         include_dft_rank_sp=include_dft_rank_sp,
@@ -1866,48 +1895,12 @@ def _dft_rank_sp_stage() -> StageDef:
     return StageDef("dft_rank_sp", "DFT ranking single point")
 
 
-def _dft_preopt_stage(*, lowest: int | None = 1) -> StageDef:
-    """Return the constrained DFT preoptimization stage."""
-    return StageDef(
-        "dft_preopt",
-        "constrained DFT preoptimization",
-        constraint=True,
-        lowest=lowest,
-        rank_by="dft_preopt",
-    )
-
-
 def _ts_dft_refinement_stages(
-    *, include_terminal_solv_sp: bool = True, selected_candidates: bool = False
+    *, include_terminal_solv_sp: bool = True, selected_candidates: bool = False,
+    method: MethodPlan | None = None,
 ) -> list[StageDef]:
-    """Return common TS DFT refinement stages.
-
-    Returns
-    -------
-    list of StageDef
-        Constrained DFT preoptimization, Hessian, ``OptTS``, final frequency,
-        and, by default, a solvent single-point stage.
-    """
-    stages = [
-        _dft_preopt_stage(lowest=None if selected_candidates else 1),
-        StageDef("dft_hessian", "DFT Hessian", read_files=["input.hess"]),
-        StageDef("dft_ts_opt", "DFT transition-state optimization", use_last_hess=True),
-        StageDef("dft_freq", "DFT frequencies"),
-    ]
-    if include_terminal_solv_sp:
-        stages.append(StageDef("dft_solv_sp", "DFT solvent single point"))
-    return stages
-
-
-def _int3_dft_refinement_stages(
-    *, include_terminal_solv_sp: bool = True, selected_candidates: bool = False
-) -> list[StageDef]:
-    """Return INT3 DFT refinement stages after the DFT single-point cutoff."""
-    stages = [
-        _dft_preopt_stage(lowest=None if selected_candidates else 1),
-        StageDef("dft_opt", "DFT minimum optimization", lowest=None if selected_candidates else 1, rank_by="dft_opt"),
-        StageDef("dft_freq", "DFT frequencies"),
-    ]
-    if include_terminal_solv_sp:
-        stages.append(StageDef("dft_solv_sp", "DFT solvent single point"))
-    return stages
+    """Adapt legacy DFT TS callers to the shared validation graph."""
+    method = method or method_preset("wb97xd3-631g")
+    method = replace(method, include_terminal_solv_sp=include_terminal_solv_sp)
+    return _validation_stages(method, profile="transition_state", preopt=True,
+                              selected_candidates=selected_candidates)

@@ -303,12 +303,7 @@ def test_unbalanced_uma_barrier_has_no_energy(tmp_path, monkeypatch):
     ).all()
 
 
-def test_full_uma_rejects_unsupported_scope_and_mixed_plan():
-    with pytest.raises(ValueError, match="scope='barriers'"):
-        ft.workflows.catalyst_screen(
-            dataframe=_components(), screening="uma-gas", method="uma-gas",
-            level="full", scope="full_cycle",
-        )
+def test_full_uma_rejects_mixed_plan():
     with pytest.raises(ValueError, match="one model and environment"):
         ft.workflows.catalyst_screen(
             dataframe=_components(), screening="uma-gas",
@@ -425,7 +420,7 @@ def test_full_uma_submitted_plan_and_matching_restart(tmp_path):
         backend="slurm", partition="kemi1", log_dir=tmp_path / "logs"
     )
     stages = workflow.show_stages(execution="dft_staged")
-    assert set(stages["group"]) == {"init"}
+    assert set(stages["group"]) == {"init", "uma_hessian", "uma_ts_opt", "uma_min_opt", "uma_freq"}
     assert "uma_min_opt" in set(stages["stage"])
     assert "uma_ts_opt" in set(stages["stage"])
     assert not any(stage.startswith("dft_") for stage in stages["stage"])

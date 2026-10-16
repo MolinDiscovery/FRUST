@@ -73,7 +73,7 @@ def compact_result_dataframe(df: pd.DataFrame) -> pd.DataFrame:
     pandas.DataFrame
         Compact result containing identity, final structure, scalar energies,
         full frequency values, termination flags, and provenance attrs. Full
-        UMA transition-state rows also retain final mode vectors so their
+        transition-state rows also retain final mode vectors so their
         reaction coordinate remains reviewable.
     """
     contract = copy.deepcopy(df.attrs.get("frust_results", {}))
@@ -104,14 +104,15 @@ def compact_result_dataframe(df: pd.DataFrame) -> pd.DataFrame:
         else [[] for _ in range(len(df))]
     )
     has_frequencies = any(frequency_rows)
-    keep_uma_modes = (
+    frequency_energy = columns.get("frequency", {}).get("electronic_energy", "")
+    mode_column = frequency_energy.removesuffix("-EE") + "-vibs"
+    keep_modes = (
         contract.get("profile") == "transition_state"
         and contract.get("calculation_level") == "full"
-        and contract.get("dft") is False
-        and "uma_freq-vibs" in df.columns
+        and mode_column in df.columns
     )
-    if keep_uma_modes:
-        keep.append("uma_freq-vibs")
+    if keep_modes:
+        keep.append(mode_column)
     if has_frequencies:
         df = df.copy()
         frequency_column = columns["frequency"].get(
@@ -145,7 +146,7 @@ def compact_result_dataframe(df: pd.DataFrame) -> pd.DataFrame:
         "policy": "screening",
         "final_geometry": True,
         "frequency_values": bool(has_frequencies),
-        "vibration_displacements": keep_uma_modes,
+        "vibration_displacements": keep_modes,
         "calculator_files": False,
     }
     return compact

@@ -155,6 +155,40 @@ class CalculatorSpec:
         object.__setattr__(self, "solvation_model", model or None)
         object.__setattr__(self, "kwargs", dict(self.kwargs or {}))
 
+    def supports_operation(self, operation: str) -> bool:
+        """Check whether this calculator input performs a scientific operation.
+
+        Parameters
+        ----------
+        operation : str
+            ``"minimum_optimization"`` and ``"constrained_preoptimization"``
+            require optimization input; ``"ts_search"`` requires ORCA OptTS;
+            ``"hessian_seed"`` requires a reusable ORCA Hessian;
+            ``"frequencies"`` requires thermochemical frequency output; and
+            ``"analysis_single_point"`` requires single-point input. UMA runs
+            through the ORCA interface and uses numerical Hessians.
+
+        Returns
+        -------
+        bool
+            Whether the configured engine and job input support the operation.
+        """
+        keys = {str(key).lower().lstrip("-") for key in self.options}
+        if operation in {"minimum_optimization", "constrained_preoptimization"}:
+            return bool(keys & {"opt", "tightopt", "verytightopt"}) and "optts" not in keys
+        if operation == "ts_search":
+            return self.engine == "orca" and "optts" in keys
+        if operation == "hessian_seed":
+            return self.engine == "orca" and bool(keys & {"freq", "numfreq"})
+        if operation == "frequencies":
+            return self.engine == "orca" and bool(keys & {"freq", "numfreq"})
+        if operation == "analysis_single_point":
+            return not bool(
+                keys
+                & {"opt", "tightopt", "verytightopt", "optts", "freq", "numfreq", "ohess"}
+            )
+        return False
+
     def to_dict(self) -> dict[str, Any]:
         """Return a canonical JSON-compatible calculator description."""
         return {
@@ -322,6 +356,18 @@ class MethodPlan:
         Explicit single-point selection attached by :meth:`with_ranking`.
         None retains the existing implicit ranking behavior.
 
+    validation_roles : mapping of str to str, optional
+        Scientific operations mapped to calculator keys in ``stages``.
+        ``"minimum_optimization"`` optimizes minima;
+        ``"constrained_preoptimization"`` prepares the reactive core;
+        ``"hessian_seed"`` supplies curvature for TS search;
+        ``"ts_search"`` locates the saddle point; ``"frequencies"`` computes
+        vibrations and thermochemistry; and ``"analysis_single_point"``
+        supplies terminal electronic energy. Optional ``"preoptimization_id"``
+        names the stored preoptimization stage when it reuses a calculator.
+        An empty mapping resolves existing UMA/DFT keys automatically.
+        Workflows require only the operations used by their chemistry.
+
     Notes
     -----
     Stage ids must match the ``StageDef.id`` values used by a workflow, unless a
@@ -346,6 +392,7 @@ class MethodPlan:
     thermochemistry: ThermochemistrySpec | None = None
     result_family: Literal["dft", "uma"] = "dft"
     ranking_stage: str | None = None
+    validation_roles: Mapping[str, str] = field(default_factory=dict)
 
     def __post_init__(self) -> None:
         normalized: dict[str, CalculatorSpec] = {}
@@ -363,12 +410,62 @@ class MethodPlan:
             self.thermochemistry, ThermochemistrySpec
         ):
             raise TypeError("thermochemistry must be a ThermochemistrySpec or None")
+        roles = dict(self.validation_roles)
+        allowed_roles = {"minimum_optimization", "constrained_preoptimization",
+                         "hessian_seed", "ts_search", "frequencies",
+                         "analysis_single_point", "preoptimization_id"}
+        if set(roles) - allowed_roles:
+            raise ValueError(f"Unknown validation roles: {sorted(set(roles) - allowed_roles)}")
+        if any(not isinstance(value, str) or not value for value in roles.values()):
+            raise ValueError("validation_roles must map operations to nonempty stage keys")
+        object.__setattr__(self, "validation_roles", roles)
         if self.result_family not in {"dft", "uma"}:
             raise ValueError("result_family must be 'dft' or 'uma'")
         if self.ranking_stage not in {None, "uma_rank_sp", "dft_rank_sp"}:
             raise ValueError("ranking_stage must be 'uma_rank_sp' or 'dft_rank_sp'")
         if self.ranking_stage is not None and self.ranking_stage not in self.stages:
             raise ValueError("ranking_stage must be present in stages")
+
+    def __setstate__(self, state):
+        """Restore legacy serialized method plans with default role bindings."""
+        for key, value in state.items():
+            object.__setattr__(self, key, value)
+        if "validation_roles" not in state:
+            object.__setattr__(self, "validation_roles", {})
+
+    def resolved_validation_roles(self) -> dict[str, str]:
+        """Return scientific operation bindings, including legacy stage aliases.
+
+        Returns
+        -------
+        dict of str to str
+            Operation-to-calculator keys for minimum optimization, constrained
+            preoptimization, Hessian seed, TS search, frequencies, and analysis
+            single point. Missing operations are rejected only if the workflow
+            needs them. ``preoptimization_id`` is the stored stage label when
+            preoptimization reuses the minimum calculator.
+        """
+        if getattr(self, "validation_roles", {}):
+            return dict(self.validation_roles)
+        uma_keys = {"uma_min_opt", "uma_freq"}
+        if uma_keys.issubset(self.stages):
+            return dict(
+                minimum_optimization="uma_min_opt",
+                constrained_preoptimization="uma_min_opt",
+                preoptimization_id="uma_preopt",
+                hessian_seed="uma_hessian",
+                ts_search="uma_ts_opt",
+                frequencies="uma_freq",
+                analysis_single_point="uma_solv_sp",
+            )
+        return dict(
+            minimum_optimization="dft_opt",
+            constrained_preoptimization="dft_preopt",
+            hessian_seed="dft_hessian",
+            ts_search="dft_ts_opt",
+            frequencies="dft_freq",
+            analysis_single_point="dft_solv_sp",
+        )
 
     def to_dict(self, *, include_name: bool = True) -> dict[str, Any]:
         """Return a stable JSON-compatible method-plan description.
@@ -390,6 +487,8 @@ class MethodPlan:
                 for stage_id in sorted(self.stages)
             },
         }
+        if getattr(self, "validation_roles", {}):
+            payload["validation_roles"] = dict(self.validation_roles)
         if self.result_family != "dft":
             payload["result_family"] = self.result_family
         if self.ranking_stage is not None:

@@ -2,6 +2,7 @@
 
 from contextlib import nullcontext
 from dataclasses import replace
+import json
 from unittest.mock import patch
 
 import numpy as np
@@ -11,7 +12,7 @@ import pytest
 import frust as ft
 from frust.screen.references import reference_identity
 from frust.stepper import Stepper
-from frust.workflows.factories import MolsWorkflow, ScreenTSWorkflow
+from frust.workflows.factories import Int3Workflow, MolsWorkflow, ScreenTSWorkflow
 
 FORMULAS = {
     "ligand": {"C": 5, "H": 7, "N": 1},
@@ -22,6 +23,15 @@ FORMULAS = {
 }
 for name in ["dimer_bh_bridged", "dimer_eight_membered"]:
     FORMULAS[name] = FORMULAS["dimer"]
+FORMULAS.update({
+    "catalyst": {"C": 8, "H": 12, "B": 1, "N": 1},
+    "int1": FORMULAS["TS1"],
+    "int2": {"C": 13, "H": 17, "B": 1, "N": 2},
+    "TS2": FORMULAS["TS1"],
+    "TS3": {"C": 19, "H": 30, "B": 2, "N": 2, "O": 2},
+    "HBpin-ligand": {"C": 11, "H": 18, "B": 1, "N": 1, "O": 2},
+})
+FORMULAS["INT3"] = FORMULAS["TS4"] = FORMULAS["TS3"]
 ENERGIES = dict(
     ligand=-10.0,
     dimer=-40.0,
@@ -31,6 +41,9 @@ ENERGIES = dict(
     TS1=-29.9,
 )
 ENERGIES["HBpin-mol"] = -5.0
+ENERGIES.update(catalyst=-19.99, int1=-30.02, int2=-29.03,
+                TS2=-30.0, TS3=-34.0, INT3=-34.04, TS4=-34.01)
+ENERGIES["HBpin-ligand"] = -14.05
 
 
 def components():
@@ -88,6 +101,9 @@ class FakeStepper:
     def __init__(self, **kwargs):
         pass
 
+    def prune_conformers(self, df, **kwargs):
+        return df.copy()
+
     def xtb(self, df, *, name, **kwargs):
         return self.calculate(df, name, kwargs)
 
@@ -139,7 +155,7 @@ class FakeStepper:
             out[name + "-vibs"] = [
                 [
                     {
-                        "frequency": -250.0 if state == "TS1" else 35.0,
+                        "frequency": -250.0 if state.startswith("TS") else 35.0,
                         "mode": [[0.0, 0.0, 0.0]] * len(atoms),
                     }
                 ]
@@ -150,15 +166,16 @@ class FakeStepper:
         return out
 
 
-def run_mocked(wf, tmp_path):
+def run_mocked(wf, tmp_path, **kwargs):
     FakeStepper.calls = []
     with (
         patch.object(MolsWorkflow, "_prepare_initial_df", prepared),
         patch.object(ScreenTSWorkflow, "_prepare_initial_df", prepared),
+        patch.object(Int3Workflow, "_prepare_initial_df", prepared),
         patch("frust.workflows.core.Stepper", FakeStepper),
         patch("frust.workflows.core._uma_scope_for_stages", return_value=nullcontext()),
     ):
-        return wf.run(out_dir=tmp_path / "run", n_cores=1, mem_gb=2)
+        return wf.run(out_dir=tmp_path / "run", n_cores=1, mem_gb=2, **kwargs)
 
 
 def test_uma_ranked_geometry_reaches_constrained_preopt_and_unconstrained_validation(
@@ -307,7 +324,8 @@ def test_all_selected_candidates_receive_validation_and_remain_reviewable(
     assert run.barriers().delta_g_kcal_mol.notna().all()
 
 
-def test_native_arrays_keep_the_validation_chain_without_preparation(tmp_path):
+@pytest.mark.parametrize("scope", ["barriers", "full_cycle"])
+def test_native_arrays_keep_the_validation_chain_without_preparation(tmp_path, scope):
     from types import SimpleNamespace
     from frust.screen.runs import ScreenRun
 
@@ -334,7 +352,8 @@ def test_native_arrays_keep_the_validation_chain_without_preparation(tmp_path):
             return SimpleNamespace(job_id="mock-job")
 
     fake = FakeExecutor()
-    wf = workflow()
+    initial = workflow(scope=scope)
+    wf = workflow(dataframe=None, systems=initial.systems(), scope=scope)
     cluster = ft.cluster.ClusterConfig(
         backend="slurm", partition="chem", log_dir=tmp_path / "logs"
     )
@@ -345,6 +364,7 @@ def test_native_arrays_keep_the_validation_chain_without_preparation(tmp_path):
         with (
             patch.object(ScreenTSWorkflow, "_prepare_initial_df") as ts_prepare,
             patch.object(MolsWorkflow, "_prepare_initial_df") as ref_prepare,
+            patch.object(Int3Workflow, "_prepare_initial_df") as int3_prepare,
         ):
             submitted = wf.submit(
                 out_dir=tmp_path / "submitted",
@@ -355,7 +375,9 @@ def test_native_arrays_keep_the_validation_chain_without_preparation(tmp_path):
             )
         ts_prepare.assert_not_called()
         ref_prepare.assert_not_called()
-    assert len(submitted.child_submissions) == 2 and fake.array_count == 2
+        int3_prepare.assert_not_called()
+    branches = 4 if scope == "full_cycle" else 2
+    assert len(submitted.child_submissions) == branches and fake.array_count == branches
     chains = [
         [stage.id for stage in args[0]._stage_defs()]
         for function, args, _ in fake.submissions
@@ -373,6 +395,12 @@ def test_native_arrays_keep_the_validation_chain_without_preparation(tmp_path):
     assert manifest["ranking_top_n"] == 1
     assert manifest["analysis_levels"] == ["low_cost", "uma_ranked", "full"]
     assert manifest["reference_store_configured"] is False
+    finalizer = next(args[0] for function, args, _ in fake.submissions
+                     if function.__name__ == "_finalize_submitted_run")
+    pd.testing.assert_frame_equal(finalizer.plan(), wf.plan())
+    if scope == "full_cycle":
+        assert "int3" in submitted.child_submissions
+        assert any("uma_preopt" in chain and "uma_min_opt" in chain for chain in chains)
 
 
 def test_uma_validation_keeps_a_consistent_gas_potential():
@@ -403,6 +431,229 @@ def test_full_cycle_selection_uses_the_same_limit_for_int3():
         for stage in stages
         if stage.id in {"dft_preopt", "dft_opt"}
     )
+
+
+@pytest.mark.parametrize("artifact_policy", ["standard", "screening"])
+@pytest.mark.parametrize("environment", ["uma-gas", "uma-alpb-chloroform", "hybrid"])
+def test_full_uma_cycle_is_balanced_and_keeps_intermediate_geometry(
+    tmp_path, artifact_policy, environment
+):
+    options = {} if environment == "hybrid" else dict(
+        screening=environment, method=environment, ranking=None
+    )
+    wf = workflow(
+        scope="full_cycle", ts_types=["TS1", "TS2", "TS3", "TS4"],
+        ranking_top_n=2, **options,
+    )
+    assert wf.plan().groupby("branch").size().to_dict() == {
+        "transition_states": 4, "references": 7, "cycle_molecules": 3, "int3": 1,
+    }
+    int3 = wf.children()["int3"]
+    assert int3.resolved_spec_profile == "omol-uma-s-1p2p1/gas"
+    assert len(int3.targets()) == 1
+    stages = int3.show_stages(detail="full").set_index("stage")
+    assert not stages.index.str.startswith("dft_").any()
+    assert stages.loc["uma_preopt", "constraint"]
+    assert not stages.loc[["uma_min_opt", "uma_freq"], "constraint"].any()
+    assert "uma_ts_opt" not in stages.index
+    assert "uma_hessian" not in stages.index
+    if environment == "hybrid":
+        assert stages.loc["uma_rank_filter", "lowest"] == 2
+        assert pd.isna(stages.loc["uma_preopt", "lowest"])
+        assert pd.isna(stages.loc["uma_min_opt", "lowest"])
+        assert stages.loc["uma_preopt", "geometry_from"] == "xtb_opt"
+        assert stages.loc["uma_min_opt", "geometry_from"] == "uma_preopt"
+        assert stages.loc["uma_freq", "geometry_from"] == "uma_min_opt"
+        assert stages.loc["uma_solv_sp", "geometry_from"] == "uma_min_opt"
+
+    run = run_mocked(wf, tmp_path, artifact_policy=artifact_policy)
+    report = json.loads((run.path / "run_report.json").read_text())
+    assert report["overall_status"] == "success"
+    profile = run.profile().set_index("profile_state")
+    assert profile.index.tolist() == [
+        "Dimer", "Cat", "TS1", "int1", "TS2", "int2", "TS3", "INT3", "TS4", "Product",
+    ]
+    assert not profile.quality_status.isin(["invalid", "incomplete"]).any()
+    assert profile.relative_g_corrected_kcal_mol.notna().all()
+    assert len(run.barriers()) == 4
+    assert run.barriers().delta_g_kcal_mol.notna().all()
+    np.testing.assert_allclose(
+        profile.loc[["TS1", "TS3"], "relative_g_corrected_kcal_mol"],
+        profile.loc[["TS1", "TS3"], "relative_g_kcal_mol"] - 1.89,
+    )
+    # INT3 and TS4 have the same spectators, so their local barrier is a direct difference.
+    assert (
+        profile.loc["TS4", "relative_g_kcal_mol"]
+        - profile.loc["INT3", "relative_g_kcal_mol"]
+    ) == pytest.approx((ENERGIES["TS4"] - ENERGIES["INT3"]) * 627.5094740631)
+    for level in run.available_analysis_levels():
+        electronic = run.profile(level=level, quantity="electronic")
+        assert len(electronic) == 10
+        assert electronic.relative_e_kcal_mol.notna().all()
+
+    int3_calls = {
+        name: (cids, coords, kwargs)
+        for state, name, cids, coords, kwargs in FakeStepper.calls if state == "INT3"
+    }
+    assert int3_calls["uma_preopt"][2]["constraint"]
+    assert not int3_calls["uma_min_opt"][2]["constraint"]
+    if environment == "hybrid":
+        for name in ["uma_preopt", "uma_min_opt", "uma_freq", "uma_solv_sp"]:
+            assert set(int3_calls[name][0]) == {0, 1}
+        assert int3_calls["uma_freq"][1][0][0][0] == 72.0
+        assert int3_calls["uma_solv_sp"][1][0][0][0] == 72.0
+    stored = pd.read_parquet(
+        run.path / "calculations/full_cycle/int3/merged.parquet"
+    )
+    assert "uma_min_opt-oc" in stored
+    if artifact_policy == "screening":
+        assert "uma_freq-frequencies_cm1" in stored
+        assert "uma_freq-vibs" not in stored
+        assert "xtb_preopt-oc" not in stored
+        assert report["artifact_cleanup"]["n_removed_targets"] == 15
+        for branch, child in wf.children().items():
+            branch_path = {
+                "references": "calculations/references",
+                "transition_states": "calculations/transition_states",
+                "cycle_molecules": "calculations/full_cycle/molecular_states",
+                "int3": "calculations/full_cycle/int3",
+            }[branch]
+            assert all(not (run.path / branch_path / target.tag).exists()
+                       for target in child.targets())
+
+    references = pd.read_parquet(run.path / "calculations/references/merged.parquet")
+    if environment == "hybrid":
+        assert len(references) == 14  # Both retained candidates remain in the run.
+        assert references.reference_id.notna().sum() == 7
+        assert set(references.loc[references.reference_id.notna(), "cid"]) == {0}
+
+
+@pytest.mark.parametrize("from_csv", [False, True])
+def test_full_cycle_children_preserve_selected_systems(tmp_path, from_csv):
+    inputs = pd.concat([
+        components(),
+        pd.DataFrame(dict(role=["catalyst"], smiles=["BC1=C(N(CC)CC)C=CC=C1"],
+                          compound_name=["NEt"])),
+    ], ignore_index=True)
+    selected_systems = ft.screen.expand(ft.screen.read(inputs)).iloc[:1].copy()
+    source = selected_systems
+    if from_csv:
+        source = tmp_path / "selected.csv"
+        selected_systems.to_csv(source, index=False)
+    wf = ft.workflows.catalyst_screen(
+        systems=source, scope="full_cycle", screening="uma-gas", method="uma-gas"
+    )
+    selected = wf.systems().system_name.iloc[0]
+    plan = wf.plan()
+    dependent = plan[plan.branch.ne("references")]
+    assert set(dependent.system_name) == {selected}
+    assert dependent.groupby("branch").size().to_dict() == {
+        "transition_states": 4, "cycle_molecules": 3, "int3": 1,
+    }
+    assert len(wf.components()) == 2
+    assert len(plan[plan.branch.eq("references")]) == 7
+    assert set(wf.components().compound_name) == {"pyrrole", "NMe"}
+    expected = pd.read_csv(source) if from_csv else selected_systems.reset_index(drop=True)
+    pd.testing.assert_frame_equal(wf.systems(), expected)
+
+
+def test_explicit_systems_reject_ambiguous_inputs_and_conflicting_identities():
+    systems = ft.screen.expand(ft.screen.read(components()))
+    with pytest.raises(ValueError, match="exactly one"):
+        workflow(systems=systems)
+    with pytest.raises(ValueError, match="missing required columns"):
+        workflow(dataframe=None, systems=systems.drop(columns="rpos"))
+    changed = pd.concat([systems, systems.assign(catalyst_smiles="B")], ignore_index=True)
+    with pytest.raises(ValueError, match="Conflicting SMILES"):
+        workflow(dataframe=None, systems=changed)
+    with pytest.raises(ValueError, match="non-missing"):
+        workflow(dataframe=None, systems=systems.assign(rpos=None))
+
+
+def test_explicit_sites_are_preserved_with_deduplicated_reference_components():
+    systems = ft.screen.expand(ft.screen.read(components()))
+    systems = pd.concat([systems, systems.assign(rpos=3)], ignore_index=True)
+    wf = workflow(dataframe=None, systems=systems, scope="full_cycle",
+                  ts_types=["TS1", "TS2", "TS3", "TS4"])
+    plan = wf.plan()
+    assert plan.branch.value_counts().to_dict() == {
+        "transition_states": 8, "references": 7, "cycle_molecules": 6, "int3": 2,
+    }
+    assert wf.components().query("role == 'substrate'").rpos.tolist() == ["2;3"]
+
+
+def test_explicit_inputs_survive_cache_invalidation_and_serialization():
+    import cloudpickle
+
+    systems = ft.screen.expand(ft.screen.read(components()))
+    second = systems.assign(
+        system_name="benzene__NEt", substrate_name="benzene",
+        substrate_smiles="c1ccccc1", catalyst_name="NEt",
+        catalyst_smiles="BC1=C(N(CC)CC)C=CC=C1", rpos=0,
+    )
+    selected = pd.concat([systems, second], ignore_index=True)
+    wf = workflow(dataframe=None, systems=selected, scope="full_cycle")
+    expected = wf.plan()
+    wf._components_cache = wf._systems_cache = wf._children_cache = None
+    restored = cloudpickle.loads(cloudpickle.dumps(wf))
+    pd.testing.assert_frame_equal(restored.systems(), selected)
+    pd.testing.assert_frame_equal(restored.plan(), expected)
+
+
+def test_pending_finalizer_recovers_legacy_explicit_inputs_from_manifest(tmp_path):
+    from frust.workflows.screening import _finalize_submitted_run
+
+    systems = ft.screen.expand(ft.screen.read(components()))
+    wf = workflow(dataframe=None, systems=systems, scope="full_cycle")
+    wf._write_manifest(tmp_path)
+    expected = wf.plan()
+    wf.dataframe = None
+    del wf._selected_systems
+    wf._components_cache = wf._systems_cache = wf._children_cache = None
+
+    def finalized(recovered, root, **kwargs):
+        pd.testing.assert_frame_equal(recovered.plan(), expected)
+        return {"overall_status": "success"}
+
+    with patch("frust.workflows.screening._finalize_run", side_effect=finalized):
+        result = _finalize_submitted_run(wf, tmp_path, None)
+    assert result.status == "success"
+
+
+@pytest.mark.parametrize("all_invalid", [False, True])
+def test_cycle_reference_publication_uses_quality_before_energy(
+    tmp_path, monkeypatch, all_invalid
+):
+    calculate = FakeStepper.calculate
+
+    def bad_minimum(cls, df, name, kwargs):
+        result = calculate(df, name, kwargs)
+        if name == "uma_freq" and result.state_id.iloc[0] == "catalyst":
+            for index, row in result.iterrows():
+                if all_invalid or row.cid == 0:
+                    result.at[index, "uma_freq-vibs"] = [{"frequency": -250.0}]
+        return result
+
+    monkeypatch.setattr(FakeStepper, "calculate", classmethod(bad_minimum))
+    wf = workflow(scope="full_cycle", ranking_top_n=2,
+                  ts_types=["TS1", "TS2", "TS3", "TS4"])
+    run = run_mocked(wf, tmp_path, artifact_policy="screening")
+    references = pd.read_parquet(run.path / "calculations/references/merged.parquet")
+    catalyst = references[references.state_id.eq("catalyst")]
+    report = json.loads((run.path / "run_report.json").read_text())
+    cat_profile = run.profile(include_invalid=True).set_index("profile_state").loc["Cat"]
+    if all_invalid:
+        assert catalyst.reference_id.isna().all()
+        assert cat_profile.quality_status == "invalid"
+        assert report["overall_status"] == "partial"
+        assert "artifact_cleanup" not in report
+        target = next(t for t in wf.children()["references"].targets()
+                      if t.state_id == "catalyst")
+        assert (run.path / "calculations/references" / target.tag).exists()
+    else:
+        assert catalyst.loc[catalyst.reference_id.notna(), "cid"].tolist() == [1]
+        assert cat_profile.quality_status == "ready"
+        assert report["overall_status"] == "success"
 
 
 def test_p13_parent_coverage_is_lightweight_and_contains_no_dft_stages(monkeypatch):

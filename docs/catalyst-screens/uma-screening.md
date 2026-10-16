@@ -52,6 +52,83 @@ The terminal SP adds ALPB(chloroform). `method` can independently select DFT
 validation instead. See [screening, selection and validation](../workflows/workflow-methods.md#screening-selection-and-validation)
 for the stage path and separate result tiers.
 
+## Include The Complete Catalytic Cycle
+
+```python
+cycle = ft.workflows.catalyst_screen(
+    csv_path="screen.csv",
+    screening="gxtb-default",
+    ranking="uma-alpb-chloroform",
+    ranking_top_n=3,
+    method="uma-gas-opt-alpb-chloroform",
+    level="full",
+    scope="full_cycle",
+    n_confs=200,
+    prune_initial=False,
+    top_n=20,
+)
+
+cycle.plan().groupby("branch").size()
+```
+
+For the single substrate/site and catalyst in `screen.csv`:
+
+| Branch | States | Targets |
+| --- | --- | ---: |
+| `transition_states` | TS1–TS4 | 4 |
+| `references` | substrate, three dimers, catalyst monomer, HBpin, H₂ | 7 |
+| `cycle_molecules` | int1, int2, borylated product | 3 |
+| `int3` | INT3 | 1 |
+
+`level="full"` requests final optimization and thermochemistry;
+`scope="full_cycle"` adds the intermediates and endpoints. The same scope also
+works with `screening="uma-gas", method="uma-gas"` or matching
+`"uma-alpb-chloroform"` screening and final methods, without explicit reranking.
+
+INT3 uses the reviewed UMA gas guess profile. It receives constrained UMA
+preoptimization, then unconstrained minimum optimization and numerical
+frequencies. With the mixed gas/solvent method above, its terminal
+ALPB(chloroform) single point uses the optimized minimum geometry. All
+reranked candidates receive refinement; analysis selects qualified candidates
+using the same rules as the TS and reference results.
+
+Run locally or submit the same workflow with compact storage:
+
+```python
+submission = cycle.submit(
+    out_dir="results/uma-cycle",
+    cluster=cluster,  # Your configured ft.cluster.ClusterConfig.
+    artifact_policy="screening",
+    target_retention="compact_success",
+)
+```
+
+After finalization, the balanced profile contains:
+
+```text
+Dimer → Cat → TS1 → int1 → TS2 → int2 → TS3 → INT3 → TS4 → Product
+```
+
+```python
+run = ft.screen.open_run("results/uma-cycle")
+profile = run.profile().set_index("profile_state")  # One system and site here.
+g = profile["relative_g_corrected_kcal_mol"]
+ts4_local_barrier = g.loc["TS4"] - g.loc["INT3"]
+```
+
+The profile balances spectator molecules across states and uses the selected
+dimer as its common zero. Differences between a TS and its preceding state
+give the corresponding local barrier. `run.barriers()` retains its existing
+reference-based barrier definitions. Missing or invalid states remain visible
+with `run.profile(include_invalid=True)`.
+
+!!! note "Compact results remain inspectable"
+
+    Screening artifact storage retains final geometries, energies, frequency
+    values, lower-tier results, and UMA TS mode vectors for chemical review.
+    Successful calculator files and redundant target artifacts are removed
+    after validated aggregation; failed targets retain their diagnostic files.
+
 ## UMA Screening With ωB97 Final Validation
 
 ```python
@@ -183,8 +260,9 @@ Optimized coordinates remain `uma_ts_opt-oc` or `uma_min_opt-oc`; gas
 
     Use gas screening with this mixed preset. `uma-gas` continues to use gas
     frequency Gibbs energies; `uma-alpb-chloroform` continues to optimize and
-    characterize on the ALPB potential. Full UMA currently supports
-    `scope="barriers"`. Inspect imaginary modes before accepting TS barriers.
+    characterize on the ALPB potential. Both `scope="barriers"` and
+    `scope="full_cycle"` are supported. Inspect imaginary modes before
+    accepting TS barriers.
 
 To compare solvent UMA SP energies on **g-xTB geometries**, keep the existing
 screening-only reranking path in a separate run:

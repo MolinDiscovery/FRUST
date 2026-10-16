@@ -26,9 +26,9 @@ from frust.workflows.screening import _cleanup_screening_targets, _finalize_run
 
 def _full_ts_frame(structure_id: str = "TS1:system:r2") -> pd.DataFrame:
     modes = [
-        {"frequency": -185.66, "displacements": np.ones((3, 3)).tolist()},
-        {"frequency": 46.89, "displacements": np.zeros((3, 3)).tolist()},
-        {"frequency": 74.99, "displacements": np.zeros((3, 3)).tolist()},
+        {"frequency": -185.66, "mode": np.ones((3, 3)).tolist()},
+        {"frequency": 46.89, "mode": np.zeros((3, 3)).tolist()},
+        {"frequency": 74.99, "mode": np.zeros((3, 3)).tolist()},
     ]
     frame = pd.DataFrame(
         {
@@ -86,12 +86,12 @@ def test_compact_ts_schema_preserves_scientific_values():
     assert after["free_energy_hartree"].iloc[0] == pytest.approx(
         before["free_energy_hartree"].iloc[0]
     )
-    assert "dft_freq-vibs" not in compact
+    assert "dft_freq-vibs" in compact
     assert "dft_hessian-input.hess" not in compact
     assert "coords_embedded" not in compact
     assert "intermediate-oc" not in compact
     assert compact.attrs["frust_artifacts"]["policy"] == "screening"
-    assert compact.attrs["frust_artifacts"]["vibration_displacements"] is False
+    assert compact.attrs["frust_artifacts"]["vibration_displacements"] is True
 
 
 @pytest.mark.parametrize(
@@ -149,7 +149,7 @@ def test_compact_schema_covers_every_screening_result_family(
     assert "discarded-stage-oc" not in compact
     if level == "full":
         assert "dft_freq-frequencies_cm1" in compact
-        assert "dft_freq-vibs" not in compact
+        assert ("dft_freq-vibs" in compact) == (profile == "transition_state")
     else:
         assert "dft_freq-frequencies_cm1" not in compact
 
@@ -162,8 +162,9 @@ def test_frequency_quality_is_identical_in_standard_and_screening_rows():
     compact_report = ft.inspect_ts_vibrations(compact)
 
     pd.testing.assert_frame_equal(full_report, compact_report)
-    with pytest.raises(ValueError, match="displacement vectors"):
-        ft.plot_vibs(compact)
+    from frust.vis.scenes import vibration_scene_from_dataframe
+    scene = vibration_scene_from_dataframe(compact)
+    np.testing.assert_array_equal(scene.cells[0].animations[0].mode, np.ones((3, 3)))
 
 
 def test_screening_collector_streams_compact_rows_and_returns_small_status(tmp_path):
@@ -201,7 +202,7 @@ def test_screening_collector_streams_compact_rows_and_returns_small_status(tmp_p
     )
 
     assert len(result) == 2
-    assert "dft_freq-vibs" not in result
+    assert "dft_freq-vibs" in result
     assert set(result["constraint_roles"].iloc[0]) == {
         "reactive_c",
         "state_specific_0",

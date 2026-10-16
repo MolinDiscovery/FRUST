@@ -164,7 +164,7 @@ class ScreenRun:
         return self._level_table("barriers", level=level)
 
     def candidate_barriers(self) -> pd.DataFrame:
-        """Return full barriers for UMA or explicitly ranked TS candidates.
+        """Return full barriers for every retained TS candidate.
 
         Returns
         -------
@@ -178,18 +178,16 @@ class ScreenRun:
             stationary points and TS mode review passed; ``"review"`` needs
             scientific review;
             ``"invalid"`` failed a quality or balance check; and
-            ``"incomplete"`` lacks a required result. Non-full runs and
-            legacy DFT runs without explicit ranking return an empty table.
+            ``"incomplete"`` lacks a required result. Non-full
+            runs return an empty table. Full runs include a row even when
+            only one TS candidate was retained.
         """
 
         self._ensure_analysis()
         path = self.analysis_dir / "candidate_barriers.parquet"
         if not path.exists():
             manifest = self.manifest
-            if manifest.get("calculation_level") != "full" or (
-                manifest.get("method", {}).get("result_family") != "uma"
-                and not manifest.get("ranking")
-            ):
+            if manifest.get("calculation_level") != "full":
                 return pd.DataFrame(
                     columns=[
                         *self.barriers().columns,
@@ -1206,7 +1204,7 @@ def _build_barriers(
             rpos=rpos,
             result_ids=result_ids or None,
             select_ts_candidates=method_family == "uma",
-            select_candidates=full and bool(manifest.get("ranking")),
+            select_candidates=full,
         )
         if dimer_state is None:
             problems.extend(dimer_issues)
@@ -1332,15 +1330,12 @@ def _build_candidate_barriers(
     dimer_references: pd.DataFrame,
     selected_barriers: pd.DataFrame,
 ) -> pd.DataFrame:
-    """Evaluate each full UMA TS with the selected reference set."""
+    """Evaluate each full TS candidate with the selected reference set."""
     columns = [
         *selected_barriers.columns,
         "cid", "selected", "ts_review_status", "ts_quality_issues", "n_imag",
     ]
-    if manifest.get("calculation_level") != "full" or (
-        manifest.get("method", {}).get("result_family") != "uma"
-        and not manifest.get("ranking")
-    ):
+    if manifest.get("calculation_level") != "full":
         return pd.DataFrame(columns=columns)
 
     rows: list[dict[str, Any]] = []
@@ -1419,7 +1414,10 @@ def _build_profiles(
                     and dimer_result_id is not None
                     else None
                 ),
-                select_candidates=full and bool(manifest.get("ranking")),
+                select_ts_candidates=(
+                    full and manifest.get("method", {}).get("result_family") == "uma"
+                ),
+                select_candidates=full,
             )
             if problems:
                 resolved[label] = None
@@ -1706,7 +1704,8 @@ def _result_id(
     }
     if protocol_fingerprint is not None:
         payload["energy_protocol_fingerprint"] = protocol_fingerprint
-        payload["normal_modes"] = _json_value(row.get("uma_freq-vibs"))
+        mode_columns = [column for column in row.index if str(column).endswith("-vibs")]
+        payload["normal_modes"] = _json_value(row.get(mode_columns[-1])) if mode_columns else None
     return "result_" + _json_hash(payload)[:16]
 
 

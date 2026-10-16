@@ -534,6 +534,7 @@ class ReferenceLibrary:
                     selected_cid=row.get("cid"),
                     calculation_level=calculation_level,
                     result_family=method.result_family,
+                    validation_stages=set(method.resolved_validation_roles().values()),
                     ranking_stage=(
                         method.ranking_stage
                         or ("uma_rank_sp" if "uma_rank_sp" in method.stages else None)
@@ -862,14 +863,10 @@ def _active_reference_method(
         if "dft_rank_sp" not in stages:
             stages.append("dft_rank_sp")
     if calculation_level == "full":
-        if method.result_family == "uma":
-            stages.extend(["uma_min_opt", "uma_freq"])
-            if method.include_terminal_solv_sp:
-                stages.append("uma_solv_sp")
-        else:
-            stages.extend(["dft_opt", "dft_freq"])
-            if method.include_terminal_solv_sp:
-                stages.append("dft_solv_sp")
+        roles = method.resolved_validation_roles()
+        stages.extend([roles["minimum_optimization"], roles["frequencies"]])
+        if method.include_terminal_solv_sp:
+            stages.append(roles["analysis_single_point"])
     active = {
         "schema_version": 1,
         "stages": {
@@ -1033,39 +1030,45 @@ def _validate_reference_result(
             or recorded_calculator != method.for_stage("uma_rank_sp").to_dict()
         ):
             raise ValueError("Reference result does not match the requested UMA ranking")
-    if calculation_level == "full" and method.result_family == "uma":
+    if calculation_level == "full" and (
+        method.result_family == "uma" or getattr(method, "validation_roles", {})
+        or df.attrs.get("frust_results", {}).get("energy_protocol")
+    ):
         contract = df.attrs.get("frust_results", {})
         if not isinstance(contract, dict):
             raise ValueError("Reference result has no full UMA result contract")
-        analysis_stage = "uma_solv_sp" if method.include_terminal_solv_sp else "uma_freq"
+        roles = method.resolved_validation_roles()
+        analysis_stage = roles["analysis_single_point"] if method.include_terminal_solv_sp else roles["frequencies"]
         expected_calculator = method.for_stage(analysis_stage).to_dict()
         recorded_calculator = (contract.get("energy_protocol") or {}).get("calculator")
         if (
-            contract.get("dft") is not False
-            or result_column(
+            result_column(
                 df, "electronic_energy", purpose="analysis", require_present=False
             ) != f"{analysis_stage}-EE"
             or result_column(
                 df, "coords", purpose="optimized", require_present=False
-            ) != "uma_min_opt-oc"
+            ) != f"{roles['minimum_optimization']}-oc"
             or recorded_calculator != expected_calculator
         ):
             raise ValueError(
-                "Reference result does not match the requested full UMA model "
+                f"Reference result does not match the requested full {method.result_family.upper()} model "
                 "and environment"
             )
-        if method.include_terminal_solv_sp:
-            protocol = contract.get("energy_protocol") or {}
+        protocol = contract.get("energy_protocol") or {}
+        if method.include_terminal_solv_sp and (
+            method.result_family == "uma" or getattr(method, "validation_roles", {})
+            or "frequency_calculator" in protocol
+        ):
             expected_recipe = (
                 method.thermochemistry.to_dict()
                 if method.thermochemistry is not None else None
             )
             if (
-                protocol.get("frequency_calculator") != method.for_stage("uma_freq").to_dict()
+                protocol.get("frequency_calculator") != method.for_stage(roles["frequencies"]).to_dict()
                 or protocol.get("thermochemistry") != expected_recipe
                 or contract.get("thermochemistry") != expected_recipe
             ):
-                raise ValueError("Reference result does not match the requested UMA thermochemistry")
+                raise ValueError(f"Reference result does not match the requested {method.result_family.upper()} thermochemistry")
     nt_columns = normal_termination_columns(df)
     if not nt_columns:
         raise ValueError("Reference has no normal-termination provenance")
@@ -1154,6 +1157,7 @@ def _copy_scientific_calculator_files(
     selected_cid: Any = None,
     calculation_level: CalculationLevel = "full",
     result_family: str = "dft",
+    validation_stages: set[str] | None = None,
     ranking_stage: str | None = None,
 ) -> None:
     if source_target_dir is None:
@@ -1167,11 +1171,11 @@ def _copy_scientific_calculator_files(
     if calculation_level in {"uma_ranked", "full"} and ranking_stage is not None:
         stage_names.add(ranking_stage)
     if calculation_level == "full":
-        stage_names.update(
+        stage_names.update(validation_stages or (
             {"uma_min_opt", "uma_freq", "uma_solv_sp"}
             if result_family == "uma"
             else {"dft_opt", "dft_freq", "dft_solv_sp"}
-        )
+        ))
     cid_suffix = None if pd.isna(selected_cid) else f"_{selected_cid}"
     candidates = [
         path

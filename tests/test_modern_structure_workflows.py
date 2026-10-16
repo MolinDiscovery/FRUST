@@ -386,9 +386,10 @@ def test_lowest_energy_rows_uses_semantic_analysis_energy():
 
 
 @pytest.mark.slow
-def test_native_int3_builder_emits_role_based_constrained_minimum():
+@pytest.mark.parametrize("profile", ["wb97xd3-631g/gas", "omol-uma-s-1p2p1/gas"])
+def test_native_int3_builder_emits_role_based_constrained_minimum(profile):
     systems = ft.screen.expand(ft.screen.read(_components()))
-    df = ft.structures.create_int3_guesses(systems, n_confs=1)
+    df = ft.structures.create_int3_guesses(systems, n_confs=1, spec_profile=profile)
 
     assert set(df["state_id"]) == {"INT3"}
     assert set(df["state_kind"]) == {"constrained_minimum"}
@@ -396,7 +397,7 @@ def test_native_int3_builder_emits_role_based_constrained_minimum():
     assert {"cat_B", "transfer_H", "pin_B", "substrate_C"} <= set(roles)
     assert (
         df.iloc[0]["ts_spec_id"]
-        == "INT3::tsguess2-v2::wb97xd3-631g::gas::r1"
+        == f"INT3::tsguess2-v2::{profile.replace('/', '::')}::r1"
     )
     assert len(df.iloc[0]["constraint_spec"]) == 6
     assert not any(column.endswith(("-EE", "-NT", "-oc")) for column in df)
