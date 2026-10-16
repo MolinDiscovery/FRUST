@@ -373,3 +373,10 @@ def test_explicit_validation_boundary_reoptimizes_a_changed_uma_environment(tmp_
     assert "uma_refine_prune" not in stages.index
     run = run_mocked(wf, tmp_path)
     assert run.barriers().delta_g_kcal_mol.notna().all()
+
+
+@pytest.mark.parametrize('value', ['', '   '])
+def test_blank_reference_store_environment_disables_shared_publication(monkeypatch, value):
+    monkeypatch.setenv('FRUST_REFERENCE_STORE', value)
+    wf = workflow()
+    assert wf.reference_store is None

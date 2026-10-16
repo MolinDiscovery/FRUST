@@ -254,7 +254,7 @@ class CatalystScreenWorkflow:
                 for key, value in (g_corrections_kcal_mol or {}).items()
             },
         }
-        configured_store = reference_store or os.environ.get("FRUST_REFERENCE_STORE")
+        configured_store = reference_store or os.environ.get("FRUST_REFERENCE_STORE", "").strip() or None
         self.reference_store = (
             None if configured_store is None else Path(configured_store)
         )
