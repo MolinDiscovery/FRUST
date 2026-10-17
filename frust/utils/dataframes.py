@@ -82,6 +82,13 @@ def merge_dataframe_attrs(
     -------
     dict
         Merged attrs suitable for assigning to a concatenated dataframe.
+
+    Notes
+    -----
+    Canonical result contracts retain consistent explicit stage-role bindings
+    when older inputs omit them. Conflicting bindings or scientific result
+    definitions remain conflicts. A retention-policy label is omitted when
+    inputs use different artifact policies.
     """
     frames = list(dfs)
     sources = _source_labels(source_files, len(frames))
@@ -127,6 +134,13 @@ def merge_dataframe_attrs(
         key=str,
     )
     for key in attr_keys:
+        if key == "frust_results":
+            contract = _merge_result_contracts(
+                [attrs[key] for _, attrs in attr_items if key in attrs]
+            )
+            if contract is not None:
+                merged[key] = contract
+                continue
         groups: list[dict[str, Any]] = []
         for source, attrs in attr_items:
             if key not in attrs:
@@ -161,6 +175,45 @@ def merge_dataframe_attrs(
     merge_info["n_skipped_files"] = len(skipped)
     merge_info["n_merged_files"] = len(frames)
     merged["frust_merge"] = merge_info
+    return merged
+
+
+def _merge_result_contracts(values: Sequence[Any]) -> dict[str, Any] | None:
+    """Merge scientifically identical contracts with optional audit metadata.
+
+    Parameters
+    ----------
+    values : sequence
+        Canonical result contracts from the input dataframe attrs.
+
+    Returns
+    -------
+    dict or None
+        Compatible contract, or ``None`` when scientific definitions or
+        explicit stage-role bindings conflict.
+    """
+    if not values or not all(isinstance(value, Mapping) for value in values):
+        return None
+    contracts = [copy.deepcopy(dict(value)) for value in values]
+    bindings: dict[str, str] = {}
+    policies = [contract.pop("artifact_policy", None) for contract in contracts]
+    for contract in contracts:
+        roles = contract.pop("stage_roles", {})
+        if not isinstance(roles, Mapping):
+            return None
+        for operation, stage in roles.items():
+            if not isinstance(operation, str) or not isinstance(stage, str):
+                return None
+            if operation in bindings and bindings[operation] != stage:
+                return None
+            bindings[operation] = stage
+    if len({_attr_fingerprint(contract) for contract in contracts}) != 1:
+        return None
+    merged = contracts[0]
+    if bindings:
+        merged["stage_roles"] = bindings
+    if policies[0] is not None and all(policy == policies[0] for policy in policies):
+        merged["artifact_policy"] = policies[0]
     return merged
 
 
