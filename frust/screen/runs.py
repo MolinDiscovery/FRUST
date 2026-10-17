@@ -850,6 +850,12 @@ def _state_rows(
 ) -> pd.DataFrame:
     if df.empty:
         return _empty_states()
+    # pandas copies attrs on column/row access; retain audit metadata on the
+    # source frame and carry only the small semantic contract into analysis.
+    source_attrs = df.attrs
+    df = pd.DataFrame(df, copy=False)
+    if "frust_results" in source_attrs:
+        df.attrs["frust_results"] = source_attrs["frust_results"]
     electronic = get_result(df, "electronic_energy", purpose="analysis")
     full = calculation_level == "full"
     components = (
