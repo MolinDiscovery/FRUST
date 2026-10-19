@@ -12,14 +12,14 @@ def _reference(state: str) -> ReferenceRecord:
     records = {
         "TS1": (
             "1-methylpyrrole",
-            "NMe",
+            "TMP",
             "uma_ts_opt-oc",
             (-944.65,),
             "aafe5d1891a43859316085bd0b70ff939035451d8cc9ab35ced1856349af8d5b",
         ),
         "TS2": (
             "1-methylpyrrole",
-            "NMe",
+            "TMP",
             "uma_ts_opt-oc",
             (-278.92,),
             "dec536ae81e06c5754adbc7f854254366a79b54966347f80ed8315528dda5219",
@@ -48,8 +48,11 @@ def _reference(state: str) -> ReferenceRecord:
     }
     substrate, catalyst, coordinates_column, negatives, source_sha256 = records[state]
     notes = (
-        "Gas-phase UMA OptTS and NumFreq; TS3 started from an ALPB seed and "
-        "its reactive mode was accepted after user review."
+        "Gas-phase UMA OptTS and NumFreq from a perturbed ALPB seed. "
+        "Historical TS3 acceptance was superseded by user review on "
+        "2026-10-19: this mode shows TS4 motion. TS3 replacement is pending "
+        "recovery and chemical review; one imaginary frequency does not "
+        "validate the TS3 identity."
         if state == "TS3"
         else "Gas-phase UMA optimization and numerical frequency; reactive mode reviewed."
     )

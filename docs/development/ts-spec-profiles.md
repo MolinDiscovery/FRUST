@@ -35,32 +35,41 @@ profile registry or make a candidate selectable in production.
 
 ## Current UMA Gas Profile
 
-The reviewed OMol UMA-S 1.2.1 gas profile is `omol-uma-s-1p2p1/gas`. It has
-separate calculated references for all five built-in states:
+The registered OMol UMA-S 1.2.1 gas profile is `omol-uma-s-1p2p1/gas`. Its
+saved references are listed below; the nominal TS3 assignment is under recovery.
 
 | State | Final imaginary frequencies (cm⁻¹) | Reference chemistry |
 | --- | --- | --- |
-| TS1 | −944.65 | 1-methylpyrrole / NMe |
-| TS2 | −278.92 | 1-methylpyrrole / NMe |
-| TS3 | −94.46 | thiophene / TMP |
+| TS1 | −944.65 | 1-methylpyrrole / TMP |
+| TS2 | −278.92 | 1-methylpyrrole / TMP |
+| TS3, historical label | −94.46 | thiophene / TMP; user identifies TS4 motion |
 | TS4 | −65.68 | thiophene / TMP |
 | INT3 | none | thiophene / TMP |
 
-For example, generate one TS3 guess with its reviewed gas constraints:
+!!! warning "The registered TS3 motion is disputed"
+
+    User review on 19 October 2026 identifies the nominal TS3 reference mode
+    as TS4 motion. Its earlier acceptance is historical; a single imaginary
+    frequency does not establish the chemical step. The stored TS3 geometry
+    remains available for reproducibility while replacement recovery proceeds.
+    Do not treat guesses or barriers carrying this TS3 label as chemically
+    validated without checking their actual modes and, where needed, pathways.
+
+For example, generate one TS4 guess with its gas constraints:
 
 ```python
 import frust as ft
 
 systems = ft.screen.expand(ft.screen.read("screen.csv"))
-ts3 = ft.screen.create_ts_guesses(
+ts4 = ft.screen.create_ts_guesses(
     systems,
-    ts_types=["TS3"],
+    ts_types=["TS4"],
     n_confs=1,
     spec_profile="omol-uma-s-1p2p1/gas",
     spec_match="exact",
-)["TS3"]
-print(ts3.loc[0, "ts_spec_id"])
-# TS3::tsguess2-v2::omol-uma-s-1p2p1::gas::r1
+)["TS4"]
+print(ts4.loc[0, "ts_spec_id"])
+# TS4::tsguess2-v2::omol-uma-s-1p2p1::gas::r1
 ```
 
 The UMA ALPB(chloroform) potential has no registered geometry profile. Its
