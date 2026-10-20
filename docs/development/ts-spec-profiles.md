@@ -36,24 +36,26 @@ profile registry or make a candidate selectable in production.
 ## Current UMA Gas Profile
 
 The registered OMol UMA-S 1.2.1 gas profile is `omol-uma-s-1p2p1/gas`. Its
-saved references are listed below; the nominal TS3 assignment is under recovery.
+saved references are listed below. TS3 revision 2 uses a recovered incoming reference.
 
 | State | Final imaginary frequencies (cm⁻¹) | Reference chemistry |
 | --- | --- | --- |
 | TS1 | −944.65 | 1-methylpyrrole / TMP |
 | TS2 | −278.92 | 1-methylpyrrole / TMP |
-| TS3, historical label | −94.46 | thiophene / TMP; user identifies TS4 motion |
+| TS3, revision 2 | −183.34 | 1-methylpyrrole / TMP; incoming HBpin motion |
 | TS4 | −65.68 | thiophene / TMP |
 | INT3 | none | thiophene / TMP |
 
-!!! warning "The registered TS3 motion is disputed"
+!!! info "TS3 revision 2 replaces the historical outgoing-mode reference"
 
-    User review on 19 October 2026 identifies the nominal TS3 reference mode
-    as TS4 motion. Its earlier acceptance is historical; a single imaginary
-    frequency does not establish the chemical step. The stored TS3 geometry
-    remains available for reproducibility while replacement recovery proceeds.
-    Do not treat guesses or barriers carrying this TS3 label as chemically
-    validated without checking their actual modes and, where needed, pathways.
+    The incoming TMP/1-methylpyrrole saddle has one reviewed imaginary mode.
+    Recorded IRC segments followed by separate converged endpoint optimizations
+    and frequencies reproduce the precursor and the INT3 minimum also reached
+    from TS4. The IRC segments reached their time limits under tighter-than-default
+    gradient criteria; the independent endpoint minima have zero imaginary modes.
+    This supports the reference chemistry, while transfer to other catalysts and
+    substrates requires separate validation. Historical revision-1 results retain
+    their original identity and should not be relabeled as revision 2.
 
 For example, generate one TS4 guess with its gas constraints:
 
