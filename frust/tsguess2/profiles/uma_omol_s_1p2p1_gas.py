@@ -12,24 +12,24 @@ def _reference(state: str) -> ReferenceRecord:
     records = {
         "TS1": (
             "1-methylpyrrole",
-            "NMe",
+            "TMP",
             "uma_ts_opt-oc",
             (-944.65,),
             "aafe5d1891a43859316085bd0b70ff939035451d8cc9ab35ced1856349af8d5b",
         ),
         "TS2": (
             "1-methylpyrrole",
-            "NMe",
+            "TMP",
             "uma_ts_opt-oc",
             (-278.92,),
             "dec536ae81e06c5754adbc7f854254366a79b54966347f80ed8315528dda5219",
         ),
         "TS3": (
-            "thiophene",
+            "1-methylpyrrole",
             "TMP",
-            "uma_ts_opt-oc",
-            (-94.46,),
-            "edbe7400d196574f3a0f27f998bcd110dbb394cb6fbef9963b07db20a1693d6e",
+            "recover_ts-oc",
+            (-183.34,),
+            "bf9615165c8354080c0191e18d1fb594a6f750ea5ae364e55a5d22518d3741d7",
         ),
         "TS4": (
             "thiophene",
@@ -48,8 +48,14 @@ def _reference(state: str) -> ReferenceRecord:
     }
     substrate, catalyst, coordinates_column, negatives, source_sha256 = records[state]
     notes = (
-        "Gas-phase UMA OptTS and NumFreq; TS3 started from an ALPB seed and "
-        "its reactive mode was accepted after user review."
+        "Gas-phase UMA incoming TS3 from the r2SCAN-profile conformer search, "
+        "TMP/1-methylpyrrole position 2, c17. Released OptTS converged; "
+        "incoming reactive mode reviewed. Bounded IRC segments followed by "
+        "independent converged zero-imaginary endpoint optimizations reproduce "
+        "the precursor and the prior TS4-side INT3. The IRC segments reached "
+        "their time limits at tighter-than-default thresholds. Revision 2 "
+        "supersedes the historical thiophene reference with TS4-like motion; "
+        "transfer to other systems requires validation."
         if state == "TS3"
         else "Gas-phase UMA optimization and numerical frequency; reactive mode reviewed."
     )
@@ -61,7 +67,7 @@ def _reference(state: str) -> ReferenceRecord:
         solvation_model=None,
         solvent=None,
         coordinates_column=coordinates_column,
-        vibrations_column="uma_freq-vibs",
+        vibrations_column="final_freq-vibs" if state == "TS3" else "uma_freq-vibs",
         negative_frequencies=negatives,
         mode_reviewed=True,
         source_sha256=source_sha256,
@@ -109,22 +115,22 @@ GEOMETRIES: dict[str, StateGeometrySpec] = {
     "TS3": StateGeometrySpec(
         state="TS3",
         geometry_key=GEOMETRY_KEY,
-        revision=1,
+        revision=2,
         role_coordinates={
-            "cat_B": (1.286156, 0.024608, 0.790853),
-            "pin_B": (2.760429, -1.129134, 1.623895),
-            "substrate_C": (2.119071, 0.09762, 2.47372),
-            "transfer_H": (1.859982, -0.957609, 0.324649),
+            "cat_B": (-0.199923, -0.161, 0.130801),
+            "pin_B": (-2.238643, -0.560843, 0.433159),
+            "substrate_C": (-1.006708, 0.85026, -0.78558),
+            "transfer_H": (-1.155553, -0.969036, 0.89315),
         },
         constraint_values={
-            "catB_substrateC": 1.8791273211408535,
-            "catB_substrateC_pinB": 71.16329601133123,
-            "catB_transferH_pinB": 92.32969531592302,
-            "pinB_catB": 2.0490389100397772,
-            "pinB_substrateC": 1.6243361694258367,
-            "transferH_catB": 1.2293789826497767,
-            "transferH_pinB": 1.5900521356075088,
-            "transferH_substrateC": 2.408140675999432,
+            "catB_substrateC": 1.5853400143142795,
+            "catB_substrateC_pinB": 64.05716884113345,
+            "catB_transferH_pinB": 101.20063264498934,
+            "pinB_catB": 2.0994461229602916,
+            "pinB_substrateC": 2.2347707423704564,
+            "transferH_catB": 1.4653760172723587,
+            "transferH_pinB": 1.245510816263753,
+            "transferH_substrateC": 2.4799449958700697,
         },
         reference=_reference("TS3"),
     ),

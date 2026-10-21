@@ -11,10 +11,11 @@ GEOMETRY_KEY = GeometryKey(method="wb97xd3-631g", basis="6-31g**")
 def _reference(
     *,
     catalyst: str,
+    substrate: str = "1-methylpyrrole",
 ) -> ReferenceRecord:
     """Return provenance for a migrated built-in wB97 geometry."""
     return ReferenceRecord(
-        substrate_name="1-methylpyrrole",
+        substrate_name=substrate,
         catalyst_name=catalyst,
         method="wB97X-D3",
         basis="6-31G**",
@@ -45,7 +46,7 @@ GEOMETRIES: dict[str, StateGeometrySpec] = {
             "catB_substrateC": 1.68461,
             "catB_catN": 3.06223,
         },
-        reference=_reference(catalyst="NMe"),
+        reference=_reference(catalyst="TMP"),
     ),
     "TS2": StateGeometrySpec(
         state="TS2",
@@ -63,7 +64,7 @@ GEOMETRIES: dict[str, StateGeometrySpec] = {
             "catB_catN": 3.080,
             "catB_BtransferH_catN": 87.38739,
         },
-        reference=_reference(catalyst="NMe"),
+        reference=_reference(catalyst="TMP"),
     ),
     "TS3": StateGeometrySpec(
         state="TS3",
@@ -85,7 +86,7 @@ GEOMETRIES: dict[str, StateGeometrySpec] = {
             "catB_transferH_pinB": 98.89,
             "catB_substrateC_pinB": 61.75,
         },
-        reference=_reference(catalyst="TMP"),
+        reference=_reference(catalyst="TMP", substrate="thiophene"),
     ),
     "TS4": StateGeometrySpec(
         state="TS4",
@@ -107,7 +108,7 @@ GEOMETRIES: dict[str, StateGeometrySpec] = {
             "catB_transferH_pinB": 89.48,
             "catB_substrateC_pinB": 77.13,
         },
-        reference=_reference(catalyst="TMP"),
+        reference=_reference(catalyst="TMP", substrate="thiophene"),
     ),
     "INT3": StateGeometrySpec(
         state="INT3",
@@ -127,6 +128,6 @@ GEOMETRIES: dict[str, StateGeometrySpec] = {
             "catB_transferH_pinB": 89.85,
             "catB_substrateC_pinB": 66.22,
         },
-        reference=_reference(catalyst="TMP"),
+        reference=_reference(catalyst="TMP", substrate="thiophene"),
     ),
 }

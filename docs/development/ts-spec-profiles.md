@@ -35,32 +35,43 @@ profile registry or make a candidate selectable in production.
 
 ## Current UMA Gas Profile
 
-The reviewed OMol UMA-S 1.2.1 gas profile is `omol-uma-s-1p2p1/gas`. It has
-separate calculated references for all five built-in states:
+The registered OMol UMA-S 1.2.1 gas profile is `omol-uma-s-1p2p1/gas`. Its
+saved references are listed below. TS3 revision 2 uses a recovered incoming reference.
 
 | State | Final imaginary frequencies (cm⁻¹) | Reference chemistry |
 | --- | --- | --- |
-| TS1 | −944.65 | 1-methylpyrrole / NMe |
-| TS2 | −278.92 | 1-methylpyrrole / NMe |
-| TS3 | −94.46 | thiophene / TMP |
+| TS1 | −944.65 | 1-methylpyrrole / TMP |
+| TS2 | −278.92 | 1-methylpyrrole / TMP |
+| TS3, revision 2 | −183.34 | 1-methylpyrrole / TMP; incoming HBpin motion |
 | TS4 | −65.68 | thiophene / TMP |
 | INT3 | none | thiophene / TMP |
 
-For example, generate one TS3 guess with its reviewed gas constraints:
+!!! info "TS3 revision 2 replaces the historical outgoing-mode reference"
+
+    The incoming TMP/1-methylpyrrole saddle has one reviewed imaginary mode.
+    Recorded IRC segments followed by separate converged endpoint optimizations
+    and frequencies reproduce the precursor and the INT3 minimum also reached
+    from TS4. The IRC segments reached their time limits under tighter-than-default
+    gradient criteria; the independent endpoint minima have zero imaginary modes.
+    This supports the reference chemistry, while transfer to other catalysts and
+    substrates requires separate validation. Historical revision-1 results retain
+    their original identity and should not be relabeled as revision 2.
+
+For example, generate one TS4 guess with its gas constraints:
 
 ```python
 import frust as ft
 
 systems = ft.screen.expand(ft.screen.read("screen.csv"))
-ts3 = ft.screen.create_ts_guesses(
+ts4 = ft.screen.create_ts_guesses(
     systems,
-    ts_types=["TS3"],
+    ts_types=["TS4"],
     n_confs=1,
     spec_profile="omol-uma-s-1p2p1/gas",
     spec_match="exact",
-)["TS3"]
-print(ts3.loc[0, "ts_spec_id"])
-# TS3::tsguess2-v2::omol-uma-s-1p2p1::gas::r1
+)["TS4"]
+print(ts4.loc[0, "ts_spec_id"])
+# TS4::tsguess2-v2::omol-uma-s-1p2p1::gas::r1
 ```
 
 The UMA ALPB(chloroform) potential has no registered geometry profile. Its

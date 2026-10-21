@@ -75,7 +75,7 @@ def test_profile_catalog_exposes_reviewed_method_environment_slots():
     }
     assert uma_gas["mode_reviewed"].eq(True).all()  # noqa: E712
     uma_by_state = uma_gas.set_index("state")
-    assert uma_by_state.loc["TS3", "negative_frequencies"] == (-94.46,)
+    assert uma_by_state.loc["TS3", "negative_frequencies"] == (-183.34,)
     assert uma_by_state.loc["INT3", "negative_frequencies"] == ()
 
 
@@ -132,7 +132,7 @@ def test_uma_gas_profile_resolves_exactly_and_matches_role_coordinates():
         assert selection.match == "exact"
         assert selection.resolved_profile == "omol-uma-s-1p2p1/gas"
         assert selection.spec.spec_id == (
-            f"{state}::tsguess2-v2::omol-uma-s-1p2p1::gas::r1"
+            f"{state}::tsguess2-v2::omol-uma-s-1p2p1::gas::r{2 if state == 'TS3' else 1}"
         )
         for constraint in selection.spec.constraints:
             points = [
