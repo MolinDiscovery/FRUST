@@ -272,3 +272,18 @@ def test_geometric_isomers_cannot_share_an_inconsistent_declared_parent():
     b = systems('C/C=C\\F').assign(catalyst_parent_name='parent', catalyst_name='other', system_name='other')
     with pytest.raises(ValueError, match='parent constitution'):
         resolve_stereoisomers(pd.concat([a, b]), catalyst_stereoisomers='all')
+
+
+def test_retry_signature_tracks_chemistry_without_cache_action_drift(tmp_path, monkeypatch):
+    from types import SimpleNamespace
+    wf = ft.workflows.catalyst_screen(systems=systems(), catalyst_stereoisomers='all',
+                                     dimer_pairing='racemic', level='low_cost')
+    wf._write_manifest(tmp_path)
+    original = (tmp_path / 'manifest.json').read_text()
+    monkeypatch.setattr(wf, '_cached_reference', lambda target: SimpleNamespace(reference_id='new_cache_entry'))
+    wf._write_manifest(tmp_path)
+    assert (tmp_path / 'manifest.json').read_text() == original
+    other = ft.workflows.catalyst_screen(systems=systems(), catalyst_stereoisomers='all',
+                                       dimer_pairing='input', level='low_cost')
+    with pytest.raises(FileExistsError, match='different catalyst-screen'):
+        other._write_manifest(tmp_path)

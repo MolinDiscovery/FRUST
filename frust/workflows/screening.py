@@ -1183,7 +1183,13 @@ class CatalystScreenWorkflow:
             "artifact_policy",
         ]
         if self.catalyst_stereoisomers != "input" or self.dimer_pairing != "input":
-            signature_keys.extend(["catalyst_stereoisomers", "dimer_pairing", "reference_plan"])
+            manifest["stereo_reference_targets"] = [
+                {key: entry[key] for key in (
+                    "target_id", "state_id", "catalyst_parent_name", "dimer_monomers"
+                )}
+                for entry in reference_plan
+            ]
+            signature_keys.extend(["catalyst_stereoisomers", "dimer_pairing", "stereo_reference_targets"])
         if self.method.result_family == "uma":
             signature_keys.append("ts_refine_n")
         if self.ranking is not None:
