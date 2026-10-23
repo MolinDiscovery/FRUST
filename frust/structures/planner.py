@@ -154,9 +154,15 @@ def plan_targets(
     list of StructureTarget
         Lightweight targets deduplicated according to each state's scope.
     """
+    options = dict(builder_options or {})
+    if options.get("dimer_pairing", "input") not in {"input", "racemic"}:
+        raise ValueError("dimer_pairing must be input or racemic")
     targets: list[StructureTarget] = []
     seen: set[tuple[Any, ...]] = set()
     specs = [get_state_spec(state) for state in states]
+    if options.get("dimer_pairing") == "racemic":
+        targets.extend(_plan_racemic_dimers(systems, [spec for spec in specs if spec.state_id in DIMER_STATES], options))
+        specs = [spec for spec in specs if spec.state_id not in DIMER_STATES]
     needs_rpos = any(spec.scope.endswith("_rpos") for spec in specs)
     for _, row in systems.iterrows():
         system = _chemical_system(row)
@@ -247,3 +253,44 @@ def _first_text(row: pd.Series, *columns: str) -> str | None:
         if value is not None and not pd.isna(value) and str(value).strip():
             return str(value).strip()
     return None
+
+
+def _plan_racemic_dimers(systems, specs, options):
+    """Deduplicate ordered monomer pairs only by exact isomeric graph identity."""
+    from dataclasses import replace
+    from hashlib import sha256
+    from rdkit import Chem
+    from frust.transformers import _build_dimer_pair
+    from frust.screen.stereo import resolve_stereoisomers
+
+    pool = resolve_stereoisomers(systems, catalyst_stereoisomers="all", racemic=True)
+    targets = []
+    for parent, group in pool.groupby("catalyst_parent_name", sort=False):
+        monomers = group.drop_duplicates("catalyst_smiles")
+        for spec in specs:
+            graphs = {}
+            for _, first in monomers.iterrows():
+                for _, second in monomers.iterrows():
+                    mol = _build_dimer_pair(spec.state_id, first.catalyst_smiles, second.catalyst_smiles)
+                    graph = Chem.MolToSmiles(mol, isomericSmiles=True)
+                    pairing = [str(first.catalyst_name), str(second.catalyst_name)]
+                    if graph in graphs:
+                        graphs[graph].system.metadata["dimer_equivalent_pairings"].append(pairing)
+                        continue
+                    digest = sha256(graph.encode()).hexdigest()[:16]
+                    pair_name = f"{parent}__pair_{digest}"
+                    metadata = dict(_chemical_system(first).metadata)
+                    metadata.update(catalyst_parent_name=str(parent), dimer_pairing="racemic",
+                                    dimer_monomers=pairing,
+                                    dimer_equivalent_pairings=[pairing],
+                                    dimer_partner_smiles=str(second.catalyst_smiles),
+                                    dimer_graph_smiles=graph)
+                    system = replace(_chemical_system(first), catalyst_name=pair_name, metadata=metadata)
+                    identity = f"{spec.state_id}:{pair_name}:racemic"
+                    target = StructureTarget(identity, sanitize_tag(identity.replace(":", "__")),
+                                             system, spec.state_id, spec.state_kind,
+                                             spec.builder_spec + "::pair-v1", spec.scope,
+                                             builder_options=dict(options))
+                    graphs[graph] = target
+                    targets.append(target)
+    return targets

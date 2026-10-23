@@ -6,6 +6,7 @@ from importlib import import_module
 from typing import TYPE_CHECKING, Any
 
 from frust.screen.core import create_ts_guesses, expand, read
+from frust.screen.stereo import resolve_stereoisomers
 
 _LAZY_API = {
     "ReferenceLibrary": ("frust.screen.references", "ReferenceLibrary"),
@@ -32,6 +33,7 @@ __all__ = [
     "open_reference_library",
     "open_run",
     "read",
+    "resolve_stereoisomers",
     "repair_reference_bindings",
 ]
 

@@ -52,6 +52,7 @@ def _prepare_aminoborane_monomer(
 
 def _combine_aminoborane_monomers(
     catalyst_smiles: str,
+    partner_smiles: str | None = None,
 ) -> tuple[
     RWMol,
     dict[str, int | tuple[int, ...]],
@@ -59,7 +60,7 @@ def _combine_aminoborane_monomers(
 ]:
     """Combine two prepared monomers and offset the second role map."""
     first, first_roles = _prepare_aminoborane_monomer(catalyst_smiles)
-    second, second_roles = _prepare_aminoborane_monomer(catalyst_smiles)
+    second, second_roles = _prepare_aminoborane_monomer(partner_smiles or catalyst_smiles)
     combined, offset = combine_rw_mols(first, second)
     second_roles = {
         "cat_B": int(second_roles["cat_B"]) + offset,
@@ -84,9 +85,9 @@ def _sanitize_dimer(editable: RWMol) -> Chem.Mol:
     return mol
 
 
-def _build_double_bh_bridged_dimer(catalyst_smiles: str) -> Chem.Mol:
+def _build_double_bh_bridged_dimer(catalyst_smiles: str, partner_smiles: str | None = None) -> Chem.Mol:
     """Build the existing reciprocal B-H-B dimer graph."""
-    editable, first, second = _combine_aminoborane_monomers(catalyst_smiles)
+    editable, first, second = _combine_aminoborane_monomers(catalyst_smiles, partner_smiles)
     first_h = int(first["cat_Hs"][0])
     second_h = int(second["cat_Hs"][0])
     first_b = int(first["cat_B"])
@@ -101,9 +102,9 @@ def _build_double_bh_bridged_dimer(catalyst_smiles: str) -> Chem.Mol:
     return _sanitize_dimer(editable)
 
 
-def _build_bh_bridged_dimer(catalyst_smiles: str) -> Chem.Mol:
+def _build_bh_bridged_dimer(catalyst_smiles: str, partner_smiles: str | None = None) -> Chem.Mol:
     """Build the asymmetric six-membered B-H bridged dimer graph."""
-    editable, first, second = _combine_aminoborane_monomers(catalyst_smiles)
+    editable, first, second = _combine_aminoborane_monomers(catalyst_smiles, partner_smiles)
     first_b = int(first["cat_B"])
     first_n = int(first["cat_N"])
     second_b = int(second["cat_B"])
@@ -118,9 +119,9 @@ def _build_bh_bridged_dimer(catalyst_smiles: str) -> Chem.Mol:
     return _sanitize_dimer(editable)
 
 
-def _build_eight_membered_dimer(catalyst_smiles: str) -> Chem.Mol:
+def _build_eight_membered_dimer(catalyst_smiles: str, partner_smiles: str | None = None) -> Chem.Mol:
     """Build the dimer graph with two reciprocal cross-monomer N-B bonds."""
-    editable, first, second = _combine_aminoborane_monomers(catalyst_smiles)
+    editable, first, second = _combine_aminoborane_monomers(catalyst_smiles, partner_smiles)
     first_b = int(first["cat_B"])
     first_n = int(first["cat_N"])
     second_b = int(second["cat_B"])
@@ -397,3 +398,18 @@ def transformer_mols(
         return {key: (mol, metadata_dict[key]) for key, mol in mols_dict.items()}
 
     return mols_dict
+
+
+def _build_dimer_pair(state, first_smiles, second_smiles):
+    """Build one ordered pair without embedding; preserve monomer atom order."""
+    first = Chem.MolFromSmiles(first_smiles)
+    second = Chem.MolFromSmiles(second_smiles)
+    for mol in (first, second):
+        Chem.RemoveStereochemistry(mol)
+    if Chem.MolToSmiles(first) != Chem.MolToSmiles(second):
+        raise ValueError("Dimer partners must have the same parent constitution")
+    return {
+        'dimer': _build_double_bh_bridged_dimer,
+        'dimer_bh_bridged': _build_bh_bridged_dimer,
+        'dimer_eight_membered': _build_eight_membered_dimer,
+    }[state](first_smiles, second_smiles)
