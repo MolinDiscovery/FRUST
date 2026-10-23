@@ -163,9 +163,13 @@ def _build_cycle(
     frame = step.build_initial_df(payload, n_confs=n_confs, n_cores=n_cores)
     from frust.structures.stereo import _stereo_spec
 
-    value = next(iter(payload.values()))
-    mol = value[0] if isinstance(value, tuple) else value
-    frame.attrs["frust_stereo"] = _stereo_spec(mol)
+    if isinstance(payload, dict) and payload:
+        from rdkit.Chem.rdchem import Mol
+
+        value = next(iter(payload.values()))
+        mol = value[0] if isinstance(value, tuple) else value
+        if isinstance(mol, Mol):
+            frame.attrs["frust_stereo"] = _stereo_spec(mol)
     return frame
 
 
