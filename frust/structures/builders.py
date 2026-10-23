@@ -97,7 +97,10 @@ def build(
         "target_id": target.target_id,
         "state_id": target.state_id,
         "state_kind": target.state_kind,
-        "stereochemistry": dict(target.system.metadata),
+        "stereochemistry": {key: value for key, value in target.system.metadata.items()
+                            if key in {"catalyst_parent_name", "catalyst_parent_smiles",
+                                       "dimer_pairing", "dimer_monomers",
+                                       "dimer_equivalent_pairings", "dimer_graph_smiles"}},
     }
     if "frust_stereo" not in out.attrs and "smiles" in out and not out.empty:
         from rdkit import Chem
@@ -144,8 +147,12 @@ def _build_cycle(
 
         mol = _build_dimer_pair(target.state_id, target.system.catalyst_smiles,
                                target.system.metadata["dimer_partner_smiles"])
+        from rdkit import Chem
+
+        smiles = Chem.MolToSmiles(mol)
         payload = {target.tag: (mol, {"molecule_role": target.state_id,
-                                     "structure_type": "MOL"})}
+                                     "structure_type": "MOL", "smiles": smiles,
+                                     "input_smiles": smiles})}
     else:
         payload = mol_factory(
             pd.DataFrame([row]),

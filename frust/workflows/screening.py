@@ -1135,6 +1135,7 @@ class CatalystScreenWorkflow:
             ),
             "components": _records(self.components()),
             "systems": _records(self.systems()),
+            "stereochemistry": self.systems().attrs.get("frust_stereoisomers", {}),
             "reference_store_configured": self.reference_store is not None,
             "reuse_policy": self.reuse_policy,
             "reference_protocol": self._reference_protocol(),
@@ -1235,7 +1236,7 @@ class Wb97ComparisonWorkflow(CatalystScreenWorkflow):
         self.candidate_rows = candidate_rows.reset_index(drop=True).copy()
         self.seed_dir: Path | None = None
         super().__init__(
-            dataframe=pd.DataFrame(source["components"]),
+            systems=pd.DataFrame(source["systems"]),
             ts_types=tuple(dict.fromkeys(self.candidate_rows["ts_type"])),
             screening="gxtb-default",
             level="full",
@@ -1243,6 +1244,8 @@ class Wb97ComparisonWorkflow(CatalystScreenWorkflow):
             spec_profile=source["resolved_ts_spec_profile"],
             include_dft_rank_sp=False,
             dimer_reference=source["dimer_reference"],
+            catalyst_stereoisomers=source.get("catalyst_stereoisomers", "input"),
+            dimer_pairing=source.get("dimer_pairing", "input"),
             g_corrections_kcal_mol=source["g_corrections_kcal_mol"],
             reference_store=reference_store,
             reuse_policy=reuse_policy,

@@ -66,5 +66,20 @@ def check_geometry(spec, coords, atoms=None):
             results.append({'atom_index': i, 'status': status})
         order = ['unavailable', 'inverted', 'unresolved', 'preserved']
         return {'status': min((r['status'] for r in results), key=order.index), 'centres': results}
-    except (ValueError, TypeError, AttributeError, RuntimeError):
+    except (ValueError, TypeError, AttributeError, RuntimeError, KeyError, IndexError):
         return unavailable
+
+
+def _check_row_stereo(row, spec, coords):
+    """Require mapped evidence when an input graph requests a carbon configuration."""
+    if spec is None:
+        for key in ("smiles", "input_smiles", "catalyst_smiles"):
+            value = row.get(key)
+            if not isinstance(value, str) or not value:
+                continue
+            mol = Chem.MolFromSmiles(value)
+            if mol is not None and any(atom.GetAtomicNum() == 6 and atom.GetChiralTag() in
+                    (Chem.ChiralType.CHI_TETRAHEDRAL_CW, Chem.ChiralType.CHI_TETRAHEDRAL_CCW)
+                    for atom in mol.GetAtoms()):
+                return {"status": "unavailable", "centres": []}
+    return check_geometry(spec, coords, row.get("atoms"))

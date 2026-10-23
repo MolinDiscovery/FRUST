@@ -942,13 +942,13 @@ def _state_rows(
             quality = "review"
         else:
             quality = "ready"
-        from frust.structures.stereo import check_geometry
+        from frust.structures.stereo import _check_row_stereo
 
-        spec = df.attrs.get("frust_stereo")
+        spec = source_attrs.get("frust_stereo")
         # Merged frames carry per-target specs keyed by their structure identity.
         if isinstance(spec, dict) and "targets" in spec:
             spec = spec["targets"].get(str(row.get("structure_id")))
-        stereo = check_geometry(spec, row.get(f"{protocol.get('geometry_stage')}-oc"), row.get("atoms"))
+        stereo = _check_row_stereo(row, spec, row.get(f"{protocol.get('geometry_stage')}-oc"))
         if stereo["status"] in {"inverted", "unresolved", "unavailable"}:
             quality = "invalid" if stereo["status"] != "unavailable" else "incomplete"
             issues.append("stereochemistry:" + stereo["status"])
@@ -1057,6 +1057,7 @@ def _build_dimer_references(
         else:
             required = [(state, None) for state in candidates]
         for state_id, structure_id in required:
+            candidate_label = structure_id or state_id
             matches = states[states["state_id"].eq(state_id)]
             matches = (matches[matches["structure_id"].eq(structure_id)] if racemic
                        else matches[matches["catalyst_name"].eq(catalyst)])
@@ -1071,10 +1072,10 @@ def _build_dimer_references(
             if qualified.empty:
                 if not matches.empty and matches["quality_status"].eq("invalid").any():
                     candidate_quality = "invalid"
-                    selection_problems.append(f"invalid:{state_id}")
+                    selection_problems.append(f"invalid:{candidate_label}")
                 else:
                     candidate_quality = "incomplete"
-                    selection_problems.append(f"missing:{state_id}")
+                    selection_problems.append(f"missing:{candidate_label}")
                 chosen = None
             else:
                 chosen = qualified.sort_values(

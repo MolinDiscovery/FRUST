@@ -608,8 +608,9 @@ class MolsWorkflow(BaseWorkflow):
         return plan_targets(
             systems,
             states=molecule_states(self.select_mols),
-            builder_options={"select_mols": self.select_mols,
-                             "dimer_pairing": getattr(self, "dimer_pairing", "input")},
+            builder_options={"select_mols": self.select_mols, **(
+                {"dimer_pairing": self.dimer_pairing}
+                if getattr(self, "dimer_pairing", "input") != "input" else {})},
         )
 
     def _prepare_initial_df(

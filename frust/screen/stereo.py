@@ -29,8 +29,8 @@ def _mirror(mol):
 
 
 def _label(mol):
-    return '_'.join(label for _, label in Chem.FindMolChiralCenters(mol, includeUnassigned=False)
-                    if label in {'R', 'S'}) or 'achiral'
+    return '_'.join(label for idx, label in Chem.FindMolChiralCenters(mol, includeUnassigned=False)
+                    if mol.GetAtomWithIdx(idx).GetAtomicNum() == 6 and label in {'R', 'S'}) or 'achiral'
 
 
 def _configurations(smiles, *, racemic=False):
@@ -80,8 +80,9 @@ def resolve_stereoisomers(systems, *, catalyst_stereoisomers='input', racemic=Fa
     Raises
     ------
     ValueError
-        If requested enumeration encounters unsupported unspecified stereo,
-        inconsistent parent constitutions, or conflicting identity labels.
+        If enumeration exceeds its bound or input contains inconsistent parent
+        constitutions or conflicting identity labels. Other unspecified stereo
+        is retained and reported in ``attrs['frust_stereoisomers']``.
     """
     if catalyst_stereoisomers not in {'input', 'representative', 'all'}:
         raise ValueError("catalyst_stereoisomers must be 'input', 'representative', or 'all'")
@@ -90,11 +91,19 @@ def resolve_stereoisomers(systems, *, catalyst_stereoisomers='input', racemic=Fa
     rows = []
     parents = {}
     names = {}
+    inferred_parents = {}
+    for row in systems.itertuples():
+        constitution = _constitution(_molecule(str(row.catalyst_smiles)))
+        explicit_parent = getattr(row, 'catalyst_parent_name', None)
+        if isinstance(explicit_parent, str) and explicit_parent:
+            inferred_parents.setdefault(constitution, explicit_parent)
+        else:
+            inferred_parents.setdefault(constitution, str(row.catalyst_name))
     supplied = {}
     for row in systems.itertuples():
         parent = getattr(row, 'catalyst_parent_name', None)
         if not isinstance(parent, str) or not parent:
-            parent = str(row.catalyst_name)
+            parent = inferred_parents[_constitution(_molecule(str(row.catalyst_smiles)))]
         supplied[(parent, Chem.MolToSmiles(_molecule(str(row.catalyst_smiles))))] = str(row.catalyst_name)
     for _, row in systems.iterrows():
         name, smiles = str(row.catalyst_name), str(row.catalyst_smiles)
@@ -102,7 +111,7 @@ def resolve_stereoisomers(systems, *, catalyst_stereoisomers='input', racemic=Fa
         constitution = _constitution(original)
         parent = row.get('catalyst_parent_name')
         if not isinstance(parent, str) or not parent:
-            parent = name
+            parent = inferred_parents[constitution]
         parent_smiles = row.get('catalyst_parent_smiles')
         if isinstance(parent_smiles, str) and _constitution(_molecule(parent_smiles)) != constitution:
             raise ValueError(f'Conflicting parent constitution for {name}')
@@ -129,7 +138,10 @@ def resolve_stereoisomers(systems, *, catalyst_stereoisomers='input', racemic=Fa
             if explicit_name != name:
                 item['system_name'] = f'{row.system_name}__{explicit_name[len(parent)+2:]}' if name == parent else f'{row.substrate_name}__{explicit_name}'
             rows.append(item)
-    out = pd.DataFrame(rows).drop_duplicates(['system_name', 'catalyst_smiles', 'rpos']).reset_index(drop=True)
+    unique = {}
+    for row in rows:
+        unique.setdefault((row['system_name'], row['catalyst_smiles'], str(row.get('rpos'))), row)
+    out = pd.DataFrame(unique.values()).reset_index(drop=True)
     out.attrs.update(systems.attrs)
     out.attrs['frust_stereoisomers'] = {
         'policy': catalyst_stereoisomers, 'racemic': racemic,

@@ -1092,12 +1092,12 @@ def _validate_reference_result(
     coords_column = result_column(df, "coords", purpose="optimized")
     if df[coords_column].isna().any():
         raise ValueError("Reference has missing selected geometry")
-    from frust.structures.stereo import check_geometry
+    from frust.structures.stereo import _check_row_stereo
 
     stereo_specs = df.attrs.get("frust_stereo", {}).get("targets", {})
     for _, row in df.iterrows():
         spec = stereo_specs.get(str(row.get("structure_id")))
-        stereo = check_geometry(spec, row.get(coords_column), row.get("atoms"))
+        stereo = _check_row_stereo(row, spec, row.get(coords_column))
         if stereo["status"] not in {"preserved", "not_applicable"}:
             raise ValueError("Reference stereochemistry is " + stereo["status"])
     if calculation_level != "full":
