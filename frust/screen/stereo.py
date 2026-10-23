@@ -15,7 +15,10 @@ def _molecule(smiles):
 
 def _constitution(mol):
     copy = Chem.Mol(mol)
-    Chem.RemoveStereochemistry(copy)
+    for atom in copy.GetAtoms():
+        if atom.GetAtomicNum() == 6:
+            atom.SetChiralTag(Chem.ChiralType.CHI_UNSPECIFIED)
+    Chem.AssignStereochemistry(copy, cleanIt=True, force=True)
     return Chem.MolToSmiles(copy)
 
 
@@ -35,6 +38,9 @@ def _label(mol):
 
 def _configurations(smiles, *, racemic=False):
     mol = _molecule(smiles)
+    if racemic and any(atom.GetAtomicNum() != 6 and atom.GetChiralTag() != Chem.ChiralType.CHI_UNSPECIFIED
+                       for atom in mol.GetAtoms()):
+        raise ValueError("Racemic resolution supports carbon configurations only; assigned non-carbon chirality needs an explicit policy")
     centres = [idx for idx, label in Chem.FindMolChiralCenters(mol, includeUnassigned=True)
                if label == '?' and mol.GetAtomWithIdx(idx).GetAtomicNum() == 6]
     if len(centres) > 10:
@@ -54,7 +60,9 @@ def _configurations(smiles, *, racemic=False):
     return configs
 
 
-def resolve_stereoisomers(systems, *, catalyst_stereoisomers='input', racemic=False):
+def resolve_stereoisomers(
+    systems: pd.DataFrame, *, catalyst_stereoisomers: str = 'input', racemic: bool = False
+) -> pd.DataFrame:
     """Resolve stable carbon configurations in an expanded systems table.
 
     Parameters

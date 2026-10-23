@@ -119,6 +119,10 @@ def build(
         ]
     if spec is not None:
         out.attrs["frust_stereo"] = {"targets": {target.target_id: spec}}
+    stereo_columns = {"catalyst_parent_name", "catalyst_parent_smiles", "dimer_pairing",
+                      "dimer_monomers", "dimer_equivalent_pairings", "dimer_partner_smiles",
+                      "dimer_graph_smiles"}
+    out = out.drop(columns=list(stereo_columns.intersection(out.columns)))
     stamp_schema(out)
     return out
 

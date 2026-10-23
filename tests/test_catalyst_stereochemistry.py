@@ -236,3 +236,39 @@ def test_cache_keys_distinguish_racemic_pairs_and_historical_homodimers():
     new_keys = {reference_identity(t, method)[0] for t in pairs}
     assert len(old_keys) == 6 and len(new_keys) == 10
     assert old_keys.isdisjoint(new_keys)
+
+
+def test_lower_energy_inverted_reference_cannot_displace_preserved_candidate():
+    from frust.results import attach_result_contract
+    from frust.workflows.screening import _reference_publication_frame
+
+    wf = ft.workflows.catalyst_screen(systems=systems(), level='low_cost')
+    target = next(t for t in wf.children()['references'].targets() if t.state_id == 'dimer')
+    mol = Chem.AddHs(Chem.MolFromSmiles('C[C@H](F)Cl'))
+    AllChem.EmbedMolecule(mol, randomSeed=42)
+    xyz = mol.GetConformer().GetPositions()
+    mirror = xyz.copy()
+    mirror[:, 0] *= -1
+    frame = pd.DataFrame(dict(structure_id=[target.target_id]*2, state_id=['dimer']*2,
+        state_kind=['minimum']*2, catalyst_name=[target.system.catalyst_name]*2,
+        system_name=[target.system.system_name]*2, substrate_name=['pyrrole']*2,
+        rpos=[None]*2, cid=[0,1], atoms=[[a.GetSymbol() for a in mol.GetAtoms()]]*2,
+        **{'xtb_opt-oc': [xyz.tolist(), mirror.tolist()], 'xtb_opt-EE': [-100., -101.],
+           'xtb_opt-NT': [True,True]}))
+    frame.attrs['frust_stereo'] = {'targets': {target.target_id: _stereo_spec(mol)}}
+    attach_result_contract(frame, 'minimum', dft=False, calculation_level='low_cost')
+    selected = _reference_publication_frame(wf, frame, target)
+    assert selected.cid.tolist() == [0]
+
+
+def test_representative_retains_distinct_diastereomers_and_fixed_centres():
+    assert len(resolve_stereoisomers(systems('CC(F)C(Cl)Br'), catalyst_stereoisomers='all')) == 4
+    assert len(resolve_stereoisomers(systems('CC(F)C(Cl)Br'), catalyst_stereoisomers='representative')) == 2
+    assert len(resolve_stereoisomers(systems('C[C@H](F)C(Cl)Br'), catalyst_stereoisomers='representative')) == 2
+
+
+def test_geometric_isomers_cannot_share_an_inconsistent_declared_parent():
+    a = systems('C/C=C/F').assign(catalyst_parent_name='parent')
+    b = systems('C/C=C\\F').assign(catalyst_parent_name='parent', catalyst_name='other', system_name='other')
+    with pytest.raises(ValueError, match='parent constitution'):
+        resolve_stereoisomers(pd.concat([a, b]), catalyst_stereoisomers='all')
