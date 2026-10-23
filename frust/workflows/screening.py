@@ -964,8 +964,6 @@ class CatalystScreenWorkflow:
             protocol["validation_top_n"] = self.validation_top_n
         if level == "full" and not self.include_dft_rank_sp:
             protocol["include_dft_rank_sp"] = False
-        if self.dimer_pairing != "input":
-            protocol["dimer_pairing"] = self.dimer_pairing
         return protocol
 
     def _shared_library(self, *, initialize: bool = False) -> ReferenceLibrary | None:

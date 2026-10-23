@@ -33,6 +33,13 @@ def check_geometry(spec, coords, atoms=None):
         or inconsistent evidence, or ``not_applicable`` when no centres exist.
         ``centres`` gives each mapped atom's outcome. This does not review TS
         modes or establish reaction-path connectivity.
+
+    Notes
+    -----
+    A centre is unresolved when its tetrahedral volume, normalized by the
+    product of the three edge lengths, is below 0.02. Chiral tags are recovered
+    from coordinates using the stored graph's neighbour order; CIP priorities
+    are not used to decide preservation or inversion.
     """
     if not spec or not spec.get('centres'):
         return {'status': 'not_applicable', 'centres': []}

@@ -44,6 +44,8 @@ A cheap screen can explicitly choose `representative` and `input`; this is
 an approximation to the reference coverage, not a full racemic search.
 Other unspecified stereochemical features, including imine double bonds,
 remain unresolved and appear in the plan's stereochemistry metadata.
+Assigned non-carbon chirality requires an explicit supported policy before
+racemic resolution can proceed.
 
 Expanded CSVs retain `catalyst_parent_name` and `catalyst_parent_smiles`.
 Resolving such an input again is idempotent. Selection scores inherited from

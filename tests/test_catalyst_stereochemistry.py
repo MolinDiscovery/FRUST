@@ -287,3 +287,15 @@ def test_retry_signature_tracks_chemistry_without_cache_action_drift(tmp_path, m
                                        dimer_pairing='input', level='low_cost')
     with pytest.raises(FileExistsError, match='different catalyst-screen'):
         other._write_manifest(tmp_path)
+
+
+def test_catalyst_free_reference_cache_identity_remains_shared():
+    from frust.screen.references import reference_identity
+    options = dict(systems=systems(), level='low_cost', n_confs=1)
+    ordinary = ft.workflows.catalyst_screen(**options)
+    racemic = ft.workflows.catalyst_screen(**options, catalyst_stereoisomers='all', dimer_pairing='racemic')
+    assert ordinary._reference_protocol() == racemic._reference_protocol()
+    for state in ['ligand', 'HBpin-mol', 'HH']:
+        a = next(t for t in ordinary.children()['references'].targets() if t.state_id == state)
+        b = next(t for t in racemic.children()['references'].targets() if t.state_id == state)
+        assert reference_identity(a, ordinary.method, protocol=ordinary._reference_protocol(), calculation_level='low_cost')[0] == reference_identity(b, racemic.method, protocol=racemic._reference_protocol(), calculation_level='low_cost')[0]
