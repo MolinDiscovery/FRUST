@@ -168,7 +168,7 @@ def test_actual_builder_geometry_and_parquet_stereo(tmp_path):
         restored['xtb_opt-oc'] = restored.coords_embedded
         restored['xtb_opt-EE'] = -100.0
         restored['xtb_opt-NT'] = True
-        attach_result_contract(restored, target.state_kind, dft=False)
+        attach_result_contract(restored, target.state_kind, dft=False, calculation_level="low_cost")
         analysis = _state_rows(restored, source='test', recipe=None, reviews={},
             calculation_level='low_cost', method=ft.workflows.methods.preset('wb97xd3-631g').to_dict())
         assert analysis.stereochemistry_status.eq('preserved').all()
