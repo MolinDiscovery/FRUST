@@ -311,8 +311,13 @@ class CatalystScreenWorkflow:
             )
         from frust.screen.stereo import resolve_stereoisomers
 
-        return resolve_stereoisomers(self._systems_cache,
-                                    catalyst_stereoisomers=self.catalyst_stereoisomers)
+        resolved = resolve_stereoisomers(self._systems_cache,
+                                         catalyst_stereoisomers=self.catalyst_stereoisomers)
+        if self.dimer_pairing == "racemic":
+            from frust.screen.stereo import _associate_catalyst_parents
+
+            resolved = _associate_catalyst_parents(resolved)
+        return resolved
 
     def children(self) -> dict[str, Any]:
         """Return the homogeneous workflows coordinated by this run."""

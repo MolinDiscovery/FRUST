@@ -299,3 +299,20 @@ def test_catalyst_free_reference_cache_identity_remains_shared():
         a = next(t for t in ordinary.children()['references'].targets() if t.state_id == state)
         b = next(t for t in racemic.children()['references'].targets() if t.state_id == state)
         assert reference_identity(a, ordinary.method, protocol=ordinary._reference_protocol(), calculation_level='low_cost')[0] == reference_identity(b, racemic.method, protocol=racemic._reference_protocol(), calculation_level='low_cost')[0]
+
+
+def test_explicit_input_and_all_have_identical_racemic_targets_and_parent_references(tmp_path):
+    from test_modular_workflow_validation import run_mocked
+    explicit = resolve_stereoisomers(systems(), catalyst_stereoisomers='all')
+    explicit = explicit.drop(columns=['catalyst_parent_name', 'catalyst_parent_smiles'])
+    options = dict(systems=explicit, dimer_pairing='racemic', ts_types=['TS1'],
+                   method='uma-gas-opt-alpb-chloroform', ranking='uma-alpb-chloroform',
+                   ranking_top_n=3, validation_top_n=3, top_n=4, prune_initial=False)
+    a = ft.workflows.catalyst_screen(**options, catalyst_stereoisomers='input')
+    b = ft.workflows.catalyst_screen(**options, catalyst_stereoisomers='all')
+    assert [i.target.as_dict() for i in a.targets()] == [i.target.as_dict() for i in b.targets()]
+    run = run_mocked(a, tmp_path, artifact_policy='screening')
+    refs = run.dimer_references()
+    assert refs.selected.sum() == 2
+    assert refs.loc[refs.selected, 'result_id'].nunique() == 1
+    assert refs.selection_quality_status.eq('ready').all()

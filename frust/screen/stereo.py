@@ -60,6 +60,34 @@ def _configurations(smiles, *, racemic=False):
     return configs
 
 
+def _associate_catalyst_parents(systems: pd.DataFrame) -> pd.DataFrame:
+    """Attach parent identities without changing supplied monomer coverage."""
+    inferred = {}
+    for row in systems.itertuples():
+        constitution = _constitution(_molecule(str(row.catalyst_smiles)))
+        parent = getattr(row, 'catalyst_parent_name', None)
+        inferred.setdefault(constitution, parent if isinstance(parent, str) and parent else str(row.catalyst_name))
+    rows = []
+    parents = {}
+    for _, row in systems.iterrows():
+        item = row.to_dict()
+        constitution = _constitution(_molecule(str(row.catalyst_smiles)))
+        parent = row.get('catalyst_parent_name')
+        if not isinstance(parent, str) or not parent:
+            parent = inferred[constitution]
+        declared = row.get('catalyst_parent_smiles')
+        if isinstance(declared, str) and _constitution(_molecule(declared)) != constitution:
+            raise ValueError(f'Conflicting parent constitution for {row.catalyst_name}')
+        if parent in parents and parents[parent] != constitution:
+            raise ValueError(f'Conflicting parent constitution for {parent}')
+        parents[parent] = constitution
+        item.update(catalyst_parent_name=parent, catalyst_parent_smiles=constitution)
+        rows.append(item)
+    out = pd.DataFrame(rows, columns=list(dict.fromkeys([*systems.columns, 'catalyst_parent_name', 'catalyst_parent_smiles'])))
+    out.attrs.update(systems.attrs)
+    return out
+
+
 def resolve_stereoisomers(
     systems: pd.DataFrame, *, catalyst_stereoisomers: str = 'input', racemic: bool = False
 ) -> pd.DataFrame:
@@ -96,6 +124,7 @@ def resolve_stereoisomers(
         raise ValueError("catalyst_stereoisomers must be 'input', 'representative', or 'all'")
     if catalyst_stereoisomers == 'input' and not racemic:
         return systems.copy()
+    systems = _associate_catalyst_parents(systems)
     rows = []
     parents = {}
     names = {}
