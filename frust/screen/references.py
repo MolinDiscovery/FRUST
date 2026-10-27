@@ -899,6 +899,10 @@ def _target_chemical_identity(target: StructureTarget) -> dict[str, Any]:
         identity["substrate_smiles"] = _canonical_smiles(system.substrate_smiles)
     if scope in {"catalyst", "system", "system_rpos"}:
         identity["catalyst_smiles"] = _canonical_smiles(system.catalyst_smiles)
+    if system.metadata.get("dimer_pairing") == "racemic":
+        identity["dimer_graph_smiles"] = system.metadata["dimer_graph_smiles"]
+        identity["dimer_pairing"] = "racemic"
+        identity["parent_smiles"] = system.metadata["catalyst_parent_smiles"]
     if scope == "global":
         identity["global_state"] = target.state_id
     return identity
@@ -938,6 +942,11 @@ def _bind_reference_dataframe(
     out["system_name"] = target.system.system_name
     out["substrate_name"] = target.system.substrate_name
     out["catalyst_name"] = target.system.catalyst_name
+    stereo = out.attrs.get("frust_stereo", {}).get("targets", {})
+    if stereo:
+        if len(stereo) != 1:
+            raise ValueError("Reference stereo metadata must describe exactly one target")
+        out.attrs["frust_stereo"] = {"targets": {target.target_id: next(iter(stereo.values()))}}
     out["state_id"] = target.state_id
     out["state_kind"] = target.state_kind
     out["rpos"] = target.rpos
@@ -1083,6 +1092,14 @@ def _validate_reference_result(
     coords_column = result_column(df, "coords", purpose="optimized")
     if df[coords_column].isna().any():
         raise ValueError("Reference has missing selected geometry")
+    from frust.structures.stereo import _check_row_stereo
+
+    stereo_specs = df.attrs.get("frust_stereo", {}).get("targets", {})
+    for _, row in df.iterrows():
+        spec = stereo_specs.get(str(row.get("structure_id")))
+        stereo = _check_row_stereo(row, spec, row.get(coords_column))
+        if stereo["status"] not in {"preserved", "not_applicable"}:
+            raise ValueError("Reference stereochemistry is " + stereo["status"])
     if calculation_level != "full":
         return {
             "status": "auto_valid",

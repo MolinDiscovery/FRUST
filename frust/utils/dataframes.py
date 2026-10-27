@@ -134,6 +134,15 @@ def merge_dataframe_attrs(
         key=str,
     )
     for key in attr_keys:
+        if key == "frust_stereo":
+            targets = {}
+            for _, attrs in attr_items:
+                for identity, spec in attrs.get(key, {}).get("targets", {}).items():
+                    if identity in targets and targets[identity] != spec:
+                        raise ValueError(f"Conflicting mapped stereo graph for {identity}")
+                    targets[identity] = copy.deepcopy(spec)
+            merged[key] = {"targets": targets}
+            continue
         if key == "frust_results":
             contract = _merge_result_contracts(
                 [attrs[key] for _, attrs in attr_items if key in attrs]

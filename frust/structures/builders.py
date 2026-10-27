@@ -97,7 +97,32 @@ def build(
         "target_id": target.target_id,
         "state_id": target.state_id,
         "state_kind": target.state_kind,
+        "stereochemistry": {key: value for key, value in target.system.metadata.items()
+                            if key in {"catalyst_parent_name", "catalyst_parent_smiles",
+                                       "dimer_pairing", "dimer_monomers",
+                                       "dimer_equivalent_pairings", "dimer_graph_smiles"}},
     }
+    if "frust_stereo" not in out.attrs and "smiles" in out and not out.empty:
+        from rdkit import Chem
+        from frust.structures.stereo import _stereo_spec
+
+        mol = Chem.MolFromSmiles(str(out.iloc[0]["smiles"]))
+        if mol is not None:
+            out.attrs["frust_stereo"] = _stereo_spec(mol)
+    from frust.structures.stereo import check_geometry
+
+    spec = out.attrs.get("frust_stereo")
+    if spec and spec["centres"]:
+        out.attrs["frust_stereo_embedding"] = [
+            check_geometry(spec, row.get("coords_embedded"), row.get("atoms"))
+            for _, row in out.iterrows()
+        ]
+    if spec is not None:
+        out.attrs["frust_stereo"] = {"targets": {target.target_id: spec}}
+    stereo_columns = {"catalyst_parent_name", "catalyst_parent_smiles", "dimer_pairing",
+                      "dimer_monomers", "dimer_equivalent_pairings", "dimer_partner_smiles",
+                      "dimer_graph_smiles"}
+    out = out.drop(columns=list(stereo_columns.intersection(out.columns)))
     stamp_schema(out)
     return out
 
@@ -121,12 +146,24 @@ def _build_cycle(
     }
     if target.rpos is not None:
         row["rpos"] = int(target.rpos)
-    payload = mol_factory(
-        pd.DataFrame([row]),
-        return_format="dict",
-        select_mols=[target.state_id],
-        show_iupac=False,
-    )
+    if target.system.metadata.get("dimer_pairing") == "racemic":
+        from frust.transformers import _build_dimer_pair
+
+        mol = _build_dimer_pair(target.state_id, target.system.catalyst_smiles,
+                               target.system.metadata["dimer_partner_smiles"])
+        from rdkit import Chem
+
+        smiles = Chem.MolToSmiles(mol)
+        payload = {target.tag: (mol, {"molecule_role": target.state_id,
+                                     "structure_type": "MOL", "smiles": smiles,
+                                     "input_smiles": smiles})}
+    else:
+        payload = mol_factory(
+            pd.DataFrame([row]),
+            return_format="dict",
+            select_mols=[target.state_id],
+            show_iupac=False,
+        )
     step = stepper_cls(
         step_type="MOLS",
         n_cores=n_cores,
@@ -134,7 +171,17 @@ def _build_cycle(
         debug=debug,
         save_output_dir=False,
     )
-    return step.build_initial_df(payload, n_confs=n_confs, n_cores=n_cores)
+    frame = step.build_initial_df(payload, n_confs=n_confs, n_cores=n_cores)
+    from frust.structures.stereo import _stereo_spec
+
+    if isinstance(payload, dict) and payload:
+        from rdkit.Chem.rdchem import Mol
+
+        value = next(iter(payload.values()))
+        mol = value[0] if isinstance(value, tuple) else value
+        if isinstance(mol, Mol):
+            frame.attrs["frust_stereo"] = _stereo_spec(mol)
+    return frame
 
 
 def _build_connected(

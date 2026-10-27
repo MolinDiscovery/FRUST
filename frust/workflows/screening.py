@@ -135,6 +135,8 @@ class CatalystScreenWorkflow:
         include_dft_rank_sp: bool | None = None,
         scope: ScreenScope = "barriers",
         dimer_reference: DimerReference = "lowest",
+        catalyst_stereoisomers: str = "input",
+        dimer_pairing: str = "input",
         g_corrections_kcal_mol: dict[str, float] | None = None,
         reference_store: str | Path | None = None,
         reuse_policy: ReusePolicy = "approved",
@@ -245,6 +247,12 @@ class CatalystScreenWorkflow:
                 f"Method plan {self.method.name!r} needs a ThermochemistrySpec "
                 "for full catalyst-screen analysis"
             )
+        if catalyst_stereoisomers not in {"input", "representative", "all"}:
+            raise ValueError("Invalid catalyst_stereoisomers policy")
+        if dimer_pairing not in {"input", "racemic"}:
+            raise ValueError("Invalid dimer_pairing policy")
+        self.catalyst_stereoisomers = catalyst_stereoisomers
+        self.dimer_pairing = dimer_pairing
         self.scope = scope
         self.dimer_reference: DimerReference = dimer_reference
         self.g_corrections_kcal_mol = {
@@ -282,6 +290,8 @@ class CatalystScreenWorkflow:
     def __setstate__(self, state):
         """Restore pending finalizers without changing their historical policy."""
         self.__dict__.update(state)
+        self.__dict__.setdefault("catalyst_stereoisomers", "input")
+        self.__dict__.setdefault("dimer_pairing", "input")
         self.__dict__.setdefault("validation_top_n", None)
         self.__dict__.setdefault("_legacy_validation_grouping", "validation_top_n" not in state)
 
@@ -299,7 +309,15 @@ class CatalystScreenWorkflow:
             self._systems_cache = (
                 selected.copy() if selected is not None else expand_screen(self.components())
             )
-        return self._systems_cache.copy()
+        from frust.screen.stereo import resolve_stereoisomers
+
+        resolved = resolve_stereoisomers(self._systems_cache,
+                                         catalyst_stereoisomers=self.catalyst_stereoisomers)
+        if self.dimer_pairing == "racemic":
+            from frust.screen.stereo import _associate_catalyst_parents
+
+            resolved = _associate_catalyst_parents(resolved)
+        return resolved
 
     def children(self) -> dict[str, Any]:
         """Return the homogeneous workflows coordinated by this run."""
@@ -323,7 +341,8 @@ class CatalystScreenWorkflow:
                     prune_initial=self.prune_initial,
                 ),
                 "references": MolsWorkflow(
-                    dataframe=components,
+                    dataframe=systems if self.catalyst_stereoisomers != "input" or self.dimer_pairing != "input" else components,
+                    dimer_pairing=self.dimer_pairing,
                     select_mols=self._reference_states(),
                     method=self.method,
                     include_dft_rank_sp=self.include_dft_rank_sp,
@@ -395,6 +414,8 @@ class CatalystScreenWorkflow:
                     "branch": item.branch,
                     "state_id": target.state_id,
                     "system_name": target.system.system_name,
+                    "catalyst_parent_name": target.system.metadata.get("catalyst_parent_name"),
+                    "dimer_monomers": target.system.metadata.get("dimer_monomers"),
                     "rpos": target.rpos,
                     "scope": target.scope,
                     "action": item.action,
@@ -420,6 +441,9 @@ class CatalystScreenWorkflow:
         )
         result.attrs["scope"] = self.scope
         result.attrs["dimer_reference"] = self.dimer_reference
+        result.attrs["catalyst_stereoisomers"] = self.catalyst_stereoisomers
+        result.attrs["dimer_pairing"] = self.dimer_pairing
+        result.attrs["stereochemistry"] = self.systems().attrs.get("frust_stereoisomers", {})
         return result
 
     def show_stages(
@@ -1069,6 +1093,8 @@ class CatalystScreenWorkflow:
                 "system_name": item.target.system.system_name,
                 "substrate_name": item.target.system.substrate_name,
                 "catalyst_name": item.target.system.catalyst_name,
+                "catalyst_parent_name": item.target.system.metadata.get("catalyst_parent_name"),
+                "dimer_monomers": item.target.system.metadata.get("dimer_monomers"),
                 "rpos": item.target.rpos,
                 "action": item.action,
                 "reference_id": item.reference_id,
@@ -1082,6 +1108,8 @@ class CatalystScreenWorkflow:
             "created_at": _utc_now(),
             "scope": self.scope,
             "dimer_reference": self.dimer_reference,
+            "catalyst_stereoisomers": self.catalyst_stereoisomers,
+            "dimer_pairing": self.dimer_pairing,
             "dimer_candidates": (
                 list(DIMER_STATES)
                 if self.dimer_reference == "lowest"
@@ -1110,6 +1138,7 @@ class CatalystScreenWorkflow:
             ),
             "components": _records(self.components()),
             "systems": _records(self.systems()),
+            "stereochemistry": self.systems().attrs.get("frust_stereoisomers", {}),
             "reference_store_configured": self.reference_store is not None,
             "reuse_policy": self.reuse_policy,
             "reference_protocol": self._reference_protocol(),
@@ -1120,6 +1149,7 @@ class CatalystScreenWorkflow:
                     "system_name": target.system.system_name,
                     "substrate_name": target.system.substrate_name,
                     "catalyst_name": target.system.catalyst_name,
+                    "catalyst_parent_name": target.system.metadata.get("catalyst_parent_name"),
                     "rpos": int(target.rpos),
                 }
                 for target in ts_targets
@@ -1155,6 +1185,14 @@ class CatalystScreenWorkflow:
             "analysis_targets",
             "artifact_policy",
         ]
+        if self.catalyst_stereoisomers != "input" or self.dimer_pairing != "input":
+            manifest["stereo_reference_targets"] = [
+                {key: entry[key] for key in (
+                    "target_id", "state_id", "catalyst_parent_name", "dimer_monomers"
+                )}
+                for entry in reference_plan
+            ]
+            signature_keys.extend(["catalyst_stereoisomers", "dimer_pairing", "stereo_reference_targets"])
         if self.method.result_family == "uma":
             signature_keys.append("ts_refine_n")
         if self.ranking is not None:
@@ -1207,7 +1245,7 @@ class Wb97ComparisonWorkflow(CatalystScreenWorkflow):
         self.candidate_rows = candidate_rows.reset_index(drop=True).copy()
         self.seed_dir: Path | None = None
         super().__init__(
-            dataframe=pd.DataFrame(source["components"]),
+            systems=pd.DataFrame(source["systems"]),
             ts_types=tuple(dict.fromkeys(self.candidate_rows["ts_type"])),
             screening="gxtb-default",
             level="full",
@@ -1215,6 +1253,8 @@ class Wb97ComparisonWorkflow(CatalystScreenWorkflow):
             spec_profile=source["resolved_ts_spec_profile"],
             include_dft_rank_sp=False,
             dimer_reference=source["dimer_reference"],
+            catalyst_stereoisomers=source.get("catalyst_stereoisomers", "input"),
+            dimer_pairing=source.get("dimer_pairing", "input"),
             g_corrections_kcal_mol=source["g_corrections_kcal_mol"],
             reference_store=reference_store,
             reuse_policy=reuse_policy,
@@ -1396,6 +1436,8 @@ def catalyst_screen(
     include_dft_rank_sp: bool | None = None,
     scope: ScreenScope = "barriers",
     dimer_reference: DimerReference = "lowest",
+    catalyst_stereoisomers: str = "input",
+    dimer_pairing: str = "input",
     g_corrections_kcal_mol: dict[str, float] | None = None,
     reference_store: str | Path | None = None,
     reuse_policy: ReusePolicy = "approved",
@@ -1484,6 +1526,19 @@ def catalyst_screen(
         balanced catalytic-cycle profile, including catalyst, int1, int2,
         INT3, and borylated product states. Both UMA and DFT final methods
         support either scope.
+    catalyst_stereoisomers : {"input", "representative", "all"}, optional
+        ``"input"`` preserves existing inputs. ``"all"`` resolves unspecified
+        stable tetrahedral carbon configurations into separate TS series.
+        ``"representative"`` selects one per mirror pair, retaining distinct
+        diastereomers and assigned input identities. Other unspecified stereo
+        remains unresolved and is reported in ``plan().attrs``.
+    dimer_pairing : {"input", "racemic"}, optional
+        ``"input"`` duplicates each supplied monomer as before. ``"racemic"``
+        includes each parent's carbon mirror configurations and ordered mixed
+        pairs in every requested topology, merging exact isomeric graph
+        duplicates only. Both TS series share this complete parent pool.
+        Missing required pairs prevent reference selection. This coverage is
+        independent of method and level; no equilibrium populations are modeled.
     dimer_reference : {"lowest", "dimer", "dimer_bh_bridged", "dimer_eight_membered"}, optional
         Catalyst dimer used in barrier and profile equations. ``"lowest"``
         calculates all three topologies and strictly selects the lowest
@@ -1565,6 +1620,8 @@ def catalyst_screen(
         include_dft_rank_sp=include_dft_rank_sp,
         scope=scope,
         dimer_reference=dimer_reference,
+        catalyst_stereoisomers=catalyst_stereoisomers,
+        dimer_pairing=dimer_pairing,
         g_corrections_kcal_mol=g_corrections_kcal_mol,
         reference_store=reference_store,
         reuse_policy=reuse_policy,

@@ -942,7 +942,18 @@ def _state_rows(
             quality = "review"
         else:
             quality = "ready"
+        from frust.structures.stereo import _check_row_stereo
+
+        spec = source_attrs.get("frust_stereo")
+        # Merged frames carry per-target specs keyed by their structure identity.
+        if isinstance(spec, dict) and "targets" in spec:
+            spec = spec["targets"].get(str(row.get("structure_id")))
+        stereo = _check_row_stereo(row, spec, row.get(f"{protocol.get('geometry_stage')}-oc"))
+        if stereo["status"] in {"inverted", "unresolved", "unavailable"}:
+            quality = "invalid" if stereo["status"] != "unavailable" else "incomplete"
+            issues.append("stereochemistry:" + stereo["status"])
         state_row = {
+                "stereochemistry_status": stereo["status"],
                 "result_id": result_id,
                 "source": source,
                 "source_row": position,
@@ -1032,11 +1043,24 @@ def _build_dimer_references(
     for catalyst in catalysts:
         candidate_rows: list[dict[str, Any]] = []
         selection_problems: list[str] = []
-        for state_id in candidates:
-            matches = states[
-                states["state_id"].eq(state_id)
-                & states["catalyst_name"].eq(catalyst)
-            ]
+        racemic = manifest.get("dimer_pairing") == "racemic"
+        if racemic:
+            parent = next((target.get("catalyst_parent_name") or catalyst
+                           for target in manifest.get("analysis_targets", [])
+                           if target["catalyst_name"] == catalyst), catalyst)
+            required = [(entry["state_id"], entry["target_id"])
+                        for entry in manifest.get("reference_plan", [])
+                        if entry["state_id"] in candidates
+                        and entry.get("catalyst_parent_name") == parent]
+            if not required:
+                selection_problems.append("missing:racemic_reference_plan")
+        else:
+            required = [(state, None) for state in candidates]
+        for state_id, structure_id in required:
+            candidate_label = structure_id or state_id
+            matches = states[states["state_id"].eq(state_id)]
+            matches = (matches[matches["structure_id"].eq(structure_id)] if racemic
+                       else matches[matches["catalyst_name"].eq(catalyst)])
             energy_bearing = matches[matches[energy_column].notna()]
             qualified = (
                 energy_bearing[
@@ -1048,10 +1072,10 @@ def _build_dimer_references(
             if qualified.empty:
                 if not matches.empty and matches["quality_status"].eq("invalid").any():
                     candidate_quality = "invalid"
-                    selection_problems.append(f"invalid:{state_id}")
+                    selection_problems.append(f"invalid:{candidate_label}")
                 else:
                     candidate_quality = "incomplete"
-                    selection_problems.append(f"missing:{state_id}")
+                    selection_problems.append(f"missing:{candidate_label}")
                 chosen = None
             else:
                 chosen = qualified.sort_values(
@@ -1063,6 +1087,7 @@ def _build_dimer_references(
                 {
                     "catalyst_name": catalyst,
                     "dimer_reference": mode,
+                    "structure_id": structure_id,
                     "state_id": state_id,
                     "result_id": None if chosen is None else chosen["result_id"],
                     "cid": None if chosen is None else chosen.get("cid"),
@@ -1079,7 +1104,7 @@ def _build_dimer_references(
                 }
             )
 
-        complete = not selection_problems
+        complete = not selection_problems and bool(candidate_rows)
         if complete:
             available = [
                 row for row in candidate_rows
@@ -1117,6 +1142,11 @@ def _build_dimer_references(
             selection_quality = _combined_quality(
                 [str(row["candidate_quality_status"]) for row in candidate_rows]
             )
+        if not candidate_rows:
+            candidate_rows = [{"catalyst_name": catalyst, "dimer_reference": mode,
+                               "state_id": None, "selected": False,
+                               "candidate_quality_status": "incomplete"}]
+            selection_quality = "incomplete"
         issues = ";".join(dict.fromkeys(selection_problems))
         for row in candidate_rows:
             row["selection_quality_status"] = selection_quality
@@ -1568,7 +1598,8 @@ def _resolve_terms(
         elif state_id == "ligand":
             matches = matches[matches["substrate_name"].eq(substrate_name)]
         elif state_id in {*DIMER_STATES, "catalyst"}:
-            matches = matches[matches["catalyst_name"].eq(catalyst_name)]
+            if not (state_id in DIMER_STATES and result_ids and state_id in result_ids):
+                matches = matches[matches["catalyst_name"].eq(catalyst_name)]
         elif state_id == "HBpin-ligand":
             matches = matches[
                 matches["substrate_name"].eq(substrate_name)
@@ -1784,6 +1815,7 @@ def _dimer_reference_columns() -> list[str]:
     return [
         "catalyst_name",
         "dimer_reference",
+        "structure_id",
         "state_id",
         "result_id",
         "cid",

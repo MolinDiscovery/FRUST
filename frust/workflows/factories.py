@@ -499,6 +499,7 @@ class MolsWorkflow(BaseWorkflow):
         smiles: list[str] | None = None,
         split: SplitMode = "per_rpos",
         select_mols: str | list[str] = "all",
+        dimer_pairing: str = "input",
         method: MethodPlan | str | None = None,
         screening: ScreeningPlan | str | None = None,
         n_confs: int | None = None,
@@ -533,6 +534,7 @@ class MolsWorkflow(BaseWorkflow):
         self.smiles = smiles
         self.split = split
         self.select_mols = select_mols
+        self.dimer_pairing = dimer_pairing
         if self.uma_rank_top_n < 1:
             raise ValueError("uma_rank_top_n must be positive")
         self.include_dft_rank_sp = (
@@ -579,6 +581,8 @@ class MolsWorkflow(BaseWorkflow):
             one prepared molecule payload returned by ``create_mol_per_rpos``.
         """
         df = self._input_df()
+        if "smiles" not in df.columns and "substrate_smiles" in df.columns:
+            df["smiles"] = df["substrate_smiles"]
         if "smiles" not in df.columns:
             raise ValueError("mols workflow input must contain a 'smiles' column")
         if self.split == "per_input":
@@ -604,7 +608,9 @@ class MolsWorkflow(BaseWorkflow):
         return plan_targets(
             systems,
             states=molecule_states(self.select_mols),
-            builder_options={"select_mols": self.select_mols},
+            builder_options={"select_mols": self.select_mols, **(
+                {"dimer_pairing": self.dimer_pairing}
+                if getattr(self, "dimer_pairing", "input") != "input" else {})},
         )
 
     def _prepare_initial_df(
