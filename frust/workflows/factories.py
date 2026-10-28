@@ -997,6 +997,8 @@ class ScreenTSWorkflow(BaseWorkflow):
         return {
             "spec_profile": self._resolved_spec_profile(),
             "spec_match": self.spec_match,
+            **({"candidate_specs": self.candidate_specs} if self.candidate_specs else {}),
+            **({"random_seed": self.random_seed} if self.random_seed is not None else {}),
         }
 
     def _systems(self) -> pd.DataFrame:
@@ -1055,6 +1057,7 @@ class ScreenTSWorkflow(BaseWorkflow):
                     raise ValueError("Candidate state and method/profile must match the requested state/profile")
             resolve_profile_specs([state for state in self.ts_types if state not in self.candidate_specs],
                                   self._resolved_spec_profile(), match=self.spec_match)
+            return plan_targets(systems, states=self.ts_types)
         targets: list[WorkflowTarget] = []
         for _, system in systems.iterrows():
             rpos_values = parse_rpos_value(
@@ -1119,6 +1122,8 @@ class ScreenTSWorkflow(BaseWorkflow):
                 ts_guess_factory=create_ts_guesses,
                 spec_profile=self._resolved_spec_profile(),
                 spec_match=self.spec_match,
+                candidate_specs=self.candidate_specs,
+                random_seed=self.random_seed,
             )
         screen_target = target.payload
         ts_type = str(screen_target["ts_type"].iloc[0]).upper()
@@ -1396,6 +1401,11 @@ class IntermediateWorkflow(Int3Workflow):
         resolve_profile_specs([s for s in self.states if s not in self.candidate_specs],
                               profile, match=self.spec_match)
         return plan_targets(self._systems(), states=self.states)
+
+    def _structure_build_kwargs(self):
+        """Use the same call-scoped references in previews and calculations."""
+        return {**super()._structure_build_kwargs(),
+                "candidate_specs": self.candidate_specs, "random_seed": self.random_seed}
 
     def _prepare_initial_df(self, target, *, save_dir, options):
         """Construct the requested minimum with the shared typed builder."""

@@ -340,3 +340,19 @@ def test_new_constrained_states_are_detected_and_mixed_auto_dispatch_is_rejected
     assert Stepper._unique_constrained_types(frame)=={'INT5','INT6'}
     with pytest.raises(ValueError,match='mixed constrained'):
         Stepper(step_type='auto')._resolve_auto_step_type(frame)
+
+
+def test_multiple_candidate_states_build_only_the_requested_target(monkeypatch):
+    monkeypatch.setattr('frust.tsguess2.api.AllChem.EmbedMultipleConfs',fake_embedding)
+    for factory,selection in [(ft.workflows.screen_ts,{'ts_types':['TS7','TS8']}),
+                              (ft.workflows.intermediates,{'states':['INT4','INT5']})]:
+        states=next(iter(selection.values()))
+        workflow=factory(dataframe=systems(),method='uma-gas',screening='uma-gas',
+                         spec_profile='uma-gas',candidate_specs={s:candidate(s) for s in states},
+                         random_seed=42,n_confs=2,validation_top_n=2,prune_initial=False,**selection)
+        assert len(workflow.targets())==2
+        for target in workflow.targets():
+            frame=workflow._prepare_initial_df(target,save_dir=None,options=ExecutionOptions())
+            assert set(frame.state_id)=={target.state_id}
+            assert frame.attrs['frust_tsguess2']['spec_id']==candidate(target.state_id).spec_id
+            assert workflow._structure_build_kwargs()['random_seed']==42
