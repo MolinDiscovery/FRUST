@@ -17,6 +17,7 @@ from frust.tsguess2.builders import (
     BISARYL_ROLE_MAPS,
     BISARYL_EXCHANGE_ROLE_MAPS,
     build_bisaryl_adduct_connected_smiles,
+    build_bisaryl_diaryl_connected_smiles,
     build_bisaryl_exchange_connected_smiles,
     build_ts1_ts2_connected_smiles,
     build_ts3_ts4_connected_smiles,
@@ -32,11 +33,12 @@ PRUNE_RMS_THRESH = -1
 RANDOM_SEED = 0xF00D
 
 _BISARYL_ADDUCT_BUILDERS = frozenset({"bisaryl_adduct", "bisaryl_h2"})
-_BISARYL_BUILDERS = _BISARYL_ADDUCT_BUILDERS | {"bisaryl_exchange"}
+_BISARYL_BUILDERS = _BISARYL_ADDUCT_BUILDERS | {"bisaryl_diaryl", "bisaryl_exchange"}
 
 _BUILDERS: dict[str, Callable[[str, str, tuple[int, ...] | list[int] | None], dict[int, str]]] = {
     "bisaryl_adduct": build_bisaryl_adduct_connected_smiles,
     "bisaryl_h2": build_bisaryl_adduct_connected_smiles,
+    "bisaryl_diaryl": build_bisaryl_diaryl_connected_smiles,
     "bisaryl_exchange": build_bisaryl_exchange_connected_smiles,
     "ts1_ts2": build_ts1_ts2_connected_smiles,
     "ts3_ts4": build_ts3_ts4_connected_smiles,
@@ -92,6 +94,9 @@ def create_ts_guess_dataframes(
         candidates use a bisaryl/HBpin exchange construction graph. This shared
         graph does not assign a reaction or distinguish a saddle from a minimum;
         the selected template supplies geometry, and validation supplies identity.
+        ``"INT4"`` uses the bisaryl N-H/B-H adduct, while ``"INT5"`` is the
+        neutral diaryl catalyst after H2 elimination. Intermediate candidates
+        require a minimum workflow for subsequent optimization.
     random_seed : int, optional
         RDKit embedding seed, retained in conformer provenance.
 
@@ -344,6 +349,27 @@ def _generated_smiles_for_system_rpos(system: pd.Series, spec: TSGuess2Spec, rpo
 
 
 def _role_mapping_from_mol(mol: Chem.Mol, spec: TSGuess2Spec) -> dict[str, int]:
+    if spec.builder_key == "bisaryl_diaryl":
+        mapped = {atom.GetAtomMapNum(): atom.GetIdx() for atom in mol.GetAtoms()
+                  if atom.GetAtomMapNum()}
+        tags = {role: tag for role, tag in BISARYL_ROLE_MAPS.items()
+                if role not in {"N_transfer_H", "B_transfer_H"}}
+        missing = set(tags.values()) - set(mapped)
+        if missing:
+            raise ValueError(f"Diaryl construction lost chemical role maps: {sorted(missing)}")
+        roles = {role: int(mapped[tag]) for role, tag in tags.items()}
+        boron = mol.GetAtomWithIdx(roles["cat_B"])
+        nitrogen = mol.GetAtomWithIdx(roles["cat_N"])
+        if (boron.GetAtomicNum() != 5 or nitrogen.GetAtomicNum() != 7
+                or boron.GetFormalCharge() or nitrogen.GetFormalCharge()
+                or boron.GetTotalNumHs(includeNeighbors=True)
+                or nitrogen.GetTotalNumHs(includeNeighbors=True)):
+            raise ValueError("Diaryl catalyst requires neutral B/N without N-H or B-H")
+        for role in ("bound_C", "incoming_C", "scaffold_B_C"):
+            if (mol.GetAtomWithIdx(roles[role]).GetAtomicNum() != 6
+                    or mol.GetBondBetweenAtoms(roles["cat_B"], roles[role]) is None):
+                raise ValueError(f"Invalid diaryl connectivity: cat_B--{role}")
+        return roles
     if spec.builder_key == "bisaryl_exchange":
         mapped = {atom.GetAtomMapNum(): atom.GetIdx() for atom in mol.GetAtoms() if atom.GetAtomMapNum()}
         missing = set(BISARYL_EXCHANGE_ROLE_MAPS.values()) - set(mapped)

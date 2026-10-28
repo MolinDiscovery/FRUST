@@ -144,6 +144,60 @@ def build_bisaryl_adduct_connected_smiles(
 build_bisaryl_h2_connected_smiles = build_bisaryl_adduct_connected_smiles
 
 
+def build_bisaryl_diaryl_connected_smiles(
+    catalyst_smiles: str,
+    substrate_smiles: str,
+    rpos_list: tuple[int, ...] | list[int] | None = None,
+    *,
+    bound_substrate_smiles: str | None = None,
+    bound_rpos: int | None = None,
+) -> dict[int, str]:
+    """Build the neutral diaryl catalyst after bisaryl H2 elimination.
+
+    Parameters
+    ----------
+    catalyst_smiles : str
+        Neutral parent BH2 catalyst with the B-aryl-tertiary-N scaffold.
+    substrate_smiles : str
+        Second substrate, whose reactive carbon becomes bonded to boron.
+    rpos_list : tuple of int, list of int, or None, optional
+        Second-substrate reactive heavy-atom indices. None selects unique sites.
+    bound_substrate_smiles : str or None, optional
+        First substrate identity. None uses the second substrate identity.
+    bound_rpos : int or None, optional
+        First substrate site. Required when its identity differs.
+
+    Returns
+    -------
+    dict of int to str
+        Connected mapped diaryl graphs keyed by second-substrate site. Both
+        aryl groups remain on boron; the N-H and B-H pair is absent. Catalyst
+        B and N are neutral, and there are no free H2 or HBpin fragments.
+    """
+    adducts = build_bisaryl_adduct_connected_smiles(
+        catalyst_smiles, substrate_smiles, rpos_list,
+        bound_substrate_smiles=bound_substrate_smiles, bound_rpos=bound_rpos,
+    )
+    parser = Chem.SmilesParserParams()
+    parser.removeHs = False
+    results = {}
+    for site, text in adducts.items():
+        rw = RWMol(Chem.MolFromSmiles(text, parser))
+        remove = [atom.GetIdx() for atom in rw.GetAtoms()
+                  if atom.GetAtomMapNum() in {BISARYL_ROLE_MAPS["N_transfer_H"],
+                                             BISARYL_ROLE_MAPS["B_transfer_H"]}]
+        for index in sorted(remove, reverse=True):
+            rw.RemoveAtom(index)
+        mapped = {atom.GetAtomMapNum(): atom.GetIdx() for atom in rw.GetAtoms()
+                  if atom.GetAtomMapNum()}
+        for role in ("cat_B", "cat_N"):
+            rw.GetAtomWithIdx(mapped[BISARYL_ROLE_MAPS[role]]).SetFormalCharge(0)
+        mol = rw.GetMol()
+        Chem.SanitizeMol(mol)
+        results[site] = Chem.MolToSmiles(mol, canonical=True)
+    return results
+
+
 def build_bisaryl_exchange_connected_smiles(
     catalyst_smiles: str,
     substrate_smiles: str,

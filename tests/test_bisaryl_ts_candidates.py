@@ -19,6 +19,7 @@ PYRROLE = "CN1C=CC=C1"
 
 def candidate(state="TS6"):
     builder = {"TS5": "bisaryl_adduct", "TS6": "bisaryl_h2",
+               "INT4": "bisaryl_adduct", "INT5": "bisaryl_diaryl",
                "TS7": "bisaryl_exchange", "INT6": "bisaryl_exchange", "TS8": "bisaryl_exchange"}[state]
     return TSGuess2Spec(
         name=state, spec_id=f"{state}::test-candidate", profile_id="omol-uma-s-1p2p1/gas",
@@ -221,4 +222,65 @@ def test_screen_ts_rejects_minimum_candidate_before_calculation():
         ft.workflows.screen_ts(
             dataframe=systems(), ts_types=["INT6"], method="uma-gas",
             candidate_specs={"INT6": candidate("INT6")}, spec_profile="uma-gas",
+        )
+
+
+@pytest.mark.parametrize("catalyst,formula,atoms", [
+    (TMP, "C25H34BN3", 63),
+    ("CN(C)c1ccccc1B", "C18H22BN3", 44),
+    ("B(c1ccccc1N1CCCCC1)", "C21H26BN3", 51),
+])
+def test_diaryl_minimum_retains_both_aryls_without_eliminated_hydrogens(catalyst, formula, atoms):
+    from frust.tsguess2.builders import build_bisaryl_diaryl_connected_smiles
+
+    text = build_bisaryl_diaryl_connected_smiles(catalyst, PYRROLE, [2])[2]
+    mol = Chem.AddHs(Chem.MolFromSmiles(text))
+    roles = _role_mapping_from_mol(mol, candidate("INT5"))
+    assert rdMolDescriptors.CalcMolFormula(mol) == formula
+    assert mol.GetNumAtoms() == atoms and len(Chem.GetMolFrags(mol)) == 1
+    assert Chem.GetFormalCharge(mol) == 0
+    assert sum(a.GetNumRadicalElectrons() for a in mol.GetAtoms()) == 0
+    assert "N_transfer_H" not in roles and "B_transfer_H" not in roles
+    for parent in ("cat_B", "cat_N"):
+        atom = mol.GetAtomWithIdx(roles[parent])
+        assert atom.GetFormalCharge() == 0 and atom.GetTotalNumHs(includeNeighbors=True) == 0
+    for role in ("bound_C", "incoming_C", "scaffold_B_C"):
+        assert mol.GetBondBetweenAtoms(roles["cat_B"], roles[role]) is not None
+    permutation = np.random.default_rng(25).permutation(mol.GetNumAtoms()).tolist()
+    reordered = Chem.RenumberAtoms(mol, permutation)
+    remapped = _role_mapping_from_mol(reordered, candidate("INT5"))
+    assert {role: permutation[index] for role, index in remapped.items()} == roles
+
+
+def test_diaryl_keeps_independent_first_substrate_identity():
+    from frust.tsguess2.builders import build_bisaryl_diaryl_connected_smiles
+
+    text = build_bisaryl_diaryl_connected_smiles(
+        TMP, PYRROLE, [2], bound_substrate_smiles="c1ccoc1", bound_rpos=4,
+    )[2]
+    mol = Chem.AddHs(Chem.MolFromSmiles(text))
+    assert rdMolDescriptors.CalcMolFormula(mol) == "C24H31BN2O"
+    roles = _role_mapping_from_mol(mol, candidate("INT5"))
+    assert mol.GetAtomWithIdx(roles["bound_frame"]).GetAtomicNum() == 8
+    assert mol.GetAtomWithIdx(roles["incoming_frame"]).GetAtomicNum() == 7
+
+
+@pytest.mark.parametrize("state,atoms", [("INT4", 65), ("INT5", 63), ("INT6", 85)])
+def test_explicit_bisaryl_minimum_construction_is_separate_from_ts_execution(monkeypatch, state, atoms):
+    from frust.tsguess2.topologies import CORE_TOPOLOGIES
+
+    monkeypatch.setattr("frust.tsguess2.api.AllChem.EmbedMultipleConfs", fake_embedding)
+    before = ft.show_spec_profiles().copy()
+    frame = ft.screen.create_ts_guesses(
+        systems(), ts_types=[state], n_confs=2, spec_profile="uma-gas",
+        candidate_specs={state: candidate(state)}, random_seed=190401,
+    )[state]
+    assert len(frame) == 2 and len(frame.iloc[0].atoms) == atoms
+    assert set(frame.state_kind) == {"constrained_minimum"}
+    assert state not in CORE_TOPOLOGIES
+    pd.testing.assert_frame_equal(before, ft.show_spec_profiles())
+    with pytest.raises(ValueError, match="intermediate candidates require a minimum workflow"):
+        ft.workflows.screen_ts(
+            dataframe=systems(), ts_types=[state], method="uma-gas",
+            candidate_specs={state: candidate(state)}, spec_profile="uma-gas",
         )

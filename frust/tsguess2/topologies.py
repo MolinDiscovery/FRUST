@@ -35,6 +35,27 @@ BISARYL_H2_TOPOLOGY = CoreTopology(
 )
 
 
+BISARYL_MINIMUM_TOPOLOGIES = {
+    "INT4": CoreTopology(
+        state="INT4",
+        builder_key="bisaryl_adduct",
+        core_smarts="[#5]~[#6]1~[#6]~[#6]~[#6]~[#6]~[#6]1~[#7]",
+        constraints=tuple(c for c in BISARYL_CH_TOPOLOGY.constraints
+                          if c.name != "incomingC_transferH"),
+    ),
+    "INT5": CoreTopology(
+        state="INT5",
+        builder_key="bisaryl_diaryl",
+        core_smarts="[#5]~[#6]1~[#6]~[#6]~[#6]~[#6]~[#6]1~[#7]",
+        constraints=(
+            ConstraintDef("catB_boundC", "distance", ("cat_B", "bound_C")),
+            ConstraintDef("catB_incomingC", "distance", ("cat_B", "incoming_C")),
+            ConstraintDef("catB_catN", "distance", ("cat_B", "cat_N")),
+        ),
+    ),
+}
+
+
 BISARYL_EXCHANGE_TOPOLOGIES = {
     state: CoreTopology(
         state=state,
