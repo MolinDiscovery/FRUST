@@ -183,6 +183,7 @@ def create_ts_guess_dataframes(
             "schema_version": 1,
             "backend": "tsguess2",
             "builder": _BUILDERS[spec.builder_key].__name__,
+            "preserve_explicit_hydrogens": spec.builder_key in _BISARYL_BUILDERS,
             "spec_id": spec.spec_id,
             "spec_selection": {
                 "requested_profile": selection.requested_profile,

@@ -69,6 +69,21 @@ silently substituted into the same profile.
 
 ### Review The Identity Of An Intermediate
 
+For example, a candidate that reaches its optimization step limit can still
+terminate normally and have one imaginary frequency. Its structure must not
+become a qualified transition state merely because the mode looks plausible.
+ORCA-backed UMA and DFT geometry optimizations now keep geometry-bound native
+convergence evidence in dataframe attributes. Analysis rejects capped, stale
+or conflicting evidence even after an identity approval; changing the evidence
+invalidates the previous review. The main calculation table gains no extra columns.
+
+This evidence is collected for ordinary optimizations and TS searches, including
+when calculation directories are not retained. Frequency-only jobs and relaxed
+scans do not receive an ordinary-optimization convergence verdict. Historical
+results and engines without native convergence evidence retain their existing
+review policy; absence of evidence does not certify convergence. Check their
+saved native outputs before scientific acceptance.
+
 | Candidate | Imaginary modes | Relaxed structure | Identity decision |
 | --- | ---: | --- | --- |
 | 0 | 0 | Released products | `rejected` as INT6 |

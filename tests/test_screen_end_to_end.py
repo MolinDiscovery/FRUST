@@ -1730,3 +1730,36 @@ def test_identity_approval_does_not_override_invalid_minimum_curvature(tmp_path)
     run=ft.screen.open_run(root).refresh_analysis();result_id=run.states().iloc[0].result_id
     run.set_identity_review(result_id,'approved',note='Identity alone cannot fix a saddle')
     assert run.states().iloc[0].quality_status=='invalid'
+
+
+@pytest.mark.parametrize('family',['uma','dft'])
+@pytest.mark.parametrize('state',['TS8','INT6'])
+def test_native_optimization_caps_override_identity_approval(tmp_path,family,state):
+    from frust.utils.optimization import _optimization_record
+
+    root=tmp_path/'native';root.mkdir();manifest=_manifest();manifest['analysis_targets']=[]
+    method=ft.workflows.methods.preset('uma-gas' if family=='uma' else 'r2scan-3c')
+    manifest['method']=method.to_dict();manifest['method_fingerprint']=method.fingerprint()
+    manifest['calculation_results']={'intermediates':'intermediates.parquet'}
+    (root/'manifest.json').write_text(json.dumps(manifest))
+    kind='transition_state' if state.startswith('TS') else 'constrained_minimum'
+    row=_row(state,-10.,{'B':1,'H':3},state_kind=kind,rpos=2)
+    row['cid']=0
+    frame=pd.DataFrame([row])
+    if family=='uma':
+        frame=frame.rename(columns={c:c.replace('dft_','uma_').replace('uma_opt-oc','uma_min_opt-oc') for c in frame if c.startswith('dft_')})
+    attach_result_contract(frame,kind,dft=True,full_method=family,calculation_level='full',include_terminal_solv_sp=False,thermochemistry=ft.workflows.ThermochemistrySpec('frequency_gibbs'))
+    stage=f'{family}_ts_opt' if kind=='transition_state' else ('uma_min_opt' if family=='uma' else 'dft_opt')
+    record=_optimization_record(frame.iloc[0],stage,frame.iloc[0][f'{stage}-oc'],'ORCA TERMINATED NORMALLY')
+    frame.attrs['frust_optimization_checks']=[record]
+    path=root/'intermediates.parquet';frame.to_parquet(path)
+    run=ft.screen.open_run(root).refresh_analysis();old=run.states().iloc[0].result_id
+    run.set_identity_review(old,'approved',note='Identity cannot override a native step cap')
+    capped=run.states().iloc[0]
+    assert capped.quality_status=='invalid'
+    assert 'native_optimization:not_converged' in capped.quality_issues
+    record['status']='converged';frame.to_parquet(path);run.refresh_analysis()
+    changed=run.states().iloc[0]
+    assert changed.result_id!=old and changed.review_status=='unreviewed'
+    run.set_identity_review(changed.result_id,'approved',note='New converged result reviewed')
+    assert run.states().iloc[0].quality_status=='ready'

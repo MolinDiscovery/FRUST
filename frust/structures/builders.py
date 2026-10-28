@@ -114,7 +114,9 @@ def build(
         from rdkit import Chem
         from frust.structures.stereo import _stereo_spec
 
-        mol = Chem.MolFromSmiles(str(out.iloc[0]["smiles"]))
+        parser = Chem.SmilesParserParams()
+        parser.removeHs = not out.attrs.get("frust_tsguess2", {}).get("preserve_explicit_hydrogens", False)
+        mol = Chem.MolFromSmiles(str(out.iloc[0]["smiles"]), parser)
         if mol is not None:
             out.attrs["frust_stereo"] = _stereo_spec(mol)
     from frust.structures.stereo import check_geometry

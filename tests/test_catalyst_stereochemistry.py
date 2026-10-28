@@ -19,6 +19,25 @@ from frust.utils.dataframes import merge_dataframe_attrs
 PIP = 'Bc1ccccc1N1CCCCC1F'
 
 
+@pytest.mark.parametrize('preserve_hydrogens',[True,False])
+def test_connected_stereo_graph_uses_the_embedding_hydrogen_order(preserve_hydrogens):
+    from frust.structures.builders import build
+
+    smiles='[H][C@](F)(Cl)C'
+    parser=Chem.SmilesParserParams();parser.removeHs=not preserve_hydrogens
+    mol=Chem.AddHs(Chem.MolFromSmiles(smiles,parser))
+    assert AllChem.EmbedMolecule(mol,randomSeed=92)==0
+    frame=pd.DataFrame([dict(smiles=smiles,atoms=[a.GetSymbol() for a in mol.GetAtoms()],
+                            coords_embedded=mol.GetConformer().GetPositions().tolist(),cid=0)])
+    frame.attrs['frust_tsguess2']={'preserve_explicit_hydrogens':preserve_hydrogens}
+    target=plan_targets(systems(),states=['TS1'])[0]
+    result=build(target,n_confs=1,n_cores=1,memory_gb=2,debug=False,
+                 ts_guess_factory=lambda *args,**kwargs:{'TS1':frame})
+    spec=result.attrs['frust_stereo']['targets'][target.target_id]
+    row=result.iloc[0]
+    assert check_geometry(spec,row.coords_embedded,row.atoms)['status']=='preserved'
+
+
 def systems(smiles=PIP):
     return pd.DataFrame([dict(system_name='pyrrole__cat', substrate_name='pyrrole',
                              substrate_smiles='CN1C=CC=C1', smiles='CN1C=CC=C1',

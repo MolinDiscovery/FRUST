@@ -1462,6 +1462,10 @@ class Stepper:
           ``*-error`` column instead of aborting the whole dataframe run.
         - Output directories are created lazily and only when saving is
           requested.
+        - ORCA geometry optimizations retain geometry-bound native convergence
+          checks in ``df.attrs["frust_optimization_checks"]``. A normal exit
+          does not imply optimization convergence. The raw log becomes a
+          dataframe column only when explicitly requested.
         """
         import pandas as _pd
 
@@ -1475,6 +1479,7 @@ class Stepper:
         step_input_rows = int(len(df_out))
         coord_col = self._last_coord_col(df_out)
         all_row_data: list[dict[str, object]] = []
+        optimization_checks = list(df_out.attrs.get("frust_optimization_checks", []))
         filtering_meta: dict[str, Any] | None = None
         stage_started_at = utc_timestamp()
         stage_start = monotonic_seconds()
@@ -1569,6 +1574,12 @@ class Stepper:
                 base_args["save_files"] = row_save_files
 
             inputs = {**base_args, **build_inputs(row)}
+            from frust.utils.optimization import _orca_optimization_requested
+
+            capture_optimization = engine_fn == self.orca_fn and _orca_optimization_requested(inputs)
+            explicit_log = "orca.out" in (inputs.get("read_files") or [])
+            if capture_optimization:
+                inputs["read_files"] = list(dict.fromkeys([*(inputs.get("read_files") or []), "orca.out"]))
 
             # Filter inputs to only those accepted by engine_fn (avoids unexpected kwargs)
             try:
@@ -1623,6 +1634,15 @@ class Stepper:
                         self.logger.error(f"Failed to stage files from '{src}' to '{save_dir}': {e}")
 
             # step 4: enforce defaults
+            if capture_optimization and isinstance(out.get("orca.out"), str):
+                from frust.utils.optimization import _optimization_record
+
+                final_coords = out.get("opt_coords")
+                optimization_checks.append(_optimization_record(
+                    row, prefix, coords if final_coords is None else final_coords, out["orca.out"]
+                ))
+                if not explicit_log:
+                    out.pop("orca.out")
             out.setdefault("normal_termination", False)
             if out["normal_termination"]:
                 out.setdefault("electronic_energy", np.nan)
@@ -1724,6 +1744,8 @@ class Stepper:
         )
         steps[prefix] = step_meta
         df_out.attrs["frust_steps"] = steps
+        if optimization_checks:
+            df_out.attrs["frust_optimization_checks"] = optimization_checks
 
         failures = sum(
             1

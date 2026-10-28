@@ -962,6 +962,14 @@ def _state_rows(
             issues.append("missing_electronic_energy")
         if full and pd.isna(free_energy):
             issues.append("missing_free_energy")
+        from frust.utils.optimization import _optimization_check
+
+        optimization = _optimization_check(
+            source_attrs.get("frust_optimization_checks", []), row, protocol.get("geometry_stage")
+        )
+        optimization_invalid = optimization is not None and optimization["status"] != "converged"
+        if optimization_invalid:
+            issues.append("native_optimization:" + optimization["status"])
         result_id = _result_id(
             row,
             state_id,
@@ -971,13 +979,14 @@ def _state_rows(
             protocol_fingerprint=(
                 protocol_fingerprint if method_family == "uma" else None
             ),
+            optimization=optimization,
         )
         identity_review_required = state_kind == "transition_state" or state_id in {"INT4", "INT5", "INT6"}
         review_status = (reviews.get(result_id, "unreviewed" if identity_review_required else "not_required")
                          if full else "not_required")
         if pd.isna(electronic_energy) or (full and pd.isna(free_energy)) or not nt_columns:
             quality = "incomplete"
-        elif failed_nt or not vibration["valid"] or review_status == "rejected":
+        elif failed_nt or not vibration["valid"] or review_status == "rejected" or optimization_invalid:
             quality = "invalid"
         elif full and (
             "weak_minimum_imag" in vibration["flags"]
@@ -1772,6 +1781,7 @@ def _result_id(
     free_energy: Any,
     vibration: Mapping[str, Any],
     protocol_fingerprint: str | None = None,
+    optimization: Mapping[str, Any] | None = None,
 ) -> str:
     payload = {
         "state_id": state_id,
@@ -1790,6 +1800,8 @@ def _result_id(
         payload["energy_protocol_fingerprint"] = protocol_fingerprint
         mode_columns = [column for column in row.index if str(column).endswith("-vibs")]
         payload["normal_modes"] = _json_value(row.get(mode_columns[-1])) if mode_columns else None
+    if optimization is not None:
+        payload["native_optimization"] = optimization
     return "result_" + _json_hash(payload)[:16]
 
 
