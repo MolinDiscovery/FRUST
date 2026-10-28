@@ -8,12 +8,12 @@ from frust.tsguess2.topologies import CORE_TOPOLOGIES
 from frust.tsguess2.specs import BUILTIN_TS_SPECS_V2
 
 
-@pytest.mark.parametrize('state',['TS5','TS6','TS7','TS8','INT6'])
+@pytest.mark.parametrize('state',['TS5','TS6','TS7','TS8','INT4','INT5','INT6'])
 def test_reviewed_candidate_constraints_match_exact_exported_coordinates(state):
     geometry=GEOMETRIES[state]
     assert geometry.status=='candidate'
     assert geometry.reference.mode_reviewed
-    assert len(geometry.reference.negative_frequencies)==(0 if state=='INT6' else 1)
+    assert len(geometry.reference.negative_frequencies)==(0 if state.startswith('INT') else 1)
     assert len(geometry.reference.source_sha256)==64
     assert 'cid' in geometry.reference.notes
     assert 'Source row' in geometry.reference.notes

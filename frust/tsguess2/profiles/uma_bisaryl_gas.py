@@ -7,7 +7,48 @@ from frust.tsguess2.models import GeometryKey, ReferenceRecord, StateGeometrySpe
 
 GEOMETRY_KEY = GeometryKey(method="omol-uma-s-1p2p1")
 
-_RECORDS = {'INT6': {'constraint_values': {'catB_catN': 2.969157652368429,
+_RECORDS = {'INT4': {'constraint_values': {'catB_boundC': 1.602251439365557,
+                                'catB_catN': 2.9575774637748715,
+                                'catB_incomingC': 1.6111602012987412,
+                                'catB_retainedH': 1.2371760070305275,
+                                'catN_transferH': 1.0333584630673909},
+          'coordinates_column': 'uma_min_opt-oc',
+          'negative_frequencies': (),
+          'notes': 'Native 65-atom bisaryl N-H/B-H adduct, four independent chemical constructions '
+                   'and two candidates through released minimum optimization/frequencies. Complete '
+                   'intended graph and zero negative frequencies reviewed. Inactive pending final '
+                   'regeneration/transfer review. Source row cid2; coordinates column '
+                   'uma_min_opt-oc; vibrations column uma_freq-vibs.',
+          'role_coordinates': {'B_transfer_H': (-0.743894, 1.636313, -0.339459),
+                               'N_transfer_H': (0.657596, 0.597523, 0.472271),
+                               'bound_C': (-2.946207, 0.981341, -0.710973),
+                               'cat_B': (-1.489872, 0.674621, -0.117491),
+                               'cat_N': (1.37643, -0.028903, 0.073902),
+                               'incoming_C': (-1.5224, 0.532658, 1.487073),
+                               'scaffold_B_C': (-0.806487, -0.644529, -0.83631),
+                               'scaffold_N_C': (0.545423, -0.964004, -0.734104)},
+          'source_sha256': 'e3ef284340e0d1eaafce63e68244ed9a0762207601049f56bf61212f814fa1bf',
+          'vibrations_column': 'uma_freq-vibs'},
+ 'INT5': {'constraint_values': {'catB_boundC': 1.5623915602949858,
+                                'catB_catN': 3.037114563095044,
+                                'catB_incomingC': 1.527106705581506},
+          'coordinates_column': 'uma_min_opt-oc',
+          'negative_frequencies': (),
+          'notes': 'Native 63-atom neutral diaryl catalyst, four independent chemical '
+                   'constructions and two candidates through released minimum '
+                   'optimization/frequencies. Complete intended graph and zero negative '
+                   'frequencies reviewed. Free H2 is outside this local geometry. Inactive pending '
+                   'final regeneration/transfer review. Source row cid2; coordinates column '
+                   'uma_min_opt-oc; vibrations column uma_freq-vibs.',
+          'role_coordinates': {'bound_C': (-1.802432, 0.76613, -0.591747),
+                               'cat_B': (-1.402602, 0.093325, 0.760487),
+                               'cat_N': (1.382474, -0.344377, -0.369041),
+                               'incoming_C': (-1.903056, 0.646321, 2.093077),
+                               'scaffold_B_C': (-0.580345, -1.255512, 0.812467),
+                               'scaffold_N_C': (0.710369, -1.437646, 0.278278)},
+          'source_sha256': 'e0437d24075e4fa807dd874e098bcbb9973e749730cdb8dc86011b549e8a125d',
+          'vibrations_column': 'uma_freq-vibs'},
+ 'INT6': {'constraint_values': {'catB_catN': 2.969157652368429,
                                 'catB_exchangingC': 1.7190634928559212,
                                 'catB_pinB': 1.9345120579836148,
                                 'catB_retainedC': 1.5878127533673483,

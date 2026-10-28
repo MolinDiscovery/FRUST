@@ -28,7 +28,7 @@ import frust as ft
 
 profiles = ft.show_spec_profiles()
 profiles.query(
-    "profile == 'omol-uma-s-1p2p1/gas' and state in ['TS5', 'TS6', 'TS7', 'TS8', 'INT6']"
+    "profile == 'omol-uma-s-1p2p1/gas' and state in ['TS5', 'TS6', 'TS7', 'TS8', 'INT4', 'INT5', 'INT6']"
 )[["state", "status", "selectable_prefer_exact"]]
 ```
 
@@ -38,6 +38,8 @@ profiles.query(
 | TS6 | `candidate` | false |
 | TS7 | `candidate` | false |
 | TS8 | `candidate` | false |
+| INT4 | `candidate` | false |
+| INT5 | `candidate` | false |
 | INT6 | `candidate` | false |
 
 `candidate` means a reviewed geometry is retained for further validation but
@@ -64,6 +66,33 @@ silently substituted into the same profile.
     missing or collapsed bridge guess alone does not assign the mechanism.
     Existing TS1–TS4 and INT3 revisions remain unchanged, and no DFT bisaryl
     reference is supplied by the UMA candidate module.
+
+### Review The Identity Of An Intermediate
+
+| Candidate | Imaginary modes | Relaxed structure | Identity decision |
+| --- | ---: | --- | --- |
+| 0 | 0 | Released products | `rejected` as INT6 |
+| 1 | 0 | Intended bridge | `approved`, subject to other quality checks |
+
+This example shows why frequency count alone cannot select an intermediate.
+When a portable run contains INT4, INT5 or INT6 results, they remain
+`unreviewed` until their structure identity is checked. For example:
+
+```python
+candidate = run.states().query("state_id == 'INT6' and cid == 0").iloc[0]
+run.set_identity_review(
+    candidate.result_id,
+    "rejected",
+    note="Relaxation produced separated products rather than the bridge.",
+)
+```
+
+`approved` confirms the intended structure or reaction identity; it does not
+override failed termination or invalid vibrations. `rejected` marks the result
+invalid for quality-based selection. `unreviewed` records that no decision exists.
+The policy applies to both UMA and DFT results. Reviews bind to the exact result
+identifier; changed geometry, energies or modes require a new review. Existing
+`set_review(...)` remains available for a TS imaginary-mode decision.
 
 For reproducible candidate export from an explicit evidence directory:
 

@@ -518,13 +518,12 @@ class ScreenRun:
         return _build_profiles(states, manifest, dimer_references)
 
     def review_queue(self) -> pd.DataFrame:
-        """Return TS results needing manual imaginary-mode review."""
+        """Return results needing reaction-mode or intermediate-identity review."""
         if self.manifest.get("calculation_level", "full") != "full":
             return self.states().iloc[0:0].copy()
         states = self.states()
         return states[
-            states["state_kind"].eq("transition_state")
-            & states["review_status"].eq("unreviewed")
+            states["review_status"].eq("unreviewed")
         ].reset_index(drop=True)
 
     def plot_vibration(self, result_id: str, *, mode: int = 0, **kwargs: Any) -> Any:
@@ -592,6 +591,56 @@ class ScreenRun:
             raise KeyError(f"Unknown result ID {result_id!r}")
         if not matches.iloc[0]["state_kind"] == "transition_state":
             raise ValueError("Manual mode review applies only to transition states")
+        self._save_identity_review(result_id, decision, note=note, reviewer=reviewer)
+
+    def set_identity_review(
+        self,
+        result_id: str,
+        decision: Literal["approved", "rejected"],
+        *,
+        note: str = "",
+        reviewer: str = "",
+    ) -> None:
+        """Record whether a characterized structure has its intended identity.
+
+        For example, a requested INT6 can relax to separated products with no
+        imaginary frequencies. Reject that result as an INT6 minimum rather
+        than selecting it because of its low energy. INT4, INT5 and INT6 need
+        this explicit identity review at full calculation depth. Other minima
+        retain their existing automatic checks, but may also be rejected here.
+
+        Parameters
+        ----------
+        result_id : str
+            Immutable result identifier from ``states()``. Geometry, energy,
+            frequencies and normal-mode content bind the review to this result;
+            recalculation requires a new review when these change.
+        decision : {"approved", "rejected"}
+            ``approved`` confirms the intended minimum or reaction identity.
+            ``rejected`` excludes it from quality-based selection. Approval
+            does not override failed calculations or vibration checks.
+        note : str, optional
+            Review rationale, such as checked fragments and reactive contacts.
+        reviewer : str, optional
+            Name or initials of the reviewer.
+
+        Raises
+        ------
+        ValueError
+            If the run is not full-level or the decision is unsupported.
+        KeyError
+            If the result identifier is absent from this run.
+        """
+        if self.manifest.get("calculation_level", "full") != "full":
+            raise ValueError("Structure identity review requires level='full'")
+        if decision not in {"approved", "rejected"}:
+            raise ValueError("decision must be 'approved' or 'rejected'")
+        if not self.states()["result_id"].eq(str(result_id)).any():
+            raise KeyError(f"Unknown result ID {result_id!r}")
+        self._save_identity_review(result_id, decision, note=note, reviewer=reviewer)
+
+    def _save_identity_review(self, result_id, decision, *, note, reviewer):
+        """Persist a review only after the public operation validates its input."""
         reviews = _read_reviews(self.reviews_path)
         review = pd.DataFrame(
             [{
@@ -923,11 +972,9 @@ def _state_rows(
                 protocol_fingerprint if method_family == "uma" else None
             ),
         )
-        review_status = (
-            reviews.get(result_id, "unreviewed")
-            if full and state_kind == "transition_state"
-            else "not_required"
-        )
+        identity_review_required = state_kind == "transition_state" or state_id in {"INT4", "INT5", "INT6"}
+        review_status = (reviews.get(result_id, "unreviewed" if identity_review_required else "not_required")
+                         if full else "not_required")
         if pd.isna(electronic_energy) or (full and pd.isna(free_energy)) or not nt_columns:
             quality = "incomplete"
         elif failed_nt or not vibration["valid"] or review_status == "rejected":
@@ -935,8 +982,8 @@ def _state_rows(
         elif full and (
             "weak_minimum_imag" in vibration["flags"]
             or (
-                state_kind == "transition_state"
-                and (review_status == "unreviewed" or vibration["flags"])
+                review_status == "unreviewed"
+                or (state_kind == "transition_state" and vibration["flags"])
             )
         ):
             quality = "review"
