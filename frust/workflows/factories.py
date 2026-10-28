@@ -11,6 +11,7 @@ from __future__ import annotations
 from pathlib import Path
 from dataclasses import replace
 from typing import Any, Literal
+from collections.abc import Mapping
 
 import pandas as pd
 
@@ -23,6 +24,7 @@ from frust.tsguess.matching import parse_rpos_value
 from frust.tsguess.specs import BUILTIN_TS_SPECS
 from frust.tsguess2.specs import BUILTIN_TS_SPECS_V2
 from frust.tsguess2.specs import resolve_profile_specs
+from frust.tsguess2.specs import TSGuess2Spec, normalize_profile_id
 from frust.structures import (
     StructureTarget,
     build as build_structure,
@@ -926,6 +928,8 @@ class ScreenTSWorkflow(BaseWorkflow):
         calculation_level: CalculationLevel | None = None,
         include_dft_rank_sp: bool | None = None,
         prune_initial: bool | dict[str, Any] = True,
+        candidate_specs: Mapping[str, TSGuess2Spec] | None = None,
+        random_seed: int | None = None,
     ) -> None:
         count = _resolve_count(validation_top_n=validation_top_n,
                                ranking_top_n=ranking_top_n,
@@ -966,6 +970,12 @@ class ScreenTSWorkflow(BaseWorkflow):
             else bool(include_dft_rank_sp)
         )
         self.prune_initial = prune_initial
+        self.candidate_specs = {str(state).upper(): spec for state, spec in (candidate_specs or {}).items()}
+        self.random_seed = random_seed
+        if any(not state.startswith("TS") for state in self.candidate_specs):
+            raise ValueError("screen_ts accepts transition-state candidates only; intermediate candidates require a minimum workflow")
+        if (self.candidate_specs or random_seed is not None) and self.ts_backend != "tsguess2":
+            raise ValueError("Experimental candidate specs and random_seed require ts_backend='tsguess2'")
 
     def _resolved_spec_profile(self) -> str:
         """Return the explicit or method-derived tsguess2 profile."""
@@ -1021,6 +1031,7 @@ class ScreenTSWorkflow(BaseWorkflow):
             for key, value in _screen_ts_specs_for_backend(self.ts_backend).items()
             if key.startswith("TS")
         }
+        supported_specs.update(self.candidate_specs)
         unknown = sorted(set(self.ts_types) - set(supported_specs))
         if unknown:
             supported = ", ".join(sorted(supported_specs))
@@ -1028,13 +1039,22 @@ class ScreenTSWorkflow(BaseWorkflow):
                 f"Unsupported screen TS types {unknown}. Supported: {supported}"
             )
         systems = self._systems()
-        if self.ts_backend == "tsguess2":
+        if self.ts_backend == "tsguess2" and not self.candidate_specs:
             resolve_profile_specs(
                 self.ts_types,
                 self._resolved_spec_profile(),
                 match=self.spec_match,
             )
             return plan_targets(systems, states=self.ts_types)
+        if self.candidate_specs:
+            unknown_candidates = set(self.candidate_specs) - set(self.ts_types)
+            if unknown_candidates:
+                raise ValueError(f"candidate_specs includes unrequested states: {sorted(unknown_candidates)}")
+            for state, spec in self.candidate_specs.items():
+                if spec.name != state or spec.profile_id != normalize_profile_id(self._resolved_spec_profile()):
+                    raise ValueError("Candidate state and method/profile must match the requested state/profile")
+            resolve_profile_specs([state for state in self.ts_types if state not in self.candidate_specs],
+                                  self._resolved_spec_profile(), match=self.spec_match)
         targets: list[WorkflowTarget] = []
         for _, system in systems.iterrows():
             rpos_values = parse_rpos_value(
@@ -1110,6 +1130,8 @@ class ScreenTSWorkflow(BaseWorkflow):
             backend=self.ts_backend,
             spec_profile=self._resolved_spec_profile(),
             spec_match=self.spec_match,
+            **({"candidate_specs": self.candidate_specs} if self.candidate_specs else {}),
+            **({"random_seed": self.random_seed} if self.random_seed is not None else {}),
         )
         df = guesses[ts_type]
         if save_dir is not None:
@@ -1578,6 +1600,8 @@ def screen_ts(
     calculation_level: CalculationLevel | None = None,
     include_dft_rank_sp: bool | None = None,
     prune_initial: bool | dict[str, Any] = True,
+    candidate_specs: Mapping[str, TSGuess2Spec] | None = None,
+    random_seed: int | None = None,
 ) -> ScreenTSWorkflow:
     """Create a substrate/catalyst transition-state screen workflow.
 
@@ -1620,6 +1644,18 @@ def screen_ts(
         environment from the same method family when an exact reference is
         missing; ``"exact"`` requires the requested environment. Neither
         policy crosses method families.
+    candidate_specs : mapping of str to TSGuess2Spec or None, optional
+        Explicit experimental templates for requested ``tsguess2`` states.
+        Their state and geometry-reference profile must match the request.
+        They remain unvalidated call-specific inputs and never activate a
+        production profile. Explicit ``"TS5"`` and ``"TS6"`` candidates seed
+        second C-H activation and bisaryl H2 elimination, respectively. ``"TS7"``
+        and ``"TS8"`` candidates use a bisaryl/HBpin exchange graph; their
+        chemical assignments still require mode and path validation. Target inspection
+        remains lightweight; embedding occurs only during execution.
+    random_seed : int or None, optional
+        RDKit conformer-generation seed for ``tsguess2``. ``None`` preserves
+        the backend default. Record a fixed seed when comparing ensembles.
     n_confs : int or None, optional
         Number of TS guess conformers generated per target.
     top_n : int, optional
@@ -1698,6 +1734,8 @@ def screen_ts(
         calculation_level=calculation_level,
         include_dft_rank_sp=include_dft_rank_sp,
         prune_initial=prune_initial,
+        candidate_specs=candidate_specs,
+        random_seed=random_seed,
     )
 
 

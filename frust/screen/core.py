@@ -119,6 +119,8 @@ def create_ts_guesses(
     backend: str = "tsguess2",
     spec_profile: str = "wb97xd3-631g/gas",
     spec_match: str = "prefer-exact",
+    candidate_specs: dict | None = None,
+    random_seed: int | None = None,
 ) -> dict[str, pd.DataFrame]:
     """Create grouped TS guess dataframes for an expanded screen.
 
@@ -142,6 +144,11 @@ def create_ts_guesses(
         Method/environment geometry profile used by ``tsguess2``.
     spec_match : {"prefer-exact", "exact"}, optional
         Profile matching policy used by ``tsguess2``.
+    candidate_specs : dict or None, optional
+        Explicit unvalidated ``tsguess2`` templates for requested states, keyed
+        by state name. They do not modify active geometry profiles.
+    random_seed : int or None, optional
+        Explicit ``tsguess2`` conformer seed. ``None`` uses the backend default.
 
     Returns
     -------
@@ -155,6 +162,8 @@ def create_ts_guesses(
         create = create_tsguess_dataframes
     else:
         raise ValueError("backend must be one of 'tsguess2' or 'tsguess'")
+    if backend_key != "tsguess2" and (candidate_specs is not None or random_seed is not None):
+        raise ValueError("candidate_specs and random_seed require backend='tsguess2'")
 
     kwargs = {
         "ts_types": ts_types,
@@ -169,6 +178,10 @@ def create_ts_guesses(
                 "spec_match": spec_match,
             }
         )
+        if candidate_specs is not None:
+            kwargs["candidate_specs"] = candidate_specs
+        if random_seed is not None:
+            kwargs["random_seed"] = int(random_seed)
     return create(systems, **kwargs)
 
 
