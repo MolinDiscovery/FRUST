@@ -26,6 +26,7 @@ from frust.tsguess2.profiles.uma_omol_s_1p2p1_gas import (
     GEOMETRIES as UMA_GAS_GEOMETRIES,
     GEOMETRY_KEY as UMA_GAS_KEY,
 )
+from frust.tsguess2.profiles.uma_bisaryl_gas import GEOMETRIES as UMA_BISARYL_CANDIDATES
 from frust.tsguess2.profiles.wb97xd3_631g_gas import (
     GEOMETRIES as WB97_GAS_GEOMETRIES,
     GEOMETRY_KEY as WB97_GAS_KEY,
@@ -54,7 +55,7 @@ _GEOMETRIES: dict[str, dict[str, StateGeometrySpec]] = {
     WB97_GAS_KEY.profile_id: WB97_GAS_GEOMETRIES,
     R2SCAN3C_GAS_KEY.profile_id: R2SCAN3C_GAS_GEOMETRIES,
     R2SCAN3C_SMD_KEY.profile_id: R2SCAN3C_SMD_GEOMETRIES,
-    UMA_GAS_KEY.profile_id: UMA_GAS_GEOMETRIES,
+    UMA_GAS_KEY.profile_id: {**UMA_GAS_GEOMETRIES, **UMA_BISARYL_CANDIDATES},
 }
 _QUARANTINED: dict[str, dict[str, str]] = {
     R2SCAN3C_SMD_KEY.profile_id: R2SCAN3C_SMD_QUARANTINED,

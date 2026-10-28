@@ -172,7 +172,8 @@ def test_second_activation_and_h2_release_have_distinct_reactive_contracts():
     assert frozenset(("N_transfer_H", "B_transfer_H")) not in activation
     assert frozenset(("N_transfer_H", "B_transfer_H")) in release
     assert frozenset(("incoming_C", "N_transfer_H")) not in release
-    assert "TS5" not in CORE_TOPOLOGIES and "TS6" not in CORE_TOPOLOGIES
+    assert CORE_TOPOLOGIES["TS5"] == BISARYL_CH_TOPOLOGY
+    assert CORE_TOPOLOGIES["TS6"] == BISARYL_H2_TOPOLOGY
 
 
 @pytest.mark.parametrize("catalyst,formula,count", [
@@ -277,7 +278,9 @@ def test_explicit_bisaryl_minimum_construction_is_separate_from_ts_execution(mon
     )[state]
     assert len(frame) == 2 and len(frame.iloc[0].atoms) == atoms
     assert set(frame.state_kind) == {"constrained_minimum"}
-    assert state not in CORE_TOPOLOGIES
+    assert state in CORE_TOPOLOGIES
+    with pytest.raises(ValueError, match=f"No selectable {state}"):
+        ft.tsguess2.resolve_profile_spec(state, "uma-gas", match="exact")
     pd.testing.assert_frame_equal(before, ft.show_spec_profiles())
     with pytest.raises(ValueError, match="intermediate candidates require a minimum workflow"):
         ft.workflows.screen_ts(

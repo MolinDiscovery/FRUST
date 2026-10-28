@@ -21,6 +21,60 @@ This page describes the maintainer workflow for turning reviewed optimized
 structures into a new method-aware geometry profile. It does not describe how
 to calculate the reference structures themselves.
 
+## Construction Support And Inactive References
+
+```python
+import frust as ft
+
+profiles = ft.show_spec_profiles()
+profiles.query(
+    "profile == 'omol-uma-s-1p2p1/gas' and state in ['TS5', 'TS6', 'TS7', 'TS8', 'INT6']"
+)[["state", "status", "selectable_prefer_exact"]]
+```
+
+| State | Current status | Selectable |
+| --- | --- | --- |
+| TS5 | `candidate` | false |
+| TS6 | `candidate` | false |
+| TS7 | `candidate` | false |
+| TS8 | `candidate` | false |
+| INT6 | `candidate` | false |
+
+`candidate` means a reviewed geometry is retained for further validation but
+production resolution will not select it. `active` means resolution may select
+that immutable revision. `missing` means the state has no supplied geometry in
+that profile; `quarantined` means an existing reference has been explicitly
+excluded. Construction topology and profile availability are separate: defining
+INT4/INT5/INT6 roles does not make a valid minimum or a selectable profile.
+
+The new UMA bisaryl candidates derive from native TMP structures with two
+alpha-1-methylpyrrole-derived groups. TS5 is the second C–H activation, TS6 the
+H₂ elimination, TS7 bridge entry, and TS8 bridge exit. Each saddle has the intended
+single imaginary mode and independently characterized minima. TS8 uses a short
+downhill IRC followed by a separately audited endpoint relaxation; those
+optimization steps are not represented as IRC. INT6 uses the TS7-side bridge
+conformer. The TS8-side bridge is a different conformer, so its energy cannot be
+silently substituted into the same profile.
+
+!!! info "Reference identity does not establish transfer or a universal mechanism"
+
+    These candidates remain inactive while final-profile regeneration and
+    independent transfer checks continue. A new catalyst/substrate pair can have
+    a two-saddle bridge route or an independently verified direct route. A
+    missing or collapsed bridge guess alone does not assign the mechanism.
+    Existing TS1–TS4 and INT3 revisions remain unchanged, and no DFT bisaryl
+    reference is supplied by the UMA candidate module.
+
+For reproducible candidate export from an explicit evidence directory:
+
+```bash
+conda run -n UMA python scripts/build_bisaryl_profile_candidates.py review-evidence/
+```
+
+The exporter checks source-file hashes, selected rows, source-coordinate bindings
+and imaginary-frequency counts, then recomputes every core distance. It emits
+inactive candidates; it does not perform scientific review or activate a profile.
+
 ## Where The Pieces Live
 
 | Artifact | Responsibility |

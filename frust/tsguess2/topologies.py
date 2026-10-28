@@ -195,3 +195,10 @@ CORE_TOPOLOGIES: dict[str, CoreTopology] = {
         ),
     ),
 }
+
+CORE_TOPOLOGIES.update({
+    "TS5": BISARYL_CH_TOPOLOGY,
+    "TS6": BISARYL_H2_TOPOLOGY,
+    **BISARYL_MINIMUM_TOPOLOGIES,
+    **BISARYL_EXCHANGE_TOPOLOGIES,
+})

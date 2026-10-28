@@ -27,7 +27,7 @@ BUILTIN_TS_SPECS_V2: dict[str, TSGuess2Spec] = {
         WB97_GAS_KEY.profile_id,
         match="exact",
     ).spec
-    for state in CORE_TOPOLOGIES
+    for state in ("TS1", "TS2", "TS3", "TS4", "INT3")
 }
 
 

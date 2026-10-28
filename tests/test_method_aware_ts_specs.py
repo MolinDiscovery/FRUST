@@ -51,14 +51,14 @@ def test_profile_catalog_exposes_reviewed_method_environment_slots():
         "TS4",
         "INT3",
     }
-    assert r2_gas["mode_reviewed"].eq(True).all()  # noqa: E712
+    assert r2_gas.loc[r2_gas["status"].eq("active"), "mode_reviewed"].eq(True).all()  # noqa: E712
     gas_by_state = r2_gas.set_index("state")
     assert gas_by_state.loc["TS1", "negative_frequencies"] == (-205.46,)
     assert gas_by_state.loc["TS2", "negative_frequencies"] == (-328.55,)
     assert gas_by_state.loc["TS3", "negative_frequencies"] == (-82.84,)
     assert gas_by_state.loc["TS4", "negative_frequencies"] == (-72.05,)
     assert gas_by_state.loc["INT3", "negative_frequencies"] == ()
-    assert set(r2_gas.loc[r2_gas["state"].str.startswith("TS"), "source_sha256"]) == {
+    assert set(r2_gas.loc[r2_gas["state"].str.startswith("TS") & r2_gas["status"].eq("active"), "source_sha256"]) == {
         "966555c888fa6a41969f791d93bcf97fa9898df89bb2d0402f7c0088819c6e31"
     }
     assert gas_by_state.loc["INT3", "source_sha256"] == (
@@ -73,7 +73,7 @@ def test_profile_catalog_exposes_reviewed_method_environment_slots():
         "TS4",
         "INT3",
     }
-    assert uma_gas["mode_reviewed"].eq(True).all()  # noqa: E712
+    assert uma_gas.loc[uma_gas["status"].isin(["active", "candidate"]), "mode_reviewed"].eq(True).all()  # noqa: E712
     uma_by_state = uma_gas.set_index("state")
     assert uma_by_state.loc["TS3", "negative_frequencies"] == (-183.34,)
     assert uma_by_state.loc["INT3", "negative_frequencies"] == ()

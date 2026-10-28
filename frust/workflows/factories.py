@@ -22,9 +22,9 @@ from frust.screen import read as read_screen
 from frust.stepper import Stepper
 from frust.tsguess.matching import parse_rpos_value
 from frust.tsguess.specs import BUILTIN_TS_SPECS
-from frust.tsguess2.specs import BUILTIN_TS_SPECS_V2
 from frust.tsguess2.specs import resolve_profile_specs
 from frust.tsguess2.specs import TSGuess2Spec, normalize_profile_id
+from frust.tsguess2.topologies import CORE_TOPOLOGIES
 from frust.structures import (
     StructureTarget,
     build as build_structure,
@@ -125,7 +125,7 @@ def _screen_ts_specs_for_backend(backend: str) -> dict[str, Any]:
     """Return supported screen TS specs for a backend name."""
     backend_key = str(backend).strip().lower()
     if backend_key == "tsguess2":
-        return BUILTIN_TS_SPECS_V2
+        return CORE_TOPOLOGIES
     if backend_key == "tsguess":
         return BUILTIN_TS_SPECS
     raise ValueError("ts_backend must be one of 'tsguess2' or 'tsguess'")
