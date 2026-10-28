@@ -4,6 +4,8 @@ from __future__ import annotations
 
 from collections.abc import Iterable
 from pathlib import Path
+import hashlib
+import json
 from typing import Any
 
 import pandas as pd
@@ -175,11 +177,23 @@ def plan_targets(
             positions = rpos_values if spec.scope.endswith("_rpos") else (None,)
             for rpos in positions:
                 scope_key = _scope_key(spec.scope, system, rpos)
+                bound_identity = ()
+                if spec.state_id in {"TS5", "TS6", "TS7", "TS8", "INT4", "INT5", "INT6"}:
+                    bound_smiles = system.metadata.get("bound_substrate_smiles")
+                    if bound_smiles is not None and not pd.isna(bound_smiles):
+                        bound_site = system.metadata.get("bound_rpos")
+                        if bound_site is None or pd.isna(bound_site):
+                            raise ValueError("bound_rpos is required with bound_substrate_smiles")
+                        bound_identity = (str(bound_smiles), int(bound_site))
+                        scope_key = (*scope_key, *bound_identity)
                 dedup_key = (spec.state_id, *scope_key)
                 if dedup_key in seen:
                     continue
                 seen.add(dedup_key)
                 target_id = _target_id(spec.state_id, system, spec.scope, rpos)
+                if bound_identity:
+                    suffix = hashlib.sha256(json.dumps(bound_identity).encode()).hexdigest()[:12]
+                    target_id += f":bound-{suffix}"
                 targets.append(
                     StructureTarget(
                         target_id=target_id,

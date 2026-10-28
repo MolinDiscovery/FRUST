@@ -76,11 +76,14 @@ STATE_SPECS: dict[str, StateSpec] = {
             f"connected_graph::TS{index}::v2",
             "system_rpos",
         )
-        for index in range(1, 5)
+        for index in range(1, 9)
     },
     "INT3": StateSpec(
         "INT3", "constrained_minimum", "connected_graph::INT3::v2", "system_rpos"
     ),
+    **{f"INT{index}": StateSpec(
+        f"INT{index}", "constrained_minimum", f"connected_graph::INT{index}::v1", "system_rpos"
+    ) for index in range(4, 7)},
 }
 
 
@@ -99,7 +102,7 @@ def get_state_spec(state_id: str) -> StateSpec:
     """
     text = str(state_id)
     upper = text.upper()
-    key = upper if upper.startswith("TS") or upper == "INT3" else text
+    key = upper if upper.startswith("TS") or upper in {"INT3", "INT4", "INT5", "INT6"} else text
     try:
         return STATE_SPECS[key]
     except KeyError as exc:

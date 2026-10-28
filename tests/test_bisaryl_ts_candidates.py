@@ -284,3 +284,59 @@ def test_explicit_bisaryl_minimum_construction_is_separate_from_ts_execution(mon
             dataframe=systems(), ts_types=[state], method="uma-gas",
             candidate_specs={state: candidate(state)}, spec_profile="uma-gas",
         )
+
+
+@pytest.mark.parametrize('state,atoms', [('INT4',65),('INT5',63),('INT6',85)])
+@pytest.mark.parametrize('method,screening', [('uma-gas','uma-gas'),('r2scan-3c','gxtb-default')])
+def test_intermediate_workflow_is_lazy_and_validates_every_retained_candidate(monkeypatch,state,atoms,method,screening):
+    calls=[]
+    def embed(mol,**kwargs):
+        calls.append(kwargs['numThreads'])
+        return fake_embedding(mol,**kwargs)
+    monkeypatch.setattr('frust.tsguess2.api.AllChem.EmbedMultipleConfs',embed)
+    workflow=ft.workflows.intermediates(
+        dataframe=systems(),states=(state,),method=method,screening=screening,
+        spec_profile='uma-gas',candidate_specs={state:candidate(state)},
+        n_confs=3,validation_top_n=3,prune_initial=False,random_seed=19,
+        include_dft_rank_sp=False)
+    targets=workflow.targets()
+    assert len(targets)==1 and not calls
+    assert targets[0].state_kind=='constrained_minimum'
+    assert workflow._step_type_for_target(targets[0])==state
+    frame=workflow._prepare_initial_df(targets[0],save_dir=None,options=ExecutionOptions(n_cores=2))
+    assert len(frame)==3 and len(frame.iloc[0].atoms)==atoms
+    assert set(frame.state_kind)=={'constrained_minimum'}
+    assert frame.attrs['frust_tsguess2']['embedding']['randomSeed']==19
+    stages=workflow._stage_defs()
+    assert not any(s.operation in {'ts_search','hessian_seed'} for s in stages)
+    minimum=next(s for s in stages if s.operation=='minimum_optimization' and s.phase=='validation')
+    assert not minimum.constraint and minimum.lowest is None
+    assert next(s for s in stages if s.operation=='frequencies').lowest is None
+    assert any(s.kind=='filter' and s.lowest==3 for s in stages)
+
+
+def test_intermediates_reject_ts_or_missing_profiles_before_construction():
+    with pytest.raises(ValueError,match='Unsupported intermediate'):
+        ft.workflows.intermediates(dataframe=systems(),states=('TS5',))
+    with pytest.raises(ValueError,match='No selectable INT5'):
+        ft.workflows.intermediates(dataframe=systems(),states=('INT5',),method='uma-gas').targets()
+    with pytest.raises(ValueError,match='state and method/profile'):
+        ft.workflows.intermediates(dataframe=systems(),states=('INT5',),method='r2scan-3c',
+                                  candidate_specs={'INT5':candidate('INT5')}).targets()
+
+
+def test_bisaryl_typed_targets_preserve_independent_bound_identity():
+    from frust.structures import normalize_systems,plan_targets
+    frame=pd.concat([systems().assign(bound_substrate_smiles=PYRROLE,bound_rpos=2),
+                     systems().assign(bound_substrate_smiles='c1ccoc1',bound_rpos=4)],ignore_index=True)
+    targets=plan_targets(normalize_systems(frame),states=['INT5','TS7'])
+    assert len(targets)==len({t.target_id for t in targets})==4
+    assert {t.system.metadata['bound_substrate_smiles'] for t in targets}=={PYRROLE,'c1ccoc1'}
+
+
+def test_new_constrained_states_are_detected_and_mixed_auto_dispatch_is_rejected():
+    from frust.stepper import Stepper
+    frame=pd.DataFrame({'structure_type':['INT5','INT6']})
+    assert Stepper._unique_constrained_types(frame)=={'INT5','INT6'}
+    with pytest.raises(ValueError,match='mixed constrained'):
+        Stepper(step_type='auto')._resolve_auto_step_type(frame)

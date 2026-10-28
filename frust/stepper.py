@@ -859,7 +859,7 @@ class Stepper:
         """Return constrained TS/INT structure types present in a dataframe."""
         if "structure_type" not in df.columns:
             return set()
-        constrained = {"TS1", "TS2", "TS3", "TS4", "INT3"}
+        constrained = {*(f"TS{i}" for i in range(1, 9)), *(f"INT{i}" for i in range(3, 7))}
         return {
             str(value).upper()
             for value in df["structure_type"].dropna().unique()
@@ -877,7 +877,7 @@ class Stepper:
                 self.step_type = next(iter(constrained_types))
             return
 
-        if self.step_type in {"TS1", "TS2", "TS3", "TS4", "INT3"} and constrained_types:
+        if self.step_type in {*(f"TS{i}" for i in range(1, 9)), *(f"INT{i}" for i in range(3, 7))} and constrained_types:
             if constrained_types != {self.step_type}:
                 types = ", ".join(sorted(constrained_types))
                 raise ValueError(

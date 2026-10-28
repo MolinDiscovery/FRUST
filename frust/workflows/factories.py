@@ -1354,6 +1354,63 @@ class Int3Workflow(BaseWorkflow):
             ranking_top_n=self.uma_rank_top_n, validation_top_n=self.validation_top_n)
 
 
+
+class IntermediateWorkflow(Int3Workflow):
+    """Shared constrained preparation and released minimum validation.
+
+    Parameters
+    ----------
+    states : sequence of str
+        ``INT3`` is the productive HBpin bridge; ``INT4`` the bisaryl N-H/B-H
+        adduct; ``INT5`` the neutral diaryl catalyst; ``INT6`` the side-path
+        HBpin bridge. Requesting a state does not establish its stability.
+    candidate_specs : mapping or None, optional
+        Call-scoped geometry specifications for unregistered references.
+    random_seed : int or None, optional
+        Connected-graph embedding seed.
+    **kwargs
+        Shared calculation and sampling options accepted by ``int3``.
+    """
+
+    workflow_name = "intermediates"
+
+    def __init__(self, *, states, candidate_specs=None, random_seed=None, **kwargs):
+        super().__init__(**kwargs)
+        self.states = tuple(str(state).upper() for state in states)
+        if not self.states or len(set(self.states)) != len(self.states):
+            raise ValueError("states must be a nonempty sequence of distinct intermediates")
+        unknown = set(self.states) - {"INT3", "INT4", "INT5", "INT6"}
+        if unknown:
+            raise ValueError(f"Unsupported intermediate states: {sorted(unknown)}")
+        self.candidate_specs = {str(k).upper(): v for k, v in (candidate_specs or {}).items()}
+        if set(self.candidate_specs) - set(self.states):
+            raise ValueError("candidate_specs includes unrequested states")
+        self.random_seed = random_seed
+
+    def _build_targets(self):
+        """Resolve references and plan identities without running embedding."""
+        profile = self._resolved_spec_profile()
+        for state, spec in self.candidate_specs.items():
+            if spec.name != state or spec.profile_id != normalize_profile_id(profile):
+                raise ValueError("Candidate state and method/profile must match the requested state/profile")
+        resolve_profile_specs([s for s in self.states if s not in self.candidate_specs],
+                              profile, match=self.spec_match)
+        return plan_targets(self._systems(), states=self.states)
+
+    def _prepare_initial_df(self, target, *, save_dir, options):
+        """Construct the requested minimum with the shared typed builder."""
+        return build_structure(
+            target, n_confs=self.n_confs, n_cores=options.n_cores,
+            memory_gb=options.mem_gb, debug=options.debug, save_dir=save_dir,
+            stepper_cls=Stepper, ts_guess_factory=create_ts_guesses,
+            spec_profile=self._resolved_spec_profile(), spec_match=self.spec_match,
+            candidate_specs=self.candidate_specs, random_seed=self.random_seed)
+
+    def _step_type_for_target(self, target):
+        """Dispatch constraints by the actual intermediate state."""
+        return target.state_id
+
+
 def mols(
     *,
     csv_path: str | Path | None = None,
@@ -1850,6 +1907,92 @@ def int3(
         include_dft_rank_sp=include_dft_rank_sp,
         prune_initial=prune_initial,
     )
+
+
+
+def intermediates(
+    *,
+    states: tuple[str, ...] = ("INT3",),
+    csv_path: str | Path | None = None,
+    dataframe: pd.DataFrame | None = None,
+    method: MethodPlan | str | None = None,
+    screening: ScreeningPlan | str | None = None,
+    spec_profile: str = "auto",
+    spec_match: str = "prefer-exact",
+    candidate_specs: Mapping[str, TSGuess2Spec] | None = None,
+    random_seed: int | None = None,
+    n_confs: int | None = None,
+    top_n: int = 20,
+    validation_top_n: int | None = None,
+    ranking_top_n: int | None = None,
+    calculation_level: CalculationLevel = "full",
+    include_dft_rank_sp: bool | None = None,
+    prune_initial: bool | dict[str, Any] = True,
+) -> IntermediateWorkflow:
+    """Prepare and independently characterize connected intermediate minima.
+
+    For example, ``states=("INT4", "INT5")`` requests separate adduct and
+    diaryl targets. Construction references must exist or be supplied explicitly;
+    this request does not assume either state survives unconstrained relaxation.
+
+    Parameters
+    ----------
+    states : tuple of str, optional
+        ``INT3`` is the productive HBpin bridge, ``INT4`` the bisaryl N-H/B-H
+        adduct, ``INT5`` the neutral diaryl catalyst, and ``INT6`` the side-path
+        HBpin bridge. Stability and connectivity require result review.
+    csv_path, dataframe : path or pandas.DataFrame or None, optional
+        Component, expanded-system, or substrate-only input, as for ``int3``.
+    method, screening : MethodPlan, ScreeningPlan, str or None, optional
+        Final and screening calculators. Chemistry and candidate counts are
+        shared across UMA and DFT method plans.
+    spec_profile : str, optional
+        Geometry reference. ``auto`` follows the final method; an explicit
+        profile permits using a reviewed guess from a different final method.
+    spec_match : {"prefer-exact", "exact"}, optional
+        Require the exact environment or allow the same-method environment
+        fallback. Neither option permits a different-method fallback.
+    candidate_specs : mapping or None, optional
+        Call-scoped state specifications, without changing active profiles.
+    random_seed : int or None, optional
+        Connected-graph embedding seed.
+    n_confs, top_n : int or None, optional
+        Initial conformer count and broad screening retention limit.
+    validation_top_n, ranking_top_n : int or None, optional
+        Validation candidate count and optional reranking count. When both
+        are supplied they must agree. All retained validation candidates receive
+        released minimum optimization and frequencies, for UMA and DFT alike.
+    calculation_level : {"low_cost", "uma_ranked", "dft_ranked", "full"}, optional
+        Stop after screening, UMA ranking, DFT ranking, or complete released
+        minimum characterization, respectively.
+    include_dft_rank_sp : bool or None, optional
+        Include the optional DFT ranking single point. ``None`` follows the
+        method and screening plans.
+    prune_initial : bool or dict, optional
+        ``False`` preserves all starts; ``True`` uses default PRISM pruning;
+        a dictionary overrides its options.
+
+    Returns
+    -------
+    IntermediateWorkflow
+        Lazy workflow sharing native local/cluster execution and collection.
+        Missing reference profiles fail before a calculation starts.
+
+    Examples
+    --------
+    >>> import frust as ft
+    >>> wf = ft.workflows.intermediates(
+    ...     dataframe=systems, states=("INT3",), method="uma-gas",
+    ...     screening="uma-gas", n_confs=8, validation_top_n=3)
+    >>> targets = wf.targets()  # Inspection does not embed molecules.
+    """
+    return IntermediateWorkflow(
+        states=states, csv_path=csv_path, dataframe=dataframe, method=method,
+        screening=screening, spec_profile=spec_profile, spec_match=spec_match,
+        candidate_specs=candidate_specs, random_seed=random_seed,
+        n_confs=n_confs, top_n=top_n, validation_top_n=validation_top_n,
+        ranking_top_n=ranking_top_n, calculation_level=calculation_level,
+        include_dft_rank_sp=include_dft_rank_sp, prune_initial=prune_initial)
 
 
 def _ts_screening_stages(
