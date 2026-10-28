@@ -52,3 +52,40 @@ def test_nonoptimization_actions_do_not_invent_convergence_checks(options):
 
     assert not _orca_optimization_requested(dict(options=options))
     assert not _orca_optimization_requested(dict(options={"Opt": None}, xtra_inp_str="%geom Scan B 0 1 = 1, 2, 5 end end"))
+
+
+@pytest.mark.parametrize('family',['uma','dft'])
+def test_reference_cache_rejects_caps_and_rebinds_exact_native_evidence(tmp_path,monkeypatch,family):
+    from dataclasses import replace
+    import frust as ft
+    from frust.results import attach_result_contract
+    from frust.screen.references import ReferenceLibrary
+
+    if family=='uma':
+        from test_uma_full_analysis import _run_full_uma,_components
+        run=_run_full_uma(tmp_path/'source',monkeypatch)
+        frame=pd.read_parquet(run.path/'calculations/references/computed.parquet')
+        frame=frame.loc[frame.state_id.eq('ligand')].iloc[[0]].copy()
+        wf=ft.workflows.catalyst_screen(dataframe=_components(),ts_types=['TS1'],
+                                      method='uma-gas',screening='uma-gas',dimer_reference='dimer')
+        target=next(t for t in wf.children()['references'].targets() if t.state_id=='ligand')
+        method=wf.method;stage='uma_min_opt'
+    else:
+        from test_screen_end_to_end import _row,_components
+        wf=ft.workflows.catalyst_screen(dataframe=_components(),ts_types=['TS1'],method='r2scan-3c-solv',dimer_reference='dimer')
+        target=next(t for t in wf.children()['references'].targets() if t.state_id=='dimer')
+        method=wf.method;stage='dft_opt';frame=pd.DataFrame([_row('dimer',-40.,{'H':2})])
+        attach_result_contract(frame,'minimum',dft=True,include_terminal_solv_sp=False,
+                               thermochemistry=method.thermochemistry)
+    record=_optimization_record(frame.iloc[0],stage,frame.iloc[0][stage+'-oc'],'ORCA TERMINATED NORMALLY')
+    frame.attrs['frust_optimization_checks']=[record];library=ReferenceLibrary(tmp_path/'library').initialize()
+    with pytest.raises(ValueError,match='native optimization is not_converged'):
+        library.publish(frame,target,method)
+    record['status']='converged';published=library.publish(frame,target,method)
+    alias=replace(target,target_id='renamed:'+target.target_id,tag='renamed')
+    rebound=published.materialize(alias)
+    assert _optimization_check(rebound.attrs['frust_optimization_checks'],rebound.iloc[0],stage)['status']=='converged'
+    assert published.dataframe().attrs['frust_optimization_checks'][0]['structure_id']==record['structure_id']
+    record['output_sha256']='a'*64
+    changed=library.publish(frame,target,method)
+    assert changed.reference_id!=published.reference_id

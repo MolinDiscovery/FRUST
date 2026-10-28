@@ -168,3 +168,24 @@ def test_profile_uses_exact_roles_quality_and_missing_evidence(variant):
     assert _balanced_profile_rows(missing,case).set_index('profile_state').loc['INT4','quality_status']=='incomplete'
     frame.loc[frame.structure_id.eq('INT4'),'formula']=pd.Series([{'C':1}],index=frame.index[frame.structure_id.eq('INT4')])
     assert _balanced_profile_rows(frame,case).set_index('profile_state').loc['INT4','quality_status']=='invalid'
+
+
+def test_full_ledger_selection_uses_final_free_energy_and_relative_corrections():
+    case=dict(system_name='single',rpos=2,variant='two_saddle',
+              applicability=_state_applicability('two_saddle'),
+              bindings={'INT4':'adduct','HBpin-mol':'HBpin','HH':'HH'})
+    frame=pd.DataFrame([
+        dict(structure_id='adduct',result_id='lowest-electronic',quality_status='ready',
+             electronic_energy_hartree=-10.,free_energy_hartree=-9.,formula='BH3',energy_protocol_fingerprint='method'),
+        dict(structure_id='adduct',result_id='lowest-free',quality_status='ready',
+             electronic_energy_hartree=-9.8,free_energy_hartree=-9.5,formula='BH3',energy_protocol_fingerprint='method'),
+        *[dict(structure_id=identity,result_id=identity,quality_status='ready',electronic_energy_hartree=0.,
+               free_energy_hartree=0.,formula=formula,energy_protocol_fingerprint='method')
+          for identity,formula in [('HBpin','C6H13BO2'),('HH','H2')]]])
+    result=_balanced_profile_rows(frame,case,reference='INT4',quantity='gibbs',corrections={'INT4':1.2})
+    row=result.set_index('profile_state').loc['INT4']
+    assert row.result_ids['INT4']=='lowest-free'
+    assert row.relative_g_corrected_kcal_mol==0.
+    frame['free_energy_hartree']=float('nan')
+    result=_balanced_profile_rows(frame,case,reference='INT4',quantity='gibbs')
+    assert result.set_index('profile_state').loc['INT4','quality_status']=='incomplete'

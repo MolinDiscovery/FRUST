@@ -105,7 +105,7 @@ def _validated_review(review, *, system, rpos, method_fingerprint):
     return variant
 
 
-def _plan_bisarylation(systems, *, method_fingerprint, pathway_reviews=None):
+def _plan_bisarylation(systems, *, method_fingerprint, pathway_reviews=None, dimer_reference='dimer'):
     """Plan native targets and chemical role bindings without embedding.
 
     The returned private plan is a foundation for composed execution; it is not
@@ -113,6 +113,11 @@ def _plan_bisarylation(systems, *, method_fingerprint, pathway_reviews=None):
     """
     from frust.structures.planner import normalize_systems, plan_targets
     from frust.tsguess.matching import parse_rpos_value
+    from frust.structures.specs import DIMER_STATES
+
+    if dimer_reference not in {'lowest', *DIMER_STATES}:
+        raise ValueError('Unknown dimer reference')
+    dimer_states = DIMER_STATES if dimer_reference == 'lowest' else (dimer_reference,)
 
     targets = {}
     cases = []
@@ -135,7 +140,7 @@ def _plan_bisarylation(systems, *, method_fingerprint, pathway_reviews=None):
             references = _reference_roles(system, site)
             references.update({s: dict(state_id=s, substrate_smiles=system['substrate_smiles'],
                                       catalyst_smiles=system['catalyst_smiles'], rpos=None)
-                               for s in ('dimer', 'catalyst', 'HBpin-mol', 'HH')})
+                               for s in (*dimer_states, 'catalyst', 'HBpin-mol', 'HH')})
             for role, component in references.items():
                 ref = {**context, **component}
                 if component['substrate_smiles'] != system['substrate_smiles']:
@@ -145,14 +150,17 @@ def _plan_bisarylation(systems, *, method_fingerprint, pathway_reviews=None):
                 target = plan_targets(pd.DataFrame([ref]), states=[component['state_id']])[0]
                 targets[target.target_id] = target
                 bindings[role] = target.target_id
+            bindings['dimer'] = bindings[dimer_states[0]]
             cases.append(dict(system_name=system['system_name'], rpos=site,
+                              catalyst_name=system['catalyst_name'], substrate_name=system['substrate_name'],
                               system_signature=signature, variant=variant,
+                              dimer_reference=dimer_reference,
                               applicability=applicability, bindings=bindings,
                               method_fingerprint=method_fingerprint))
     return dict(cases=cases, targets=list(targets.values()), method_fingerprint=method_fingerprint)
 
 
-def _balanced_profile_rows(states, case, *, reference='M'):
+def _balanced_profile_rows(states, case, *, reference='M', quantity='electronic', corrections=None):
     """Resolve quality-qualified candidates by exact target identity and balance.
 
     Sparse chemistry-specific provenance belongs in the returned helper table,
@@ -161,6 +169,11 @@ def _balanced_profile_rows(states, case, *, reference='M'):
     """
     from collections import Counter
     from frust.screen.runs import HARTREE_TO_KCAL_MOL, QUALITY_ORDER, _parse_formula
+
+    if quantity not in {'electronic', 'gibbs'}:
+        raise ValueError('quantity must be electronic or gibbs')
+    energy_column = 'free_energy_hartree' if quantity == 'gibbs' else 'electronic_energy_hartree'
+    corrections = corrections or {}
 
     terms = _profile_terms(case['variant'])
     if reference not in terms:
@@ -176,7 +189,9 @@ def _balanced_profile_rows(states, case, *, reference='M'):
                 issues.append('missing:' + role)
                 continue
             ranks = candidates.quality_status.map(QUALITY_ORDER).fillna(3)
-            best = candidates.loc[ranks.eq(ranks.min())].sort_values('electronic_energy_hartree', na_position='last').iloc[0]
+            if energy_column not in candidates:
+                candidates = candidates.assign(**{energy_column: float('nan')})
+            best = candidates.loc[ranks.eq(ranks.min())].sort_values(energy_column, na_position='last').iloc[0]
             chosen[role] = best
             if best.quality_status != 'ready':
                 issues.append(str(best.quality_status) + ':' + role)
@@ -196,16 +211,20 @@ def _balanced_profile_rows(states, case, *, reference='M'):
         energies = [row['electronic_energy_hartree'] for row in chosen.values()]
         if any(pd.isna(value) for value in energies):
             issues.append('missing_electronic_energy')
+        free_energies = [row.get('free_energy_hartree', float('nan')) for row in chosen.values()]
+        if quantity == 'gibbs' and any(pd.isna(value) for value in free_energies):
+            issues.append('missing_free_energy')
         resolved[label] = dict(
-            quality_status='incomplete' if any(issue in issues for issue in ['missing_electronic_energy','missing_energy_protocol']) else
+            quality_status='incomplete' if any(issue in issues for issue in ['missing_electronic_energy','missing_free_energy','missing_energy_protocol']) else
                            'invalid' if 'incompatible_energy_protocols' in issues else
                            max((str(row.quality_status) for row in chosen.values()), key=QUALITY_ORDER.get),
             quality_issues=issues, composition=dict(composition),
             electronic_energy_hartree=sum(components[role] * row.electronic_energy_hartree for role, row in chosen.items()),
+            free_energy_hartree=sum(components[role] * row.get('free_energy_hartree',float('nan')) for role,row in chosen.items()),
             result_ids={role:row.result_id for role,row in chosen.items()})
     base = resolved[reference]
     rows = []
-    for label, value in resolved.items():
+    for order, (label, value) in enumerate(resolved.items()):
         issues = list(value['quality_issues'])
         quality = max([value['quality_status'], base['quality_status']], key=QUALITY_ORDER.get)
         if 'composition' in value and 'composition' in base and value['composition'] != base['composition']:
@@ -218,11 +237,17 @@ def _balanced_profile_rows(states, case, *, reference='M'):
             issues.append('unresolved_pathway')
         relative = ((value['electronic_energy_hartree'] - base['electronic_energy_hartree']) * HARTREE_TO_KCAL_MOL
                     if quality == 'ready' else float('nan'))
+        relative_g = ((value['free_energy_hartree'] - base['free_energy_hartree']) * HARTREE_TO_KCAL_MOL
+                      if quality == 'ready' else float('nan'))
+        correction = float(corrections.get(label, 0.)) - float(corrections.get(reference, 0.))
         rows.append(dict(system_name=case['system_name'], rpos=case['rpos'],
+                         system_signature=case.get('system_signature'), profile_order=order,
                          variant=case['variant'], profile_state=label, reference=reference,
                          applicability=case['applicability'].get(label, 'required'),
                          relative_e_kcal_mol=relative, quality_status=quality,
-                         quality_issues=';'.join(issues), result_ids=value.get('result_ids', {})))
+                         relative_g_kcal_mol=relative_g, g_correction_kcal_mol=correction,
+                         relative_g_corrected_kcal_mol=relative_g+correction,
+                         quality_issues=';'.join(issues), result_ids=value.get('result_ids')))
     return pd.DataFrame(rows)
 
 

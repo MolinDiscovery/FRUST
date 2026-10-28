@@ -813,7 +813,7 @@ def reference_identity(
     active_plan = _active_reference_method(
         method,
         calculation_level,
-        include_dft_rank_sp=bool((protocol or {}).get("include_dft_rank_sp", True)),
+        include_dft_rank_sp=bool((protocol or {}).get("include_dft_rank_sp", "dft_rank_sp" in method.stages)),
     )
     method_fingerprint = _content_hash(active_plan)
     identity = {
@@ -939,6 +939,11 @@ def _bind_reference_dataframe(
     }
 
     out["structure_id"] = target.target_id
+    checks = out.attrs.get("frust_optimization_checks", [])
+    for record in checks:
+        if record["structure_id"] == str(source_labels.get("structure_id", "")):
+            record.setdefault("source_structure_id", record["structure_id"])
+            record["structure_id"] = target.target_id
     out["system_name"] = target.system.system_name
     out["substrate_name"] = target.system.substrate_name
     out["catalyst_name"] = target.system.catalyst_name
@@ -1092,6 +1097,13 @@ def _validate_reference_result(
     coords_column = result_column(df, "coords", purpose="optimized")
     if df[coords_column].isna().any():
         raise ValueError("Reference has missing selected geometry")
+    from frust.utils.optimization import _optimization_check
+
+    for _, row in df.iterrows():
+        native = _optimization_check(df.attrs.get("frust_optimization_checks", []),
+                                     row, coords_column.removesuffix("-oc"))
+        if native is not None and native["status"] != "converged":
+            raise ValueError("Reference native optimization is " + native["status"])
     from frust.structures.stereo import _check_row_stereo
 
     stereo_specs = df.attrs.get("frust_stereo", {}).get("targets", {})
@@ -1153,8 +1165,7 @@ def _reference_result_content(
         if calculation_level == "full"
         else {"analysis_electronic_energy_hartree": electronic_energy}
     )
-    return _json_compatible(
-        {
+    content = {
             "atoms": row["atoms"],
             "optimized_coords": row[coords_column],
             "calculation_level": calculation_level,
@@ -1164,7 +1175,13 @@ def _reference_result_content(
                 column: row[column] for column in normal_termination_columns(df)
             },
         }
-    )
+    from frust.utils.optimization import _optimization_check
+
+    native = _optimization_check(df.attrs.get("frust_optimization_checks", []),
+                                 row, coords_column.removesuffix("-oc"))
+    if native is not None:
+        content["native_optimization"] = native
+    return _json_compatible(content)
 
 
 def _copy_scientific_calculator_files(

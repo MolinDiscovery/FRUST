@@ -388,8 +388,12 @@ class ScreenRun:
         """
         self._ensure_analysis()
         selected_level = self._resolve_analysis_level(level)
-        if self.manifest.get("scope") != "full_cycle":
+        if self.manifest.get("scope") not in {"full_cycle", "bisarylation"}:
             raise ValueError("This run used scope='barriers'; no full-cycle profile exists")
+        if self.manifest.get("scope") == "bisarylation" and dimer_reference is not None:
+            if dimer_reference != self.manifest.get('dimer_reference'):
+                raise ValueError("The private bisarylation prototype supports its recorded reference only")
+            dimer_reference = None
         if dimer_reference is None:
             path = self.analysis_dir / (
                 "profiles.parquet" if level is None else "profiles_by_level.parquet"
@@ -739,7 +743,7 @@ def build_analysis(run_dir: str | Path) -> dict[str, Any]:
     candidate_barriers.to_parquet(
         analysis_dir / "candidate_barriers.parquet", index=False
     )
-    if manifest.get("scope") == "full_cycle":
+    if manifest.get("scope") in {"full_cycle", "bisarylation"}:
         profiles.to_parquet(analysis_dir / "profiles.parquet", index=False)
 
     analysis_levels = tuple(
@@ -786,7 +790,7 @@ def build_analysis(run_dir: str | Path) -> dict[str, Any]:
         analysis_dir / "barriers_by_level.parquet",
         index=False,
     )
-    if manifest.get("scope") == "full_cycle":
+    if manifest.get("scope") in {"full_cycle", "bisarylation"}:
         _concat_level_tables(profiles_by_level).to_parquet(
             analysis_dir / "profiles_by_level.parquet",
             index=False,
@@ -850,6 +854,24 @@ def _build_level_tables(
             frames.append(state_rows)
     states = pd.concat(frames, ignore_index=True) if frames else _empty_states()
     dimer_references = _build_dimer_references(states, level_manifest)
+    if manifest.get("scope") == "bisarylation":
+        from frust.workflows.bisarylation import _balanced_profile_rows
+        parts = []
+        for case in manifest['bisarylation']['cases']:
+            case = {**case, 'bindings': dict(case['bindings'])}
+            _, result_id, quality, _ = _selected_dimer_reference(dimer_references, case['catalyst_name'])
+            matches = states.loc[states.result_id.eq(result_id)]
+            local_states = states.copy()
+            if matches.empty:
+                case['bindings'].pop('dimer', None)
+            else:
+                case['bindings']['dimer'] = str(matches.iloc[0].structure_id)
+                local_states.loc[local_states.result_id.eq(result_id), 'quality_status'] = quality
+            parts.append(_balanced_profile_rows(local_states, case, reference=manifest['bisarylation']['reference'],
+                         quantity='gibbs' if calculation_level=='full' else 'electronic',
+                         corrections=manifest['bisarylation'].get('g_corrections_kcal_mol', {})))
+        profiles = pd.concat(parts, ignore_index=True)
+        return states, dimer_references, pd.DataFrame(), profiles
     barriers = _build_barriers(states, level_manifest, dimer_references)
     profiles = (
         _build_profiles(states, level_manifest, dimer_references)
@@ -1427,7 +1449,7 @@ def _build_candidate_barriers(
         *selected_barriers.columns,
         "cid", "selected", "ts_review_status", "ts_quality_issues", "n_imag",
     ]
-    if manifest.get("calculation_level") != "full":
+    if manifest.get("calculation_level") != "full" or manifest.get("scope") == "bisarylation":
         return pd.DataFrame(columns=columns)
 
     rows: list[dict[str, Any]] = []

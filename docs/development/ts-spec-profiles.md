@@ -77,6 +77,11 @@ convergence evidence in dataframe attributes. Analysis rejects capped, stale
 or conflicting evidence even after an identity approval; changing the evidence
 invalidates the previous review. The main calculation table gains no extra columns.
 
+Reference publication applies the same native convergence gate. Reusing a
+minimum under another run's labels preserves its geometry and output hashes
+while rebinding the evidence to the receiving target. Native convergence
+evidence also participates in the immutable reference identifier.
+
 This evidence is collected for ordinary optimizations and TS searches, including
 when calculation directories are not retained. Frequency-only jobs and relaxed
 scans do not receive an ordinary-optimization convergence verdict. Historical
@@ -118,6 +123,29 @@ conda run -n UMA python scripts/build_bisaryl_profile_candidates.py review-evide
 The exporter checks source-file hashes, selected rows, source-coordinate bindings
 and imaginary-frequency counts, then recomputes every core distance. It emits
 inactive candidates; it does not perform scientific review or activate a profile.
+
+### Per-System Bisarylation Paths
+
+| Reviewed route | Exchange states used | States inapplicable to that route |
+| --- | --- | --- |
+| Two saddles | TS7 → INT6 → TS8 | None |
+| TS7 only | TS7 connects reactants to products | INT6, TS8 |
+| TS8 only | TS8 connects reactants to products | TS7, INT6 |
+| Unresolved | Search TS7, INT6 and TS8 | None; failed or missing searches do not select a route |
+
+For example, one collection can contain a reviewed two-saddle system and a
+different system with a reviewed TS7-only route. The second system must not
+receive a fabricated INT6 row or a missing-TS8 failure simply to fill a table.
+Reviews need the correct chemical system, both reactive sites and method.
+The initially bound aryl and incoming aryl also need separate reference bindings;
+they need not be the same molecule or react at the same position.
+
+The composed bisarylation implementation remains a private prototype. Its
+tests exercise shared local execution, cluster submission, retained candidates,
+portable collection and balanced electronic/Gibbs ledgers for UMA and DFT.
+These tests establish software behavior, not the existence of all three routes.
+Candidate-barrier integration, dynamic reference overrides and final pathway-review
+binding and scientific activation gates remain open before a public workflow.
 
 ## Where The Pieces Live
 

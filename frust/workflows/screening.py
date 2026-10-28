@@ -2332,6 +2332,7 @@ def _branch_dir(root: Path, branch: str) -> Path:
         "references": root / "calculations" / "references",
         "cycle_molecules": root / "calculations" / "full_cycle" / "molecular_states",
         "int3": root / "calculations" / "full_cycle" / "int3",
+        "intermediates": root / "calculations" / "bisarylation" / "intermediates",
     }
     return mapping[branch]
 
@@ -2359,6 +2360,10 @@ def _write_verified_parquet(df: pd.DataFrame, destination: Path) -> None:
 
 def _calculation_result_paths(scope: ScreenScope) -> dict[str, str | None]:
     """Return terminal calculation-result paths for a portable run."""
+    if scope == "bisarylation":
+        return {"transition_states": "calculations/transition_states/merged.parquet",
+                "references": "calculations/references/merged.parquet",
+                "intermediates": "calculations/bisarylation/intermediates/merged.parquet"}
     return {
         "transition_states": "calculations/transition_states/merged.parquet",
         "references": "calculations/references/merged.parquet",
@@ -2380,6 +2385,9 @@ def _tier_calculation_result_paths(
     level: CalculationLevel,
 ) -> dict[str, str | None]:
     """Return collected nested-tier result paths for a portable run."""
+    if scope == "bisarylation":
+        return {branch: path.replace("merged.parquet", f"tiers/{level}/merged.parquet")
+                for branch, path in _calculation_result_paths(scope).items()}
     return {
         "transition_states": (
             f"calculations/transition_states/tiers/{level}/merged.parquet"
