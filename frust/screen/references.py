@@ -1030,6 +1030,7 @@ def _validate_reference_result(
     calculation_level: CalculationLevel,
 ) -> dict[str, Any]:
     if calculation_level == "uma_ranked":
+        screening_geometry = "uma_opt-oc" if "uma_opt" in method.stages else "xtb_opt-oc"
         contract = df.attrs.get("frust_results", {})
         if not isinstance(contract, dict):
             raise ValueError("Reference result has no UMA ranking contract")
@@ -1040,7 +1041,7 @@ def _validate_reference_result(
             ) != "uma_rank_sp-EE"
             or result_column(
                 df, "coords", purpose="optimized", require_present=False
-            ) != "xtb_opt-oc"
+            ) != screening_geometry
             or recorded_calculator != method.for_stage("uma_rank_sp").to_dict()
         ):
             raise ValueError("Reference result does not match the requested UMA ranking")

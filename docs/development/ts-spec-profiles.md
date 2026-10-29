@@ -60,8 +60,10 @@ silently substituted into the same profile.
 
 !!! info "Reference identity does not establish transfer or a universal mechanism"
 
-    These candidates remain inactive while final-profile regeneration and
-    independent transfer checks continue. A new catalyst/substrate pair can have
+    Final-profile regeneration and family-level transferred connection examples
+    are recorded, including failures and broader sampling where needed. The
+    candidates remain inactive pending remaining pathway/readiness review.
+    A new catalyst/substrate pair can have
     a two-saddle bridge route or an independently verified direct route. A
     missing or collapsed bridge guess alone does not assign the mechanism.
     Existing TS1–TS4 and INT3 revisions remain unchanged, and no DFT bisaryl
@@ -140,12 +142,16 @@ Reviews need the correct chemical system, both reactive sites and method.
 The initially bound aryl and incoming aryl also need separate reference bindings;
 they need not be the same molecule or react at the same position.
 
-The composed bisarylation implementation remains a private prototype. Its
-tests exercise shared local execution, cluster submission, retained candidates,
-portable collection and balanced electronic/Gibbs ledgers for UMA and DFT.
-These tests establish software behavior, not the existence of all three routes.
-Candidate-barrier integration, dynamic reference overrides and final pathway-review
-binding and scientific activation gates remain open before a public workflow.
+`ft.workflows.bisarylation_screen(...)` now composes native execution and portable
+analysis. Its tests exercise matching local/cluster targets, every retained
+validation candidate, balanced electronic/Gibbs ledgers and local forward/reverse
+barriers across UMA and DFT plans. A current pathway review binds exact result IDs
+and copied proof files; it cannot be inherited from a prior planning hypothesis.
+Distinct neighboring minimum conformers can be bound per saddle, while the
+ordered ledger keeps its own selected state. Available dimer references can be
+compared without recalculation. These tests establish software behavior, not
+the existence of all three chemical routes. Scientific coverage and registry
+activation remain separate gates. See the [review workflow](../catalyst-screens/bisarylation.md).
 
 ## Where The Pieces Live
 

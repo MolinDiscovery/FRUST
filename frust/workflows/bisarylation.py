@@ -160,38 +160,45 @@ def _plan_bisarylation(systems, *, method_fingerprint, pathway_reviews=None, dim
     return dict(cases=cases, targets=list(targets.values()), method_fingerprint=method_fingerprint)
 
 
-def _balanced_profile_rows(states, case, *, reference='M', quantity='electronic', corrections=None):
-    """Resolve quality-qualified candidates by exact target identity and balance.
+def _component_rows(states, case, *, quantity, result_ids=None):
+    """Select quality then final energy once per target, with explicit ID overrides."""
+    from frust.screen.runs import QUALITY_ORDER
 
-    Sparse chemistry-specific provenance belongs in the returned helper table,
-    not the main calculation dataframe. Missing required evidence remains
-    incomplete; inapplicable pathway states are omitted rather than fabricated.
-    """
+    energy = 'free_energy_hartree' if quantity == 'gibbs' else 'electronic_energy_hartree'
+    by_id, best, keys = {}, {}, {}
+    for _, row in states.iterrows():
+        by_id[row.result_id] = row
+        value = row.get(energy, float('nan'))
+        key = (QUALITY_ORDER.get(row.quality_status, 3), pd.isna(value),
+               float(value) if not pd.isna(value) else float('inf'), str(row.result_id))
+        if row.structure_id not in best or key < keys[row.structure_id]:
+            best[row.structure_id], keys[row.structure_id] = row, key
+    selected = {}
+    for role, identity in case['bindings'].items():
+        if role in (result_ids or {}):
+            row = by_id.get(result_ids[role])
+            selected[role] = row if row is not None and row.structure_id == identity else None
+        else:
+            selected[role] = best.get(identity)
+    return selected
+
+
+def _resolved_profile_nodes(states, case, *, quantity, result_ids=None):
+    """Select balanced node components once for all adjacent-barrier equations."""
     from collections import Counter
-    from frust.screen.runs import HARTREE_TO_KCAL_MOL, QUALITY_ORDER, _parse_formula
+    from frust.screen.runs import QUALITY_ORDER, _parse_formula
 
-    if quantity not in {'electronic', 'gibbs'}:
-        raise ValueError('quantity must be electronic or gibbs')
-    energy_column = 'free_energy_hartree' if quantity == 'gibbs' else 'electronic_energy_hartree'
-    corrections = corrections or {}
-
+    selected = _component_rows(states, case, quantity=quantity, result_ids=result_ids)
     terms = _profile_terms(case['variant'])
-    if reference not in terms:
-        raise ValueError(f'Unknown applicable profile reference {reference!r}')
     resolved = {}
     for label, components in terms.items():
         chosen = {}
         issues = []
         for role in components:
-            identity = case['bindings'].get(role)
-            candidates = states.loc[states.structure_id.eq(identity)] if identity is not None else states.iloc[:0]
-            if candidates.empty:
+            best = selected.get(role)
+            if best is None:
                 issues.append('missing:' + role)
                 continue
-            ranks = candidates.quality_status.map(QUALITY_ORDER).fillna(3)
-            if energy_column not in candidates:
-                candidates = candidates.assign(**{energy_column: float('nan')})
-            best = candidates.loc[ranks.eq(ranks.min())].sort_values(energy_column, na_position='last').iloc[0]
             chosen[role] = best
             if best.quality_status != 'ready':
                 issues.append(str(best.quality_status) + ':' + role)
@@ -219,9 +226,33 @@ def _balanced_profile_rows(states, case, *, reference='M', quantity='electronic'
                            'invalid' if 'incompatible_energy_protocols' in issues else
                            max((str(row.quality_status) for row in chosen.values()), key=QUALITY_ORDER.get),
             quality_issues=issues, composition=dict(composition),
+            energy_protocol_fingerprint=next(iter(protocols)) if len(protocols)==1 else None,
             electronic_energy_hartree=sum(components[role] * row.electronic_energy_hartree for role, row in chosen.items()),
             free_energy_hartree=sum(components[role] * row.get('free_energy_hartree',float('nan')) for role,row in chosen.items()),
             result_ids={role:row.result_id for role,row in chosen.items()})
+    return resolved
+
+
+def _balanced_profile_rows(states, case, *, reference='M', quantity='electronic', corrections=None,
+                           result_ids=None, _nodes=None):
+    """Resolve quality-qualified candidates by exact target identity and balance.
+
+    Sparse chemistry-specific provenance belongs in the returned helper table,
+    not the main calculation dataframe. Missing required evidence remains
+    incomplete; inapplicable pathway states are omitted rather than fabricated.
+    """
+    from frust.screen.runs import HARTREE_TO_KCAL_MOL, QUALITY_ORDER
+
+    if quantity not in {'electronic', 'gibbs'}:
+        raise ValueError('quantity must be electronic or gibbs')
+    corrections = corrections or {}
+    result_ids = result_ids or {}
+
+    terms = _profile_terms(case['variant'])
+    if reference not in terms:
+        raise ValueError(f'Unknown applicable profile reference {reference!r}')
+    resolved = (_resolved_profile_nodes(states, case, quantity=quantity, result_ids=result_ids)
+                if _nodes is None else _nodes)
     base = resolved[reference]
     rows = []
     for order, (label, value) in enumerate(resolved.items()):
@@ -230,11 +261,20 @@ def _balanced_profile_rows(states, case, *, reference='M', quantity='electronic'
         if 'composition' in value and 'composition' in base and value['composition'] != base['composition']:
             quality = 'invalid'
             issues.append('unbalanced_composition')
+        if (value.get('energy_protocol_fingerprint') is not None
+                and base.get('energy_protocol_fingerprint') is not None
+                and value['energy_protocol_fingerprint'] != base['energy_protocol_fingerprint']):
+            quality = 'invalid'
+            issues.append('incompatible_reference_energy_protocol')
         if base['quality_status'] != 'ready':
             issues.append(base['quality_status'] + ':profile_reference')
         if case['applicability'].get(label) == 'discovery' and quality == 'ready':
             quality = 'review'
             issues.append('unresolved_pathway')
+        pathway_status = case.get('pathway_review_status')
+        if label in {'TS7', 'INT6', 'TS8'} and pathway_status not in {None, 'approved'}:
+            quality = max([quality, 'review'], key=QUALITY_ORDER.get)
+            issues.append('pathway:' + pathway_status)
         relative = ((value['electronic_energy_hartree'] - base['electronic_energy_hartree']) * HARTREE_TO_KCAL_MOL
                     if quality == 'ready' else float('nan'))
         relative_g = ((value['free_energy_hartree'] - base['free_energy_hartree']) * HARTREE_TO_KCAL_MOL
@@ -243,6 +283,7 @@ def _balanced_profile_rows(states, case, *, reference='M', quantity='electronic'
         rows.append(dict(system_name=case['system_name'], rpos=case['rpos'],
                          system_signature=case.get('system_signature'), profile_order=order,
                          variant=case['variant'], profile_state=label, reference=reference,
+                         pathway_review_status=pathway_status,
                          applicability=case['applicability'].get(label, 'required'),
                          relative_e_kcal_mol=relative, quality_status=quality,
                          relative_g_kcal_mol=relative_g, g_correction_kcal_mol=correction,
@@ -253,12 +294,14 @@ def _balanced_profile_rows(states, case, *, reference='M', quantity='electronic'
 
 def _execution_children(plan, *, method, screening, candidate_specs=None,
                         spec_profile='auto', random_seed=None, n_confs=None,
-                        validation_top_n=1, top_n=20, prune_initial=True):
+                        validation_top_n=1, top_n=20, prune_initial=True,
+                        calculation_level='full', ranking_top_n=None,
+                        include_dft_rank_sp=False, spec_match='prefer-exact'):
     """Bind a private reviewed plan to existing homogeneous execution graphs.
 
     Children retain their ordinary local ``run`` and cluster ``submit`` paths.
-    This does not yet supply composed manifests, reference-cache integration or
-    a public end-to-end bisarylation factory.
+    The composed owner supplies manifests, reference reuse and result-bound
+    pathway decisions without changing these native execution graphs.
     """
     from frust.workflows.factories import ScreenTSWorkflow, IntermediateWorkflow, MolsWorkflow
     from frust.workflows.methods import preset
@@ -278,14 +321,16 @@ def _execution_children(plan, *, method, screening, candidate_specs=None,
         systems = pd.DataFrame([{**t.system.as_dict(), 'rpos': t.rpos} for t in targets])
         states = tuple(dict.fromkeys(t.state_id for t in targets))
         common = dict(dataframe=systems, method=method, screening=screening,
-                      calculation_level='full', n_confs=n_confs, top_n=top_n,
+                      calculation_level=calculation_level, n_confs=n_confs, top_n=top_n,
                       validation_top_n=validation_top_n, prune_initial=prune_initial,
-                      include_dft_rank_sp=False)
+                      ranking_top_n=ranking_top_n,
+                      include_dft_rank_sp=include_dft_rank_sp)
         if branch == 'references':
             child = MolsWorkflow(select_mols=states, **common)
         else:
             candidates = {s: spec for s, spec in (candidate_specs or {}).items() if s in states}
-            connected = dict(candidate_specs=candidates, spec_profile=spec_profile, random_seed=random_seed)
+            connected = dict(candidate_specs=candidates, spec_profile=spec_profile,
+                             spec_match=spec_match, random_seed=random_seed)
             child = (ScreenTSWorkflow(ts_types=states, **common, **connected)
                      if branch == 'transition_states' else
                      IntermediateWorkflow(states=states, **common, **connected))

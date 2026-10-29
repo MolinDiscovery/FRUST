@@ -74,6 +74,7 @@ nav:
           - Exporting XYZ Structures: workflows/xyz-export.md
       - Catalyst Screens:
           - Overview: catalyst-screens/overview.md
+          - Bisarylation Review: catalyst-screens/bisarylation.md
           - Input Tables: catalyst-screens/input-tables.md
           - TS Guess DataFrames: catalyst-screens/ts-guesses.md
           - Running Screens: catalyst-screens/running.md

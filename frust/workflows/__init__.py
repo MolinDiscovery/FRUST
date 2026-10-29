@@ -21,6 +21,7 @@ _PUBLIC_API: dict[str, tuple[str, str]] = {
     "raw_mols": ("frust.workflows.factories", "raw_mols"),
     "screen_ts": ("frust.workflows.factories", "screen_ts"),
     "catalyst_screen": ("frust.workflows.screening", "catalyst_screen"),
+    "bisarylation_screen": ("frust.workflows.bisarylation_workflow", "bisarylation_screen"),
     "wb97_comparison": ("frust.workflows.screening", "wb97_comparison"),
     "int3": ("frust.workflows.factories", "int3"),
     "intermediates": ("frust.workflows.factories", "intermediates"),
@@ -86,6 +87,7 @@ def __dir__() -> list[str]:
 
 if TYPE_CHECKING:
     from frust.workflows import methods
+    from frust.workflows.bisarylation_workflow import bisarylation_screen
     from frust.workflows.screening import (
         CatalystScreenWorkflow,
         Wb97ComparisonWorkflow,

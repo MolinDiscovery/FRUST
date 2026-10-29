@@ -152,7 +152,13 @@ class ScreenRun:
         return self._level_table("dimer_references", level=level)
 
     def barriers(self, *, level: str | None = None) -> pd.DataFrame:
-        """Return the tidy TS1--TS4 barriers for one result tier.
+        """Return the selected barriers for one result tier.
+
+        Ordinary catalyst screens use their recorded dimer-reference equations.
+        Bisarylation runs use ``reference_state`` for the adjacent balanced
+        precursor; ``dimer_relative_*`` columns separately report saddle
+        elevations above the dimer reference. Reverse barriers and their
+        quality are independent of the forward barrier.
 
         Parameters
         ----------
@@ -390,10 +396,6 @@ class ScreenRun:
         selected_level = self._resolve_analysis_level(level)
         if self.manifest.get("scope") not in {"full_cycle", "bisarylation"}:
             raise ValueError("This run used scope='barriers'; no full-cycle profile exists")
-        if self.manifest.get("scope") == "bisarylation" and dimer_reference is not None:
-            if dimer_reference != self.manifest.get('dimer_reference'):
-                raise ValueError("The private bisarylation prototype supports its recorded reference only")
-            dimer_reference = None
         if dimer_reference is None:
             path = self.analysis_dir / (
                 "profiles.parquet" if level is None else "profiles_by_level.parquet"
@@ -519,7 +521,220 @@ class ScreenRun:
         manifest["dimer_reference"] = requested
         manifest["dimer_candidates"] = list(candidates)
         dimer_references = _build_dimer_references(states, manifest)
+        if manifest.get('scope') == 'bisarylation':
+            from frust.workflows.bisarylation_analysis import _bisarylation_tables
+
+            return _bisarylation_tables(self.path, states, manifest, dimer_references,
+                                        calculation_level=level)[1]
         return _build_profiles(states, manifest, dimer_references)
+
+    def pathway_reviews(self) -> pd.DataFrame:
+        """Return current result-bound bisarylation pathway decisions.
+
+        Returns
+        -------
+        pandas.DataFrame
+            One row per chemical system/site. ``status="approved"`` means
+            the explicit decision still matches all bound results, their
+            numerical/identity quality and the saved evidence files.
+            ``"unreviewed"`` has no resolved decision; ``"stale"`` has changed
+            results, method or quality; ``"missing_evidence"`` lacks a saved
+            proof file; ``"changed_evidence"`` has a changed proof digest.
+            A planning hypothesis alone is never a current result approval.
+            ``attrs["frust_pathway_reviews"]`` contains qualified prior
+            hypotheses for another bisarylation workflow's ``pathway_reviews``
+            argument. New results still need their own review.
+
+        Raises
+        ------
+        ValueError
+            If this run has no bisarylation pathway definitions.
+        """
+        if self.manifest.get('scope') != 'bisarylation':
+            raise ValueError('Pathway reviews require a bisarylation run')
+        from frust.workflows.bisarylation_analysis import _analysis_case, _read_pathway_reviews
+
+        states = self.states()
+        records = _read_pathway_reviews(self.path)
+        rows, hypotheses = [], {}
+        for original in self.manifest['bisarylation']['cases']:
+            case = _analysis_case(states, original, self.path, records)
+            rows.append(dict(system_name=case['system_name'], rpos=case['rpos'],
+                system_signature=case['system_signature'], planned_variant=original['variant'],
+                variant=case['variant'], status=case['pathway_review_status'],
+                minimum_result_ids=json.dumps(case['reviewed_minimum_result_ids'], sort_keys=True),
+                result_ids=json.dumps(case['reviewed_result_ids'], sort_keys=True)))
+            if case['pathway_review_status'] == 'approved':
+                latest = next(r for r in reversed(records)
+                    if r.get('system_signature') == case['system_signature']
+                    and r.get('system_name') == case['system_name'] and r.get('rpos') == case['rpos'])
+                prior = dict(variant=case['variant'], system_signature=case['system_signature'],
+                    method_fingerprint=case['method_fingerprint'],
+                    evidence_sha256=[e['sha256'] for e in latest['evidence']])
+                previous = hypotheses.get(case['system_signature'])
+                if previous is not None and previous['variant'] != prior['variant']:
+                    prior['variant'] = 'unresolved'
+                hypotheses[case['system_signature']] = prior
+        result = pd.DataFrame(rows)
+        result.attrs['frust_pathway_reviews'] = hypotheses
+        return result
+
+    def pathway_candidates(self, *, system_name: str, rpos: int,
+                           variant: str | None = None) -> pd.DataFrame:
+        """Inspect all exact result choices for each exchange-pathway role.
+
+        Parameters
+        ----------
+        system_name : str
+            Expanded chemical system to inspect.
+        rpos : int
+            Incoming substrate reactive site.
+        variant : {"two_saddle", "ts7_only", "ts8_only"} or None, optional
+            Candidate roles for the specified hypothesis. ``None`` uses the
+            planned route, or the full two-saddle pool for unresolved discovery.
+            Inspecting a hypothesis does not approve it.
+
+        Returns
+        -------
+        pandas.DataFrame
+            Role, state, candidate ID, immutable result ID, energy and quality.
+            ``selected`` marks results bound by the current approved review,
+            including explicitly distinct neighboring minimum conformers.
+            Missing roles remain visible as ``quality_status="incomplete"``.
+            Use reviewed role/result choices as ``set_pathway_review`` input.
+
+        Raises
+        ------
+        ValueError
+            If this is not a bisarylation run or the system/site is ambiguous.
+        """
+        if self.manifest.get('scope') != 'bisarylation':
+            raise ValueError('Pathway candidates require a bisarylation run')
+        from frust.workflows.bisarylation_analysis import _analysis_case, _review_roles
+
+        cases = [c for c in self.manifest['bisarylation']['cases']
+                 if c['system_name'] == str(system_name) and c['rpos'] == int(rpos)]
+        if len(cases) != 1:
+            raise ValueError('Pathway candidates require one exact system and reactive site')
+        states = self.states()
+        case = _analysis_case(states, cases[0], self.path)
+        requested = variant or (case['variant'] if case['variant'] != 'unresolved' else 'two_saddle')
+        if requested == 'unresolved':
+            raise ValueError('Choose a concrete hypothesis to inspect its candidate roles')
+        rows = []
+        for role in sorted(_review_roles(requested)):
+            choices = states.loc[states.structure_id.eq(case['bindings'].get(role))]
+            selected = {case['reviewed_result_ids'].get(role)}
+            selected.update(v[role] for v in case['reviewed_minimum_result_ids'].values() if role in v)
+            if choices.empty:
+                rows.append(dict(role=role, result_id=None, selected=False, quality_status='incomplete'))
+            for _, row in choices.iterrows():
+                rows.append(dict(role=role, state_id=row.state_id, cid=row.cid, result_id=row.result_id,
+                    selected=row.result_id in selected, quality_status=row.quality_status,
+                    electronic_energy_hartree=row.electronic_energy_hartree,
+                    free_energy_hartree=row.free_energy_hartree))
+        return pd.DataFrame(rows)
+
+    def set_pathway_review(self, *, system_name: str, rpos: int, variant: str,
+                           result_ids: Mapping[str, str] | None = None,
+                           minimum_result_ids: Mapping[str, Mapping[str, str]] | None = None,
+                           evidence_files: Sequence[str | Path] = (),
+                           note: str = '', reviewer: str = '') -> None:
+        """Record a pathway assignment bound to exact current calculation results.
+
+        Parameters
+        ----------
+        system_name : str
+            Expanded chemical system to review.
+        rpos : int
+            Incoming substrate reactive site for that system.
+        variant : {"two_saddle", "ts7_only", "ts8_only", "unresolved"}
+            ``two_saddle`` uses TS7, INT6 and TS8; ``ts7_only`` or
+            ``ts8_only`` uses the named direct exchange saddle and omits the
+            other saddle and INT6 from pathway analysis. ``unresolved``
+            withdraws a previous assignment. It does not prove state absence.
+        result_ids : mapping of str to str or None, optional
+            Exact role-to-result bindings for INT5, the applicable exchange
+            saddles/INT6, HBpin-mol, HH, int2 and bound_product. Every bound
+            row must belong to its planned target and pass numerical and
+            identity review. Changing a bound result requires a new decision.
+            Use an empty mapping with ``variant="unresolved"``.
+        evidence_files : sequence of path-like, optional
+            At least one reviewed path/endpoint evidence file for a resolved
+            assignment. Files are copied into the portable run and verified
+            by SHA-256 on analysis. The caller must inspect that evidence;
+            this method checks bindings, not chemical truth from file names.
+        minimum_result_ids : mapping or None, optional
+            Per-saddle minimum-role overrides, for example
+            ``{"TS8": {"INT6": bridge_from_TS8}}`` when TS7 and TS8 reach
+            different bridge conformers. Every override requires an exact,
+            qualified result of the same minimum target. Local barriers use
+            these explicit neighbors; the ordered ledger retains its selected
+            state. Such bindings do not establish an interconversion barrier.
+        note : str, optional
+            Scientific rationale, including conformer compatibility and path
+            limitations where needed.
+        reviewer : str, optional
+            Name or initials of the reviewer.
+
+        Raises
+        ------
+        ValueError
+            If the run is not full-level bisarylation, the system/site is
+            ambiguous, required bindings are absent or any bound result is
+            numerically invalid or lacks identity approval.
+        FileNotFoundError
+            If a requested evidence file is absent.
+
+        Notes
+        -----
+        The operation never approves an imaginary mode, minimum identity or
+        capped calculation implicitly. Alternative direct variants need their
+        own outer-state connection evidence. A changed evidence file invalidates
+        the decision, including after moving the portable run.
+        """
+        if self.manifest.get('scope') != 'bisarylation' or self.manifest.get('calculation_level') != 'full':
+            raise ValueError('Pathway review requires a full-level bisarylation run')
+        from frust.workflows.bisarylation_analysis import _check_result_bindings, _read_pathway_reviews
+
+        cases = [c for c in self.manifest['bisarylation']['cases']
+                 if c['system_name'] == str(system_name) and c['rpos'] == int(rpos)]
+        if len(cases) != 1:
+            raise ValueError('Pathway review requires one exact chemical system and reactive site')
+        case = cases[0]
+        bindings = dict(result_ids or {})
+        minimum_bindings = {s: dict(v) for s, v in (minimum_result_ids or {}).items()}
+        _check_result_bindings(self.states(), case, variant, bindings, minimum_bindings)
+        sources = [Path(p).expanduser().resolve() for p in evidence_files]
+        if variant != 'unresolved' and not sources:
+            raise ValueError('A resolved pathway requires reviewed evidence files')
+        for source in sources:
+            if not source.is_file():
+                raise FileNotFoundError(source)
+        saved = []
+        directory = self.analysis_dir / 'pathway_evidence'
+        for source in sources:
+            data = source.read_bytes()
+            digest = hashlib.sha256(data).hexdigest()
+            destination = directory / (digest + source.suffix)
+            directory.mkdir(parents=True, exist_ok=True)
+            if destination.exists() and destination.read_bytes() != data:
+                raise ValueError('Existing pathway evidence does not match its digest')
+            destination.write_bytes(data)
+            saved.append(dict(path=str(destination.relative_to(self.path)), sha256=digest))
+        record = dict(system_name=case['system_name'], rpos=case['rpos'],
+            system_signature=case['system_signature'],
+            method_fingerprint=case['method_fingerprint'], variant=variant,
+            result_ids=bindings, minimum_result_ids=minimum_bindings,
+            evidence=saved, note=str(note), reviewer=str(reviewer),
+            reviewed_at=_utc_now())
+        records = [*_read_pathway_reviews(self.path), record]
+        self.analysis_dir.mkdir(parents=True, exist_ok=True)
+        destination = self.analysis_dir / 'pathway_reviews.json'
+        temporary = destination.with_suffix('.json.tmp')
+        temporary.write_text(json.dumps(dict(schema_version=1, records=records), indent=2) + '\n')
+        temporary.replace(destination)
+        self.refresh_analysis()
 
     def review_queue(self) -> pd.DataFrame:
         """Return results needing reaction-mode or intermediate-identity review."""
@@ -670,6 +885,13 @@ class ScreenRun:
         ]
         if any(not path.exists() for path in required):
             self.refresh_analysis()
+        elif self.manifest.get('scope') == 'bisarylation':
+            from frust.workflows.bisarylation_analysis import _review_fingerprint
+
+            report = self.analysis_dir / 'report.json'
+            previous = json.loads(report.read_text()) if report.exists() else {}
+            if previous.get('pathway_review_fingerprint') != _review_fingerprint(self.path):
+                self.refresh_analysis()
 
     def _resolve_analysis_level(self, level: str | None) -> str:
         """Validate and resolve a requested nested analysis tier."""
@@ -738,7 +960,7 @@ def build_analysis(run_dir: str | Path) -> dict[str, Any]:
     )
     barriers.to_parquet(analysis_dir / "barriers.parquet", index=False)
     candidate_barriers = _build_candidate_barriers(
-        states, manifest, dimer_references, barriers
+        states, manifest, dimer_references, barriers, root=root
     )
     candidate_barriers.to_parquet(
         analysis_dir / "candidate_barriers.parquet", index=False
@@ -816,6 +1038,10 @@ def build_analysis(run_dir: str | Path) -> dict[str, Any]:
         "candidate_barrier_quality": _counts(candidate_barriers, "quality_status"),
         "analysis_levels": list(analysis_levels),
     }
+    if manifest.get('scope') == 'bisarylation':
+        from frust.workflows.bisarylation_analysis import _review_fingerprint
+
+        report['pathway_review_fingerprint'] = _review_fingerprint(root)
     (analysis_dir / "report.json").write_text(json.dumps(report, indent=2, sort_keys=True) + "\n")
     return report
 
@@ -855,23 +1081,11 @@ def _build_level_tables(
     states = pd.concat(frames, ignore_index=True) if frames else _empty_states()
     dimer_references = _build_dimer_references(states, level_manifest)
     if manifest.get("scope") == "bisarylation":
-        from frust.workflows.bisarylation import _balanced_profile_rows
-        parts = []
-        for case in manifest['bisarylation']['cases']:
-            case = {**case, 'bindings': dict(case['bindings'])}
-            _, result_id, quality, _ = _selected_dimer_reference(dimer_references, case['catalyst_name'])
-            matches = states.loc[states.result_id.eq(result_id)]
-            local_states = states.copy()
-            if matches.empty:
-                case['bindings'].pop('dimer', None)
-            else:
-                case['bindings']['dimer'] = str(matches.iloc[0].structure_id)
-                local_states.loc[local_states.result_id.eq(result_id), 'quality_status'] = quality
-            parts.append(_balanced_profile_rows(local_states, case, reference=manifest['bisarylation']['reference'],
-                         quantity='gibbs' if calculation_level=='full' else 'electronic',
-                         corrections=manifest['bisarylation'].get('g_corrections_kcal_mol', {})))
-        profiles = pd.concat(parts, ignore_index=True)
-        return states, dimer_references, pd.DataFrame(), profiles
+        from frust.workflows.bisarylation_analysis import _bisarylation_tables
+
+        barriers, profiles = _bisarylation_tables(root, states, level_manifest, dimer_references,
+                                                calculation_level=calculation_level)
+        return states, dimer_references, barriers, profiles
     barriers = _build_barriers(states, level_manifest, dimer_references)
     profiles = (
         _build_profiles(states, level_manifest, dimer_references)
@@ -1443,14 +1657,22 @@ def _build_candidate_barriers(
     manifest: Mapping[str, Any],
     dimer_references: pd.DataFrame,
     selected_barriers: pd.DataFrame,
+    *,
+    root: Path | None = None,
 ) -> pd.DataFrame:
     """Evaluate each full TS candidate with the selected reference set."""
     columns = [
         *selected_barriers.columns,
         "cid", "selected", "ts_review_status", "ts_quality_issues", "n_imag",
     ]
-    if manifest.get("calculation_level") != "full" or manifest.get("scope") == "bisarylation":
+    if manifest.get("calculation_level") != "full":
         return pd.DataFrame(columns=columns)
+    if manifest.get('scope') == 'bisarylation':
+        from frust.workflows.bisarylation_analysis import _candidate_barriers
+
+        if root is None:
+            raise ValueError('Bisarylation candidate analysis requires its portable run root')
+        return _candidate_barriers(root, states, manifest, dimer_references, selected_barriers)
 
     rows: list[dict[str, Any]] = []
     for target_position, target in enumerate(manifest.get("analysis_targets", [])):

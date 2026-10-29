@@ -10,12 +10,12 @@ from frust.workflows.bisarylation_workflow import _BisarylationWorkflow
 from frust.workflows.factories import IntermediateWorkflow
 
 
-def workflow(method='uma-gas',variant='unresolved'):
+def workflow(method='uma-gas',variant='unresolved',ranking=None):
     from test_bisaryl_ts_candidates import candidate
     system=dict(system_name='pyrrole__TMP',substrate_name='pyrrole',catalyst_name='TMP',
                 substrate_smiles='CN1C=CC=C1',catalyst_smiles='CC1(C)CCCC(C)(C)N1c1ccccc1B',rpos=2)
     wf=_BisarylationWorkflow(systems=pd.DataFrame([system]),method=method,
-                            screening='uma-gas' if method=='uma-gas' else 'gxtb-default',
+                            screening='uma-gas' if method=='uma-gas' else 'gxtb-default',ranking=ranking,
                             candidate_specs={s:candidate(s) for s in ['TS5','TS6','TS7','TS8','INT4','INT5','INT6']},
                             spec_profile='uma-gas',n_confs=4,validation_top_n=2,prune_initial=False)
     if variant!='unresolved':
@@ -48,9 +48,45 @@ def test_missing_calculation_branches_remain_portable_and_incomplete(tmp_path):
     assert profile.relative_e_kcal_mol.isna().all()
 
 
+def test_public_factory_is_lazy_and_rejects_unsupported_pairing(monkeypatch):
+    import frust as ft
+    import frust.structures.builders
+
+    template=workflow()
+    monkeypatch.setattr(frust.structures.builders,'build',lambda *a,**k:pytest.fail('Planning must not embed'))
+    options=dict(systems=template.systems(),method='uma-gas',screening='uma-gas',
+        candidate_specs=template.candidate_specs,spec_profile='uma-gas',validation_top_n=2)
+    assert ft.workflows.bisarylation_screen(**options).targets()
+    with pytest.raises(ValueError,match='dimer_pairing'):
+        ft.workflows.bisarylation_screen(**options,dimer_pairing='racemic')
+
+
+@pytest.mark.parametrize('level,ranking',[('low_cost',None),('uma_ranked','uma-gas'),
+    ('dft_ranked','r2scan-3c'),('full','uma-gas'),('full','r2scan-3c')])
+def test_composed_ranking_keeps_native_stage_counts_and_targets(level,ranking):
+    import frust as ft
+
+    base=workflow()
+    wf=ft.workflows.bisarylation_screen(systems=base.systems(),method='r2scan-3c',
+        screening='gxtb-default',ranking=ranking,level=level,
+        candidate_specs=base.candidate_specs,spec_profile='uma-gas',
+        validation_top_n=2 if level=='full' else None,
+        ranking_top_n=2 if ranking is not None else None)
+    children=wf.children()
+    assert {t.target.target_id for t in wf.targets()}
+    for child in children.values():
+        assert child.validation_top_n==(2 if level=='full' else None)
+        assert child.calculation_level==level
+        stages=child._stage_defs();names=[s.method_stage or s.id for s in stages if s.kind=='calc']
+        assert ('uma_rank_sp' in names)==(ranking=='uma-gas')
+        assert ('dft_rank_sp' in names)==(ranking=='r2scan-3c')
+        assert ('dft_freq' in names)==(level=='full')
+
+
 @pytest.mark.parametrize('method',['uma-gas','r2scan-3c'])
 @pytest.mark.parametrize('mixed',[None,'ts7_only','ts8_only'])
-def test_mocked_native_children_collect_all_candidates_and_balanced_profiles(tmp_path,method,monkeypatch,mixed):
+@pytest.mark.parametrize('ranking',[None,'uma-gas'])
+def test_mocked_native_children_collect_all_candidates_and_balanced_profiles(tmp_path,method,monkeypatch,mixed,ranking):
     import test_modular_workflow_validation as helper
     from test_modular_workflow_validation import run_mocked,prepared
 
@@ -67,13 +103,13 @@ def test_mocked_native_children_collect_all_candidates_and_balanced_profiles(tmp
         monkeypatch.setitem(helper.ENERGIES,state,-10.)
     monkeypatch.setitem(helper.ENERGIES,'dimer_bh_bridged',-9.8)
     monkeypatch.setitem(helper.ENERGIES,'dimer_eight_membered',-9.7)
-    wf=workflow(method,variant='two_saddle')
+    wf=workflow(method,variant='two_saddle',ranking=ranking)
     if mixed:
         first=wf.systems().iloc[0].to_dict()
         second={**first,'system_name':'second','catalyst_name':'Pip',
                 'catalyst_smiles':'Bc1ccccc1N1CCCCC1'}
         wf=_BisarylationWorkflow(systems=pd.DataFrame([first,second]),method=wf.method,
-                                 screening=wf.screening,candidate_specs=wf.candidate_specs,
+                                 screening=wf.screening,ranking=ranking,candidate_specs=wf.candidate_specs,
                                  spec_profile='uma-gas',n_confs=4,validation_top_n=2,prune_initial=False)
         wf.pathway_reviews={}
         for system,variant in [(first,'two_saddle'),(second,mixed)]:
@@ -84,7 +120,20 @@ def test_mocked_native_children_collect_all_candidates_and_balanced_profiles(tmp
         run=run_mocked(wf,tmp_path)
     states=run.states();core=states[states.state_id.isin(['TS5','TS6','TS7','TS8','INT4','INT5','INT6'])]
     assert core.groupby('structure_id').size().eq(2).all()
-    for result_id in core.result_id:run.set_identity_review(result_id,'approved',note='Mocked identity review')
+    with patch.object(run, 'refresh_analysis', return_value=run):
+        for result_id in core.result_id:run.set_identity_review(result_id,'approved',note='Mocked identity review')
+    run.refresh_analysis()
+    unreviewed=run.profile(quantity='electronic',include_invalid=True)
+    assert unreviewed.loc[unreviewed.profile_state.isin(['TS7','INT6','TS8']),'quality_status'].eq('review').all()
+    from frust.workflows.bisarylation_analysis import _review_roles
+    proof=tmp_path/'synthetic-path-review.json';proof.write_text('{"scope":"Mocked software fixture; no scientific validation."}')
+    for case in run.manifest['bisarylation']['cases']:
+        states=run.states();bindings={}
+        for role in _review_roles(case['variant']):
+            rows=states.loc[states.structure_id.eq(case['bindings'][role])]
+            bindings[role]=rows.sort_values(['free_energy_hartree','result_id']).iloc[0].result_id
+        run.set_pathway_review(system_name=case['system_name'],rpos=case['rpos'],
+            variant=case['variant'],result_ids=bindings,evidence_files=[proof],note='Synthetic pathway decision')
     profile=run.profile(quantity='electronic',include_invalid=True)
     assert set(profile.profile_state)=={'Dimer','Cat','M','TS5','INT4','TS6','INT5','TS7','INT6','TS8','Product'}
     assert profile.quality_status.eq('ready').all()
@@ -96,8 +145,47 @@ def test_mocked_native_children_collect_all_candidates_and_balanced_profiles(tmp
     assert run.profile(quantity='gibbs').relative_g_kcal_mol.notna().all()
     assert run.dimer_references().groupby('catalyst_name').size().eq(3).all()
     assert not run.profile(quantity='electronic',dimer_reference='lowest').empty
-    with pytest.raises(ValueError,match='recorded reference only'):
-        run.profile(dimer_reference='dimer')
+    assert not run.profile(quantity='electronic',dimer_reference='dimer').empty
+    alternate=run.profile(quantity='electronic',dimer_reference='dimer_eight_membered')
+    assert not alternate.empty
+    barriers=run.barriers();candidates=run.candidate_barriers()
+    assert barriers.quality_status.eq('ready').all()
+    assert candidates.groupby(['system_signature','ts_type']).size().eq(2).all()
+    assert candidates.groupby(['system_signature','ts_type']).selected.sum().eq(1).all()
+    other_exchange=candidates.loc[candidates.ts_type.isin(['TS7','TS8']) & ~candidates.selected]
+    assert other_exchange.quality_status.eq('review').all()
+    assert other_exchange.delta_e_kcal_mol.isna().all()
+    assert run.pathway_reviews().status.eq('approved').all()
+    assert run.pathway_reviews().attrs['frust_pathway_reviews']
+    case=run.manifest['bisarylation']['cases'][0]
+    pool=run.pathway_candidates(system_name=case['system_name'],rpos=case['rpos'])
+    assert pool.groupby('role').selected.sum().eq(1).all()
+    if mixed is None and method=='uma-gas' and ranking is None:
+        import shutil
+        import frust as ft
+
+        proof.unlink()  # Portable proof is independent of the original source file.
+        moved_path=tmp_path.parent/(tmp_path.name+'-moved');shutil.copytree(run.path,moved_path)
+        moved=ft.screen.open_run(moved_path)
+        assert moved.pathway_reviews().status.eq('approved').all()
+        saved=json.loads((moved_path/'analysis/pathway_reviews.json').read_text())['records'][-1]
+        evidence=moved_path/saved['evidence'][0]['path'];original=evidence.read_bytes()
+        evidence.write_text('{"changed":true}')
+        refreshed=moved.profile(quantity='electronic',include_invalid=True)
+        assert refreshed.loc[refreshed.profile_state.isin(['TS7','INT6','TS8']),'quality_status'].eq('review').all()
+        assert moved.pathway_reviews().status.eq('changed_evidence').all()
+        evidence.write_bytes(original)
+        assert moved.profile(quantity='electronic').quality_status.eq('ready').all()
+        # A connected, explicitly reviewed conformer may outrank the energy minimum.
+        case=moved.manifest['bisarylation']['cases'][0];states=moved.states()
+        alternatives=states.loc[states.state_id.eq('TS7')].sort_values('free_energy_hartree')
+        higher=alternatives.iloc[-1].result_id
+        ids={**saved['result_ids'],'TS7':higher}
+        moved.set_pathway_review(system_name=case['system_name'],rpos=case['rpos'],
+            variant=case['variant'],result_ids=ids,evidence_files=[evidence],note='Mock connected higher-energy conformer')
+        assert moved.barriers().set_index('ts_type').loc['TS7','ts_result_id']==higher
+        moved.set_pathway_review(system_name=case['system_name'],rpos=case['rpos'],variant='unresolved')
+        assert moved.pathway_reviews().status.eq('unreviewed').all()
 
 
 @pytest.mark.parametrize('variant',['two_saddle','ts7_only','ts8_only','unresolved'])
