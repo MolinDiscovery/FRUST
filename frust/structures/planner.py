@@ -178,13 +178,15 @@ def plan_targets(
             for rpos in positions:
                 scope_key = _scope_key(spec.scope, system, rpos)
                 bound_identity = ()
-                if spec.state_id in {"TS5", "TS6", "TS7", "TS8", "INT4", "INT5", "INT6"}:
-                    bound_smiles = system.metadata.get("bound_substrate_smiles")
-                    if bound_smiles is not None and not pd.isna(bound_smiles):
-                        bound_site = system.metadata.get("bound_rpos")
-                        if bound_site is None or pd.isna(bound_site):
-                            raise ValueError("bound_rpos is required with bound_substrate_smiles")
-                        bound_identity = (str(bound_smiles), int(bound_site))
+                if spec.uses_bound_role:
+                    from frust.structures.roles import effective_bound_role
+
+                    bound_smiles, bound_site = effective_bound_role(
+                        system.as_dict(), rpos
+                    )
+                    # Preserve default historical IDs; explicit defaults are identical.
+                    if (bound_smiles, bound_site) != (system.substrate_smiles, rpos):
+                        bound_identity = (bound_smiles, bound_site)
                         scope_key = (*scope_key, *bound_identity)
                 dedup_key = (spec.state_id, *scope_key)
                 if dedup_key in seen:

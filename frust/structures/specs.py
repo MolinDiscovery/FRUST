@@ -38,12 +38,16 @@ class StateSpec:
         Versioned shared-builder identifier.
     scope : str
         Component dependency and target-deduplication scope.
+    uses_bound_role : bool, optional
+        Include the effective bound molecule/site in chemical target identity.
+        Incoming and bound roles keep their original SMILES atom indexing.
     """
 
     state_id: str
     state_kind: StateKind
     builder_spec: str
     scope: TargetScope
+    uses_bound_role: bool = False
 
 
 STATE_SPECS: dict[str, StateSpec] = {
@@ -75,15 +79,23 @@ STATE_SPECS: dict[str, StateSpec] = {
             "transition_state",
             f"connected_graph::TS{index}::v2",
             "system_rpos",
+            uses_bound_role=index >= 5,
         )
         for index in range(1, 9)
     },
     "INT3": StateSpec(
         "INT3", "constrained_minimum", "connected_graph::INT3::v2", "system_rpos"
     ),
-    **{f"INT{index}": StateSpec(
-        f"INT{index}", "constrained_minimum", f"connected_graph::INT{index}::v1", "system_rpos"
-    ) for index in range(4, 7)},
+    **{
+        f"INT{index}": StateSpec(
+            f"INT{index}",
+            "constrained_minimum",
+            f"connected_graph::INT{index}::v1",
+            "system_rpos",
+            uses_bound_role=True,
+        )
+        for index in range(4, 7)
+    },
 }
 
 

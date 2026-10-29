@@ -331,12 +331,10 @@ def _generated_smiles_for_system_rpos(system: pd.Series, spec: TSGuess2Spec, rpo
     builder = _BUILDERS[spec.builder_key]
     extra = {}
     if spec.builder_key in _BISARYL_BUILDERS:
-        bound_smiles = system.get("bound_substrate_smiles")
-        bound_rpos = system.get("bound_rpos")
-        if bound_smiles is not None and not pd.isna(bound_smiles):
-            extra["bound_substrate_smiles"] = str(bound_smiles)
-        if bound_rpos is not None and not pd.isna(bound_rpos):
-            extra["bound_rpos"] = int(bound_rpos)
+        from frust.structures.roles import effective_bound_role
+
+        bound_smiles, bound_rpos = effective_bound_role(system, rpos)
+        extra = dict(bound_substrate_smiles=bound_smiles, bound_rpos=bound_rpos)
     generated = builder(
         str(system["catalyst_smiles"]),
         str(system["substrate_smiles"]),

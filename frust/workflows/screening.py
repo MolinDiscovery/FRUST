@@ -11,7 +11,7 @@ import time
 from collections.abc import Mapping
 from contextlib import contextmanager, nullcontext
 from copy import copy, deepcopy
-from dataclasses import dataclass, replace
+from dataclasses import asdict, dataclass, replace
 from datetime import datetime, timezone
 from pathlib import Path
 from typing import Any, Literal
@@ -147,6 +147,9 @@ class CatalystScreenWorkflow:
         validation_top_n: int | None = None,
         ts_refine_n: int | None = None,
         prune_initial: bool | dict[str, Any] = True,
+        candidate_specs=None,
+        pathway_reviews=None,
+        random_seed=None,
     ) -> None:
         if sum(value is not None for value in (csv_path, dataframe, systems)) != 1:
             raise ValueError("Provide exactly one of csv_path, dataframe, or systems")
@@ -165,6 +168,28 @@ class CatalystScreenWorkflow:
         self.csv_path = None if csv_path is None else Path(csv_path)
         self.dataframe = None if dataframe is None else dataframe.copy()
         self.ts_types = tuple(str(value).upper() for value in ts_types)
+        self.candidate_specs = dict(candidate_specs or {})
+        self.pathway_reviews = dict(pathway_reviews or {})
+        self.random_seed = random_seed
+        self._reaction_plan = None
+        from frust.workflows.reactions import NETWORKS
+
+        known = {r.ts_state for n in NETWORKS.values() for r in n.reactions}
+        if not self.ts_types or set(self.ts_types) - known:
+            raise ValueError("Expected nonempty registered TS selection")
+        for network in NETWORKS.values():
+            if (
+                set(self.ts_types) & {r.ts_state for r in network.reactions}
+                and not network.supports_racemic
+                and dimer_pairing != "input"
+            ):
+                raise ValueError(f'{network.network_id} requires dimer_pairing="input"')
+        if validation_top_n is not None and normalized_level != "full":
+            raise ValueError("validation_top_n requires a full calculation level")
+        if normalized_level == "full" and validation_top_n is None:
+            validation_top_n = (
+                ranking_top_n if ranking_top_n is not None else uma_rank_top_n
+            )
         self.level: CalculationLevel = normalized_level  # type: ignore[assignment]
         self.screening = _coerce_screening(screening)
         if ranking is None:
@@ -273,7 +298,12 @@ class CatalystScreenWorkflow:
                                ranking_top_n=ranking_top_n,
                                uma_rank_top_n=uma_rank_top_n,
                                ts_refine_n=ts_refine_n)
-        self.validation_top_n = validation_top_n
+        self.validation_top_n = (
+            count
+            if self.level == "full"
+            and (validation_top_n is not None or ranking_top_n is not None)
+            else None
+        )
         self.uma_rank_top_n = count or 1
         self.ranking_top_n = self.uma_rank_top_n
         self.ts_refine_n = 3 if ts_refine_n is None else int(ts_refine_n)
@@ -322,64 +352,35 @@ class CatalystScreenWorkflow:
     def children(self) -> dict[str, Any]:
         """Return the homogeneous workflows coordinated by this run."""
         if self._children_cache is None:
-            components = self.components()
-            systems = self.systems()
-            children: dict[str, Any] = {
-                "transition_states": ScreenTSWorkflow(
-                    dataframe=systems,
-                    ts_types=self.ts_types,
-                    method=self.method,
-                    spec_profile=self.spec_profile,
-                    spec_match=self.spec_match,
-                    include_dft_rank_sp=self.include_dft_rank_sp,
-                    n_confs=self.n_confs,
-                    top_n=self.top_n,
-                    uma_rank_top_n=self.uma_rank_top_n if self.ranking is not None else None,
-                    validation_top_n=self.validation_top_n,
-                    ts_refine_n=None if self.validation_top_n is not None else self.ts_refine_n,
-                    calculation_level=self.level,
-                    prune_initial=self.prune_initial,
-                ),
-                "references": MolsWorkflow(
-                    dataframe=systems if self.catalyst_stereoisomers != "input" or self.dimer_pairing != "input" else components,
-                    dimer_pairing=self.dimer_pairing,
-                    select_mols=self._reference_states(),
-                    method=self.method,
-                    include_dft_rank_sp=self.include_dft_rank_sp,
-                    n_confs=self.n_confs,
-                    top_n=self.top_n,
-                    uma_rank_top_n=self.uma_rank_top_n if self.ranking is not None else None,
-                    validation_top_n=self.validation_top_n,
-                    calculation_level=self.level,
-                    prune_initial=self.prune_initial,
-                ),
-            }
-            if self.scope == "full_cycle":
-                children["cycle_molecules"] = MolsWorkflow(
-                    dataframe=systems,
-                    select_mols=["int1", "int2", "HBpin-ligand"],
-                    method=self.method,
-                    include_dft_rank_sp=self.include_dft_rank_sp,
-                    n_confs=self.n_confs,
-                    top_n=self.top_n,
-                    uma_rank_top_n=self.uma_rank_top_n if self.ranking is not None else None,
-                    validation_top_n=self.validation_top_n,
-                    calculation_level=self.level,
-                    prune_initial=self.prune_initial,
-                )
-                children["int3"] = Int3Workflow(
-                    dataframe=systems,
-                    method=self.method,
-                    spec_profile=self.spec_profile,
-                    spec_match=self.spec_match,
-                    include_dft_rank_sp=self.include_dft_rank_sp,
-                    n_confs=self.n_confs,
-                    top_n=self.top_n,
-                    uma_rank_top_n=self.uma_rank_top_n if self.ranking is not None else None,
-                    validation_top_n=self.validation_top_n,
-                    calculation_level=self.level,
-                    prune_initial=self.prune_initial,
-                )
+            from frust.workflows.reaction_planner import plan_reactions
+            from frust.workflows.reaction_execution import _execution_children
+
+            self._reaction_plan = plan_reactions(
+                self.systems(),
+                ts_types=self.ts_types,
+                scope=self.scope,
+                method_fingerprint=self.method.fingerprint(),
+                dimer_reference=self.dimer_reference,
+                pathway_reviews=self.pathway_reviews,
+                dimer_pairing=self.dimer_pairing,
+            )
+            children = _execution_children(
+                self._reaction_plan,
+                method=self.method,
+                screening=self.screening,
+                candidate_specs=self.candidate_specs,
+                spec_profile=self.spec_profile,
+                spec_match=self.spec_match,
+                random_seed=self.random_seed,
+                n_confs=self.n_confs,
+                top_n=self.top_n,
+                validation_top_n=self.validation_top_n,
+                ranking_top_n=self.ranking_top_n if self.ranking is not None else None,
+                calculation_level=self.level,
+                prune_initial=self.prune_initial,
+                include_dft_rank_sp=self.include_dft_rank_sp,
+                ts_refine_n=self.ts_refine_n,
+            )
             if getattr(self, "_legacy_validation_grouping", False):
                 for child in children.values():
                     child._legacy_validation_grouping = True
@@ -414,16 +415,38 @@ class CatalystScreenWorkflow:
                     "branch": item.branch,
                     "state_id": target.state_id,
                     "system_name": target.system.system_name,
-                    "catalyst_parent_name": target.system.metadata.get("catalyst_parent_name"),
+                    "catalyst_parent_name": target.system.metadata.get(
+                        "catalyst_parent_name"
+                    ),
                     "dimer_monomers": target.system.metadata.get("dimer_monomers"),
                     "rpos": target.rpos,
                     "scope": target.scope,
                     "action": item.action,
                     "reference_id": item.reference_id,
                     "target": target.tag,
+                    "options": ";".join(
+                        (self._reaction_plan or {})
+                        .get("reasons", {})
+                        .get(target.target_id, [])
+                    ),
                 }
             )
-        result = pd.DataFrame(rows)
+        result = pd.DataFrame(
+            rows,
+            columns=[
+                "branch",
+                "state_id",
+                "system_name",
+                "catalyst_parent_name",
+                "dimer_monomers",
+                "rpos",
+                "scope",
+                "action",
+                "reference_id",
+                "target",
+                "options",
+            ],
+        )
         result.attrs["calculation_level"] = self.level
         result.attrs["screening"] = self.screening.to_dict()
         result.attrs["screening_fingerprint"] = self.screening.fingerprint()
@@ -444,6 +467,10 @@ class CatalystScreenWorkflow:
         result.attrs["catalyst_stereoisomers"] = self.catalyst_stereoisomers
         result.attrs["dimer_pairing"] = self.dimer_pairing
         result.attrs["stereochemistry"] = self.systems().attrs.get("frust_stereoisomers", {})
+        if self._reaction_plan is not None:
+            result.attrs["frust_reaction_plan"] = {
+                k: v for k, v in self._reaction_plan.items() if k != "targets"
+            }
         return result
 
     def show_stages(
@@ -1076,12 +1103,22 @@ class CatalystScreenWorkflow:
         artifact_policy: ArtifactPolicy = "standard",
     ) -> None:
         ts_targets = self.children()["transition_states"].targets()
-        terminal_results = _calculation_result_paths(self.scope)
+        terminal_results = {
+            branch: str(
+                (_branch_dir(root, branch) / "merged.parquet").relative_to(root)
+            )
+            for branch in self.children()
+        }
         level_results = {
             level: (
                 terminal_results
                 if level == self.level
-                else _tier_calculation_result_paths(self.scope, level)
+                else {
+                    branch: path.replace(
+                        "merged.parquet", f"tiers/{level}/merged.parquet"
+                    )
+                    for branch, path in terminal_results.items()
+                }
             )
             for level in self._analysis_levels()
         }
@@ -1157,6 +1194,10 @@ class CatalystScreenWorkflow:
             "calculation_results": terminal_results,
             "tier_calculation_results": level_results,
         }
+        if self._reaction_plan is not None and not any(
+            "dimer" in c["bindings"] for c in self._reaction_plan["cases"]
+        ):
+            manifest["dimer_candidates"] = []
         if self.ranking is not None:
             manifest["ranking"] = self.ranking.to_dict()
             manifest["ranking_fingerprint"] = self.ranking.fingerprint()
@@ -1166,7 +1207,16 @@ class CatalystScreenWorkflow:
             manifest["validation_top_n"] = self.validation_top_n
         if self.method.result_family == "uma":
             manifest["ts_refine_n"] = self.ts_refine_n
-        signature_keys = [
+        if self._reaction_plan is not None:
+            manifest["reaction_plan"] = {
+                k: v for k, v in self._reaction_plan.items() if k != "targets"
+            }
+            manifest["reaction_plan"]["candidate_specs"] = {
+                k: asdict(v) for k, v in self.candidate_specs.items()
+            }
+            manifest["reaction_plan"]["random_seed"] = self.random_seed
+        signature_keys = ["reaction_plan"] if self._reaction_plan is not None else []
+        signature_keys += [
             "scope",
             "dimer_reference",
             "calculation_level",
@@ -1278,6 +1328,28 @@ class Wb97ComparisonWorkflow(CatalystScreenWorkflow):
                 candidate_ids=keys,
                 seed_dir=self.seed_dir,
             )
+            source_cases = self._reaction_plan["cases"]
+            cases = []
+            for target in children["transition_states"].targets():
+                for original in source_cases:
+                    if (
+                        original["system_name"] == target.system.system_name
+                        and original["rpos"] == target.rpos
+                    ):
+                        case = deepcopy(original)
+                        case["reactions"] = [
+                            r
+                            for r in case["reactions"]
+                            if r["ts_state"] == target.state_id
+                        ]
+                        if not case["reactions"]:
+                            continue
+                        case["bindings"][target.state_id] = target.target_id
+                        case["parent_uma_result_id"] = target.builder_options[
+                            "parent_uma_result_id"
+                        ]
+                        cases.append(case)
+            self._reaction_plan["cases"] = cases
             self._children_cache = children
         return dict(children)
 
@@ -1448,14 +1520,18 @@ def catalyst_screen(
     validation_top_n: int | None = None,
     ts_refine_n: int | None = None,
     prune_initial: bool | dict[str, Any] = True,
+    candidate_specs=None,
+    pathway_reviews=None,
+    random_seed=None,
 ) -> CatalystScreenWorkflow:
     """Create an end-to-end catalyst-screen workflow.
 
     The default ``scope="barriers"`` calculates TS1--TS4 plus ligand, all
     three dimer topologies, HBpin, and H2 references. The lowest qualified
-    dimer is selected per catalyst. ``scope="full_cycle"`` additionally
-    calculates catalyst, int1, int2, HBpin-ligand, and INT3 states for a
-    balanced profile.
+    dimer is selected per catalyst. Selected TS5--TS8 reactions use their own
+    local minimum references. ``scope="full_cycle"`` adds the defined
+    minimum/product/reference states and reverse quantities for the selected
+    chemistry. Mixed TS1--TS8 requests expose separate named branches.
 
     Parameters
     ----------
@@ -1472,7 +1548,8 @@ def catalyst_screen(
         from the selected rows. No substrate/catalyst cross-product is made.
     ts_types : sequence of str, optional
         Transition-state families to calculate. Supported built-ins are
-        ``"TS1"``, ``"TS2"``, ``"TS3"``, and ``"TS4"``.
+        ``"TS1"`` through ``"TS8"``. Only selected families are scheduled;
+        coverage adds minimum/reference dependencies without adding other saddles.
     screening : ScreeningPlan or str, optional
         Inexpensive geometry-screening plan. The default ``"gxtb-default"``
         runs GFN-FF followed by direct g-xTB ranking and optimization. Choose
@@ -1521,11 +1598,12 @@ def catalyst_screen(
         True for DFT validation after plain g-xTB screening;
         ``"dft_ranked"`` always runs the ranking point.
     scope : {"barriers", "full_cycle"}, optional
-        ``"barriers"`` calculates the dependencies of the four supplied
-        barrier equations. ``"full_cycle"`` adds every state needed for the
-        balanced catalytic-cycle profile, including catalyst, int1, int2,
-        INT3, and borylated product states. Both UMA and DFT final methods
-        support either scope.
+        ``"barriers"`` calculates the declared forward comparisons for selected
+        reactions, preserving the productive reference pool. ``"full_cycle"``
+        adds their endpoints, reverse barriers and balanced profiles. Productive
+        requests retain int1/int2/INT3/product coverage without adding unrequested
+        saddles; TS6-only requests add INT4, INT5 and H2. Selecting TS1--TS4
+        never adds INT4--INT6. UMA and capable DFT plans share this contract.
     catalyst_stereoisomers : {"input", "representative", "all"}, optional
         ``"input"`` preserves existing inputs. ``"all"`` resolves unspecified
         stable tetrahedral carbon configurations into separate TS series.
@@ -1540,7 +1618,8 @@ def catalyst_screen(
         Missing required pairs prevent reference selection. This coverage is
         independent of method and level; no equilibrium populations are modeled.
     dimer_reference : {"lowest", "dimer", "dimer_bh_bridged", "dimer_eight_membered"}, optional
-        Catalyst dimer used in barrier and profile equations. ``"lowest"``
+        Catalyst dimer used when a selected quantity requires that reference.
+        A local-only request does not schedule a dimer. ``"lowest"``
         calculates all three topologies and strictly selects the lowest
         qualified result per catalyst. An explicit state calculates and uses
         only that topology. ``"dimer"`` reproduces the former FRUST behavior.
@@ -1588,6 +1667,14 @@ def catalyst_screen(
         the candidates carried into validation.
     prune_initial : bool or dict, optional
         Initial conformer-pruning configuration forwarded to child workflows.
+    candidate_specs : mapping or None, optional
+        Call-scoped geometry specifications for selected saddles and their
+        connected minima. Missing registered geometry profiles fail before embedding.
+    pathway_reviews : mapping or None, optional
+        Prior system/method-bound pathway hypotheses used for applicability.
+        They do not approve newly calculated results or connections.
+    random_seed : int or None, optional
+        Connected-structure sampling seed, recorded in the portable plan.
 
     Returns
     -------
@@ -1632,6 +1719,9 @@ def catalyst_screen(
         validation_top_n=validation_top_n,
         ts_refine_n=ts_refine_n,
         prune_initial=prune_initial,
+        candidate_specs=candidate_specs,
+        pathway_reviews=pathway_reviews,
+        random_seed=random_seed,
     )
 
 
@@ -1853,6 +1943,23 @@ def _finalize_run(
                     source_target_dir=target_dir,
                     artifact_policy=artifact_policy,
                 )
+        prior_bindings = frame.attrs.get("frust_reference_bindings", {}).get(
+            "bindings", []
+        )
+        frame.attrs["frust_reference_bindings"] = {
+            "schema_version": 1,
+            "bindings": [
+                *prior_bindings,
+                {
+                    "target_id": target.target_id,
+                    "source_structure_ids": list(
+                        frame.get("structure_id", pd.Series(dtype=str))
+                        .dropna()
+                        .unique()
+                    ),
+                },
+            ],
+        }
         frame["reference_id"] = None
         if reference_id is not None:
             frame.loc[selected_frame.index, "reference_id"] = reference_id
@@ -2332,7 +2439,7 @@ def _branch_dir(root: Path, branch: str) -> Path:
         "references": root / "calculations" / "references",
         "cycle_molecules": root / "calculations" / "full_cycle" / "molecular_states",
         "int3": root / "calculations" / "full_cycle" / "int3",
-        "intermediates": root / "calculations" / "bisarylation" / "intermediates",
+        "intermediates": root / "calculations" / "intermediates",
     }
     return mapping[branch]
 

@@ -59,7 +59,7 @@ def test_public_native_workflow_needs_no_override_and_does_not_assign_new_system
     assert not workflow.candidate_specs
     targets=workflow.targets()
     assert {'TS5','TS6','TS7','TS8','INT4','INT5','INT6'}.issubset({t.target.state_id for t in targets})
-    assert workflow._bisarylation_plan['cases'][0]['variant']=='unresolved'
+    assert workflow._reaction_plan["cases"][0]["variant"] == "unresolved"
 
 
 def test_default_compatibility_specs_keep_only_existing_dft_references():

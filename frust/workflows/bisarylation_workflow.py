@@ -172,12 +172,34 @@ def bisarylation_screen(*, systems=None, dataframe=None, csv_path=None,
     barriers remain withheld; unused states are omitted only after the relevant
     per-system hypothesis/decision. A missing bridge does not prove a direct path.
     """
-    return _BisarylationWorkflow(systems=systems, dataframe=dataframe, csv_path=csv_path,
-        method=method, screening=screening, ranking=ranking, level=level,
-        spec_profile=spec_profile, spec_match=spec_match, candidate_specs=candidate_specs,
-        pathway_reviews=pathway_reviews, random_seed=random_seed, n_confs=n_confs,
-        top_n=top_n, validation_top_n=validation_top_n, ranking_top_n=ranking_top_n,
-        prune_initial=prune_initial, dimer_reference=dimer_reference,
-        catalyst_stereoisomers=catalyst_stereoisomers, dimer_pairing=dimer_pairing,
-        reference_store=reference_store, reuse_policy=reuse_policy,
-        g_corrections_kcal_mol=g_corrections_kcal_mol)
+    from frust.workflows.screening import catalyst_screen
+
+    if validation_top_n is None and ranking_top_n is None and level == "full":
+        validation_top_n = 1
+    return catalyst_screen(
+        ts_types=("TS5", "TS6", "TS7", "TS8"),
+        scope="full_cycle",
+        systems=systems,
+        dataframe=dataframe,
+        csv_path=csv_path,
+        method=method,
+        screening=screening,
+        ranking=ranking,
+        level=level,
+        spec_profile=spec_profile,
+        spec_match=spec_match,
+        candidate_specs=candidate_specs,
+        pathway_reviews=pathway_reviews,
+        random_seed=random_seed,
+        n_confs=n_confs,
+        top_n=top_n,
+        validation_top_n=validation_top_n,
+        ranking_top_n=ranking_top_n,
+        prune_initial=prune_initial,
+        dimer_reference=dimer_reference,
+        catalyst_stereoisomers=catalyst_stereoisomers,
+        dimer_pairing=dimer_pairing,
+        reference_store=reference_store,
+        reuse_policy=reuse_policy,
+        g_corrections_kcal_mol=g_corrections_kcal_mol,
+    )

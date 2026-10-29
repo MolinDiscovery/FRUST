@@ -31,6 +31,9 @@ def _read_pathway_reviews(root):
 def _review_fingerprint(root):
     """Include actual proof-file contents so cached analysis cannot hide tampering."""
     records = _read_pathway_reviews(root)
+    from frust.workflows.reaction_analysis import _connection_records
+
+    records = [*records, *_connection_records(root)]
     allowed = (Path(root) / 'analysis/pathway_evidence').resolve()
     actual = []
     for record in records:
@@ -43,50 +46,30 @@ def _review_fingerprint(root):
 
 
 def _reaction_value(case, selected, left, right, *, quantity, corrections):
-    """Cancel spectators before checking dependencies and evaluating a barrier."""
-    from frust.screen.runs import HARTREE_TO_KCAL_MOL, QUALITY_ORDER, _parse_formula
+    """Adapt a historical ledger pair to the shared expression evaluator."""
+    from frust.workflows.expressions import evaluate_expression
+    from frust.workflows.reactions import difference
 
     terms = _profile_terms(case['variant'])
-    coefficients = Counter(terms[left])
-    coefficients.subtract(terms[right])
-    coefficients = {r: c for r, c in coefficients.items() if abs(c) > 1e-12}
-    rows, issues, qualities, protocols, inventory = {}, [], [], set(), Counter()
-    for role, coefficient in coefficients.items():
-        row = selected.get(role)
-        if row is None:
-            qualities.append('incomplete');issues.append('missing:' + role)
-            continue
-        rows[role] = row
-        qualities.append(str(row.quality_status))
-        if row.quality_status != 'ready':
-            issues.append(str(row.quality_status) + ':' + role)
-        protocol = row.get('energy_protocol_fingerprint')
-        if protocol is None or pd.isna(protocol):
-            qualities.append('incomplete');issues.append('missing_energy_protocol:' + role)
-        else:
-            protocols.add(protocol)
-        formula = row.formula if isinstance(row.formula, Mapping) else _parse_formula(str(row.formula))
-        for atom, count in formula.items():
-            inventory[atom] += coefficient * count
-        if pd.isna(row.electronic_energy_hartree) or (quantity == 'gibbs' and pd.isna(row.get('free_energy_hartree', float('nan')))):
-            qualities.append('incomplete');issues.append('missing_energy:' + role)
-    if len(protocols) > 1:
-        qualities.append('invalid');issues.append('incompatible_energy_protocols')
-    if len(rows) == len(coefficients) and any(abs(v) > 1e-8 for v in inventory.values()):
-        qualities.append('invalid');issues.append('unbalanced_composition')
-    pathway = case.get('pathway_review_status')
-    if {left, right} & {'TS7', 'INT6', 'TS8'} and pathway not in {None, 'approved'}:
-        qualities.append('review');issues.append('pathway:' + pathway)
-    quality = max(qualities or ['incomplete'], key=QUALITY_ORDER.get)
-    e = sum(coefficients[r] * row.electronic_energy_hartree for r, row in rows.items())
-    g = sum(coefficients[r] * row.get('free_energy_hartree', float('nan')) for r, row in rows.items())
-    correction = float(corrections.get(left, 0.)) - float(corrections.get(right, 0.))
-    return dict(quality_status=quality, quality_issues=';'.join(dict.fromkeys(issues)),
-        relative_e_kcal_mol=e * HARTREE_TO_KCAL_MOL if quality == 'ready' else float('nan'),
-        relative_g_kcal_mol=g * HARTREE_TO_KCAL_MOL if quality == 'ready' else float('nan'),
-        relative_g_corrected_kcal_mol=g * HARTREE_TO_KCAL_MOL + correction if quality == 'ready' else float('nan'),
-        g_correction_kcal_mol=correction,
-        reference_result_ids={r: row.result_id for r, row in rows.items() if coefficients[r] < 0})
+    result = evaluate_expression(
+        selected,
+        difference(terms[left], terms[right]),
+        quantity=quantity,
+        correction=float(corrections.get(left, 0.0))
+        - float(corrections.get(right, 0.0)),
+    )
+    if {left, right} & {"TS7", "INT6", "TS8"} and case.get(
+        "pathway_review_status"
+    ) not in {None, "approved"}:
+        if result["quality_status"] == "ready":
+            result.update(
+                quality_status="review",
+                relative_e_kcal_mol=float("nan"),
+                relative_g_kcal_mol=float("nan"),
+                relative_g_corrected_kcal_mol=float("nan"),
+            )
+        result["quality_issues"] += ";pathway:" + str(case.get("pathway_review_status"))
+    return result
 
 
 def _check_result_bindings(states, case, variant, result_ids, minimum_result_ids=None):
@@ -160,6 +143,31 @@ def _analysis_case(states, case, root, reviews=None):
         case['applicability'] = _state_applicability(review['variant'])
         case['reviewed_result_ids'] = dict(review['result_ids'])
         case['reviewed_minimum_result_ids'] = deepcopy(review.get('minimum_result_ids', {}))
+    from frust.workflows.connections import connection_status
+
+    case["connection_statuses"] = {}
+    case["reviewed_connection_result_ids"] = {}
+    if review is not None:
+        for saddle, minima in review.get("minimum_result_ids", {}).items():
+            saddle_id = review.get("connection_result_ids", {}).get(
+                saddle, review.get("result_ids", {}).get(saddle)
+            )
+            state = connection_status(
+                states,
+                bindings=case["bindings"],
+                result_ids=minima,
+                saddle_role=saddle,
+                saddle_result_id=saddle_id,
+                evidence=review.get("evidence", []),
+                root=root,
+            )
+            if status != "approved":
+                state = status
+            case["connection_statuses"][saddle] = state
+            if state != "approved":
+                case["reviewed_minimum_result_ids"].pop(saddle, None)
+            else:
+                case["reviewed_connection_result_ids"][saddle] = saddle_id
     return case
 
 
@@ -191,11 +199,29 @@ def _barrier_rows(states, case, *, quantity='gibbs', corrections=None, candidate
     Candidate overrides do not inherit another saddle's pathway approval.
     """
     corrections = corrections or {}
-    choices = dict(case.get('reviewed_result_ids', {}))
+    choices = {
+        **case.get("reviewed_result_ids", {}),
+        **case.get("reviewed_connection_result_ids", {}),
+    }
     if candidate is not None:
         state = candidate.state_id
-        if state in {'TS7', 'TS8'} and choices.get(state) != candidate.result_id:
-            case = {**case, 'pathway_review_status': 'unreviewed_candidate'}
+        if choices.get(state) != candidate.result_id and (
+            state in {"TS7", "TS8"}
+            or state in case.get("reviewed_minimum_result_ids", {})
+        ):
+            case = {
+                **case,
+                "pathway_review_status": "unreviewed_candidate",
+                "reviewed_minimum_result_ids": {
+                    k: v
+                    for k, v in case.get("reviewed_minimum_result_ids", {}).items()
+                    if k != state
+                },
+                "connection_statuses": {
+                    **case.get("connection_statuses", {}),
+                    state: "unreviewed_candidate",
+                },
+            }
         choices[state] = candidate.result_id
     pairs = dict(TS5=('M', 'INT4'), TS6=('INT4', 'INT5'))
     if case['variant'] == 'two_saddle':
@@ -215,6 +241,15 @@ def _barrier_rows(states, case, *, quantity='gibbs', corrections=None, candidate
         local = (_component_rows(states, case, quantity=quantity,
                                  result_ids={**choices, **minimum_choices})
                  if minimum_choices else selected)
+        connection = case.get("connection_statuses", {}).get(state)
+        if (
+            connection is not None
+            and connection != "approved"
+            and local.get(state) is not None
+        ):
+            local = dict(local)
+            local[state] = local[state].copy()
+            local[state]["quality_status"] = "review"
         forward = pd.Series(_reaction_value(case, local, state, precursor,
                             quantity=quantity, corrections=corrections))
         reverse = pd.Series(_reaction_value(case, local, state, product,
@@ -224,33 +259,61 @@ def _barrier_rows(states, case, *, quantity='gibbs', corrections=None, candidate
         ts = selected.get(state)
         ts = ts if ts is not None else pd.Series(dtype=object)
         result_id = ts.get('result_id')
-        rows.append(dict(system_name=case['system_name'], substrate_name=case['substrate_name'],
-            catalyst_name=case['catalyst_name'], rpos=case['rpos'], ts_type=state,
-            system_signature=case['system_signature'], variant=case['variant'],
-            pathway_review_status=case.get('pathway_review_status', 'unreviewed'),
-            ts_result_id=result_id, ts_cid=ts.get('cid'), reference_state=precursor,
-            product_state=product, reference_result_ids=json.dumps(forward.reference_result_ids, sort_keys=True),
-            product_result_ids=json.dumps(reverse.reference_result_ids, sort_keys=True),
-            uses_alternate_minimum=any(selected.get(r) is None or selected[r].result_id != v
-                                       for r, v in minimum_choices.items()),
-            delta_e_kcal_mol=forward.relative_e_kcal_mol,
-            delta_g_kcal_mol=forward.relative_g_kcal_mol,
-            delta_g_corrected_kcal_mol=forward.relative_g_corrected_kcal_mol,
-            g_correction_kcal_mol=forward.g_correction_kcal_mol,
-            reverse_delta_e_kcal_mol=reverse.relative_e_kcal_mol,
-            reverse_delta_g_kcal_mol=reverse.relative_g_kcal_mol,
-            reverse_delta_g_corrected_kcal_mol=reverse.relative_g_corrected_kcal_mol,
-            reverse_quality_status=reverse.quality_status, reverse_quality_issues=reverse.quality_issues,
-            dimer_relative_e_kcal_mol=elevation.relative_e_kcal_mol,
-            dimer_relative_g_kcal_mol=elevation.relative_g_kcal_mol,
-            dimer_elevation_quality_status=elevation.quality_status,
-            dimer_state_id=case.get('dimer_state_id'), dimer_result_id=case.get('dimer_result_id'),
-            dimer_reference_quality=case.get('dimer_reference_quality', 'incomplete'),
-            method_family=ts.get('method_family'), energy_method=ts.get('energy_method'),
-            energy_model=ts.get('energy_model'), solvation_model=ts.get('solvation_model'),
-            solvent=ts.get('solvent'), energy_protocol_fingerprint=ts.get('energy_protocol_fingerprint'),
-            quality_status=forward.quality_status, quality_issues=forward.quality_issues,
-            formula_id=f'frust_bisarylation_local_barrier::{state}::v1'))
+        rows.append(
+            dict(
+                system_name=case["system_name"],
+                substrate_name=case["substrate_name"],
+                catalyst_name=case["catalyst_name"],
+                rpos=case["rpos"],
+                ts_type=state,
+                system_signature=case["system_signature"],
+                variant=case["variant"],
+                connection_status=case.get("connection_statuses", {}).get(
+                    state, "unreviewed"
+                ),
+                pathway_review_status=case.get("pathway_review_status", "unreviewed"),
+                ts_result_id=result_id,
+                ts_cid=ts.get("cid"),
+                reference_state=precursor,
+                product_state=product,
+                reference_result_ids=json.dumps(
+                    forward.reference_result_ids, sort_keys=True
+                ),
+                product_result_ids=json.dumps(
+                    reverse.reference_result_ids, sort_keys=True
+                ),
+                uses_alternate_minimum=any(
+                    selected.get(r) is None or selected[r].result_id != v
+                    for r, v in minimum_choices.items()
+                ),
+                delta_e_kcal_mol=forward.relative_e_kcal_mol,
+                delta_g_kcal_mol=forward.relative_g_kcal_mol,
+                delta_g_corrected_kcal_mol=forward.relative_g_corrected_kcal_mol,
+                g_correction_kcal_mol=forward.g_correction_kcal_mol,
+                reverse_delta_e_kcal_mol=reverse.relative_e_kcal_mol,
+                reverse_delta_g_kcal_mol=reverse.relative_g_kcal_mol,
+                reverse_delta_g_corrected_kcal_mol=reverse.relative_g_corrected_kcal_mol,
+                reverse_quality_status=reverse.quality_status,
+                reverse_quality_issues=reverse.quality_issues,
+                dimer_relative_e_kcal_mol=elevation.relative_e_kcal_mol,
+                dimer_relative_g_kcal_mol=elevation.relative_g_kcal_mol,
+                dimer_elevation_quality_status=elevation.quality_status,
+                dimer_state_id=case.get("dimer_state_id"),
+                dimer_result_id=case.get("dimer_result_id"),
+                dimer_reference_quality=case.get(
+                    "dimer_reference_quality", "incomplete"
+                ),
+                method_family=ts.get("method_family"),
+                energy_method=ts.get("energy_method"),
+                energy_model=ts.get("energy_model"),
+                solvation_model=ts.get("solvation_model"),
+                solvent=ts.get("solvent"),
+                energy_protocol_fingerprint=ts.get("energy_protocol_fingerprint"),
+                quality_status=forward.quality_status,
+                quality_issues=forward.quality_issues,
+                formula_id=f"frust_bisarylation_local_barrier::{state}::v1",
+            )
+        )
     return pd.DataFrame(rows)
 
 

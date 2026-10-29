@@ -6,7 +6,7 @@ import json
 from collections.abc import Mapping
 
 import pandas as pd
-
+from frust.structures.roles import effective_bound_role
 
 BISARYL_STATES = ('TS5', 'INT4', 'TS6', 'INT5', 'TS7', 'INT6', 'TS8')
 PATH_STATES = {
@@ -37,12 +37,7 @@ def _optional(value):
 def _reference_roles(system: Mapping, rpos: int) -> dict[str, dict]:
     """Preserve which aryl supplies the starting catalyst and released product."""
     incoming = system['substrate_smiles']
-    bound = _optional(system.get('bound_substrate_smiles')) or incoming
-    bound_rpos = _optional(system.get('bound_rpos'))
-    if bound_rpos is None and bound == incoming:
-        bound_rpos = rpos
-    if bound_rpos is None:
-        raise ValueError('bound_rpos is required for the bound substrate')
+    bound, bound_rpos = effective_bound_role(system, rpos)
     def component(state, smiles, site=None):
         return dict(state_id=state, substrate_smiles=smiles, rpos=site,
                     catalyst_smiles=system['catalyst_smiles'])
@@ -73,14 +68,7 @@ def _profile_terms(variant: str) -> dict[str, dict[str, float]]:
 
 def _system_signature(system: Mapping, rpos: int) -> str:
     """Bind pathway planning to both aryl identities, sites and stereochemistry."""
-    bound = _optional(system.get('bound_substrate_smiles'))
-    if bound is None:
-        bound = system['substrate_smiles']
-        bound_rpos = rpos
-    else:
-        bound_rpos = _optional(system.get('bound_rpos'))
-        if bound_rpos is None:
-            raise ValueError('bound_rpos is required with bound_substrate_smiles')
+    bound, bound_rpos = effective_bound_role(system, rpos)
     payload = dict(catalyst_smiles=system['catalyst_smiles'],
                    incoming_substrate_smiles=system['substrate_smiles'],incoming_rpos=int(rpos),
                    bound_substrate_smiles=bound,bound_rpos=int(bound_rpos))
@@ -292,49 +280,4 @@ def _balanced_profile_rows(states, case, *, reference='M', quantity='electronic'
     return pd.DataFrame(rows)
 
 
-def _execution_children(plan, *, method, screening, candidate_specs=None,
-                        spec_profile='auto', random_seed=None, n_confs=None,
-                        validation_top_n=1, top_n=20, prune_initial=True,
-                        calculation_level='full', ranking_top_n=None,
-                        include_dft_rank_sp=False, spec_match='prefer-exact'):
-    """Bind a private reviewed plan to existing homogeneous execution graphs.
-
-    Children retain their ordinary local ``run`` and cluster ``submit`` paths.
-    The composed owner supplies manifests, reference reuse and result-bound
-    pathway decisions without changing these native execution graphs.
-    """
-    from frust.workflows.factories import ScreenTSWorkflow, IntermediateWorkflow, MolsWorkflow
-    from frust.workflows.methods import preset
-
-    method = preset(method) if isinstance(method, str) else method
-    if method.fingerprint() != plan['method_fingerprint']:
-        raise ValueError('Execution method does not match the reviewed target plan')
-    grouped = {
-        'transition_states': [t for t in plan['targets'] if t.state_kind == 'transition_state'],
-        'intermediates': [t for t in plan['targets'] if t.state_kind == 'constrained_minimum'],
-        'references': [t for t in plan['targets'] if t.state_kind == 'minimum'],
-    }
-    children = {}
-    for branch, targets in grouped.items():
-        if not targets:
-            continue
-        systems = pd.DataFrame([{**t.system.as_dict(), 'rpos': t.rpos} for t in targets])
-        states = tuple(dict.fromkeys(t.state_id for t in targets))
-        common = dict(dataframe=systems, method=method, screening=screening,
-                      calculation_level=calculation_level, n_confs=n_confs, top_n=top_n,
-                      validation_top_n=validation_top_n, prune_initial=prune_initial,
-                      ranking_top_n=ranking_top_n,
-                      include_dft_rank_sp=include_dft_rank_sp)
-        if branch == 'references':
-            child = MolsWorkflow(select_mols=states, **common)
-        else:
-            candidates = {s: spec for s, spec in (candidate_specs or {}).items() if s in states}
-            connected = dict(candidate_specs=candidates, spec_profile=spec_profile,
-                             spec_match=spec_match, random_seed=random_seed)
-            child = (ScreenTSWorkflow(ts_types=states, **common, **connected)
-                     if branch == 'transition_states' else
-                     IntermediateWorkflow(states=states, **common, **connected))
-            child.targets()  # Resolve only applicable profiles, before any embedding.
-        child._target_cache = list(targets)
-        children[branch] = child
-    return children
+from frust.workflows.reaction_execution import _execution_children

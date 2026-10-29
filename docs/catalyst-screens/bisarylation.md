@@ -46,7 +46,8 @@ reference. See [geometry-profile maintenance](../development/ts-spec-profiles.md
 ```python
 import frust as ft
 
-wf = ft.workflows.bisarylation_screen(
+wf = ft.workflows.catalyst_screen(
+    ts_types=["TS5", "TS6", "TS7", "TS8"], scope="full_cycle",
     systems=systems,
     method="uma-gas",
     screening="uma-gas",
@@ -252,3 +253,6 @@ native saddle searches for the smaller additional systems took roughly
 13–18 minutes per family on the GPU; endpoint characterization and recovery can
 dominate total time. These observations are planning inputs, not an ETA for a
 larger catalyst. Missing or unreviewed target states remain explicit limitations.
+
+The [reaction-coverage guide](reaction-coverage.md) explains the unified planner,
+partial selections, mixed branches and exact connection reviews.

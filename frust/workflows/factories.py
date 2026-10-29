@@ -25,6 +25,7 @@ from frust.tsguess.specs import BUILTIN_TS_SPECS
 from frust.tsguess2.specs import resolve_profile_specs
 from frust.tsguess2.specs import TSGuess2Spec, normalize_profile_id
 from frust.tsguess2.topologies import CORE_TOPOLOGIES
+from frust.structures.specs import get_state_spec
 from frust.structures import (
     StructureTarget,
     build as build_structure,
@@ -1338,8 +1339,7 @@ class Int3Workflow(BaseWorkflow):
             save_dir=save_dir,
             stepper_cls=Stepper,
             ts_guess_factory=create_ts_guesses,
-            spec_profile=self._resolved_spec_profile(),
-            spec_match=self.spec_match,
+            **self._structure_build_kwargs(),
         )
 
     def _step_type_for_target(self, target: WorkflowTarget) -> str | None:
@@ -1357,7 +1357,6 @@ class Int3Workflow(BaseWorkflow):
             calculation_level=self.calculation_level,
             include_dft_rank_sp=self.include_dft_rank_sp,
             ranking_top_n=self.uma_rank_top_n, validation_top_n=self.validation_top_n)
-
 
 
 class IntermediateWorkflow(Int3Workflow):
@@ -1384,7 +1383,11 @@ class IntermediateWorkflow(Int3Workflow):
         self.states = tuple(str(state).upper() for state in states)
         if not self.states or len(set(self.states)) != len(self.states):
             raise ValueError("states must be a nonempty sequence of distinct intermediates")
-        unknown = set(self.states) - {"INT3", "INT4", "INT5", "INT6"}
+        unknown = {
+            s
+            for s in self.states
+            if get_state_spec(s).state_kind != "constrained_minimum"
+        }
         if unknown:
             raise ValueError(f"Unsupported intermediate states: {sorted(unknown)}")
         self.candidate_specs = {str(k).upper(): v for k, v in (candidate_specs or {}).items()}
@@ -1406,15 +1409,6 @@ class IntermediateWorkflow(Int3Workflow):
         """Use the same call-scoped references in previews and calculations."""
         return {**super()._structure_build_kwargs(),
                 "candidate_specs": self.candidate_specs, "random_seed": self.random_seed}
-
-    def _prepare_initial_df(self, target, *, save_dir, options):
-        """Construct the requested minimum with the shared typed builder."""
-        return build_structure(
-            target, n_confs=self.n_confs, n_cores=options.n_cores,
-            memory_gb=options.mem_gb, debug=options.debug, save_dir=save_dir,
-            stepper_cls=Stepper, ts_guess_factory=create_ts_guesses,
-            spec_profile=self._resolved_spec_profile(), spec_match=self.spec_match,
-            candidate_specs=self.candidate_specs, random_seed=self.random_seed)
 
     def _step_type_for_target(self, target):
         """Dispatch constraints by the actual intermediate state."""
@@ -1917,7 +1911,6 @@ def int3(
         include_dft_rank_sp=include_dft_rank_sp,
         prune_initial=prune_initial,
     )
-
 
 
 def intermediates(
