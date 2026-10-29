@@ -456,6 +456,8 @@ class ScreenRun:
                 "profile_order",
             ]
         ).reset_index(drop=True)
+        if 'result_ids' in result:
+            result['result_ids']=result['result_ids'].map(lambda value:json.loads(value) if isinstance(value,str) else value)
         result.attrs["energy_column"] = (
             "relative_g_corrected_kcal_mol"
             if quantity == "gibbs"

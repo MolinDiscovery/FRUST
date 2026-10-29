@@ -203,7 +203,7 @@ def reaction_tables(
                     evaluate_expression(
                         chosen,
                         difference(
-                            {ts: 1.0}, case.get("profile_terms", {}).get("Dimer", {})
+                            case["profile_terms"][ts], case["profile_terms"]["Dimer"]
                         ),
                         quantity=quantity,
                         correction=float(
@@ -284,6 +284,20 @@ def reaction_tables(
                     reverse_quality_status=reverse.get(
                         "quality_status", "not_requested"
                     ),
+                    uses_alternate_minimum=any(
+                        chosen.get(role) is not None
+                        and selected.get(role) is not None
+                        and chosen[role].result_id != selected[role].result_id
+                        for role in set(reaction["expressions"]["forward_barrier"])
+                        | set(reaction["expressions"].get("reverse_barrier", {}))
+                        if role != ts
+                    ),
+                    reverse_quality_issues=reverse.get("quality_issues", ""),
+                    dimer_relative_g_kcal_mol=elevation.get("relative_g_kcal_mol"),
+                    dimer_relative_g_corrected_kcal_mol=elevation.get(
+                        "relative_g_corrected_kcal_mol"
+                    ),
+                    dimer_elevation_quality_issues=elevation.get("quality_issues", ""),
                     dimer_relative_e_kcal_mol=elevation.get("relative_e_kcal_mol"),
                     dimer_elevation_quality_status=elevation.get(
                         "quality_status", "not_requested"
@@ -417,6 +431,8 @@ def reaction_tables(
                         system_name=case["system_name"],
                         rpos=case["rpos"],
                         network_id=case["network_id"],
+                        system_signature=case.get("system_signature"),
+                        pathway_review_status=case.get("pathway_review_status"),
                         variant=case["variant"],
                         profile_state=label,
                         reference=reference,

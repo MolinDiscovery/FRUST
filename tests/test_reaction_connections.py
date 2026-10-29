@@ -75,6 +75,13 @@ def test_exact_connection_replacement_revocation_and_portable_proof(tmp_path, ts
             candidates=candidates,
         )[0]
 
+    if ts == 'TS6':
+        neighbor=states.loc[states.state_id.eq('INT4')].iloc[0].copy()
+        neighbor.result_id='INT4-reviewed-neighbor'
+        neighbor.electronic_energy_hartree+=.03
+        neighbor.free_energy_hartree+=.03
+        states.loc[len(states)] = neighbor
+        ids['INT4']=neighbor.result_id
     record()
     original = rows().set_index("ts_type")
     assert original.loc[ts, "connection_status"] == "approved"
@@ -89,6 +96,9 @@ def test_exact_connection_replacement_revocation_and_portable_proof(tmp_path, ts
         .iloc[0]
     )
     assert candidate.connection_status == "unreviewed_candidate"
+    if ts == "TS6":
+        assert original.loc[ts,"uses_alternate_minimum"]
+        assert not candidate.uses_alternate_minimum
     assert candidate.quality_status != "ready" and pd.isna(candidate.delta_e_kcal_mol)
     changed = states.copy()
     changed.loc[changed.state_id.eq(ts), "result_id"] = "replacement"
@@ -227,4 +237,33 @@ def test_declared_node_gibbs_corrections_are_applied_once_to_each_quantity(tmp_p
     ts = profile.loc[profile.profile_state.eq("TS6")].iloc[0]
     assert ts.relative_g_corrected_kcal_mol - ts.relative_g_kcal_mol == pytest.approx(
         -0.8
+    )
+
+
+def test_common_analysis_preserves_neighbor_and_dimer_inspection_fields(tmp_path):
+    run, states, case = setup_run(tmp_path)
+    case["profile_terms"] = NETWORKS["bisarylation"].profile_terms
+    case["profile_order"] = list(case["profile_terms"])
+    rows, _ = reaction_tables(
+        tmp_path, states, run.manifest, pd.DataFrame(), calculation_level="full"
+    )
+    ts6 = rows.set_index("ts_type").loc["TS6"]
+    assert pd.notna(ts6.dimer_relative_g_kcal_mol)
+    energies = states.set_index("state_id").free_energy_hartree
+    expected = (
+        energies["TS6"]
+        + energies["HH"]
+        - 0.5 * energies["dimer"]
+        - energies["incoming_ligand"]
+        - energies["bound_ligand"]
+    ) * 627.5094740631
+    assert ts6.dimer_relative_g_kcal_mol == pytest.approx(expected)
+    assert ts6.dimer_elevation_quality_status == "ready"
+    assert not ts6.uses_alternate_minimum
+    missing_h2 = states.loc[~states.state_id.eq("HH")]
+    rows, _ = reaction_tables(
+        tmp_path, missing_h2, run.manifest, pd.DataFrame(), calculation_level="full"
+    )
+    assert (
+        "missing:HH" in rows.set_index("ts_type").loc["TS6", "reverse_quality_issues"]
     )
