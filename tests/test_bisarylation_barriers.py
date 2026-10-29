@@ -97,6 +97,9 @@ def test_distinct_neighbor_conformers_are_not_spliced_into_one_local_barrier():
     assert json.loads(rows.loc['TS7','product_result_ids'])['INT6']=='INT6-result'
     assert rows.loc['TS8','uses_alternate_minimum']
     assert not rows.loc['TS7','uses_alternate_minimum']
+    case['reviewed_minimum_result_ids']={'TS8':{'INT6':'INT6-result'}}
+    matching=_barrier_rows(states,case,quantity='electronic').set_index('ts_type')
+    assert not matching.loc['TS8','uses_alternate_minimum']
 
 
 def test_pathway_review_invalidated_by_geometry_result_method_or_file(tmp_path):

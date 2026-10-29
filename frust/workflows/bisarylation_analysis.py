@@ -231,7 +231,8 @@ def _barrier_rows(states, case, *, quantity='gibbs', corrections=None, candidate
             ts_result_id=result_id, ts_cid=ts.get('cid'), reference_state=precursor,
             product_state=product, reference_result_ids=json.dumps(forward.reference_result_ids, sort_keys=True),
             product_result_ids=json.dumps(reverse.reference_result_ids, sort_keys=True),
-            uses_alternate_minimum=any(choices.get(r) != v for r, v in minimum_choices.items()),
+            uses_alternate_minimum=any(selected.get(r) is None or selected[r].result_id != v
+                                       for r, v in minimum_choices.items()),
             delta_e_kcal_mol=forward.relative_e_kcal_mol,
             delta_g_kcal_mol=forward.relative_g_kcal_mol,
             delta_g_corrected_kcal_mol=forward.relative_g_corrected_kcal_mol,
