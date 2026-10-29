@@ -21,7 +21,7 @@ This page describes the maintainer workflow for turning reviewed optimized
 structures into a new method-aware geometry profile. It does not describe how
 to calculate the reference structures themselves.
 
-## Construction Support And Inactive References
+## Construction References And Their Status
 
 ```python
 import frust as ft
@@ -34,13 +34,13 @@ profiles.query(
 
 | State | Current status | Selectable |
 | --- | --- | --- |
-| TS5 | `candidate` | false |
-| TS6 | `candidate` | false |
-| TS7 | `candidate` | false |
-| TS8 | `candidate` | false |
-| INT4 | `candidate` | false |
-| INT5 | `candidate` | false |
-| INT6 | `candidate` | false |
+| TS5 | `active` (revision 2) | true |
+| TS6 | `active` (revision 2) | true |
+| TS7 | `active` (revision 2) | true |
+| TS8 | `active` (revision 2) | true |
+| INT4 | `active` (revision 2) | true |
+| INT5 | `active` (revision 2) | true |
+| INT6 | `active` (revision 2) | true |
 
 `candidate` means a reviewed geometry is retained for further validation but
 production resolution will not select it. `active` means resolution may select
@@ -49,7 +49,7 @@ that profile; `quarantined` means an existing reference has been explicitly
 excluded. Construction topology and profile availability are separate: defining
 INT4/INT5/INT6 roles does not make a valid minimum or a selectable profile.
 
-The new UMA bisaryl candidates derive from native TMP structures with two
+The reviewed UMA bisaryl references derive from native TMP structures with two
 alpha-1-methylpyrrole-derived groups. TS5 is the second C–H activation, TS6 the
 H₂ elimination, TS7 bridge entry, and TS8 bridge exit. Each saddle has the intended
 single imaginary mode and independently characterized minima. TS8 uses a short
@@ -62,12 +62,14 @@ silently substituted into the same profile.
 
     Final-profile regeneration and family-level transferred connection examples
     are recorded, including failures and broader sampling where needed. The
-    candidates remain inactive pending remaining pathway/readiness review.
+    seven gas references are active as revision 2; the original candidate
+    revision 1 remains unchanged. Scientific examples establish two-saddle
+    local exchange; direct TS7-only and TS8-only chemistry remains unvalidated.
     A new catalyst/substrate pair can have
     a two-saddle bridge route or an independently verified direct route. A
     missing or collapsed bridge guess alone does not assign the mechanism.
     Existing TS1–TS4 and INT3 revisions remain unchanged, and no DFT bisaryl
-    reference is supplied by the UMA candidate module.
+    reference is supplied by the UMA profile modules.
 
 ### Review The Identity Of An Intermediate
 
@@ -151,7 +153,8 @@ Distinct neighboring minimum conformers can be bound per saddle, while the
 ordered ledger keeps its own selected state. Available dimer references can be
 compared without recalculation. These tests establish software behavior, not
 the existence of all three chemical routes. Scientific coverage and registry
-activation remain separate gates. See the [review workflow](../catalyst-screens/bisarylation.md).
+activation are separate decisions. The published UMA gas geometries do not
+assign a target pathway. See the [review workflow](../catalyst-screens/bisarylation.md).
 
 ## Where The Pieces Live
 

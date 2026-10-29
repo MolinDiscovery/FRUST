@@ -1,0 +1,26 @@
+{
+  "local_barriers_sha256": "ce094cee7d7cc74909298ad5a5c482d7dbe8e46eee01dc69c9148cc3296f74b8",
+  "references": {
+    "TS5": {
+      "source_sha256": "d45159ec10eff4aad7dcb668da253f06c6b4b8ab197e7b326257cfaaa6dd6475",
+      "cid": 4,
+      "reference_json_sha256": "44e3373263dc758bcab04e2c006d69db476ade9e1b70325f7ea5f273eca750cb"
+    },
+    "TS6": {
+      "source_sha256": "b0ee9e70a74546a7e7a17884107d1cc469fd55d77fce22b5dd4263a4395067aa",
+      "cid": 1,
+      "reference_json_sha256": "898761cc4def4a6ffaed810af786b20952f544a0539ac330286b57cda73399f2"
+    },
+    "TS7": {
+      "source_sha256": "4776e1bf6bdf0420d2066a5f4ac60a73c9032b2fb1e5d5c170e1151e4ccaf00c",
+      "cid": 7,
+      "reference_json_sha256": "0e0152d07c9c638e6ee0ff5da6e9b45298f45c7c5e8072b2e4d245a2e73382ce"
+    },
+    "TS8": {
+      "source_sha256": "1255848406216986f8d2113bd20ab6ab725cc96b98f1791c0088acfdeea4af1d",
+      "cid": 5,
+      "reference_json_sha256": "657e7a7cb1f2c876f95a1763ef70adad93472ef30c6cadd3ae5b24dc0e639f73"
+    }
+  },
+  "viewer_sha256": "f7cc78921ae72e7623e89cdd111434f58c2efddd2ffda1cd212644b406fb8016"
+}

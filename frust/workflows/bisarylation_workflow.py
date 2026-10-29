@@ -119,8 +119,10 @@ def bisarylation_screen(*, systems=None, dataframe=None, csv_path=None,
         Prefer the exact environment with allowed same-method fallback, or
         require an exact profile match.
     candidate_specs : mapping or None, optional
-        Explicit reviewed geometry specifications for TS5–TS8 and INT4–INT6.
-        This is required while the requested registry references are inactive.
+        Optional explicit geometry specifications overriding registry selection
+        for this call. Reviewed UMA gas references for TS5–TS8 and INT4–INT6
+        are selectable without overrides. Other methods require available
+        references or an explicitly selected geometry profile.
     pathway_reviews : mapping or None, optional
         Prior system/method-bound hypotheses used to plan applicable states.
         They do not approve the newly calculated results. New runs default to
@@ -164,7 +166,9 @@ def bisarylation_screen(*, systems=None, dataframe=None, csv_path=None,
     Notes
     -----
     Software support for ``two_saddle``, ``ts7_only`` and ``ts8_only`` does not
-    establish which route a particular system follows. Unreviewed exchange
+    establish which route a particular system follows. Reviewed scientific
+    examples establish two-saddle local exchange; direct single-saddle chemistry
+    remains unvalidated. Unreviewed exchange
     barriers remain withheld; unused states are omitted only after the relevant
     per-system hypothesis/decision. A missing bridge does not prove a direct path.
     """

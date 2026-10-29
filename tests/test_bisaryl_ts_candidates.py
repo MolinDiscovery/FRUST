@@ -122,8 +122,9 @@ def test_explicit_candidate_is_call_scoped_and_records_seed(monkeypatch):
     assert lineage["bound_rpos"] == lineage["incoming_rpos"] == 2
     assert lineage["bound_substrate_smiles"] == lineage["incoming_substrate_smiles"] == PYRROLE
     pd.testing.assert_frame_equal(before, ft.show_spec_profiles())
-    with pytest.raises(ValueError, match="No selectable TS6"):
-        ft.tsguess2.resolve_profile_spec("TS6", "uma-gas", match="exact")
+    selected=ft.tsguess2.resolve_profile_spec("TS6", "uma-gas", match="exact")
+    assert selected.spec.spec_id.endswith('::r2')
+    assert selected.spec.spec_id!=candidate().spec_id
     with pytest.raises(ValueError, match="state and method/profile"):
         ft.tsguess2.create_ts_guess_dataframes(
             systems(), ts_types=["TS6"], candidate_specs={"TS6": candidate()},
@@ -279,8 +280,7 @@ def test_explicit_bisaryl_minimum_construction_is_separate_from_ts_execution(mon
     assert len(frame) == 2 and len(frame.iloc[0].atoms) == atoms
     assert set(frame.state_kind) == {"constrained_minimum"}
     assert state in CORE_TOPOLOGIES
-    with pytest.raises(ValueError, match=f"No selectable {state}"):
-        ft.tsguess2.resolve_profile_spec(state, "uma-gas", match="exact")
+    assert ft.tsguess2.resolve_profile_spec(state, "uma-gas", match="exact").spec.spec_id.endswith('::r2')
     pd.testing.assert_frame_equal(before, ft.show_spec_profiles())
     with pytest.raises(ValueError, match="intermediate candidates require a minimum workflow"):
         ft.workflows.screen_ts(
@@ -322,7 +322,7 @@ def test_intermediates_reject_ts_or_missing_profiles_before_construction():
     with pytest.raises(ValueError,match='Unsupported intermediate'):
         ft.workflows.intermediates(dataframe=systems(),states=('TS5',))
     with pytest.raises(ValueError,match='No selectable INT5'):
-        ft.workflows.intermediates(dataframe=systems(),states=('INT5',),method='uma-gas').targets()
+        ft.workflows.intermediates(dataframe=systems(),states=('INT5',),method='r2scan-3c').targets()
     with pytest.raises(ValueError,match='state and method/profile'):
         ft.workflows.intermediates(dataframe=systems(),states=('INT5',),method='r2scan-3c',
                                   candidate_specs={'INT5':candidate('INT5')}).targets()

@@ -31,6 +31,8 @@ def main() -> None:
         path=root/('stage02/resumed_20261028/ts6_reviewed_native_candidate.json' if state=='TS6' else 'stage03/INT6_C7_reviewed_native_candidate.json' if state=='INT6' else f'stage03/{state}_reviewed_native_candidate.json')
         candidate=json.loads(path.read_text());source=Path(candidate['source_dataframe'])
         if not source.is_absolute():source=root.parent/source
+        elif not source.exists() and 'runs' in source.parts:
+            source=root.parent.joinpath(*source.parts[source.parts.index('runs'):])
         assert hashlib.sha256(source.read_bytes()).hexdigest()==candidate['source_sha256']
         if state=='TS6':decision=json.loads((root/'stage02/resumed_20261028/scientific_decision.json').read_text());assert 'passed' in str(decision.get('gate',decision.get('decision',''))).lower() or decision.get('accepted_reference_candidate')==path.name
         elif state in {'INT4','INT5'}:assert json.loads((root/f'stage03/{state}_native_minimum_decision.json').read_text())['gate']=='passed_native_minimum_identity'

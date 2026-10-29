@@ -1,4 +1,4 @@
-"""Inactive reference geometry bindings and method-resolution boundaries."""
+"""Immutable candidates, reviewed publication and method-resolution boundaries."""
 import numpy as np
 import pytest
 
@@ -23,14 +23,43 @@ def test_reviewed_candidate_constraints_match_exact_exported_coordinates(state):
 
 
 @pytest.mark.parametrize('state',['TS5','TS6','TS7','TS8','INT4','INT5','INT6'])
-def test_construction_support_does_not_silently_activate_a_profile(state):
-    for profile in ['uma-gas','r2scan-3c','wb97xd3-631g']:
+def test_reviewed_publication_preserves_candidate_and_method_boundaries(state, monkeypatch):
+    from frust.tsguess2 import profiles
+    from frust.tsguess2.profiles.uma_bisaryl_gas_reviewed import GEOMETRIES as published
+
+    original=GEOMETRIES[state];active=published[state]
+    assert original.status=='candidate' and original.revision==1
+    assert active.status=='active' and active.revision==2
+    assert active.role_coordinates==original.role_coordinates
+    assert active.constraint_values==original.constraint_values
+    assert active.reference.source_sha256==original.reference.source_sha256
+    selection=ft.tsguess2.resolve_profile_spec(state,'uma-gas',match='exact')
+    assert selection.match=='exact'
+    assert selection.spec.spec_id.endswith('::r2')
+    assert selection.spec.role_coordinates==active.role_coordinates
+    for profile in ['r2scan-3c','wb97xd3-631g']:
         with pytest.raises(ValueError,match=f'No selectable {state}'):
             ft.tsguess2.resolve_profile_spec(state,profile)
     summary=ft.show_spec_profiles()
-    rows=summary.loc[summary.state.eq(state)]
-    assert not rows.selectable_prefer_exact.any()
-    assert set(rows.status).issubset({'candidate','missing'})
+    rows=summary.loc[summary.state.eq(state)&summary.profile.eq(active.geometry_key.profile_id)]
+    assert rows.status.eq('active').all() and rows.selectable_prefer_exact.all()
+    monkeypatch.setitem(profiles._GEOMETRIES[active.geometry_key.profile_id],state,original)
+    with pytest.raises(ValueError,match=f'No selectable {state}'):
+        ft.tsguess2.resolve_profile_spec(state,'uma-gas')
+
+
+def test_public_native_workflow_needs_no_override_and_does_not_assign_new_system(monkeypatch):
+    from test_bisaryl_ts_candidates import systems
+    from frust.workflows.factories import ScreenTSWorkflow, IntermediateWorkflow, MolsWorkflow
+
+    for cls in (ScreenTSWorkflow,IntermediateWorkflow,MolsWorkflow):
+        monkeypatch.setattr(cls,'_prepare_initial_df',
+                            lambda *args,**kwargs:pytest.fail('Planning must not embed'))
+    workflow=ft.workflows.bisarylation_screen(systems=systems(),method='uma-gas',screening='uma-gas')
+    assert not workflow.candidate_specs
+    targets=workflow.targets()
+    assert {'TS5','TS6','TS7','TS8','INT4','INT5','INT6'}.issubset({t.target.state_id for t in targets})
+    assert workflow._bisarylation_plan['cases'][0]['variant']=='unresolved'
 
 
 def test_default_compatibility_specs_keep_only_existing_dft_references():

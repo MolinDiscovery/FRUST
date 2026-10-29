@@ -72,6 +72,7 @@ def test_profile_catalog_exposes_reviewed_method_environment_slots():
         "TS3",
         "TS4",
         "INT3",
+        "TS5", "TS6", "TS7", "TS8", "INT4", "INT5", "INT6",
     }
     assert uma_gas.loc[uma_gas["status"].isin(["active", "candidate"]), "mode_reviewed"].eq(True).all()  # noqa: E712
     uma_by_state = uma_gas.set_index("state")
