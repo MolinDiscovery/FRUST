@@ -57,6 +57,8 @@ def main() -> None:
     html=out/'references.html'
     html.write_text(html.read_text().replace('<script>', '<script>'+vendor.read_text().replace('</script','<\\/script')+'\nvar $3Dmolpromise=Promise.resolve();\n</script>\n<script>',1))
     (out/'3Dmol-LICENSE.txt').write_bytes(license_file.read_bytes())
+    for file in [out/'local-barriers.svg',out/'3Dmol-LICENSE.txt']:
+        file.write_text('\n'.join(line.rstrip() for line in file.read_text().splitlines()).rstrip()+'\n')
     sources['viewer_sha256']=hashlib.sha256(vendor.read_bytes()).hexdigest()
     (out/'provenance.json').write_text(json.dumps(sources,indent=2)+'\n')
     print(out)
