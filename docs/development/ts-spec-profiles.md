@@ -21,6 +21,141 @@ This page describes the maintainer workflow for turning reviewed optimized
 structures into a new method-aware geometry profile. It does not describe how
 to calculate the reference structures themselves.
 
+## Construction References And Their Status
+
+```python
+import frust as ft
+
+profiles = ft.show_spec_profiles()
+profiles.query(
+    "profile == 'omol-uma-s-1p2p1/gas' and state in ['TS5', 'TS6', 'TS7', 'TS8', 'INT4', 'INT5', 'INT6']"
+)[["state", "status", "selectable_prefer_exact"]]
+```
+
+| State | Current status | Selectable |
+| --- | --- | --- |
+| TS5 | `active` (revision 2) | true |
+| TS6 | `active` (revision 2) | true |
+| TS7 | `active` (revision 2) | true |
+| TS8 | `active` (revision 2) | true |
+| INT4 | `active` (revision 2) | true |
+| INT5 | `active` (revision 2) | true |
+| INT6 | `active` (revision 2) | true |
+
+`candidate` means a reviewed geometry is retained for further validation but
+production resolution will not select it. `active` means resolution may select
+that immutable revision. `missing` means the state has no supplied geometry in
+that profile; `quarantined` means an existing reference has been explicitly
+excluded. Construction topology and profile availability are separate: defining
+INT4/INT5/INT6 roles does not make a valid minimum or a selectable profile.
+
+The reviewed UMA bisaryl references derive from native TMP structures with two
+alpha-1-methylpyrrole-derived groups. TS5 is the second C–H activation, TS6 the
+H₂ elimination, TS7 bridge entry, and TS8 bridge exit. Each saddle has the intended
+single imaginary mode and independently characterized minima. TS8 uses a short
+downhill IRC followed by a separately audited endpoint relaxation; those
+optimization steps are not represented as IRC. INT6 uses the TS7-side bridge
+conformer. The TS8-side bridge is a different conformer, so its energy cannot be
+silently substituted into the same profile.
+
+!!! info "Reference identity does not establish transfer or a universal mechanism"
+
+    Final-profile regeneration and family-level transferred connection examples
+    are recorded, including failures and broader sampling where needed. The
+    seven gas references are active as revision 2; the original candidate
+    revision 1 remains unchanged. Scientific examples establish two-saddle
+    local exchange; direct TS7-only and TS8-only chemistry remains unvalidated.
+    A new catalyst/substrate pair can have
+    a two-saddle bridge route or an independently verified direct route. A
+    missing or collapsed bridge guess alone does not assign the mechanism.
+    Existing TS1–TS4 and INT3 revisions remain unchanged, and no DFT bisaryl
+    reference is supplied by the UMA profile modules.
+
+### Review The Identity Of An Intermediate
+
+For example, a candidate that reaches its optimization step limit can still
+terminate normally and have one imaginary frequency. Its structure must not
+become a qualified transition state merely because the mode looks plausible.
+ORCA-backed UMA and DFT geometry optimizations now keep geometry-bound native
+convergence evidence in dataframe attributes. Analysis rejects capped, stale
+or conflicting evidence even after an identity approval; changing the evidence
+invalidates the previous review. The main calculation table gains no extra columns.
+
+Reference publication applies the same native convergence gate. Reusing a
+minimum under another run's labels preserves its geometry and output hashes
+while rebinding the evidence to the receiving target. Native convergence
+evidence also participates in the immutable reference identifier.
+
+This evidence is collected for ordinary optimizations and TS searches, including
+when calculation directories are not retained. Frequency-only jobs and relaxed
+scans do not receive an ordinary-optimization convergence verdict. Historical
+results and engines without native convergence evidence retain their existing
+review policy; absence of evidence does not certify convergence. Check their
+saved native outputs before scientific acceptance.
+
+| Candidate | Imaginary modes | Relaxed structure | Identity decision |
+| --- | ---: | --- | --- |
+| 0 | 0 | Released products | `rejected` as INT6 |
+| 1 | 0 | Intended bridge | `approved`, subject to other quality checks |
+
+This example shows why frequency count alone cannot select an intermediate.
+When a portable run contains INT4, INT5 or INT6 results, they remain
+`unreviewed` until their structure identity is checked. For example:
+
+```python
+candidate = run.states().query("state_id == 'INT6' and cid == 0").iloc[0]
+run.set_identity_review(
+    candidate.result_id,
+    "rejected",
+    note="Relaxation produced separated products rather than the bridge.",
+)
+```
+
+`approved` confirms the intended structure or reaction identity; it does not
+override failed termination or invalid vibrations. `rejected` marks the result
+invalid for quality-based selection. `unreviewed` records that no decision exists.
+The policy applies to both UMA and DFT results. Reviews bind to the exact result
+identifier; changed geometry, energies or modes require a new review. Existing
+`set_review(...)` remains available for a TS imaginary-mode decision.
+
+For reproducible candidate export from an explicit evidence directory:
+
+```bash
+conda run -n UMA python scripts/build_bisaryl_profile_candidates.py review-evidence/
+```
+
+The exporter checks source-file hashes, selected rows, source-coordinate bindings
+and imaginary-frequency counts, then recomputes every core distance. It emits
+inactive candidates; it does not perform scientific review or activate a profile.
+
+### Per-System Bisarylation Paths
+
+| Reviewed route | Exchange states used | States inapplicable to that route |
+| --- | --- | --- |
+| Two saddles | TS7 → INT6 → TS8 | None |
+| TS7 only | TS7 connects reactants to products | INT6, TS8 |
+| TS8 only | TS8 connects reactants to products | TS7, INT6 |
+| Unresolved | Search TS7, INT6 and TS8 | None; failed or missing searches do not select a route |
+
+For example, one collection can contain a reviewed two-saddle system and a
+different system with a reviewed TS7-only route. The second system must not
+receive a fabricated INT6 row or a missing-TS8 failure simply to fill a table.
+Reviews need the correct chemical system, both reactive sites and method.
+The initially bound aryl and incoming aryl also need separate reference bindings;
+they need not be the same molecule or react at the same position.
+
+`ft.workflows.bisarylation_screen(...)` now composes native execution and portable
+analysis. Its tests exercise matching local/cluster targets, every retained
+validation candidate, balanced electronic/Gibbs ledgers and local forward/reverse
+barriers across UMA and DFT plans. A current pathway review binds exact result IDs
+and copied proof files; it cannot be inherited from a prior planning hypothesis.
+Distinct neighboring minimum conformers can be bound per saddle, while the
+ordered ledger keeps its own selected state. Available dimer references can be
+compared without recalculation. These tests establish software behavior, not
+the existence of all three chemical routes. Scientific coverage and registry
+activation are separate decisions. The published UMA gas geometries do not
+assign a target pathway. See the [review workflow](../catalyst-screens/bisarylation.md).
+
 ## Where The Pieces Live
 
 | Artifact | Responsibility |

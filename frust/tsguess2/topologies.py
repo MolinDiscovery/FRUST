@@ -5,6 +5,75 @@ from __future__ import annotations
 from frust.tsguess2.models import ConstraintDef, CoreTopology
 
 
+BISARYL_CH_TOPOLOGY = CoreTopology(
+    state="TS5",
+    builder_key="bisaryl_adduct",
+    core_smarts="[#5]~[#6]1~[#6]~[#6]~[#6]~[#6]~[#6]1~[#7]",
+    constraints=(
+        ConstraintDef("incomingC_transferH", "distance", ("incoming_C", "N_transfer_H")),
+        ConstraintDef("catN_transferH", "distance", ("cat_N", "N_transfer_H")),
+        ConstraintDef("catB_incomingC", "distance", ("cat_B", "incoming_C")),
+        ConstraintDef("catB_boundC", "distance", ("cat_B", "bound_C")),
+        ConstraintDef("catB_retainedH", "distance", ("cat_B", "B_transfer_H")),
+        ConstraintDef("catB_catN", "distance", ("cat_B", "cat_N")),
+    ),
+)
+
+
+BISARYL_H2_TOPOLOGY = CoreTopology(
+    state="TS6",
+    builder_key="bisaryl_h2",
+    core_smarts="[#5]~[#6]1~[#6]~[#6]~[#6]~[#6]~[#6]1~[#7]",
+    constraints=(
+        ConstraintDef("catN_NtransferH", "distance", ("cat_N", "N_transfer_H")),
+        ConstraintDef("catB_BtransferH", "distance", ("cat_B", "B_transfer_H")),
+        ConstraintDef("eliminating_HH", "distance", ("N_transfer_H", "B_transfer_H")),
+        ConstraintDef("catB_catN", "distance", ("cat_B", "cat_N")),
+        ConstraintDef("catB_boundC", "distance", ("cat_B", "bound_C")),
+        ConstraintDef("catB_incomingC", "distance", ("cat_B", "incoming_C")),
+    ),
+)
+
+
+BISARYL_MINIMUM_TOPOLOGIES = {
+    "INT4": CoreTopology(
+        state="INT4",
+        builder_key="bisaryl_adduct",
+        core_smarts="[#5]~[#6]1~[#6]~[#6]~[#6]~[#6]~[#6]1~[#7]",
+        constraints=tuple(c for c in BISARYL_CH_TOPOLOGY.constraints
+                          if c.name != "incomingC_transferH"),
+    ),
+    "INT5": CoreTopology(
+        state="INT5",
+        builder_key="bisaryl_diaryl",
+        core_smarts="[#5]~[#6]1~[#6]~[#6]~[#6]~[#6]~[#6]1~[#7]",
+        constraints=(
+            ConstraintDef("catB_boundC", "distance", ("cat_B", "bound_C")),
+            ConstraintDef("catB_incomingC", "distance", ("cat_B", "incoming_C")),
+            ConstraintDef("catB_catN", "distance", ("cat_B", "cat_N")),
+        ),
+    ),
+}
+
+
+BISARYL_EXCHANGE_TOPOLOGIES = {
+    state: CoreTopology(
+        state=state,
+        builder_key="bisaryl_exchange",
+        core_smarts="[#5]~[#6]1~[#6]~[#6]~[#6]~[#6]~[#6]1~[#7]",
+        constraints=(
+            ConstraintDef("catB_transferH", "distance", ("cat_B", "transfer_H")),
+            ConstraintDef("pinB_transferH", "distance", ("pin_B", "transfer_H")),
+            ConstraintDef("catB_exchangingC", "distance", ("cat_B", "exchanging_C")),
+            ConstraintDef("pinB_exchangingC", "distance", ("pin_B", "exchanging_C")),
+            ConstraintDef("catB_retainedC", "distance", ("cat_B", "retained_C")),
+            ConstraintDef("catB_pinB", "distance", ("cat_B", "pin_B")),
+            ConstraintDef("catB_catN", "distance", ("cat_B", "cat_N")),
+        ),
+    ) for state in ("TS7", "INT6", "TS8")
+}
+
+
 _HBPIN_BRIDGED_CORE_SMARTS = (
     "[#5;!$([#5](~[#8])~[#8])]~[#1]~"
     "[#5;$([#5](~[#8])~[#8])]~[#6]"
@@ -126,3 +195,10 @@ CORE_TOPOLOGIES: dict[str, CoreTopology] = {
         ),
     ),
 }
+
+CORE_TOPOLOGIES.update({
+    "TS5": BISARYL_CH_TOPOLOGY,
+    "TS6": BISARYL_H2_TOPOLOGY,
+    **BISARYL_MINIMUM_TOPOLOGIES,
+    **BISARYL_EXCHANGE_TOPOLOGIES,
+})

@@ -336,14 +336,16 @@ ts1[
 The same builder is used automatically by a workflow:
 
 ```python
-wf = ft.workflows.screen_ts(
+wf = ft.workflows.catalyst_screen(
     dataframe=components,
-    ts_types=["TS1", "TS2", "TS4"],
-    method="r2scan-3c-solv",
+    screening="gxtb-default",
+    method="r2scan-3c",
+    level="full",
+    scope="barriers",
 )
 
-wf.resolved_spec_profile
-preview = wf.preview(n_confs=1, targets=[0])
+wf.children()["transition_states"].resolved_spec_profile
+preview = wf.preview(targets=[0], n_confs=1)
 ```
 
 `Stepper` does not own TS geometry. It only validates and renders the roles and
@@ -382,6 +384,24 @@ embedded = embed_mols(raw, n_confs=2)
 
 df = step.build_initial_df(embedded)
 ```
+
+## When To Use Stepper vs Workflows
+
+`Stepper` gives you direct, dataframe-by-dataframe control. Use it when you need
+to inspect intermediate results, run custom stage sequences, or debug a single
+molecule. The workflow layer (`ft.workflows`) wraps the same `Stepper` stages
+into a local-to-cluster object with target management, collection, and portable
+run bundles.
+
+| You want to... | Use |
+| --- | --- |
+| Debug one molecule step by step | `ft.Stepper` |
+| Run a production screen that moves from laptop to Slurm | `ft.workflows.mols(...)` or `ft.workflows.catalyst_screen(...)` |
+| Inspect TS guesses before calculating | `ft.screen.create_ts_guesses(...)` then `ft.Stepper` |
+| Reuse approved references across runs | `ft.workflows.catalyst_screen(...)` |
+
+For new production work, start with `ft.workflows`. Drop to `Stepper` only when
+you need the extra control.
 
 ## Input Summary
 

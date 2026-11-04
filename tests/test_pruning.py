@@ -36,6 +36,28 @@ def _pruning_df() -> pd.DataFrame:
 
 
 class PruneConformersTests(unittest.TestCase):
+    def test_parquet_checkpoint_coordinates_match_in_memory_pruning(self):
+        import tempfile
+        from pathlib import Path
+
+        original = _pruning_df()
+        with tempfile.TemporaryDirectory() as directory:
+            path = Path(directory) / "candidates.parquet"
+            original.to_parquet(path)
+            restored = pd.read_parquet(path)
+
+        seen = []
+        def keep_all(coords, atoms, **kwargs):
+            seen.append(coords.copy())
+            return coords, np.ones(len(coords), dtype=bool)
+
+        with patch("frust.utils.pruning._load_prism_functions",
+                   return_value=(keep_all, keep_all, None, None)):
+            memory_result = prune_conformers(original, modes=("moi",), coords_col="xtb_opt-oc")
+            checkpoint_result = prune_conformers(restored, modes=("moi",), coords_col="xtb_opt-oc")
+        np.testing.assert_allclose(seen[0], seen[1])
+        self.assertEqual(memory_result.cid.tolist(), checkpoint_result.cid.tolist())
+
     def test_moi_and_rmsd_masks_compose_with_grouping_and_attrs(self):
         calls = []
 

@@ -11,6 +11,7 @@ from __future__ import annotations
 from pathlib import Path
 from dataclasses import replace
 from typing import Any, Literal
+from collections.abc import Mapping
 
 import pandas as pd
 
@@ -21,8 +22,10 @@ from frust.screen import read as read_screen
 from frust.stepper import Stepper
 from frust.tsguess.matching import parse_rpos_value
 from frust.tsguess.specs import BUILTIN_TS_SPECS
-from frust.tsguess2.specs import BUILTIN_TS_SPECS_V2
 from frust.tsguess2.specs import resolve_profile_specs
+from frust.tsguess2.specs import TSGuess2Spec, normalize_profile_id
+from frust.tsguess2.topologies import CORE_TOPOLOGIES
+from frust.structures.specs import get_state_spec
 from frust.structures import (
     StructureTarget,
     build as build_structure,
@@ -123,7 +126,7 @@ def _screen_ts_specs_for_backend(backend: str) -> dict[str, Any]:
     """Return supported screen TS specs for a backend name."""
     backend_key = str(backend).strip().lower()
     if backend_key == "tsguess2":
-        return BUILTIN_TS_SPECS_V2
+        return CORE_TOPOLOGIES
     if backend_key == "tsguess":
         return BUILTIN_TS_SPECS
     raise ValueError("ts_backend must be one of 'tsguess2' or 'tsguess'")
@@ -926,6 +929,8 @@ class ScreenTSWorkflow(BaseWorkflow):
         calculation_level: CalculationLevel | None = None,
         include_dft_rank_sp: bool | None = None,
         prune_initial: bool | dict[str, Any] = True,
+        candidate_specs: Mapping[str, TSGuess2Spec] | None = None,
+        random_seed: int | None = None,
     ) -> None:
         count = _resolve_count(validation_top_n=validation_top_n,
                                ranking_top_n=ranking_top_n,
@@ -966,6 +971,12 @@ class ScreenTSWorkflow(BaseWorkflow):
             else bool(include_dft_rank_sp)
         )
         self.prune_initial = prune_initial
+        self.candidate_specs = {str(state).upper(): spec for state, spec in (candidate_specs or {}).items()}
+        self.random_seed = random_seed
+        if any(not state.startswith("TS") for state in self.candidate_specs):
+            raise ValueError("screen_ts accepts transition-state candidates only; intermediate candidates require a minimum workflow")
+        if (self.candidate_specs or random_seed is not None) and self.ts_backend != "tsguess2":
+            raise ValueError("Experimental candidate specs and random_seed require ts_backend='tsguess2'")
 
     def _resolved_spec_profile(self) -> str:
         """Return the explicit or method-derived tsguess2 profile."""
@@ -987,6 +998,8 @@ class ScreenTSWorkflow(BaseWorkflow):
         return {
             "spec_profile": self._resolved_spec_profile(),
             "spec_match": self.spec_match,
+            **({"candidate_specs": self.candidate_specs} if self.candidate_specs else {}),
+            **({"random_seed": self.random_seed} if self.random_seed is not None else {}),
         }
 
     def _systems(self) -> pd.DataFrame:
@@ -1021,6 +1034,7 @@ class ScreenTSWorkflow(BaseWorkflow):
             for key, value in _screen_ts_specs_for_backend(self.ts_backend).items()
             if key.startswith("TS")
         }
+        supported_specs.update(self.candidate_specs)
         unknown = sorted(set(self.ts_types) - set(supported_specs))
         if unknown:
             supported = ", ".join(sorted(supported_specs))
@@ -1028,12 +1042,22 @@ class ScreenTSWorkflow(BaseWorkflow):
                 f"Unsupported screen TS types {unknown}. Supported: {supported}"
             )
         systems = self._systems()
-        if self.ts_backend == "tsguess2":
+        if self.ts_backend == "tsguess2" and not self.candidate_specs:
             resolve_profile_specs(
                 self.ts_types,
                 self._resolved_spec_profile(),
                 match=self.spec_match,
             )
+            return plan_targets(systems, states=self.ts_types)
+        if self.candidate_specs:
+            unknown_candidates = set(self.candidate_specs) - set(self.ts_types)
+            if unknown_candidates:
+                raise ValueError(f"candidate_specs includes unrequested states: {sorted(unknown_candidates)}")
+            for state, spec in self.candidate_specs.items():
+                if spec.name != state or spec.profile_id != normalize_profile_id(self._resolved_spec_profile()):
+                    raise ValueError("Candidate state and method/profile must match the requested state/profile")
+            resolve_profile_specs([state for state in self.ts_types if state not in self.candidate_specs],
+                                  self._resolved_spec_profile(), match=self.spec_match)
             return plan_targets(systems, states=self.ts_types)
         targets: list[WorkflowTarget] = []
         for _, system in systems.iterrows():
@@ -1099,6 +1123,8 @@ class ScreenTSWorkflow(BaseWorkflow):
                 ts_guess_factory=create_ts_guesses,
                 spec_profile=self._resolved_spec_profile(),
                 spec_match=self.spec_match,
+                candidate_specs=self.candidate_specs,
+                random_seed=self.random_seed,
             )
         screen_target = target.payload
         ts_type = str(screen_target["ts_type"].iloc[0]).upper()
@@ -1110,6 +1136,8 @@ class ScreenTSWorkflow(BaseWorkflow):
             backend=self.ts_backend,
             spec_profile=self._resolved_spec_profile(),
             spec_match=self.spec_match,
+            **({"candidate_specs": self.candidate_specs} if self.candidate_specs else {}),
+            **({"random_seed": self.random_seed} if self.random_seed is not None else {}),
         )
         df = guesses[ts_type]
         if save_dir is not None:
@@ -1311,8 +1339,7 @@ class Int3Workflow(BaseWorkflow):
             save_dir=save_dir,
             stepper_cls=Stepper,
             ts_guess_factory=create_ts_guesses,
-            spec_profile=self._resolved_spec_profile(),
-            spec_match=self.spec_match,
+            **self._structure_build_kwargs(),
         )
 
     def _step_type_for_target(self, target: WorkflowTarget) -> str | None:
@@ -1330,6 +1357,62 @@ class Int3Workflow(BaseWorkflow):
             calculation_level=self.calculation_level,
             include_dft_rank_sp=self.include_dft_rank_sp,
             ranking_top_n=self.uma_rank_top_n, validation_top_n=self.validation_top_n)
+
+
+class IntermediateWorkflow(Int3Workflow):
+    """Shared constrained preparation and released minimum validation.
+
+    Parameters
+    ----------
+    states : sequence of str
+        ``INT3`` is the productive HBpin bridge; ``INT4`` the bisaryl N-H/B-H
+        adduct; ``INT5`` the neutral diaryl catalyst; ``INT6`` the side-path
+        HBpin bridge. Requesting a state does not establish its stability.
+    candidate_specs : mapping or None, optional
+        Call-scoped geometry specifications for unregistered references.
+    random_seed : int or None, optional
+        Connected-graph embedding seed.
+    **kwargs
+        Shared calculation and sampling options accepted by ``int3``.
+    """
+
+    workflow_name = "intermediates"
+
+    def __init__(self, *, states, candidate_specs=None, random_seed=None, **kwargs):
+        super().__init__(**kwargs)
+        self.states = tuple(str(state).upper() for state in states)
+        if not self.states or len(set(self.states)) != len(self.states):
+            raise ValueError("states must be a nonempty sequence of distinct intermediates")
+        unknown = {
+            s
+            for s in self.states
+            if get_state_spec(s).state_kind != "constrained_minimum"
+        }
+        if unknown:
+            raise ValueError(f"Unsupported intermediate states: {sorted(unknown)}")
+        self.candidate_specs = {str(k).upper(): v for k, v in (candidate_specs or {}).items()}
+        if set(self.candidate_specs) - set(self.states):
+            raise ValueError("candidate_specs includes unrequested states")
+        self.random_seed = random_seed
+
+    def _build_targets(self):
+        """Resolve references and plan identities without running embedding."""
+        profile = self._resolved_spec_profile()
+        for state, spec in self.candidate_specs.items():
+            if spec.name != state or spec.profile_id != normalize_profile_id(profile):
+                raise ValueError("Candidate state and method/profile must match the requested state/profile")
+        resolve_profile_specs([s for s in self.states if s not in self.candidate_specs],
+                              profile, match=self.spec_match)
+        return plan_targets(self._systems(), states=self.states)
+
+    def _structure_build_kwargs(self):
+        """Use the same call-scoped references in previews and calculations."""
+        return {**super()._structure_build_kwargs(),
+                "candidate_specs": self.candidate_specs, "random_seed": self.random_seed}
+
+    def _step_type_for_target(self, target):
+        """Dispatch constraints by the actual intermediate state."""
+        return target.state_id
 
 
 def mols(
@@ -1578,6 +1661,8 @@ def screen_ts(
     calculation_level: CalculationLevel | None = None,
     include_dft_rank_sp: bool | None = None,
     prune_initial: bool | dict[str, Any] = True,
+    candidate_specs: Mapping[str, TSGuess2Spec] | None = None,
+    random_seed: int | None = None,
 ) -> ScreenTSWorkflow:
     """Create a substrate/catalyst transition-state screen workflow.
 
@@ -1620,6 +1705,18 @@ def screen_ts(
         environment from the same method family when an exact reference is
         missing; ``"exact"`` requires the requested environment. Neither
         policy crosses method families.
+    candidate_specs : mapping of str to TSGuess2Spec or None, optional
+        Explicit experimental templates for requested ``tsguess2`` states.
+        Their state and geometry-reference profile must match the request.
+        They remain unvalidated call-specific inputs and never activate a
+        production profile. Explicit ``"TS5"`` and ``"TS6"`` candidates seed
+        second C-H activation and bisaryl H2 elimination, respectively. ``"TS7"``
+        and ``"TS8"`` candidates use a bisaryl/HBpin exchange graph; their
+        chemical assignments still require mode and path validation. Target inspection
+        remains lightweight; embedding occurs only during execution.
+    random_seed : int or None, optional
+        RDKit conformer-generation seed for ``tsguess2``. ``None`` preserves
+        the backend default. Record a fixed seed when comparing ensembles.
     n_confs : int or None, optional
         Number of TS guess conformers generated per target.
     top_n : int, optional
@@ -1698,6 +1795,8 @@ def screen_ts(
         calculation_level=calculation_level,
         include_dft_rank_sp=include_dft_rank_sp,
         prune_initial=prune_initial,
+        candidate_specs=candidate_specs,
+        random_seed=random_seed,
     )
 
 
@@ -1812,6 +1911,91 @@ def int3(
         include_dft_rank_sp=include_dft_rank_sp,
         prune_initial=prune_initial,
     )
+
+
+def intermediates(
+    *,
+    states: tuple[str, ...] = ("INT3",),
+    csv_path: str | Path | None = None,
+    dataframe: pd.DataFrame | None = None,
+    method: MethodPlan | str | None = None,
+    screening: ScreeningPlan | str | None = None,
+    spec_profile: str = "auto",
+    spec_match: str = "prefer-exact",
+    candidate_specs: Mapping[str, TSGuess2Spec] | None = None,
+    random_seed: int | None = None,
+    n_confs: int | None = None,
+    top_n: int = 20,
+    validation_top_n: int | None = None,
+    ranking_top_n: int | None = None,
+    calculation_level: CalculationLevel = "full",
+    include_dft_rank_sp: bool | None = None,
+    prune_initial: bool | dict[str, Any] = True,
+) -> IntermediateWorkflow:
+    """Prepare and independently characterize connected intermediate minima.
+
+    For example, ``states=("INT4", "INT5")`` requests separate adduct and
+    diaryl targets. Construction references must exist or be supplied explicitly;
+    this request does not assume either state survives unconstrained relaxation.
+
+    Parameters
+    ----------
+    states : tuple of str, optional
+        ``INT3`` is the productive HBpin bridge, ``INT4`` the bisaryl N-H/B-H
+        adduct, ``INT5`` the neutral diaryl catalyst, and ``INT6`` the side-path
+        HBpin bridge. Stability and connectivity require result review.
+    csv_path, dataframe : path or pandas.DataFrame or None, optional
+        Component, expanded-system, or substrate-only input, as for ``int3``.
+    method, screening : MethodPlan, ScreeningPlan, str or None, optional
+        Final and screening calculators. Chemistry and candidate counts are
+        shared across UMA and DFT method plans.
+    spec_profile : str, optional
+        Geometry reference. ``auto`` follows the final method; an explicit
+        profile permits using a reviewed guess from a different final method.
+    spec_match : {"prefer-exact", "exact"}, optional
+        Require the exact environment or allow the same-method environment
+        fallback. Neither option permits a different-method fallback.
+    candidate_specs : mapping or None, optional
+        Call-scoped state specifications, without changing active profiles.
+    random_seed : int or None, optional
+        Connected-graph embedding seed.
+    n_confs, top_n : int or None, optional
+        Initial conformer count and broad screening retention limit.
+    validation_top_n, ranking_top_n : int or None, optional
+        Validation candidate count and optional reranking count. When both
+        are supplied they must agree. All retained validation candidates receive
+        released minimum optimization and frequencies, for UMA and DFT alike.
+    calculation_level : {"low_cost", "uma_ranked", "dft_ranked", "full"}, optional
+        Stop after screening, UMA ranking, DFT ranking, or complete released
+        minimum characterization, respectively.
+    include_dft_rank_sp : bool or None, optional
+        Include the optional DFT ranking single point. ``None`` follows the
+        method and screening plans.
+    prune_initial : bool or dict, optional
+        ``False`` preserves all starts; ``True`` uses default PRISM pruning;
+        a dictionary overrides its options.
+
+    Returns
+    -------
+    IntermediateWorkflow
+        Lazy workflow sharing native local/cluster execution and collection.
+        Missing reference profiles fail before a calculation starts.
+
+    Examples
+    --------
+    >>> import frust as ft
+    >>> wf = ft.workflows.intermediates(
+    ...     dataframe=systems, states=("INT3",), method="uma-gas",
+    ...     screening="uma-gas", n_confs=8, validation_top_n=3)
+    >>> targets = wf.targets()  # Inspection does not embed molecules.
+    """
+    return IntermediateWorkflow(
+        states=states, csv_path=csv_path, dataframe=dataframe, method=method,
+        screening=screening, spec_profile=spec_profile, spec_match=spec_match,
+        candidate_specs=candidate_specs, random_seed=random_seed,
+        n_confs=n_confs, top_n=top_n, validation_top_n=validation_top_n,
+        ranking_top_n=ranking_top_n, calculation_level=calculation_level,
+        include_dft_rank_sp=include_dft_rank_sp, prune_initial=prune_initial)
 
 
 def _ts_screening_stages(

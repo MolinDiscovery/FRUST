@@ -4,6 +4,8 @@ from __future__ import annotations
 
 from collections.abc import Iterable
 from pathlib import Path
+import hashlib
+import json
 from typing import Any
 
 import pandas as pd
@@ -175,11 +177,25 @@ def plan_targets(
             positions = rpos_values if spec.scope.endswith("_rpos") else (None,)
             for rpos in positions:
                 scope_key = _scope_key(spec.scope, system, rpos)
+                bound_identity = ()
+                if spec.uses_bound_role:
+                    from frust.structures.roles import effective_bound_role
+
+                    bound_smiles, bound_site = effective_bound_role(
+                        system.as_dict(), rpos
+                    )
+                    # Preserve default historical IDs; explicit defaults are identical.
+                    if (bound_smiles, bound_site) != (system.substrate_smiles, rpos):
+                        bound_identity = (bound_smiles, bound_site)
+                        scope_key = (*scope_key, *bound_identity)
                 dedup_key = (spec.state_id, *scope_key)
                 if dedup_key in seen:
                     continue
                 seen.add(dedup_key)
                 target_id = _target_id(spec.state_id, system, spec.scope, rpos)
+                if bound_identity:
+                    suffix = hashlib.sha256(json.dumps(bound_identity).encode()).hexdigest()[:12]
+                    target_id += f":bound-{suffix}"
                 targets.append(
                     StructureTarget(
                         target_id=target_id,

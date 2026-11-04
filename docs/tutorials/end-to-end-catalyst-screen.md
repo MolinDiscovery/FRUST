@@ -95,6 +95,33 @@ wf = ft.workflows.catalyst_screen(
 )
 ```
 
+The three method blocks are independent:
+
+| Block | Controls | This example |
+| --- | --- | --- |
+| `screening` | Inexpensive geometry generation and optimization | `"gxtb-default"` (GFN-FF + g-xTB) |
+| `ranking` | Optional single-point selection on screened geometries | omitted (implicit DFT ranking SP) |
+| `method` | Final validation calculator and thermochemistry | `"r2scan-3c"` (ORCA composite DFT) |
+
+Add a `ranking` block to select validation inputs with a different method:
+
+```python
+ranked_wf = ft.workflows.catalyst_screen(
+    csv_path="screen.csv",
+    screening="gxtb-default",
+    ranking="uma-alpb-chloroform",
+    ranking_top_n=1,
+    method="r2scan-3c",
+    level="full",
+    scope="barriers",
+)
+```
+
+Here g-xTB generates geometries, UMA + ALPB(chloroform) selects the best one,
+and ORCA `r2scan-3c` performs the final validation. See
+[UMA Method Choices](../catalyst-screens/uma-screening.md) for all UMA and
+hybrid combinations, including full UMA runs and `wb97_comparison` workflows.
+
 The default `dimer_reference="lowest"` adds `dimer`,
 `dimer_bh_bridged`, and `dimer_eight_membered` to the reference plan. FRUST
 selects one qualified topology per catalyst using Gibbs energy at `full` level
@@ -174,12 +201,15 @@ On the first run, the compact plan is similar to:
 | transition_states | TS4 | n_methyl_pyrrole__tmp_bcat | 2 | calculate |
 | references | ligand | n_methyl_pyrrole__tmp_bcat |  | calculate |
 | references | dimer | n_methyl_pyrrole__tmp_bcat |  | calculate |
+| references | dimer_bh_bridged | n_methyl_pyrrole__tmp_bcat |  | calculate |
+| references | dimer_eight_membered | n_methyl_pyrrole__tmp_bcat |  | calculate |
 | references | HBpin-mol | n_methyl_pyrrole__tmp_bcat |  | calculate |
 | references | HH | n_methyl_pyrrole__tmp_bcat |  | calculate |
 
 `ligand` is the free substrate in the established FRUST state naming, while
-`HH` is H2. An approved compatible reference changes only `action` from
-`calculate` to `reuse`.
+`HH` is H2. The three dimer rows are the candidate topologies compared by
+`dimer_reference="lowest"`. An approved compatible reference changes only
+`action` from `calculate` to `reuse`.
 
 Inspect the calculation stages and their cluster resource-group names:
 
@@ -726,3 +756,13 @@ The minimal executable companion is
 [`examples/end_to_end_catalyst_screen.ipynb`](https://github.com/MolinDiscovery/FRUST/blob/main/examples/end_to_end_catalyst_screen.ipynb).
 For a field-by-field description of the run bundle and reference library, see
 [End-To-End Calculation And Analysis](../catalyst-screens/end-to-end.md).
+
+Continue with:
+
+- [UMA Method Choices](../catalyst-screens/uma-screening.md) for UMA screening,
+  ranking, and validation combinations.
+- [Workflow Method Plans](../workflows/workflow-methods.md) for calculator
+  presets and stage replacement.
+- [Slurm Arrays](../cluster/arrays.md) for array-based cluster submission.
+- [Transition States](../troubleshooting/transition-states.md) for final TS
+  validation.

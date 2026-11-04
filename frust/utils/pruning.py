@@ -10,6 +10,7 @@ import numpy as np
 import pandas as pd
 
 from frust.schema import infer_group_columns, normalize_dataframe
+from frust.utils.RMSD import _coerce_coords_array
 from frust.utils.timing import (
     build_step_timing,
     elapsed_seconds,
@@ -162,7 +163,8 @@ def prune_conformers(
         if not all(list(row_atoms) == list(atoms) for row_atoms in work[atoms_col]):
             raise ValueError("All rows in a PRISM pruning group must have the same atom order.")
 
-        coords = np.stack([np.asarray(coords, dtype=float) for coords in work[resolved_coords_col]])
+        coords = np.stack([_coerce_coords_array(value, resolved_coords_col)
+                           for value in work[resolved_coords_col]])
         _validate_coords_shape(coords, atoms, resolved_coords_col)
 
         active_coords = coords

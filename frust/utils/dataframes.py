@@ -134,6 +134,13 @@ def merge_dataframe_attrs(
         key=str,
     )
     for key in attr_keys:
+        if key == "frust_optimization_checks":
+            records = {}
+            for _, attrs in attr_items:
+                for record in attrs.get(key, []):
+                    records[_attr_fingerprint(record)] = copy.deepcopy(record)
+            merged[key] = list(records.values())
+            continue
         if key == "frust_stereo":
             targets = {}
             for _, attrs in attr_items:

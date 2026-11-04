@@ -1676,3 +1676,90 @@ def test_screening_submission_uses_owned_submitit_directory_and_light_jobs(tmp_p
     submitted_workflow = target_submission[1][0]
     assert submitted_workflow._target_cache is None
     assert submitted_workflow.dataframe is None
+
+
+@pytest.mark.parametrize('state',['INT4','INT5','INT6'])
+@pytest.mark.parametrize('family',['uma','dft'])
+def test_intermediate_identity_review_qualifies_before_energy_and_is_source_bound(tmp_path,state,family):
+    from frust.screen.runs import _resolve_terms
+
+    root=tmp_path/'identity';root.mkdir()
+    manifest=_manifest();manifest['analysis_targets']=[]
+    method=ft.workflows.methods.preset('uma-gas' if family=='uma' else 'r2scan-3c')
+    manifest['method']=method.to_dict();manifest['method_fingerprint']=method.fingerprint()
+    manifest['calculation_results']={'intermediates':'intermediates.parquet'}
+    (root/'manifest.json').write_text(json.dumps(manifest))
+    rows=[_row(state,energy,{'B':1,'H':3},state_kind='constrained_minimum',rpos=2)
+          for energy in [-10.0,-9.9]]
+    for cid,row in enumerate(rows):row['cid']=cid
+    frame=pd.DataFrame(rows)
+    if family=='uma':
+        frame=frame.drop(columns=['dft_ts_opt-oc']).rename(columns={
+            'dft_opt-oc':'uma_min_opt-oc','dft_freq-EE':'uma_freq-EE',
+            'dft_freq-GE':'uma_freq-GE','dft_freq-vibs':'uma_freq-vibs','dft_freq-NT':'uma_freq-NT'})
+    attach_result_contract(frame,'constrained_minimum',dft=True,full_method=family,
+                           calculation_level='full',include_terminal_solv_sp=False,
+                           thermochemistry=ft.workflows.ThermochemistrySpec('frequency_gibbs'))
+    frame.to_parquet(root/'intermediates.parquet')
+    run=ft.screen.open_run(root).refresh_analysis();states=run.states()
+    assert set(states.quality_status)=={'review'}
+    assert len(run.review_queue())==2
+    identifiers=states.set_index('cid').result_id
+    run.set_identity_review(identifiers[0],'rejected',note='Zero imaginary frequencies, but wrong product identity')
+    run.set_identity_review(identifiers[1],'approved',note='Expected intermediate contacts and stable fragments')
+    states=run.states();assert states.set_index('cid').loc[0,'quality_status']=='invalid'
+    selected,problems=_resolve_terms(states,{state:1.0},system_name='pyrrole__NMe',
+                                    substrate_name='pyrrole',catalyst_name='NMe',rpos=2,select_candidates=True)
+    assert not problems and selected[state]['cid']==1
+    assert selected[state]['quality_status']=='ready'
+    assert run.review_queue().empty
+    frame.at[0,f'{family}_freq-EE']-=0.01
+    frame.to_parquet(root/'intermediates.parquet');run.refresh_analysis()
+    changed=run.states().set_index('cid').loc[0]
+    assert changed.result_id!=identifiers[0] and changed.review_status=='unreviewed'
+    assert changed.quality_status=='review'
+
+
+def test_identity_approval_does_not_override_invalid_minimum_curvature(tmp_path):
+    root=tmp_path/'identity';root.mkdir();manifest=_manifest();manifest['analysis_targets']=[]
+    manifest['calculation_results']={'intermediates':'intermediates.parquet'}
+    (root/'manifest.json').write_text(json.dumps(manifest))
+    row=_row('INT6',-10.0,{'B':1,'H':3},state_kind='constrained_minimum',rpos=2)
+    row['dft_freq-vibs'][0]['frequency']=-200.0
+    _write_result(root/'intermediates.parquet',[row],'constrained_minimum')
+    run=ft.screen.open_run(root).refresh_analysis();result_id=run.states().iloc[0].result_id
+    run.set_identity_review(result_id,'approved',note='Identity alone cannot fix a saddle')
+    assert run.states().iloc[0].quality_status=='invalid'
+
+
+@pytest.mark.parametrize('family',['uma','dft'])
+@pytest.mark.parametrize('state',['TS8','INT6'])
+def test_native_optimization_caps_override_identity_approval(tmp_path,family,state):
+    from frust.utils.optimization import _optimization_record
+
+    root=tmp_path/'native';root.mkdir();manifest=_manifest();manifest['analysis_targets']=[]
+    method=ft.workflows.methods.preset('uma-gas' if family=='uma' else 'r2scan-3c')
+    manifest['method']=method.to_dict();manifest['method_fingerprint']=method.fingerprint()
+    manifest['calculation_results']={'intermediates':'intermediates.parquet'}
+    (root/'manifest.json').write_text(json.dumps(manifest))
+    kind='transition_state' if state.startswith('TS') else 'constrained_minimum'
+    row=_row(state,-10.,{'B':1,'H':3},state_kind=kind,rpos=2)
+    row['cid']=0
+    frame=pd.DataFrame([row])
+    if family=='uma':
+        frame=frame.rename(columns={c:c.replace('dft_','uma_').replace('uma_opt-oc','uma_min_opt-oc') for c in frame if c.startswith('dft_')})
+    attach_result_contract(frame,kind,dft=True,full_method=family,calculation_level='full',include_terminal_solv_sp=False,thermochemistry=ft.workflows.ThermochemistrySpec('frequency_gibbs'))
+    stage=f'{family}_ts_opt' if kind=='transition_state' else ('uma_min_opt' if family=='uma' else 'dft_opt')
+    record=_optimization_record(frame.iloc[0],stage,frame.iloc[0][f'{stage}-oc'],'ORCA TERMINATED NORMALLY')
+    frame.attrs['frust_optimization_checks']=[record]
+    path=root/'intermediates.parquet';frame.to_parquet(path)
+    run=ft.screen.open_run(root).refresh_analysis();old=run.states().iloc[0].result_id
+    run.set_identity_review(old,'approved',note='Identity cannot override a native step cap')
+    capped=run.states().iloc[0]
+    assert capped.quality_status=='invalid'
+    assert 'native_optimization:not_converged' in capped.quality_issues
+    record['status']='converged';frame.to_parquet(path);run.refresh_analysis()
+    changed=run.states().iloc[0]
+    assert changed.result_id!=old and changed.review_status=='unreviewed'
+    run.set_identity_review(changed.result_id,'approved',note='New converged result reviewed')
+    assert run.states().iloc[0].quality_status=='ready'

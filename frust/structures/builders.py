@@ -27,6 +27,8 @@ def build(
     mol_factory: Any = create_mol_per_rpos,
     spec_profile: str = "wb97xd3-631g/gas",
     spec_match: str = "prefer-exact",
+    candidate_specs: dict | None = None,
+    random_seed: int | None = None,
 ) -> pd.DataFrame:
     """Construct an initial dataframe for one typed target.
 
@@ -44,6 +46,10 @@ def build(
         Method/environment geometry profile for connected constrained states.
     spec_match : {"prefer-exact", "exact"}, optional
         Geometry-profile matching policy.
+    candidate_specs : dict or None, optional
+        Call-scoped construction specifications; these do not activate profiles.
+    random_seed : int or None, optional
+        Seed used for connected-graph conformer embedding.
 
     Returns
     -------
@@ -68,6 +74,8 @@ def build(
             ts_guess_factory=ts_guess_factory,
             spec_profile=spec_profile,
             spec_match=spec_match,
+            candidate_specs=candidate_specs,
+            random_seed=random_seed,
         )
         if save_dir is not None:
             df.to_parquet(save_dir / "structure_guess.parquet")
@@ -106,7 +114,9 @@ def build(
         from rdkit import Chem
         from frust.structures.stereo import _stereo_spec
 
-        mol = Chem.MolFromSmiles(str(out.iloc[0]["smiles"]))
+        parser = Chem.SmilesParserParams()
+        parser.removeHs = not out.attrs.get("frust_tsguess2", {}).get("preserve_explicit_hydrogens", False)
+        mol = Chem.MolFromSmiles(str(out.iloc[0]["smiles"]), parser)
         if mol is not None:
             out.attrs["frust_stereo"] = _stereo_spec(mol)
     from frust.structures.stereo import check_geometry
@@ -192,6 +202,8 @@ def _build_connected(
     ts_guess_factory: Any,
     spec_profile: str,
     spec_match: str,
+    candidate_specs: dict | None = None,
+    random_seed: int | None = None,
 ) -> pd.DataFrame:
     if target.rpos is None:
         raise ValueError(f"Connected-graph target {target.target_id!r} requires rpos")
@@ -205,5 +217,8 @@ def _build_connected(
         backend="tsguess2",
         spec_profile=spec_profile,
         spec_match=spec_match,
+        **({"candidate_specs": {target.state_id: candidate_specs[target.state_id]}}
+           if candidate_specs and target.state_id in candidate_specs else {}),
+        **({"random_seed": random_seed} if random_seed is not None else {}),
     )
     return grouped[target.state_id]

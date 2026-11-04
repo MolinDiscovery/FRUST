@@ -123,7 +123,7 @@ def state_kind_for(state_id: object) -> str:
     text = str(state_id).upper()
     if text.startswith("TS"):
         return "transition_state"
-    if text == "INT3":
+    if text in {"INT3", "INT4", "INT5", "INT6"}:
         return "constrained_minimum"
     return "minimum"
 
