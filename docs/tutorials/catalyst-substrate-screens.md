@@ -12,6 +12,7 @@ component CSV
     -> substrate-catalyst systems
     -> tsguess2 dataframes
     -> inspect one target
+    -> composed catalyst_screen workflow
     -> local smoke test
     -> staged cluster run
 ```
@@ -41,12 +42,12 @@ components[["role", "compound_name", "rpos"]]
 | substrate | `methoxyfuran` | `3,5` |
 | catalyst | `tmp_bcat` |  |
 
-Blank substrate `rpos` means “use symmetry-unique aromatic C-H positions.” A
+Blank substrate `rpos` means "use symmetry-unique aromatic C-H positions." A
 single integer or a comma/semicolon-separated value selects explicit RDKit atom
 indices. Draw labels from the exact SMILES before entering them:
 
 ```python
-ft.DrawUniqueChGrid(components.loc[components["role"].eq("substrate"), "smiles"])
+ft.DrawUniqueChGrid(components.loc[components["role"].eq("substrate"), "smiles"].tolist())
 ```
 
 ## 2. Expand Components Into Systems
@@ -72,7 +73,7 @@ Use one conformer while checking the wiring:
 ```python
 ts_guesses = ft.screen.create_ts_guesses(
     systems,
-    ts_types=["TS1", "TS2", "TS4"],
+    ts_types=["TS1", "TS2", "TS3", "TS4"],
     n_confs=1,
 )
 
@@ -139,83 +140,114 @@ be used to infer constraints.
 
 ## 5. Build The Production Workflow
 
-For local-to-cluster work, use one workflow object rather than manually
-repeating the dataframe cascade:
+For local-to-cluster work, use `ft.workflows.catalyst_screen(...)`. It composes
+screening, optional ranking, and final validation into one workflow object that
+also calculates the molecular references needed for barrier equations.
 
 ```python
-wf = ft.workflows.screen_ts(
+wf = ft.workflows.catalyst_screen(
     csv_path="docs/examples/screen.csv",
-    ts_types=["TS1", "TS2", "TS4"],
+    screening="gxtb-default",
     method="r2scan-3c",
+    level="full",
+    scope="barriers",
     n_confs=None,
     top_n=20,
-    dft=True,
 )
 ```
 
-`wf.targets()` is lightweight: it expands systems, TS families, and reactive
-positions, but it does not embed conformers or run calculators.
+The three method blocks are independent:
+
+| Block | Controls | Example values |
+| --- | --- | --- |
+| `screening` | Inexpensive geometry generation and optimization | `"gxtb-default"`, `"uma-gas"`, `"uma-alpb-chloroform"` |
+| `ranking` | Optional single-point selection on screened geometries | `"uma-alpb-chloroform"`, `"wb97xd3-631g"` |
+| `method` | Final validation calculator and thermochemistry | `"r2scan-3c"`, `"uma-gas-opt-alpb-chloroform"` |
+
+`scope="barriers"` calculates TS1--TS4 plus the ligand, dimer, HBpin, and H2
+references required by the barrier equations. `scope="full_cycle"` additionally
+calculates catalyst, int1, int2, INT3, and borylated product states for a
+balanced catalytic-cycle profile.
+
+`wf.plan()` is calculation-free. It shows which structures will be calculated
+and which approved references can be reused:
 
 ```python
-targets = wf.targets()
-
-len(targets)
-targets[0].tag
-targets[0].metadata
+wf.plan()[["branch", "state_id", "system_name", "rpos", "action"]]
 ```
 
-The first target represents one `TS family + system + rpos`. Inspect the active
-calculation and scheduler groups before running:
+| branch | state_id | system_name | rpos | action |
+| --- | --- | --- | ---: | --- |
+| `transition_states` | `TS1` | `n_methyl_pyrrole__tmp_bcat` | 2 | `calculate` |
+| `transition_states` | `TS1` | `n_methyl_pyrrole__tmp_bcat` | 3 | `calculate` |
+| `transition_states` | `TS2` | `n_methyl_pyrrole__tmp_bcat` | 2 | `calculate` |
+| ... | ... | ... | ... | ... |
+| `references` | `ligand` | `n_methyl_pyrrole__tmp_bcat` |  | `calculate` |
+| `references` | `dimer` | `n_methyl_pyrrole__tmp_bcat` |  | `calculate` |
+| `references` | `HBpin-mol` | `n_methyl_pyrrole__tmp_bcat` |  | `calculate` |
+| `references` | `HH` | `n_methyl_pyrrole__tmp_bcat` |  | `calculate` |
+
+Inspect the active calculation and scheduler groups before running:
 
 ```python
 wf.show_stages(execution="dft_staged")[
-    ["group", "stage", "engine", "options", "constraint", "lowest"]
+    ["branch", "group", "stage", "engine", "options", "constraint", "lowest"]
 ]
 ```
 
-By default, `screen_ts(...)` inserts PRISM pruning after TS-guess generation.
-Install `prism-pruner` where the workflow runs, customize it with
+By default, `catalyst_screen(...)` inserts PRISM pruning after TS-guess
+generation. Install `prism-pruner` where the workflow runs, customize it with
 `prune_initial={...}`, or set `prune_initial=False` when every initial conformer
 must be retained.
 
-## 6. Run One Local Target
+!!! tip "TS-only screens use `screen_ts`"
 
-Before a production submission, run one target with the same chemistry and
-method plan:
+    When you only need transition states without molecular references, use
+    `ft.workflows.screen_ts(...)` instead. It accepts `screening` and `method`
+    but skips the reference branches.
+
+## 6. Run A Local Smoke Test
+
+Before a production submission, run the workflow locally with the same
+chemistry and method plan. `catalyst_screen` runs all branches together, so
+start with a small input or a cheap level:
 
 ```python
-df = wf.run(
-    targets=[0],
-    out_dir="debug/screen_ts",
+smoke = ft.workflows.catalyst_screen(
+    csv_path="docs/examples/screen.csv",
+    screening="gxtb-default",
+    method="r2scan-3c",
+    level="low_cost",
+    scope="barriers",
+    n_confs=1,
+    top_n=3,
+    prune_initial=False,
+)
+
+run = smoke.run(
+    out_dir="debug/catalyst_screen",
     execution="dft_staged",
     n_cores=4,
     mem_gb=20,
 )
 
-ft.show_steps(df)
+run.summary()
 ```
+
+`level="low_cost"` reports electronic barriers from the g-xTB screen without
+DFT or UMA refinement, Hessian, `OptTS`, frequency, or solvent stages.
+`wf.run(...)` returns a `ScreenRun` — the same portable analysis interface you
+get after a cluster submission. `run.states()` lists every calculated state
+with energies and quality flags; `run.barriers()` returns the barrier table.
 
 Successful targets are compacted by default to their final parquet plus
 `timing.json`. Use `target_retention="all"` when debugging and you want every
 intermediate checkpoint.
 
-For an inexpensive wiring check, make the workflow deliberately small:
+!!! tip "Single-target smoke tests use `screen_ts`"
 
-```python
-smoke = ft.workflows.screen_ts(
-    csv_path="docs/examples/screen.csv",
-    ts_types=["TS1"],
-    method="r2scan-3c",
-    n_confs=1,
-    top_n=3,
-    dft=False,
-    prune_initial=False,
-)
-```
-
-`dft=False` skips DFT geometry refinement, Hessian, `OptTS`, frequency, and
-solvent stages. The screen still applies the configured low-cost stages and the
-DFT pre-single-point cutoff.
+    `catalyst_screen` runs all branches together. To test one TS target in
+    isolation, use `ft.workflows.screen_ts(...)` with `wf.run(targets=[0], ...)`.
 
 ## 7. Submit The Same Workflow
 
@@ -225,11 +257,11 @@ from frust.cluster import ClusterConfig, Resources
 cluster = ClusterConfig(
     backend="slurm",
     partition="kemi1",
-    log_dir="logs/screen_ts",
+    log_dir="logs/catalyst_screen",
 )
 
 result = wf.submit(
-    out_dir="runs/screen_ts",
+    out_dir="runs/catalyst_screen",
     cluster=cluster,
     execution="dft_staged",
     stage_resources={
@@ -242,21 +274,22 @@ result = wf.submit(
 )
 ```
 
-The collector job writes `merged.parquet` and `collection_report.json` after
-the target chains finish. Read the merged dataframe and provenance normally:
+The finalization job writes a portable run bundle with per-branch
+`merged.parquet` files, `run_report.json`, and a snapshot of reused references.
+Open the bundle with `ft.screen.open_run(...)`:
 
 ```python
-import pandas as pd
-
-merged = pd.read_parquet(result.collection_output)
-ft.show_steps(merged)
-ft.show_timing(merged, detail="workflow")
+run = ft.screen.open_run(result.run_dir)
+run.summary()
+run.barriers()[["substrate_name", "ts_type", "rpos", "delta_e_kcal_mol", "quality_status"]]
 ```
 
 Continue with:
 
-- [Running Catalyst Screens](../catalyst-screens/running.md) for execution
-  modes, pruning, retention, and production checks.
+- [UMA Method Choices](../catalyst-screens/uma-screening.md) for UMA screening,
+  ranking, and validation combinations.
+- [End-To-End Calculation And Analysis](../catalyst-screens/end-to-end.md) for
+  reference libraries, dimer selection, and portable run bundles.
 - [Workflow Method Plans](../workflows/workflow-methods.md) for calculator
   presets and stage replacement.
 - [Transition States](../troubleshooting/transition-states.md) for final TS
