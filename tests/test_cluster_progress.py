@@ -1,5 +1,6 @@
 import subprocess
 from collections import Counter
+from datetime import datetime, timezone
 from types import SimpleNamespace
 
 import pytest
@@ -114,6 +115,7 @@ def test_cancelled_array_element_and_scheduler_outage(tmp_path, monkeypatch):
     snapshot = progress._read_snapshot(tmp_path)
     assert snapshot.branches[0][1] == {"succeeded": 1, "unverified": 2}
     assert snapshot.scheduler_errors == ["squeue", "sacct"]
+    assert snapshot.calculation.reason == "waiting for Slurm worker status"
 
 
 def test_retry_keeps_other_targets_and_rejects_old_final_report(tmp_path, monkeypatch):
@@ -148,14 +150,76 @@ def test_retry_keeps_other_targets_and_rejects_old_final_report(tmp_path, monkey
 
     report["submission"]["references"]["collection_report"] = str(refs / "collection_report_first.json")
     _atomic_write_submission_json(tmp_path / "run_report.json", report)
-    _mark_completed(tmp_path, "second", "screen_finalize", 0)
+    completed_ns = 1_794_000_060_000_000_000
+    _mark_completed(tmp_path, "second", "screen_finalize", 0, finished_ns=completed_ns)
+    monkeypatch.setattr(progress.time, "time", lambda: 1_794_000_120)
     assert progress._read_snapshot(tmp_path).finalization == "finished without a verified report"
     for status, display in [("partial", "finished with issues"), ("success", "ready")]:
         _atomic_write_submission_json(tmp_path / "run_report.json", {
             "overall_status": status,
             "submission": {"references": {"collection_report": str(refs / "collection_report_second.json")}},
+            "finalized_at": datetime.fromtimestamp(1_794_000_000, timezone.utc).isoformat(),
         })
-        assert progress._read_snapshot(tmp_path).finalization == display
+        snapshot = progress._read_snapshot(tmp_path)
+        assert snapshot.finalization == display
+        assert snapshot.ready_at == (completed_ns / 1e9 if status == "success" else None)
+        assert ("Results ready at:" in progress._format_snapshot(snapshot)) == (status == "success")
+
+
+def test_calculation_eta_accounts_for_running_and_queued_targets(tmp_path, monkeypatch):
+    now = datetime(2026, 11, 6, 18, 45, tzinfo=timezone.utc).timestamp()
+    monkeypatch.setattr(progress.time, "time", lambda: now)
+    _screen(tmp_path)
+    branch = tmp_path / "calculations" / "transition_states"
+    targets = [f"TS1__substrate__cat__r{index}" for index in range(13)]
+    attempt = _submit(branch, [tuple(targets[:10]), (targets[10],), (targets[11],), (targets[12],)],
+                      ["100_0", "100_1", "100_2", "100_3"], collector="101")
+    _atomic_write_submission_json(tmp_path / "manifest.json", {
+        "components": [{"compound_name": "substrate", "smiles": "c1ccccc1"},
+                       {"compound_name": "cat", "smiles": "C"}],
+        "systems": [{"system_name": "substrate__cat", "substrate_name": "substrate", "catalyst_name": "cat"}],
+    })
+
+    def stamp(seconds):
+        return datetime.fromtimestamp(seconds, timezone.utc).isoformat()
+
+    def record(index, identity, payload):
+        _atomic_write_submission_json(branch / ".frust" / "batches" / identity / f"{index}.json", payload)
+
+    record(0, attempt, {
+        "started_at": stamp(now - 1230), "finished_at": stamp(now - 30),
+        "targets": [
+            {"target": tag, "status": "success", "started_at": stamp(now - 1230 + index * 120),
+             "finished_at": stamp(now - 1110 + index * 120)}
+            for index, tag in enumerate(targets[:10])
+        ],
+    })
+
+    def running(index, identity, age):
+        record(index, identity, {
+            "started_at": stamp(now - age),
+            "targets": [{"target": targets[10], "status": "running", "started_at": stamp(now - age)}],
+        })
+
+    running(1, attempt, 30)
+    _slurm(monkeypatch, queue="100_1|RUNNING\n100_2|PENDING\n100_3|PENDING\n101|PENDING\n200|PENDING\n")
+    snapshot = progress._read_snapshot(tmp_path)
+    assert snapshot.calculation.seconds == pytest.approx(330)
+    output = progress._format_snapshot(snapshot)
+    finish = datetime.fromtimestamp(now + 600).astimezone().strftime("%a %d %b %H:%M %Z")
+    assert f"Calculation ETA: around {finish} at recent worker capacity" in output
+    assert "Results still need: transition states collection, finalization" in output
+
+    running(1, attempt, 150)
+    assert "outlasted comparable timings" in progress._read_snapshot(tmp_path).calculation.reason
+
+    retry = _submit(branch, [(targets[10],), (targets[11],), (targets[12],)], ["102_0", "102_1", "102_2"],
+                    created_ns=30, previous={tag: attempt for tag in targets[10:]})
+    running(0, retry, 30)
+    _slurm(monkeypatch, queue="102_0|RUNNING\n102_1|PENDING\n102_2|PENDING\n200|PENDING\n")
+    snapshot = progress._read_snapshot(tmp_path)
+    assert snapshot.branches[0][1]["succeeded"] == 10
+    assert snapshot.calculation.reason == "waiting for more completed target timings (Transition states)"
 
 
 def test_standalone_collector_reads_only_matching_report(tmp_path, monkeypatch):

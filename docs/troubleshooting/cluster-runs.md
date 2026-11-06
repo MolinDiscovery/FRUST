@@ -27,6 +27,22 @@ available records cannot establish the target state. Collection and screen
 finalization have their own status, so you can see when results are ready.
 Press `Ctrl+C` to close the view.
 
+When FRUST has enough comparable timings, the display can include an estimate
+for the remaining calculation workers.
+
+```text
+Calculation ETA: around Fri 06 Nov 21:40 CET at recent worker capacity
+Results still need: transition states collection, finalization
+Finalization: pending
+```
+
+The estimate uses the current attempt's completed targets, their molecular
+sizes and types, and the worker capacity seen over the last two hours. FRUST
+shows why an estimate is unavailable while workers warm up, after a stall,
+or when the remaining work has too few comparable timings. Collection and
+finalization can follow the calculation ETA. After verified finalization,
+the view shows the recorded results-ready time when available.
+
 ## Local Submission Test
 
 Before using Slurm, test the submission wiring locally:
