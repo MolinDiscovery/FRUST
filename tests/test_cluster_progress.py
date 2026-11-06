@@ -211,6 +211,11 @@ def test_calculation_eta_accounts_for_running_and_queued_targets(tmp_path, monke
     assert "Results still need: transition states collection, finalization" in output
 
     running(1, attempt, 150)
+    moderate_outlier = progress._read_snapshot(tmp_path)
+    assert moderate_outlier.calculation.reason is None
+    assert 240 < moderate_outlier.calculation.seconds < 300
+
+    running(1, attempt, 600)
     assert "outlasted comparable timings" in progress._read_snapshot(tmp_path).calculation.reason
 
     retry = _submit(branch, [(targets[10],), (targets[11],), (targets[12],)], ["102_0", "102_1", "102_2"],
@@ -220,6 +225,66 @@ def test_calculation_eta_accounts_for_running_and_queued_targets(tmp_path, monke
     snapshot = progress._read_snapshot(tmp_path)
     assert snapshot.branches[0][1]["succeeded"] == 10
     assert snapshot.calculation.reason == "waiting for more completed target timings (Transition states)"
+
+
+def test_calculation_eta_absorbs_runaway_worker_when_parallel_pool_dominates(tmp_path, monkeypatch):
+    now = datetime(2026, 11, 6, 18, 45, tzinfo=timezone.utc).timestamp()
+    monkeypatch.setattr(progress.time, "time", lambda: now)
+    _screen(tmp_path)
+    branch = tmp_path / "calculations" / "transition_states"
+    targets = [f"TS1__substrate__cat__r{index}" for index in range(30)]
+    batches = [tuple(targets[:10])] + [(tag,) for tag in targets[10:]]
+    jobs = [f"100_{index}" for index in range(len(batches))]
+    attempt = _submit(branch, batches, jobs, collector="101")
+    _atomic_write_submission_json(tmp_path / "manifest.json", {
+        "components": [{"compound_name": "substrate", "smiles": "c1ccccc1"},
+                       {"compound_name": "cat", "smiles": "C"}],
+        "systems": [{"system_name": "substrate__cat", "substrate_name": "substrate", "catalyst_name": "cat"}],
+    })
+
+    def stamp(seconds):
+        return datetime.fromtimestamp(seconds, timezone.utc).isoformat()
+
+    def record(index, payload):
+        _atomic_write_submission_json(branch / ".frust" / "batches" / attempt / f"{index}.json", payload)
+
+    record(0, {
+        "started_at": stamp(now - 1230), "finished_at": stamp(now - 30),
+        "targets": [
+            {"target": tag, "status": "success", "started_at": stamp(now - 1230 + index * 120),
+             "finished_at": stamp(now - 1110 + index * 120)}
+            for index, tag in enumerate(targets[:10])
+        ],
+    })
+    # One worker is at 5x the comparable duration, while three healthy workers and 16 queued batches dominate.
+    record(1, {
+        "started_at": stamp(now - 600),
+        "targets": [{"target": targets[10], "status": "running", "started_at": stamp(now - 600)}],
+    })
+    for index in (2, 3, 4):
+        record(index, {
+            "started_at": stamp(now - 30),
+            "targets": [{"target": targets[9 + index], "status": "running", "started_at": stamp(now - 30)}],
+        })
+    queue_lines = [f"100_{index}|RUNNING" for index in range(1, 5)]
+    queue_lines.extend(f"100_{index}|PENDING" for index in range(5, 21))
+    queue_lines.extend(["101|PENDING", "200|PENDING"])
+    _slurm(monkeypatch, queue="\n".join(queue_lines) + "\n")
+
+    snapshot = progress._read_snapshot(tmp_path)
+    assert snapshot.calculation.reason is None
+    assert 500 < snapshot.calculation.seconds < 700
+
+    # Once all other batches finish and only the runaway worker remains, withhold the ETA.
+    for index in range(2, 21):
+        record(index, {
+            "started_at": stamp(now - 180), "finished_at": stamp(now - 60),
+            "targets": [{"target": targets[9 + index], "status": "success",
+                         "started_at": stamp(now - 180), "finished_at": stamp(now - 60)}],
+        })
+    _slurm(monkeypatch, queue="100_1|RUNNING\n101|PENDING\n200|PENDING\n")
+    tail_snapshot = progress._read_snapshot(tmp_path)
+    assert tail_snapshot.calculation.reason == "a limiting active target has outlasted comparable timings (Transition states)"
 
 
 def test_standalone_collector_reads_only_matching_report(tmp_path, monkeypatch):

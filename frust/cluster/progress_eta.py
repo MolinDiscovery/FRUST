@@ -15,7 +15,11 @@ from frust.cluster.naming import sanitize_tag
 
 _LOOKBACK = 2 * 60 * 60
 _MIN_TIMINGS = 10
+_MIN_TAIL = 5
 _DRAWS = 256
+_RUNAWAY_RATIO = 4.0
+_RUNAWAY_MIN_SHIFT = 300.0
+_RUNAWAY_REL_SHIFT = 0.5
 
 
 @dataclass(frozen=True)
@@ -116,6 +120,27 @@ def _schedule(active: list[float], queued: list[float], slots: int) -> float:
     return max(workers)
 
 
+def _simulate_makespan(
+    draws: object, remaining: list[_Batch], overhead: float, slots: int,
+) -> float:
+    import numpy as np
+
+    live_costs, queued_costs = [], []
+    column = 0
+    for batch in remaining:
+        stop = column + len(batch.targets)
+        cost = draws[:, column:stop].sum(axis=1)
+        if batch.start is None:
+            queued_costs.append(cost + overhead)
+        else:
+            live_costs.append(cost)
+        column = stop
+    live_draws = np.asarray(live_costs).T
+    queued_draws = np.asarray(queued_costs).T if queued_costs else [[]] * _DRAWS
+    return float(np.median([_schedule(list(live), list(queued), slots)
+                            for live, queued in zip(live_draws, queued_draws)]))
+
+
 def _estimate_worker_time(
     history: list[_Batch],
     remaining: list[_Batch],
@@ -164,38 +189,51 @@ def _estimate_worker_time(
     elapsed = np.array([target.end - target.start for target, _, _ in matched])
     train = np.array([feature_row(kind, size) for _, kind, size in matched])
     fit, *_ = np.linalg.lstsq(train, np.log(elapsed), rcond=None)
-    residuals = np.exp(np.log(elapsed) - train @ fit)
+    log_residuals = np.log(elapsed) - train @ fit
+    residuals = np.exp(log_residuals)
+    max_residual = float(np.max(residuals))
+    tail_scale = float(np.clip(np.std(log_residuals), 0.10, 1.0))
+    min_tail = min(_MIN_TAIL, len(matched) // 5)
     typical = np.exp(np.array([feature_row(*entry) for entry in remaining_features]) @ fit)
     rng = np.random.default_rng(22)
     draws = typical * rng.choice(residuals, size=(_DRAWS, len(targets)))
+    runaways: list[tuple[int, float]] = []
     for column, target in enumerate(targets):
         if target.start is None:
             continue
         age = now - target.start
         residual = typical[column] * residuals - age
         residual = residual[residual > 0]
-        if not len(residual):
-            return _Estimate(reason="an active target has outlasted comparable timings")
-        draws[:, column] = rng.choice(residual, size=_DRAWS)
+        if len(residual) >= min_tail:
+            draws[:, column] = rng.choice(residual, size=_DRAWS)
+        else:
+            empirical_draws = round(_DRAWS * len(residual) / min_tail)
+            parts = []
+            if empirical_draws:
+                parts.append(rng.choice(residual, size=empirical_draws))
+            parts.append(age * np.expm1(rng.exponential(tail_scale, size=_DRAWS - empirical_draws)))
+            combined = np.concatenate(parts)
+            rng.shuffle(combined)
+            draws[:, column] = combined
+        if age > _RUNAWAY_RATIO * typical[column] * max_residual:
+            runaways.append((column, age))
 
     overheads = [max(0.0, batch.end - batch.start - sum(t.end - t.start for t in batch.targets))
                  for batch in history if batch.start is not None and batch.end is not None and batch.end <= now
                  and all(t.start is not None and t.end is not None for t in batch.targets)]
     overhead = float(np.median(overheads)) if overheads else 0.0
-    live_costs, queued_costs = [], []
-    column = 0
-    for batch in remaining:
-        stop = column + len(batch.targets)
-        cost = draws[:, column:stop].sum(axis=1)
-        if batch.start is None:
-            queued_costs.append(cost + overhead)
-        else:
-            live_costs.append(cost)
-        column = stop
-
     slots = _worker_slots(history, active, now)
-    live_draws = np.asarray(live_costs).T
-    queued_draws = np.asarray(queued_costs).T if queued_costs else [[]] * _DRAWS
-    seconds = float(np.median([_schedule(list(live), list(queued), slots)
-                              for live, queued in zip(live_draws, queued_draws)]))
+    seconds = _simulate_makespan(draws, remaining, overhead, slots)
+    if runaways:
+        low_draws = draws.copy()
+        high_draws = draws.copy()
+        for column, age in runaways:
+            low_draws[:, column] = 0.0
+            high_draws[:, column] = age
+        spread = (
+            _simulate_makespan(high_draws, remaining, overhead, slots)
+            - _simulate_makespan(low_draws, remaining, overhead, slots)
+        )
+        if spread > max(_RUNAWAY_MIN_SHIFT, _RUNAWAY_REL_SHIFT * seconds):
+            return _Estimate(reason="a limiting active target has outlasted comparable timings")
     return _Estimate(seconds=seconds)

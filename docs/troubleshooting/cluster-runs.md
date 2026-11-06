@@ -37,11 +37,14 @@ Finalization: pending
 ```
 
 The estimate uses the current attempt's completed targets, their molecular
-sizes and types, and the worker capacity seen over the last two hours. FRUST
-shows why an estimate is unavailable while workers warm up, after a stall,
-or when the remaining work has too few comparable timings. Collection and
-finalization can follow the calculation ETA. After verified finalization,
-the view shows the recorded results-ready time when available.
+sizes and types, and the worker capacity seen over the last two hours. A single
+slow target in a parallel worker pool does not hide the forecast while queued
+work dominates the finish time. FRUST shows why an estimate is unavailable
+while workers warm up, after a stall, when a limiting active target runs far
+past comparable timings, or when the remaining work has too few comparable
+timings. Collection and finalization can follow the calculation ETA. After
+verified finalization, the view shows the recorded results-ready time when
+available.
 
 ## Local Submission Test
 
