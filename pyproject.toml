@@ -43,6 +43,7 @@ docs = [
 include = ["frust*"]
 
 [project.scripts]
+frust = "frust.cli:main"
 merge_parquet = "frust.utils.analytics:main_merge_parquet"
 
 [tool.pytest.ini_options]
