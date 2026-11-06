@@ -3,6 +3,30 @@
 Cluster failures usually come from one of four places: input validation,
 environment setup, scheduler configuration, or a backend chemistry job.
 
+## Follow a Submission
+
+On the cluster, open a live view from the project directory.
+
+```bash
+frust progress
+```
+
+Pass the project directory from elsewhere, or pass a results directory directly.
+If the project contains one tracked run in an immediate subdirectory, FRUST
+opens it automatically. Use `--once` for a single snapshot.
+
+```bash
+frust progress ~/runs/anisole_screen --once
+```
+
+The view refreshes every 30 seconds for tracked Slurm submissions using
+`execution="single_job"`. The bar counts targets with a finished outcome,
+including those shown under **issues**. **Waiting in batch** means the worker
+has started and this target is waiting its turn. **Unverified** means the
+available records cannot establish the target state. Collection and screen
+finalization have their own status, so you can see when results are ready.
+Press `Ctrl+C` to close the view.
+
 ## Local Submission Test
 
 Before using Slurm, test the submission wiring locally:
