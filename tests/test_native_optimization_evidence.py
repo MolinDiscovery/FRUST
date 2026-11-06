@@ -73,38 +73,32 @@ def test_nonoptimization_actions_do_not_invent_convergence_checks(options):
     assert not _orca_optimization_requested(dict(options={"Opt": None}, xtra_inp_str="%geom Scan B 0 1 = 1, 2, 5 end end"))
 
 
-@pytest.mark.parametrize('family',['uma','dft'])
-def test_reference_cache_rejects_caps_and_rebinds_exact_native_evidence(tmp_path,monkeypatch,family):
-    from dataclasses import replace
-    import frust as ft
-    from frust.results import attach_result_contract
-    from frust.screen.references import ReferenceLibrary
+@pytest.mark.parametrize("method, stage", [
+    ("uma-gas-opt-alpb-chloroform", "uma_min_opt"),
+    ("wb97xd3-631g", "dft_opt"),
+])
+def test_collected_reference_keeps_geometry_bound_convergence(tmp_path, monkeypatch, method, stage):
+    from test_modular_workflow_validation import FakeStepper, run_mocked, workflow
 
-    if family=='uma':
-        from test_uma_full_analysis import _run_full_uma,_components
-        run=_run_full_uma(tmp_path/'source',monkeypatch)
-        frame=pd.read_parquet(run.path/'calculations/references/computed.parquet')
-        frame=frame.loc[frame.state_id.eq('ligand')].iloc[[0]].copy()
-        wf=ft.workflows.catalyst_screen(dataframe=_components(),ts_types=['TS1'],
-                                      method='uma-gas',screening='uma-gas',dimer_reference='dimer')
-        target=next(t for t in wf.children()['references'].targets() if t.state_id=='ligand')
-        method=wf.method;stage='uma_min_opt'
-    else:
-        from test_screen_end_to_end import _row,_components
-        wf=ft.workflows.catalyst_screen(dataframe=_components(),ts_types=['TS1'],method='r2scan-3c-solv',dimer_reference='dimer')
-        target=next(t for t in wf.children()['references'].targets() if t.state_id=='dimer')
-        method=wf.method;stage='dft_opt';frame=pd.DataFrame([_row('dimer',-40.,{'H':2})])
-        attach_result_contract(frame,'minimum',dft=True,include_terminal_solv_sp=False,
-                               thermochemistry=method.thermochemistry)
-    record=_optimization_record(frame.iloc[0],stage,frame.iloc[0][stage+'-oc'],'ORCA TERMINATED NORMALLY')
-    frame.attrs['frust_optimization_checks']=[record];library=ReferenceLibrary(tmp_path/'library').initialize()
-    with pytest.raises(ValueError,match='native optimization is not_converged'):
-        library.publish(frame,target,method)
-    record['status']='converged';published=library.publish(frame,target,method)
-    alias=replace(target,target_id='renamed:'+target.target_id,tag='renamed')
-    rebound=published.materialize(alias)
-    assert _optimization_check(rebound.attrs['frust_optimization_checks'],rebound.iloc[0],stage)['status']=='converged'
-    assert published.dataframe().attrs['frust_optimization_checks'][0]['structure_id']==record['structure_id']
-    record['output_sha256']='a'*64
-    changed=library.publish(frame,target,method)
-    assert changed.reference_id!=published.reference_id
+    calculate = FakeStepper.calculate
+
+    def with_native_evidence(cls, frame, name, kwargs):
+        result = calculate(frame, name, kwargs)
+        if name == stage and result["state_id"].iloc[0] == "ligand":
+            row = result.iloc[0]
+            record = _optimization_record(
+                row, stage, row[stage + "-oc"], "ORCA TERMINATED NORMALLY"
+            )
+            result.attrs["frust_optimization_checks"] = [record]
+        return result
+
+    monkeypatch.setattr(FakeStepper, "calculate", classmethod(with_native_evidence))
+    wf = workflow(method=method, dimer_reference="dimer")
+    run = run_mocked(wf, tmp_path, artifact_policy="compact")
+    frame = pd.read_parquet(run.path / "calculations/references/merged.parquet")
+    ligand = frame.loc[frame.state_id.eq("ligand")].iloc[0]
+    check = _optimization_check(frame.attrs["frust_optimization_checks"], ligand, stage)
+    assert check["status"] == "not_converged"
+    states = run.states().query("state_id == 'ligand'")
+    assert states.quality_status.tolist() == ["invalid"]
+    assert states.quality_issues.str.contains("native_optimization:not_converged").all()

@@ -90,7 +90,6 @@ def bisarylation_screen(*, systems=None, dataframe=None, csv_path=None,
                        n_confs=None, top_n=20, validation_top_n=None, ranking_top_n=None,
                        prune_initial=True, dimer_reference='lowest',
                        catalyst_stereoisomers='input', dimer_pairing='input',
-                       reference_store=None, reuse_policy='approved',
                        g_corrections_kcal_mol=None) -> CatalystScreenWorkflow:
     """Build and review the second-arylation branch from native chemical inputs.
 
@@ -147,11 +146,6 @@ def bisarylation_screen(*, systems=None, dataframe=None, csv_path=None,
     dimer_pairing : {"input"}, optional
         Use dimers of the supplied catalyst configuration. Racemic pairing is
         currently unsupported and raises before calculation or embedding.
-    reference_store : path-like or None, optional
-        Shared immutable minimum-reference library for ordinary reference roles.
-    reuse_policy : {"approved", "auto_valid"}, optional
-        Reuse explicitly approved references, or references that meet the shared
-        numerical policy. This never approves a TS or pathway automatically.
     g_corrections_kcal_mol : mapping or None, optional
         Explicit per-balanced-state Gibbs corrections. No productive-cycle
         association correction is assumed for this different inventory.
@@ -199,7 +193,5 @@ def bisarylation_screen(*, systems=None, dataframe=None, csv_path=None,
         dimer_reference=dimer_reference,
         catalyst_stereoisomers=catalyst_stereoisomers,
         dimer_pairing=dimer_pairing,
-        reference_store=reference_store,
-        reuse_policy=reuse_policy,
         g_corrections_kcal_mol=g_corrections_kcal_mol,
     )

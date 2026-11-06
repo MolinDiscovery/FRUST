@@ -10,8 +10,8 @@ screen.csv
     -> submit TSs and molecular references together
     -> open the portable result bundle
     -> review TS vibrations
-    -> approve reference structures once
-    -> reuse those references in later screens
+    -> inspect reference structures and their quality
+    -> trace each barrier to its saved reference results
 ```
 
 The first example uses `scope="barriers"`. It calculates TS1--TS4 and the four
@@ -44,43 +44,7 @@ ft.DrawUniqueChGrid(["CN1C=CC=C1"])
     small screen. Add substrates, catalysts, and reactive positions only after
     that path works.
 
-## 2. Choose A Reference Library
-
-References are ordinary scientific files rather than an opaque cache. Choose a
-shared directory visible from the cluster:
-
-```bash
-export FRUST_REFERENCE_STORE=/groups/kemi/jmni/grow/frust_reference_library
-```
-
-Alternatively, pass the path explicitly when constructing the workflow. The
-environment variable is convenient because the same notebook can be moved
-between run directories without editing it.
-
-The library will eventually look like:
-
-```text
-frust_reference_library/
-├── index.parquet
-├── reviews.csv
-└── entries/
-    ├── screening/
-    │   ├── low_cost/
-    │   └── dft_ranked/
-    └── references/
-        └── full/
-            └── r2scan_3c/
-                └── dimer/
-                    └── tmp_bcat/
-                        └── ref_<content-id>/
-```
-
-The compatibility key represents the molecule, method, and calculation
-protocol. The reference ID also fingerprints the resulting geometry, energies,
-and vibrations. Consequently, a changed recalculation can coexist with the old
-entry instead of overwriting it.
-
-## 3. Construct The Complete Workflow
+## 2. Construct The Complete Workflow
 
 ```python
 import frust as ft
@@ -184,32 +148,32 @@ wf.method.fingerprint()
 
 No structures or calculators have run at this point.
 
-## 4. Inspect What Will Be Calculated
+## 3. Inspect What Will Be Calculated
 
 ```python
 plan = wf.plan()
-plan[["branch", "state_id", "system_name", "rpos", "action"]]
+plan[["branch", "state_id", "system_name", "rpos"]]
 ```
 
-On the first run, the compact plan is similar to:
+For this input, the compact plan looks like this.
 
-| branch | state_id | system_name | rpos | action |
-| --- | --- | --- | ---: | --- |
-| transition_states | TS1 | n_methyl_pyrrole__tmp_bcat | 2 | calculate |
-| transition_states | TS2 | n_methyl_pyrrole__tmp_bcat | 2 | calculate |
-| transition_states | TS3 | n_methyl_pyrrole__tmp_bcat | 2 | calculate |
-| transition_states | TS4 | n_methyl_pyrrole__tmp_bcat | 2 | calculate |
-| references | ligand | n_methyl_pyrrole__tmp_bcat |  | calculate |
-| references | dimer | n_methyl_pyrrole__tmp_bcat |  | calculate |
-| references | dimer_bh_bridged | n_methyl_pyrrole__tmp_bcat |  | calculate |
-| references | dimer_eight_membered | n_methyl_pyrrole__tmp_bcat |  | calculate |
-| references | HBpin-mol | n_methyl_pyrrole__tmp_bcat |  | calculate |
-| references | HH | n_methyl_pyrrole__tmp_bcat |  | calculate |
+| branch | state_id | system_name | rpos |
+| --- | --- | --- | ---: |
+| transition_states | TS1 | n_methyl_pyrrole__tmp_bcat | 2 |
+| transition_states | TS2 | n_methyl_pyrrole__tmp_bcat | 2 |
+| transition_states | TS3 | n_methyl_pyrrole__tmp_bcat | 2 |
+| transition_states | TS4 | n_methyl_pyrrole__tmp_bcat | 2 |
+| references | ligand | n_methyl_pyrrole__tmp_bcat |  |
+| references | dimer | n_methyl_pyrrole__tmp_bcat |  |
+| references | dimer_bh_bridged | n_methyl_pyrrole__tmp_bcat |  |
+| references | dimer_eight_membered | n_methyl_pyrrole__tmp_bcat |  |
+| references | HBpin-mol | n_methyl_pyrrole__tmp_bcat |  |
+| references | HH | n_methyl_pyrrole__tmp_bcat |  |
 
 `ligand` is the free substrate in the established FRUST state naming, while
 `HH` is H2. The three dimer rows are the candidate topologies compared by
-`dimer_reference="lowest"`. An approved compatible reference changes only
-`action` from `calculate` to `reuse`.
+`dimer_reference="lowest"`. FRUST plans each required molecular reference once
+for the campaign, even if several barriers depend on it.
 
 Inspect the calculation stages and their cluster resource-group names:
 
@@ -228,7 +192,7 @@ ft.plot_mols(preview)
 Both `plan()` and `show_stages()` are calculation-free. `preview()` generates
 and embeds only the selected structure; it does not run xTB, g-xTB, or ORCA.
 
-## 5. Submit TSs And References Together
+## 4. Submit TSs And References Together
 
 ```python
 from frust.cluster import ClusterConfig, Resources
@@ -340,7 +304,7 @@ missing or incomplete.
     input and protocol supports recovery, but changing the method, input,
     corrections, or conformer protocol raises instead of mixing calculations.
 
-## 6. Open The Portable Run
+## 5. Open The Portable Run
 
 After the finalization job completes:
 
@@ -402,7 +366,7 @@ states.query("state_id == 'dimer'")[[
     barriers and profiles; it does not mean the structure has passed scientific
     validation.
 
-## 7. Read The Barrier Table
+## 6. Read The Barrier Table
 
 ```python
 barriers = run.barriers()
@@ -475,7 +439,7 @@ All energy differences are converted from Hartree to kcal/mol. The literal
 `-1.89 kcal/mol` correction is Gibbs-only: it is recorded separately and is
 never silently added to `delta_e_kcal_mol`.
 
-## 8. Review Transition-State Modes
+## 7. Review Transition-State Modes
 
 This section applies only to `level="full"`. Electronic-only runs have no
 frequency calculation, so `run.review_queue()` is empty and ΔE quality is
@@ -520,120 +484,32 @@ Reviews are tied to the result geometry, energy, frequencies, and normal-mode
 content. A changed recalculation receives a new result ID and must be reviewed
 again.
 
-## 9. Inspect And Approve Molecular References
+## 8. Inspect Molecular References
 
-Full references are checked for normal termination, complete thermochemistry,
-and their vibration pattern before publication. A minimum with zero imaginary
-frequencies receives `validation_status="auto_valid"`. A minimum with exactly
-one weak imaginary frequency (`abs(frequency) < 50 cm^-1`) is published with
-`validation_status="review"`, while stronger or multiple imaginary frequencies
-are retained in the run but not published to the reference library.
-
-Neither `auto_valid` nor `review` full references are reused by the default
-`reuse_policy="approved"` until you inspect and approve them. A review-quality
-reference remains ineligible for `reuse_policy="auto_valid"`, even after manual
-approval.
-
-`low_cost` and `dft_ranked` entries are stored separately as screening
-artifacts. Exact protocol matches can be reused automatically because they are
-not presented as approved DFT minima or thermochemical references. Their XYZ,
-result parquet, metadata, and retained calculator evidence remain inspectable.
+Find the exact free-substrate and dimer results used by a TS1 barrier in the
+run's state table.
 
 ```python
-library.search(calculation_level="dft_ranked")[[
-    "reference_id",
-    "state_id",
-    "electronic_energy_hartree",
-]]
+import json
+
+ts1 = run.barriers().query("ts_type == 'TS1'").iloc[0]
+reference_ids = json.loads(ts1["reference_result_ids"]).values()
+run.states().loc[
+    lambda states: states["result_id"].isin(reference_ids),
+    ["state_id", "cid", "free_energy_hartree", "quality_status", "quality_issues"],
+]
 ```
 
-```python
-import os
+A full reference with one imaginary mode below 50 cm⁻¹ in magnitude receives
+`review` status. Stronger or multiple imaginary modes make the result
+`invalid`. Both remain visible so you can trace their effect on the barriers.
+The `terminal_results` section of `run_report.json` lists missing reference
+targets and targets with no qualified candidate.
 
-library = ft.screen.open_reference_library(
-    os.environ["FRUST_REFERENCE_STORE"]
-)
-
-reference_queue = library.review_queue()
-reference_queue[[
-    "reference_id",
-    "state_id",
-    "compound_name",
-    "formula",
-    "method",
-    "validation_status",
-    "free_energy_hartree",
-]]
-```
-
-Open one entry and inspect all of its evidence:
-
-```python
-reference_id = reference_queue.iloc[0]["reference_id"]
-reference = library.get(reference_id)
-
-reference.summary()
-reference.view()
-reference.plot_vibrations(mode=0)
-reference.xyz_path()
-reference.files()
-reference.dataframe()
-```
-
-`reference.files()` exposes retained ORCA inputs and outputs. `result.parquet`
-contains the complete canonical FRUST row, while `metadata.json` records the
-method plan, thermochemistry, validation, provenance, and checksums.
-
-Approve the entry only after inspection:
-
-```python
-reference.approve(
-    reviewer="JMN",
-    note="Correct tmp_bcat dimer minimum and expected connectivity.",
-)
-```
-
-If inspection fails, use `reference.reject(...)` *instead of* the approval
-call. Rejection preserves the entry for auditing but excludes it from reuse;
-for example, the review note could be `"Collapsed to the wrong dimer
-geometry."`.
-
-!!! note "Approval affects later runs"
-
-    A newly calculated reference is already part of the run that produced it.
-    Approval controls whether future workflows may reuse that shared entry.
-    Inspect a `validation_status="review"` entry particularly carefully before
-    approving it; reoptimization is often preferable when the mode is chemically
-    meaningful rather than a weak peripheral motion.
-
-## 10. Confirm Reuse Before The Next Submission
-
-After approving the references, construct the next workflow normally:
-
-```python
-next_wf = ft.workflows.catalyst_screen(
-    csv_path="screen.csv",
-    level="full",
-    method="r2scan-3c",
-    scope="barriers",
-)
-
-next_wf.plan().query("branch == 'references'")[[
-    "state_id",
-    "action",
-    "reference_id",
-]]
-```
-
-The compatible approved rows now show `action="reuse"`. Every reused entry is
-copied into the new run bundle, including its XYZ, result parquet, metadata,
-review, checksums, and retained calculator files. The completed run therefore
-does not depend on the shared library remaining available.
-
-## 11. Move And Reopen The Results
+## 9. Move And Reopen The Results
 
 Copy the whole `results/` directory from the cluster. Analysis does not require
-the original CSV, workflow object, scheduler, or shared reference library:
+the original CSV, workflow object, or scheduler:
 
 ```python
 downloaded = ft.screen.open_run("downloaded/results")
@@ -650,15 +526,10 @@ results/
 ├── manifest.json
 ├── run_report.json
 ├── calculations/
-│   ├── transition_states/
+│   ├── transition_states/merged.parquet
 │   └── references/
-│       ├── computed.parquet
-│       ├── reused.parquet
 │       ├── merged.parquet
-│       ├── publication_report.json
-│       ├── index.parquet
-│       ├── reviews.csv
-│       └── entries/
+│       └── tiers/<level>/merged.parquet
 └── analysis/
     ├── states.parquet
     ├── barriers.parquet
@@ -666,7 +537,7 @@ results/
     └── report.json
 ```
 
-## 12. Extend The Run To A Full Cycle
+## 10. Extend The Run To A Full Cycle
 
 Use a new output directory and change the scope:
 
@@ -678,7 +549,7 @@ cycle_wf = ft.workflows.catalyst_screen(
     scope="full_cycle",
 )
 
-cycle_wf.plan()[["branch", "state_id", "action"]]
+cycle_wf.plan()[["branch", "state_id", "options"]]
 ```
 
 This adds the isolated catalyst, `int1`, `int2`, `HBpin-ligand`, and `INT3`.
@@ -741,19 +612,15 @@ incomplete states by default.
 
 | Symptom | Meaning | Next action |
 | --- | --- | --- |
-| Reference plan still says `calculate` | No compatible approved entry exists | Check method/protocol fingerprints and approve the intended entry |
 | Barrier is `incomplete` | At least one equation term is missing | Inspect `run.states()` and child collection reports |
 | Barrier is `invalid` | A dependency failed termination, vibration, composition, or review checks | Read `quality_issues` and inspect the raw result |
-| Dimer and barriers are `review` | The dimer has one weak imaginary mode below 50 cm^-1 | Inspect the dimer mode; approve the library entry only if scientifically acceptable, otherwise reoptimize |
-| Reference row exists but was not published | Automatic reference validation rejected it | Read `calculations/references/publication_report.json` for the explicit reason |
+| Dimer and barriers are `review` | The dimer has one weak imaginary mode below 50 cm^-1 | Inspect the dimer mode and decide whether to reoptimize |
 | TS remains `review` after approval | A low-frequency flag remains or a different result ID was approved | Compare the queue and approved `result_id` |
 | `FileExistsError` for `out_dir` | Existing manifest has a different scientific signature | Choose a new directory for the changed run |
-| Reference checksum failure | An entry file changed after publication | Preserve it for diagnosis and publish a clean recalculation |
-| Reused ligand exists but barrier says `missing:ligand` | A legacy run snapshot retained the publishing run's component label | Dry-run `ft.screen.repair_reference_bindings("results")`, inspect the mapping, then repeat with `apply=True` |
 
 The minimal executable companion is
 [`examples/end_to_end_catalyst_screen.ipynb`](https://github.com/MolinDiscovery/FRUST/blob/main/examples/end_to_end_catalyst_screen.ipynb).
-For a field-by-field description of the run bundle and reference library, see
+For a field-by-field description of the run bundle, see
 [End-To-End Calculation And Analysis](../catalyst-screens/end-to-end.md).
 
 Continue with:

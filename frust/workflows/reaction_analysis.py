@@ -69,11 +69,6 @@ def reaction_tables(
     records = _connection_records(root)
     for original in manifest["reaction_plan"]["cases"]:
         case = deepcopy(original)
-        aliases = states.attrs.get("frust_identity_aliases", {})
-        case["bindings"] = {
-            role: aliases.get(identity, identity)
-            for role, identity in case["bindings"].items()
-        }
         case.setdefault("reviewed_result_ids", {})
         # Legacy pathway decisions are an explicit adapter, not chemistry inference.
         if case["network_id"] == "bisarylation":

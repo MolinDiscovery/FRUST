@@ -238,8 +238,8 @@ submitted = screen.submit(
 )
 ```
 
-Only references marked `calculate` receive workers; cached references marked
-`reuse` are snapshotted. Wait for `submitted.finalization_job_id`, which builds
+Each required reference target is scheduled once per campaign. Wait for
+`submitted.finalization_job_id`, which builds
 the portable analysis bundle. A screen report's `success` means finalization
 completed; `partial` means results are incomplete; `failed` can indicate a
 missing required collection report. Review scientific quality separately.
@@ -250,7 +250,7 @@ complete branches, including earlier successful targets. Keep the same output
 directory and scientific settings. Screen retries also support
 `artifact_policy="compact"`. Partial runs retain the final and tier snapshots
 needed for recollection, and failed targets retain their checkpoints.
-The original reference reuse plan and submission records are retained.
+The original target plan and submission records are retained.
 A successfully finalized screen rejects further retries, including after its
 per-target files have been cleaned up. Use a new output directory for more work.
 

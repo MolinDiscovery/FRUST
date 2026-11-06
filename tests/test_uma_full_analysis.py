@@ -14,7 +14,6 @@ import pytest
 import frust as ft
 from frust.stepper import Stepper
 from frust.screen.runs import ScreenRun
-from frust.screen.references import ReferenceLibrary, reference_identity
 from frust.results import free_energy_components, result_column
 from frust.structures.specs import DIMER_STATES
 from frust.workflows.factories import MolsWorkflow, ScreenTSWorkflow
@@ -311,77 +310,6 @@ def test_full_uma_rejects_mixed_plan():
         )
 
 
-def test_uma_reference_identity_separates_gas_and_alpb():
-    common = dict(dataframe=_components(), ts_types=["TS1"], level="full")
-    gas = ft.workflows.catalyst_screen(
-        **common, screening="uma-gas", method="uma-gas"
-    )
-    alpb = ft.workflows.catalyst_screen(
-        **common, screening="uma-alpb-chloroform",
-        method="uma-alpb-chloroform",
-    )
-    gas_target = gas.children()["references"].targets()[0]
-    alpb_target = alpb.children()["references"].targets()[0]
-    gas_key, gas_identity = reference_identity(
-        gas_target, gas.method, protocol=gas._reference_protocol()
-    )
-    alpb_key, alpb_identity = reference_identity(
-        alpb_target, alpb.method, protocol=alpb._reference_protocol()
-    )
-    assert gas_key != alpb_key
-    assert gas_identity["active_method"]["result_family"] == "uma"
-    assert gas_identity["active_method"]["stages"]["uma_freq"]["kwargs"].get(
-        "uma_xtb_alpb"
-    ) is None
-    assert alpb_identity["active_method"]["stages"]["uma_freq"]["kwargs"][
-        "uma_xtb_alpb"
-    ] == "chloroform"
-
-
-def test_uma_reference_publication_rejects_wrong_environment(tmp_path, monkeypatch):
-    gas_run = _run_full_uma(tmp_path, monkeypatch)
-    gas_references = pd.read_parquet(
-        gas_run.path / "calculations/references/computed.parquet"
-    )
-    gas_ligand = gas_references[
-        gas_references["state_id"].eq("ligand")
-    ].copy()
-    alpb = ft.workflows.catalyst_screen(
-        dataframe=_components(), ts_types=["TS1"],
-        screening="uma-alpb-chloroform", method="uma-alpb-chloroform",
-        level="full", dimer_reference="dimer",
-    )
-    ligand_target = next(
-        target for target in alpb.children()["references"].targets()
-        if target.state_id == "ligand"
-    )
-    library = ReferenceLibrary(tmp_path / "wrong_environment").initialize()
-    with pytest.raises(ValueError, match="full UMA model and environment"):
-        library.publish(
-            gas_ligand, ligand_target, alpb.method,
-            protocol=alpb._reference_protocol(), calculation_level="full",
-        )
-
-    gas_ligand = gas_ligand.copy()
-    gas_ligand.at[gas_ligand.index[0], "uma_freq-vibs"] = [
-        {"frequency": -120.0, "mode": []},
-        {"frequency": -40.0, "mode": []},
-    ]
-    gas_workflow = ft.workflows.catalyst_screen(
-        dataframe=_components(), ts_types=["TS1"], screening="uma-gas",
-        method="uma-gas", level="full", dimer_reference="dimer",
-    )
-    gas_target = next(
-        target for target in gas_workflow.children()["references"].targets()
-        if target.state_id == "ligand"
-    )
-    with pytest.raises(ValueError, match="imaginary frequencies"):
-        library.publish(
-            gas_ligand, gas_target, gas_workflow.method,
-            protocol=gas_workflow._reference_protocol(), calculation_level="full",
-        )
-
-
 def test_approved_uma_mode_selects_reviewed_candidate(tmp_path, monkeypatch):
     run = _run_full_uma(tmp_path, monkeypatch)
     candidates = run.states().query("state_id == 'TS1'")
@@ -521,7 +449,7 @@ def test_mixed_uma_stage_graphs_cover_ts_and_all_reference_alternatives():
 
 
 @pytest.mark.parametrize("artifact_policy", ["standard", "compact"])
-def test_mixed_uma_portable_energy_assembly_and_reference_cache(tmp_path, monkeypatch, artifact_policy):
+def test_mixed_uma_portable_energy_assembly(tmp_path, monkeypatch, artifact_policy):
     run = _run_full_uma(
         tmp_path, monkeypatch, environment=_MIXED_UMA, artifact_policy=artifact_policy
     )
@@ -546,29 +474,6 @@ def test_mixed_uma_portable_energy_assembly_and_reference_cache(tmp_path, monkey
     reopened = ScreenRun(run.path).refresh_analysis()
     pd.testing.assert_frame_equal(run.barriers(), reopened.barriers())
     pd.testing.assert_frame_equal(run.candidate_barriers(), reopened.candidate_barriers())
-
-
-def test_mixed_uma_cache_identity_and_wrong_frequency_provenance(tmp_path, monkeypatch):
-    workflow = ft.workflows.catalyst_screen(
-        dataframe=_components(), ts_types=["TS1"], screening="uma-gas",
-        method=_MIXED_UMA, level="full", dimer_reference="dimer",
-    )
-    target = next(t for t in workflow.children()["references"].targets() if t.state_id == "ligand")
-    key, identity = reference_identity(target, workflow.method, protocol=workflow._reference_protocol())
-    assert "uma_solv_sp" in identity["active_method"]["stages"]
-    gas = ft.workflows.methods.preset("uma-gas")
-    gas_key, _ = reference_identity(target, gas, protocol=workflow._reference_protocol())
-    assert key != gas_key
-    run = _run_full_uma(tmp_path, monkeypatch, environment=_MIXED_UMA)
-    refs = pd.read_parquet(run.path / "calculations/references/computed.parquet")
-    ligand = refs[refs["state_id"].eq("ligand")].copy()
-    library = ReferenceLibrary(tmp_path / "library").initialize()
-    library.publish(ligand, target, workflow.method, protocol=workflow._reference_protocol())
-    ligand.attrs["frust_results"]["energy_protocol"]["frequency_calculator"]["kwargs"][
-        "uma_xtb_alpb"
-    ] = "chloroform"
-    with pytest.raises(ValueError, match="UMA thermochemistry"):
-        library.publish(ligand, target, workflow.method, protocol=workflow._reference_protocol())
 
 
 def test_mixed_uma_barrier_rejects_incompatible_thermal_protocol(tmp_path, monkeypatch):

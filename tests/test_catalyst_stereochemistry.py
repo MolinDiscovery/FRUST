@@ -134,7 +134,7 @@ def test_native_plan_method_independent_and_manifest_isolated(method, tmp_path):
     assert len({t['catalyst_name'] for t in manifest['analysis_targets']}) == 2
     old = ft.workflows.catalyst_screen(systems=systems(), method=method, n_confs=1)
     assert len(old.children()['transition_states'].targets()) == 4
-    assert workflow._reference_protocol() != old._reference_protocol()
+    assert manifest["validation_top_n"] == 3
 
 
 def test_racemic_reference_requires_each_pair_and_shares_exact_result():
@@ -245,23 +245,11 @@ def test_explicit_stereo_without_atom_mapping_is_unavailable():
     assert _check_row_stereo({'smiles': 'C[C@H](F)Cl'}, None, None)['status'] == 'unavailable'
 
 
-def test_cache_keys_distinguish_racemic_pairs_and_historical_homodimers():
-    from frust.screen.references import reference_identity
-    method = ft.workflows.methods.preset('wb97xd3-631g')
-    resolved = resolve_stereoisomers(systems(), catalyst_stereoisomers='all')
-    old = plan_targets(resolved, states=DIMER_STATES)
-    pairs = plan_targets(resolved, states=DIMER_STATES, builder_options={'dimer_pairing': 'racemic'})
-    old_keys = {reference_identity(t, method)[0] for t in old}
-    new_keys = {reference_identity(t, method)[0] for t in pairs}
-    assert len(old_keys) == 6 and len(new_keys) == 10
-    assert old_keys.isdisjoint(new_keys)
-
-
 def test_lower_energy_inverted_reference_cannot_displace_preserved_candidate():
     from frust.results import attach_result_contract
-    from frust.workflows.screening import _reference_publication_frame
+    from frust.screen.runs import _build_dimer_references, _state_rows
 
-    wf = ft.workflows.catalyst_screen(systems=systems(), level='low_cost')
+    wf = ft.workflows.catalyst_screen(systems=systems(), level='low_cost', dimer_reference='dimer')
     target = next(t for t in wf.children()['references'].targets() if t.state_id == 'dimer')
     mol = Chem.AddHs(Chem.MolFromSmiles('C[C@H](F)Cl'))
     AllChem.EmbedMolecule(mol, randomSeed=42)
@@ -276,8 +264,12 @@ def test_lower_energy_inverted_reference_cannot_displace_preserved_candidate():
            'xtb_opt-NT': [True,True]}))
     frame.attrs['frust_stereo'] = {'targets': {target.target_id: _stereo_spec(mol)}}
     attach_result_contract(frame, 'minimum', dft=False, calculation_level='low_cost')
-    selected = _reference_publication_frame(wf, frame, target)
-    assert selected.cid.tolist() == [0]
+    states = _state_rows(frame, source="references", recipe=None, reviews={},
+                         calculation_level="low_cost", method=wf.method.to_dict())
+    dimers = _build_dimer_references(states, {
+        "calculation_level": "low_cost", "dimer_reference": "dimer",
+    })
+    assert dimers.loc[dimers.selected, "result_id"].tolist() == states.loc[states.cid.eq(0), "result_id"].tolist()
 
 
 def test_representative_retains_distinct_diastereomers_and_fixed_centres():
@@ -293,31 +285,17 @@ def test_geometric_isomers_cannot_share_an_inconsistent_declared_parent():
         resolve_stereoisomers(pd.concat([a, b]), catalyst_stereoisomers='all')
 
 
-def test_retry_signature_tracks_chemistry_without_cache_action_drift(tmp_path, monkeypatch):
-    from types import SimpleNamespace
+def test_retry_signature_tracks_stereochemical_target_plan(tmp_path):
     wf = ft.workflows.catalyst_screen(systems=systems(), catalyst_stereoisomers='all',
                                      dimer_pairing='racemic', level='low_cost')
     wf._write_manifest(tmp_path)
     original = (tmp_path / 'manifest.json').read_text()
-    monkeypatch.setattr(wf, '_cached_reference', lambda target: SimpleNamespace(reference_id='new_cache_entry'))
     wf._write_manifest(tmp_path)
     assert (tmp_path / 'manifest.json').read_text() == original
     other = ft.workflows.catalyst_screen(systems=systems(), catalyst_stereoisomers='all',
                                        dimer_pairing='input', level='low_cost')
     with pytest.raises(FileExistsError, match='different catalyst-screen'):
         other._write_manifest(tmp_path)
-
-
-def test_catalyst_free_reference_cache_identity_remains_shared():
-    from frust.screen.references import reference_identity
-    options = dict(systems=systems(), level='low_cost', n_confs=1)
-    ordinary = ft.workflows.catalyst_screen(**options)
-    racemic = ft.workflows.catalyst_screen(**options, catalyst_stereoisomers='all', dimer_pairing='racemic')
-    assert ordinary._reference_protocol() == racemic._reference_protocol()
-    for state in ['ligand', 'HBpin-mol', 'HH']:
-        a = next(t for t in ordinary.children()['references'].targets() if t.state_id == state)
-        b = next(t for t in racemic.children()['references'].targets() if t.state_id == state)
-        assert reference_identity(a, ordinary.method, protocol=ordinary._reference_protocol(), calculation_level='low_cost')[0] == reference_identity(b, racemic.method, protocol=racemic._reference_protocol(), calculation_level='low_cost')[0]
 
 
 def test_explicit_input_and_all_have_identical_racemic_targets_and_parent_references(tmp_path):

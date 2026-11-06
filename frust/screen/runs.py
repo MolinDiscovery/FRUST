@@ -13,12 +13,13 @@ from typing import Any, Literal
 import numpy as np
 import pandas as pd
 
-from frust.results import free_energy_components, frequency_values, get_result
+from frust.results import free_energy_components, frequency_values, get_result, result_column
 from frust.schema import normal_termination_columns
 from frust.screen._quality import minimum_vibration_status
 from frust.structures.specs import DIMER_STATES
 
 
+SCREEN_MANIFEST_VERSION = 4
 HARTREE_TO_KCAL_MOL = 627.5094740631
 DIMER_TIE_TOLERANCE_KCAL_MOL = 0.01
 QUALITY_ORDER = {"ready": 0, "review": 1, "invalid": 2, "incomplete": 3}
@@ -53,6 +54,18 @@ def open_run(path: str | Path) -> "ScreenRun":
     return ScreenRun(path)
 
 
+def _read_screen_manifest(path: Path) -> dict[str, Any]:
+    payload = json.loads(path.read_text())
+    if payload.get("run_type") != "catalyst_screen":
+        raise ValueError(f"Unsupported run type {payload.get('run_type')!r}")
+    if payload.get("schema_version") != SCREEN_MANIFEST_VERSION:
+        raise ValueError(
+            f"Unsupported catalyst-screen manifest version in {path}. "
+            "Open this run with the FRUST version that created it."
+        )
+    return payload
+
+
 class ScreenRun:
     """Portable catalyst-screen analysis and review interface."""
 
@@ -67,9 +80,7 @@ class ScreenRun:
     @property
     def manifest(self) -> dict[str, Any]:
         """Return the portable run manifest."""
-        payload = json.loads(self.manifest_path.read_text())
-        if payload.get("run_type") != "catalyst_screen":
-            raise ValueError(f"Unsupported run type {payload.get('run_type')!r}")
+        payload = _read_screen_manifest(self.manifest_path)
         if "reaction_plan" in payload:
             cases = [
                 c
@@ -1145,7 +1156,7 @@ class ScreenRun:
 def build_analysis(run_dir: str | Path) -> dict[str, Any]:
     """Build portable state, barrier, profile, and report artifacts."""
     root = Path(run_dir).expanduser().resolve()
-    manifest = json.loads((root / "manifest.json").read_text())
+    manifest = _read_screen_manifest(root / "manifest.json")
     analysis_dir = root / "analysis"
     analysis_dir.mkdir(parents=True, exist_ok=True)
     reviews_path = analysis_dir / "reviews.csv"
@@ -1268,18 +1279,11 @@ def _build_level_tables(
         else None
     )
     frames = []
-    identity_aliases = {}
     for source, frame in _load_raw_frames(
         root,
         manifest,
         calculation_results=calculation_results,
     ):
-        for binding in frame.attrs.get("frust_reference_bindings", {}).get(
-            "bindings", []
-        ):
-            source_ids = binding.get("source_structure_ids", [])
-            if len(source_ids) == 1:
-                identity_aliases[binding["target_id"]] = source_ids[0]
         state_rows = _state_rows(
             frame,
             source=source,
@@ -1291,7 +1295,6 @@ def _build_level_tables(
         if not state_rows.empty:
             frames.append(state_rows)
     states = pd.concat(frames, ignore_index=True) if frames else _empty_states()
-    states.attrs["frust_identity_aliases"] = identity_aliases
     dimer_references = _build_dimer_references(states, level_manifest)
     if manifest.get("scope") == "bisarylation":
         from frust.workflows.bisarylation_analysis import _bisarylation_tables
@@ -1395,6 +1398,11 @@ def _state_rows(
     )
     calculator = protocol.get("calculator", {})
     nt_columns = normal_termination_columns(df)
+    reference_geometry = (
+        result_column(df, "coords", purpose="optimized", require_present=False)
+        if source == "references"
+        else None
+    )
     rows: list[dict[str, Any]] = []
     for position, (_, row) in enumerate(df.iterrows()):
         component = components.iloc[position] if full else pd.Series(dtype=object)
@@ -1422,6 +1430,12 @@ def _state_rows(
             issues.append("missing_electronic_energy")
         if full and pd.isna(free_energy):
             issues.append("missing_free_energy")
+        coords = row.get(reference_geometry)
+        missing_geometry = source == "references" and not (
+            isinstance(coords, (list, tuple, np.ndarray)) and len(coords)
+        )
+        if missing_geometry:
+            issues.append("missing_optimized_geometry")
         from frust.utils.optimization import _optimization_check
 
         optimization = _optimization_check(
@@ -1444,7 +1458,12 @@ def _state_rows(
         identity_review_required = state_kind == "transition_state" or state_id in {"INT4", "INT5", "INT6"}
         review_status = (reviews.get(result_id, "unreviewed" if identity_review_required else "not_required")
                          if full else "not_required")
-        if pd.isna(electronic_energy) or (full and pd.isna(free_energy)) or not nt_columns:
+        if (
+            pd.isna(electronic_energy)
+            or (full and pd.isna(free_energy))
+            or not nt_columns
+            or missing_geometry
+        ):
             quality = "incomplete"
         elif failed_nt or not vibration["valid"] or review_status == "rejected" or optimization_invalid:
             quality = "invalid"
@@ -1580,13 +1599,13 @@ def _build_dimer_references(
             matches = (matches[matches["structure_id"].eq(structure_id)] if racemic
                        else matches[matches["catalyst_name"].eq(catalyst)])
             energy_bearing = matches[matches[energy_column].notna()]
-            qualified = (
-                energy_bearing[
-                    energy_bearing["quality_status"].isin(["ready", "review"])
-                ]
-                if mode == "lowest"
-                else energy_bearing
-            )
+            qualified = energy_bearing[
+                energy_bearing["quality_status"].isin(["ready", "review"])
+            ]
+            if mode != "lowest" and qualified.empty:
+                # An explicit topology can still show a flagged result when
+                # no qualified conformer is available.
+                qualified = energy_bearing
             if qualified.empty:
                 if not matches.empty and matches["quality_status"].eq("invalid").any():
                     candidate_quality = "invalid"

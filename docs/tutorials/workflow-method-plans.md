@@ -42,16 +42,16 @@ No conformers or calculators have run yet. Inspect the calculation plan first:
 
 ```python
 plan = wf.plan()
-plan[["branch", "state_id", "system_name", "rpos", "action"]]
+plan[["branch", "state_id", "system_name", "rpos"]]
 ```
 
-| branch | state_id | system_name | rpos | action |
-| --- | --- | --- | ---: | --- |
-| `transition_states` | `TS1` | `n_methyl_pyrrole__tmp_bcat` | 2 | `calculate` |
-| `transition_states` | `TS1` | `n_methyl_pyrrole__tmp_bcat` | 3 | `calculate` |
-| ... | ... | ... | ... | ... |
-| `references` | `ligand` | `n_methyl_pyrrole__tmp_bcat` |  | `calculate` |
-| `references` | `dimer` | `n_methyl_pyrrole__tmp_bcat` |  | `calculate` |
+| branch | state_id | system_name | rpos |
+| --- | --- | --- | ---: |
+| `transition_states` | `TS1` | `n_methyl_pyrrole__tmp_bcat` | 2 |
+| `transition_states` | `TS1` | `n_methyl_pyrrole__tmp_bcat` | 3 |
+| ... | ... | ... | ... |
+| `references` | `ligand` | `n_methyl_pyrrole__tmp_bcat` |  |
+| `references` | `dimer` | `n_methyl_pyrrole__tmp_bcat` |  |
 
 Each transition-state target is one TS family, substrate-catalyst system, and
 reactive position. The expensive `tsguess2` conformer generation runs later,

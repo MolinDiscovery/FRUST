@@ -7,7 +7,7 @@ import pytest
 
 from frust.results import attach_result_contract
 from frust.utils.dataframes import merge_dataframe_attrs
-from frust.workflows.screening import _concat_reference_results
+from frust.workflows.screening import _concat_tier_results
 
 
 def _frames(family, profile="minimum"):
@@ -40,9 +40,9 @@ def test_legacy_roles_and_mixed_retention_preserve_semantic_contract(family, pro
 
 
 @pytest.mark.parametrize("family", ["uma", "dft"])
-def test_reference_collection_accepts_legacy_roles(family):
-    legacy, current = _frames(family)
-    merged = _concat_reference_results([legacy, current], source_files=["legacy", "current"])
+def test_tier_collection_preserves_result_contract(family):
+    _, current = _frames(family)
+    merged = _concat_tier_results([current, current.copy()], source_files=["a", "b"])
 
     assert merged["value"].tolist() == [1.0, 1.0]
     assert merged.attrs["frust_results"] == current.attrs["frust_results"]
@@ -63,7 +63,7 @@ def test_conflicting_scientific_definitions_remain_conflicts(difference):
     assert "frust_results" not in attrs
     assert "frust_results" in attrs["frust_merge"]["attr_conflicts"]
     with pytest.raises(ValueError, match="incompatible canonical"):
-        _concat_reference_results([first, second], source_files=["first", "second"])
+        _concat_tier_results([first, second], source_files=["first", "second"])
 
 
 def test_matching_compact_policy_is_retained():

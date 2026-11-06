@@ -15,22 +15,22 @@ wf = ft.workflows.catalyst_screen(
     scope="barriers",
 )
 
-wf.plan()[["branch", "state_id", "system_name", "rpos", "action"]]
+wf.plan()[["branch", "state_id", "system_name", "rpos"]]
 ```
 
-| branch | state_id | system_name | rpos | action |
-| --- | --- | --- | ---: | --- |
-| transition_states | TS1 | pyrrole__NMe | 2 | calculate |
-| transition_states | TS2 | pyrrole__NMe | 2 | calculate |
-| references | ligand | pyrrole__NMe |  | reuse |
-| references | dimer | pyrrole__NMe |  | calculate |
-| references | dimer_bh_bridged | pyrrole__NMe |  | calculate |
-| references | dimer_eight_membered | pyrrole__NMe |  | calculate |
-| references | HBpin-mol | pyrrole__NMe |  | reuse |
-| references | HH | pyrrole__NMe |  | reuse |
+| branch | state_id | system_name | rpos |
+| --- | --- | --- | ---: |
+| transition_states | TS1 | pyrrole__NMe | 2 |
+| transition_states | TS2 | pyrrole__NMe | 2 |
+| references | ligand | pyrrole__NMe |  |
+| references | dimer | pyrrole__NMe |  |
+| references | dimer_bh_bridged | pyrrole__NMe |  |
+| references | dimer_eight_membered | pyrrole__NMe |  |
+| references | HBpin-mol | pyrrole__NMe |  |
+| references | HH | pyrrole__NMe |  |
 
-`plan()` is calculation-free. It shows which structures will be calculated and
-which approved scientific references can be reused.
+`plan()` shows the structures and the reasons they are required before any
+embedding or calculation. Multiple sites can share the same molecular target.
 
 ## Select The Dimer Reference
 
@@ -287,7 +287,7 @@ finalizer that creates the portable analysis tables.
 ## Analyze Anywhere
 
 Copy the complete `results/` directory from the cluster, then open it without
-the original workflow object, CSV, scheduler, or shared reference library:
+the original workflow object, CSV, or scheduler:
 
 ```python
 run = ft.screen.open_run("results")
@@ -349,16 +349,10 @@ results/
 │   │       ├── low_cost/merged.parquet
 │   │       └── dft_ranked/merged.parquet
 │   └── references/
-│       ├── computed.parquet
-│       ├── reused.parquet
 │       ├── merged.parquet
-│       ├── tiers/
-│       │   ├── low_cost/merged.parquet
-│       │   └── dft_ranked/merged.parquet
-│       ├── publication_report.json
-│       ├── index.parquet
-│       ├── reviews.csv
-│       └── entries/
+│       └── tiers/
+│           ├── low_cost/merged.parquet
+│           └── dft_ranked/merged.parquet
 └── analysis/
     ├── states.parquet
     ├── dimer_references.parquet
@@ -377,24 +371,17 @@ energy stages, method, basis, solvent, result ID, and quality status. Full runs
 also contain frequency Gibbs energy, thermal correction, assembled `G`, and
 vibration classification. `barriers.parquet` contains `delta_e_kcal_mol` for
 every level and Gibbs columns only for full runs.
-Within `calculations/references/`, `computed.parquet` contains references made
-for this run, `reused.parquet` contains snapshots from the shared library, and
-`merged.parquet` is their analysis-ready union. `entries/` is the inspectable
-scientific evidence behind published rows. Completed calculations are retained
-in `computed.parquet` even when they fail publication validation.
-`publication_report.json` records every target as `published`, `not_published`,
-`reused`, or `missing_result`, together with the validation status or failure
-reason.
-`run_report.json` summarizes child-job collection and finalization; it does not
-contain a second copy of the energies.
+`calculations/references/merged.parquet` contains the campaign's retained
+reference candidates. Each barrier records the chosen rows in
+`reference_result_ids`. `run_report.json` summarizes collection and
+finalization. Its `terminal_results` section lists missing target IDs and
+reference targets with no qualified candidate.
 
-For minima, vibration handling is lossless and explicit:
-
-| vibration result | run quality | reference-library behavior |
-| --- | --- | --- |
-| Zero imaginary modes | `ready` | Published as `validation_status="auto_valid"` |
-| One mode with `abs(frequency) < 50 cm^-1` | `review` | Published as `validation_status="review"`; requires approval for reuse |
-| Stronger or multiple imaginary modes | `invalid` | Retained in the run, but not published |
+| Minimum vibration result | Run quality |
+| --- | --- |
+| Zero imaginary modes | `ready` when the other quality checks pass |
+| One imaginary mode with magnitude below 50 cm⁻¹ | `review` |
+| Stronger or multiple imaginary modes | `invalid` |
 
 When a dimer is `review` or `invalid`, FRUST still calculates numerical barriers
 from the available energies. Each dependent row inherits the dimer status and
@@ -403,7 +390,12 @@ records `dependency_review:dimer` or `dependency_invalid:dimer` in
 
 Reusing an existing run directory is allowed only when its scientific run
 signature matches. A changed input, method, correction, or conformer protocol
-raises instead of silently mixing old and new outputs.
+requires a new output directory.
+
+!!! note "Earlier run formats"
+
+    Use the FRUST version that created an earlier catalyst-screen bundle to
+    open or resume it. Start new calculations in a fresh directory.
 
 For gas-frequency calculations followed by a solvent single point, FRUST uses
 
@@ -438,105 +430,6 @@ run.set_review(
 
 Reviews are keyed to the actual result content. Recalculation or a changed
 geometry produces a new result ID and therefore requires a new review.
-
-## Inspectable Reference Library
-
-Set a shared library once on the cluster:
-
-```bash
-export FRUST_REFERENCE_STORE=/groups/kemi/jmni/grow/frust_reference_library
-```
-
-The default production reuse policy is `"approved"`. A new reference is
-automatically checked for termination, required thermochemistry, and its
-vibrations, but it must be inspected once before future runs reuse it. A weak
-single imaginary minimum is queued with `validation_status="review"`; it is
-never eligible for `reuse_policy="auto_valid"`, even if later approved:
-
-```python
-library = ft.screen.open_reference_library(
-    "/groups/kemi/jmni/grow/frust_reference_library"
-)
-
-library.review_queue()
-reference_id = library.review_queue().iloc[0]["reference_id"]
-reference = library.get(reference_id)
-
-reference.summary()
-reference.view()
-reference.plot_vibrations()
-reference.xyz_path()
-reference.files()
-
-reference.approve(note="Correct NMe dimer minimum")
-```
-
-Each immutable entry contains `metadata.json` plus its checksum, the full FRUST
-result parquet, `optimized.xyz`, and retained final-stage calculator inputs and
-outputs. The compatibility key represents molecule + method + protocol; the
-reference ID additionally fingerprints the resulting geometry, energies, and
-vibrations. A reused entry is copied into the run, so completed work never
-depends on the continued existence or contents of the shared library.
-
-!!! warning "Reject instead of replacing"
-
-    `reference.reject(...)` preserves the audit trail and prevents future
-    reuse. A recalculation becomes a new immutable entry with a new reference
-ID; old runs retain their original snapshots.
-
-The store separates automatically reusable screening artifacts from reviewed
-thermochemical references:
-
-```text
-entries/
-├── screening/
-│   ├── low_cost/
-│   └── dft_ranked/
-└── references/
-    └── full/
-```
-
-Use `reuse_policy="auto_valid"` only when automatic minimum checks are an
-acceptable substitute for manual structure approval.
-
-### Repair legacy reused-reference labels
-
-Current FRUST runs bind reused scientific references to the names in the
-current `StructureTarget`. The shared entry remains immutable, while
-`reused.parquet`, previews, and analysis use the current substrate and catalyst
-labels.
-
-For a run created before this binding was applied, inspect the proposed repair
-first:
-
-```python
-proposed = ft.screen.repair_reference_bindings("results")
-proposed[[
-    "reference_id",
-    "old_substrate_name",
-    "substrate_name",
-    "old_catalyst_name",
-    "catalyst_name",
-]]
-```
-
-Apply the repair only after checking the mapping:
-
-```python
-repaired = ft.screen.repair_reference_bindings("results", apply=True)
-print(repaired.attrs["backup_dir"])
-```
-
-The repair matches rows by checksum-protected chemical identity, creates a
-backup, updates only run-local aggregate parquets, rebuilds every stored
-analysis level, and updates `run_report.json`. It does not edit the shared
-reference library or the immutable entries copied into the run.
-
-!!! warning "Do not map legacy names by row order"
-
-    Names such as `substrate_000` are not scientific identifiers. Use the
-    repair helper, which matches canonical reference identity and refuses an
-    ambiguous target.
 
 ## Full Catalytic Cycle
 

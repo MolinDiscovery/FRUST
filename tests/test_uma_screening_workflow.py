@@ -10,7 +10,6 @@ import pytest
 
 import frust as ft
 from frust.results import result_column
-from frust.screen.references import reference_identity
 from frust.workflows.factories import ScreenTSWorkflow
 
 
@@ -74,16 +73,6 @@ def test_full_uma_screen_uses_one_stage_plan_for_ts_references_and_int3():
     assert init_group[-4:] == ["uma_sp", "uma_sp_filter", "uma_opt", "dft_preopt"]
     assert workflow.children()["int3"].resolved_spec_profile == "omol-uma-s-1p2p1/gas"
     assert workflow.children()["int3"].targets()
-
-    reference_target = workflow.children()["references"].targets()[0]
-    _, identity = reference_identity(
-        reference_target,
-        workflow.method,
-        protocol=workflow._reference_protocol("full"),
-    )
-    assert "uma_sp" in identity["active_method"]["stages"]
-    assert "uma_opt" in identity["active_method"]["stages"]
-    assert "dft_rank_sp" not in identity["active_method"]["stages"]
 
 
 def test_uma_ranking_sp_switch_preserves_dft_ranked_level():

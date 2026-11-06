@@ -22,7 +22,7 @@ def _execution_children(
     """Bind a private reviewed plan to existing homogeneous execution graphs.
 
     Children retain their ordinary local ``run`` and cluster ``submit`` paths.
-    The composed owner supplies manifests, reference reuse and result-bound
+    The composed owner supplies manifests and result-bound
     pathway decisions without changing these native execution graphs.
     """
     from frust.workflows.factories import (

@@ -217,7 +217,7 @@ mode and all required reference minima pass quality checks.
 
     Use `screening="uma-gas", method="uma-gas"` for a gas UMA barrier.
     Use `screening="uma-alpb-chloroform", method="uma-alpb-chloroform"` for
-    the corrected potential. Keep their outputs and reference stores separate.
+    the corrected potential. Use a separate run directory for each potential.
 
 ## Gas UMA Geometry With A Terminal Chloroform Single Point
 

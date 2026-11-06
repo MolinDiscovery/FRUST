@@ -10,7 +10,6 @@ import pandas as pd
 import pytest
 
 import frust as ft
-from frust.screen.references import reference_identity
 from frust.screen.runs import ScreenRun
 from frust.workflows.factories import MolsWorkflow, ScreenTSWorkflow
 
@@ -147,7 +146,7 @@ def _run(tmp_path, *, level="full", ranking="uma-gas", ranking_energies=None) ->
 @pytest.mark.parametrize(
     "ranking, solvent", [("uma-gas", None), ("uma-alpb-chloroform", "ALPB(chloroform)")]
 )
-def test_hybrid_plan_and_reference_identity(ranking, solvent):
+def test_hybrid_stage_plan(ranking, solvent):
     workflow = _workflow(ranking=ranking)
     assert workflow._analysis_levels() == ("low_cost", "uma_ranked", "full")
     assert workflow.plan().attrs["uma_rank_top_n"] == 2
@@ -161,46 +160,6 @@ def test_hybrid_plan_and_reference_identity(ranking, solvent):
         assert stages.set_index("stage").loc["xtb_sp_filter", "lowest"] == 3
         assert stages.set_index("stage").loc["uma_rank_filter", "lowest"] == 2
         assert stages.set_index("stage").loc["uma_rank_sp", "solvent"] == solvent
-    target = workflow.children()["references"].targets()[0]
-    _, ranked_identity = reference_identity(
-        target, workflow.method, protocol=workflow._reference_protocol("uma_ranked"),
-        calculation_level="uma_ranked",
-    )
-    _, full_identity = reference_identity(
-        target, workflow.method, protocol=workflow._reference_protocol("full"),
-        calculation_level="full",
-    )
-    assert "uma_rank_sp" in ranked_identity["active_method"]["stages"]
-    assert "uma_rank_sp" in full_identity["active_method"]["stages"]
-    assert ranked_identity["active_method"]["stages"]["uma_rank_sp"]["kwargs"].get(
-        "uma_xtb_alpb"
-    ) == ("chloroform" if solvent else None)
-
-
-def test_ranking_environment_separates_cached_references():
-    gas = _workflow(ranking="uma-gas")
-    alpb = _workflow(ranking="uma-alpb-chloroform")
-    gas_target = gas.children()["references"].targets()[0]
-    alpb_target = alpb.children()["references"].targets()[0]
-    gas_ranked, _ = reference_identity(
-        gas_target, gas.method, protocol=gas._reference_protocol("uma_ranked"),
-        calculation_level="uma_ranked",
-    )
-    alpb_ranked, _ = reference_identity(
-        alpb_target, alpb.method, protocol=alpb._reference_protocol("uma_ranked"),
-        calculation_level="uma_ranked",
-    )
-    gas_low, _ = reference_identity(
-        gas_target, gas.method, protocol=gas._reference_protocol("low_cost"),
-        calculation_level="low_cost",
-    )
-    alpb_low, _ = reference_identity(
-        alpb_target, alpb.method, protocol=alpb._reference_protocol("low_cost"),
-        calculation_level="low_cost",
-    )
-    assert gas_ranked != alpb_ranked
-    assert gas_low == alpb_low
-
 
 @pytest.mark.parametrize("ranking", ["uma-gas", "uma-alpb-chloroform"])
 def test_hybrid_full_run_has_independent_uma_and_dft_tiers(tmp_path, ranking):
