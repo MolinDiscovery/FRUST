@@ -170,7 +170,7 @@ def test_uma_full_run_writes_uma_low_cost_tier_and_skips_ranking_sp(tmp_path):
         patch("frust.workflows.core.Stepper", _FakeStepper),
         patch("frust.workflows.core._uma_scope_for_stages", return_value=nullcontext()),
     ):
-        result = workflow.run(targets=[0], out_dir=tmp_path, target_retention="all")
+        result = workflow.run(targets=[0], out_dir=tmp_path, artifact_policy="diagnostic")
 
     assert "uma_sp-EE" in result and "uma_opt-EE" in result
     assert "dft_rank_sp-EE" not in result
@@ -232,7 +232,7 @@ def test_uma_full_ranking_switch_writes_dft_ranked_tier(tmp_path):
         patch("frust.workflows.core.Stepper", _FakeStepper),
         patch("frust.workflows.core._uma_scope_for_stages", return_value=nullcontext()),
     ):
-        result = workflow.run(targets=[0], out_dir=tmp_path, target_retention="all")
+        result = workflow.run(targets=[0], out_dir=tmp_path, artifact_policy="diagnostic")
 
     assert result_column(result, purpose="ranking") == "dft_rank_sp-EE"
     ranked = pd.read_parquet(next(tmp_path.glob("*/tier_dft_ranked.parquet")))

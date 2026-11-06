@@ -10,7 +10,8 @@ import pandas as pd
 from frust.results import COMPACT_FREQUENCY_COLUMN, frequency_values
 from frust.schema import normal_termination_columns
 
-ArtifactPolicy = Literal["standard", "screening"]
+ARTIFACT_POLICY_VERSION = 1
+ArtifactPolicy = Literal["standard", "compact", "diagnostic"]
 
 _IDENTITY_COLUMNS = (
     "structure_id",
@@ -46,22 +47,23 @@ def validate_artifact_policy(value: str) -> ArtifactPolicy:
 
     Parameters
     ----------
-    value : {"standard", "screening"}
-        ``"standard"`` keeps the audit-oriented result. ``"screening"``
-        retains compact scientific values and final geometry.
+    value : {"standard", "compact", "diagnostic"}
+        ``"standard"`` keeps rich results and routine calculator outputs.
+        ``"compact"`` retains portable results and final TS modes.
+        ``"diagnostic"`` keeps standard results and every generated checkpoint.
 
     Returns
     -------
-    {"standard", "screening"}
+    {"standard", "compact", "diagnostic"}
         The validated policy.
     """
-    if value not in {"standard", "screening"}:
-        raise ValueError("artifact_policy must be 'standard' or 'screening'")
+    if value not in {"standard", "compact", "diagnostic"}:
+        raise ValueError("artifact_policy must be 'standard', 'compact', or 'diagnostic'")
     return value  # type: ignore[return-value]
 
 
 def compact_result_dataframe(df: pd.DataFrame) -> pd.DataFrame:
-    """Project a successful workflow result onto the screening schema.
+    """Project a successful workflow result onto the compact schema.
 
     Parameters
     ----------
@@ -134,7 +136,7 @@ def compact_result_dataframe(df: pd.DataFrame) -> pd.DataFrame:
     compact.attrs = copy.deepcopy(df.attrs)
     if isinstance(contract, dict):
         contract["schema_version"] = max(int(contract.get("schema_version", 0)), 5)
-        contract["artifact_policy"] = "screening"
+        contract["artifact_policy"] = "compact"
         if has_frequencies:
             frequency_contract = contract.setdefault("columns", {}).setdefault(
                 "frequency", {}
@@ -143,7 +145,7 @@ def compact_result_dataframe(df: pd.DataFrame) -> pd.DataFrame:
         compact.attrs["frust_results"] = contract
     compact.attrs["frust_artifacts"] = {
         "schema_version": 1,
-        "policy": "screening",
+        "policy": "compact",
         "final_geometry": True,
         "frequency_values": bool(has_frequencies),
         "vibration_displacements": keep_modes,

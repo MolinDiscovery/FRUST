@@ -653,7 +653,7 @@ class WorkflowExecutionTests(unittest.TestCase):
                     execution="dft_staged",
                     n_cores=3,
                     mem_gb=9,
-                    target_retention="all",
+                    artifact_policy="diagnostic",
                 )
 
             create.assert_not_called()

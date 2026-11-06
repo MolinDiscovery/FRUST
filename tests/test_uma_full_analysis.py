@@ -241,7 +241,7 @@ def test_missing_reference_and_missing_gibbs_are_incomplete(tmp_path, monkeypatc
 
 def test_compact_uma_bundle_retains_reviewable_ts_mode(tmp_path, monkeypatch):
     run = _run_full_uma(
-        tmp_path, monkeypatch, artifact_policy="screening"
+        tmp_path, monkeypatch, artifact_policy="compact"
     )
     raw_ts = pd.read_parquet(
         run.path / "calculations/transition_states/merged.parquet"
@@ -520,7 +520,7 @@ def test_mixed_uma_stage_graphs_cover_ts_and_all_reference_alternatives():
             ]
 
 
-@pytest.mark.parametrize("artifact_policy", ["standard", "screening"])
+@pytest.mark.parametrize("artifact_policy", ["standard", "compact"])
 def test_mixed_uma_portable_energy_assembly_and_reference_cache(tmp_path, monkeypatch, artifact_policy):
     run = _run_full_uma(
         tmp_path, monkeypatch, environment=_MIXED_UMA, artifact_policy=artifact_policy

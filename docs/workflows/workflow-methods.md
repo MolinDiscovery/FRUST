@@ -279,7 +279,7 @@ Hessian, TS-search, frequency, and optional analysis-energy groups as applicable
 Existing DFT group names remain the same; UMA groups use their UMA stage names.
 Use `show_stages()` before choosing resource overrides or array limits.
 
-Compact (`artifact_policy="screening"`) full TS results retain the final mode
+Compact (`artifact_policy="compact"`) full TS results retain the final mode
 vectors for either method so `run.plot_vibration(...)` can display the reaction
 coordinate. Minimum results retain scalar frequencies without mode vectors.
 Older compact bundles that omitted vectors remain readable, but regeneration is
@@ -577,9 +577,10 @@ Staged arrays require one target per element. See
 [Slurm Arrays](../cluster/arrays.md) for job counts, resource limits, result
 records, and explicit retries.
 
-Successful workflow targets keep only their final parquet and `timing.json` by
-default. Pass `target_retention="all"` to `wf.run(...)` or `wf.submit(...)`
-when you want to keep every intermediate checkpoint parquet.
+By default, successful targets keep their final parquet, tier snapshots,
+timing, and routine calculator files. Pass `artifact_policy="diagnostic"` to
+`wf.run(...)` or `wf.submit(...)` when you also want every intermediate
+checkpoint parquet.
 
 Resource overrides are optional and use stage-group names:
 
@@ -626,9 +627,8 @@ errored target outputs so failed calculations are visible.
 
 For automatic collection, successfully collected targets are compacted by
 default. Failed, skipped, missing, or non-normal-termination targets keep their
-intermediate checkpoint files for debugging. Manual `wf.collect(...)` defaults
-to `target_retention="all"` so recovery on old runs does not unexpectedly
-delete files.
+intermediate checkpoints for debugging. Manual `wf.collect(...)` preserves its
+source files.
 
 After the collector job finishes, load the merged output normally:
 

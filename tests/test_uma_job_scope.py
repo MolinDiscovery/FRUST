@@ -121,7 +121,7 @@ def test_workflow_reuses_one_server_for_sp_opt_and_numfreq(tmp_path):
     ):
         result = _TinyUmaWorkflow(method=_method()).run(
             targets=[0], n_cores=4, mem_gb=2,
-            save_output_dir=False, uma_oet_tools=runtime,
+            uma_oet_tools=runtime,
         )
 
     assert [event[0] for event in starts] == ["start", "stop"]

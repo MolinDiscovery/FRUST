@@ -454,8 +454,8 @@ class ReferenceLibrary:
             Only ``"full"`` requires frequencies and thermochemistry.
         source_run, source_target_dir : str, pathlib.Path, or None, optional
             Provenance and calculator-file source locations.
-        artifact_policy : {"standard", "screening"}, optional
-            ``"screening"`` stores compact result values and optimized XYZ
+        artifact_policy : {"standard", "compact", "diagnostic"}, optional
+            ``"compact"`` stores compact result values and optimized XYZ
             without ``calculator_files/``. ``"standard"`` stores selected
             calculator evidence for the requested calculation level.
 
@@ -471,7 +471,7 @@ class ReferenceLibrary:
                 "reference publication requires exactly one selected result row"
             )
         validation = _validate_reference_result(df, method, calculation_level)
-        if artifact_policy == "screening":
+        if artifact_policy == "compact":
             df = compact_result_dataframe(df)
         cache_key, identity = reference_identity(
             target,
@@ -481,7 +481,7 @@ class ReferenceLibrary:
         )
         result_content = _reference_result_content(df, method, calculation_level)
         result_fingerprint = _content_hash(result_content)
-        evidence_level = "compact" if artifact_policy == "screening" else "full"
+        evidence_level = "compact" if artifact_policy == "compact" else "full"
         reference_id = (
             "ref_"
             + _content_hash(
@@ -527,7 +527,7 @@ class ReferenceLibrary:
             (temp_path / "optimized.xyz").write_text(
                 ac2xyz(row["atoms"], row[coords_col])
             )
-            if artifact_policy == "standard":
+            if artifact_policy != "compact":
                 _copy_scientific_calculator_files(
                     source_target_dir,
                     temp_path / "calculator_files",

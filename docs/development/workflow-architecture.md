@@ -137,7 +137,7 @@ TS1__furan__TMP__r0/
 
 After a successful target finishes, workflow objects compact the directory by
 default to the final parquet plus `timing.json`. Pass
-`target_retention="all"` to keep every checkpoint for successful targets.
+`artifact_policy="diagnostic"` to keep every checkpoint for successful targets.
 Failed or interrupted targets keep their intermediate files.
 
 ## Cluster Submission Flow

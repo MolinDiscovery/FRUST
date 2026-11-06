@@ -199,6 +199,7 @@ class Stepper:
         self.memory_gb      = memory_gb
         self.save_calc_dirs = save_calc_dirs
         self.save_output    = save_output_dir
+        self._retain_failed_orca_log = False
         self.output_base    = Path(output_base) if output_base is not None else None
 
         self.base_dir = self.output_base if self.output_base is not None else Path(".")
@@ -232,7 +233,8 @@ class Stepper:
 
     def _ensure_base_dir(self) -> Path:
         """Create the output directory lazily on first use."""
-        if self.save_output and not getattr(self, "_base_dir_prepared", False):
+        writes_outputs = self.save_output or self._retain_failed_orca_log
+        if writes_outputs and not getattr(self, "_base_dir_prepared", False):
             self.base_dir = prepare_base_dir(self.output_base, self.job_id)
             self._base_dir_prepared = True
         return self.base_dir
@@ -1632,6 +1634,21 @@ class Stepper:
                                         shutil.copy2(p, dst)
                     except Exception as e:
                         self.logger.error(f"Failed to stage files from '{src}' to '{save_dir}': {e}")
+
+            if (
+                self._retain_failed_orca_log
+                and engine_fn == self.orca_fn
+                and not out.get("normal_termination")
+            ):
+                log = out.get("orca.out") or out.get("log")
+                if isinstance(log, str) and log:
+                    try:
+                        failed_dir = make_step_dir(
+                            self._ensure_base_dir() / prefix, f"failed_row_{row_number}"
+                        )
+                        (failed_dir / "orca.out").write_text(log, encoding="utf-8")
+                    except OSError as error:
+                        self.logger.warning("Could not retain failed ORCA log: %s", error)
 
             # step 4: enforce defaults
             if capture_optimization and isinstance(out.get("orca.out"), str):

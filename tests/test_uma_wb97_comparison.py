@@ -165,7 +165,7 @@ def test_missing_wb97_reference_does_not_borrow_uma_energy(tmp_path, monkeypatch
 
 def test_compact_bundle_keeps_parent_candidate_link(tmp_path, monkeypatch):
     parent, _, comparison = _run_comparison(
-        tmp_path, monkeypatch, artifact_policy="screening"
+        tmp_path, monkeypatch, artifact_policy="compact"
     )
     raw = pd.read_parquet(
         comparison.path / "calculations/transition_states/merged.parquet"

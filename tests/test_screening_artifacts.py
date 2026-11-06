@@ -90,7 +90,7 @@ def test_compact_ts_schema_preserves_scientific_values():
     assert "dft_hessian-input.hess" not in compact
     assert "coords_embedded" not in compact
     assert "intermediate-oc" not in compact
-    assert compact.attrs["frust_artifacts"]["policy"] == "screening"
+    assert compact.attrs["frust_artifacts"]["policy"] == "compact"
     assert compact.attrs["frust_artifacts"]["vibration_displacements"] is True
 
 
@@ -196,9 +196,8 @@ def test_screening_collector_streams_compact_rows_and_returns_small_status(tmp_p
         output,
         report,
         True,
-        target_retention="compact_success",
-        artifact_policy="screening",
-        defer_screening_cleanup=True,
+        artifact_policy="compact",
+        defer_compact_cleanup=True,
     )
 
     assert len(result) == 2
@@ -219,12 +218,59 @@ def test_screening_collector_streams_compact_rows_and_returns_small_status(tmp_p
         output,
         report,
         True,
-        target_retention="compact_success",
-        artifact_policy="screening",
-        defer_screening_cleanup=True,
+        artifact_policy="compact",
+        defer_compact_cleanup=True,
     )
     assert status.row_count == 2
     assert not any(isinstance(value, pd.DataFrame) for value in status.__dict__.values())
+
+
+@pytest.mark.parametrize("require_normal_termination", [True, False])
+def test_partial_compact_collection_releases_only_successful_checkpoints(
+    tmp_path, require_normal_termination
+):
+    targets = [WorkflowTarget("success", None), WorkflowTarget("failed", None)]
+    final_name = "init.dft_freq.parquet"
+    for target in targets:
+        directory = tmp_path / target.tag
+        directory.mkdir()
+        frame = _full_ts_frame(structure_id=target.tag)
+        if target.tag == "failed":
+            frame["dft_freq-NT"] = False
+        frame.to_parquet(directory / final_name, index=False)
+        (directory / "init.parquet").write_bytes(b"checkpoint")
+        (directory / "tier_low_cost.parquet").write_bytes(b"tier snapshot")
+
+    merged = _collect_expected_outputs(
+        SimpleNamespace(workflow_name="screen_ts"), targets, tmp_path,
+        {target.tag: final_name for target in targets},
+        tmp_path / "merged.parquet", tmp_path / "collection_report.json",
+        require_normal_termination, artifact_policy="compact",
+    )
+
+    expected = ["success"] if require_normal_termination else ["success", "failed"]
+    assert merged["structure_id"].tolist() == expected
+    if not require_normal_termination:
+        assert merged["coords_embedded"].isna().tolist() == [True, False]
+    assert not (tmp_path / "success/init.parquet").exists()
+    assert (tmp_path / "success/tier_low_cost.parquet").exists()
+    assert (tmp_path / "success" / final_name).exists()
+    assert (tmp_path / "failed/init.parquet").exists()
+    assert "dft_hessian-input.hess" in pd.read_parquet(tmp_path / "failed" / final_name)
+    report = json.loads((tmp_path / "collection_report.json").read_text())
+    assert report["n_failures"] == 1
+    assert report["retry_targets"] == ["failed"]
+
+
+def test_managed_workflow_rejects_removed_storage_settings_before_writes(tmp_path):
+    workflow = _HessianWorkflow()
+    output = tmp_path / "run"
+    with pytest.raises(ValueError, match="compact"):
+        workflow.run(out_dir=output, artifact_policy="screening")
+    for removed in ("target_retention", "save_output_dir"):
+        with pytest.raises(TypeError, match=removed):
+            workflow.run(out_dir=output, **{removed: True})
+    assert not output.exists()
 
 
 def test_submitit_cleanup_requires_ownership_and_success(tmp_path):
@@ -266,7 +312,7 @@ def test_standalone_screening_collector_removes_targets_only_on_complete_success
         tmp_path / "merged.parquet",
         tmp_path / "report.json",
         True,
-        artifact_policy="screening",
+        artifact_policy="compact",
         return_dataframe=False,
     )
 
@@ -284,7 +330,7 @@ def test_finalizer_rejects_missing_collection_report(tmp_path):
             workflow,
             root,
             expected_report_paths=[str(root / "missing.json")],
-            artifact_policy="screening",
+            artifact_policy="compact",
         )
 
     report = json.loads((root / "run_report.json").read_text())
@@ -302,7 +348,7 @@ class _HessianWorkflow(BaseWorkflow):
         return [WorkflowTarget("target", payload=None)]
 
     def _stage_defs(self):
-        return [StageDef("dft_ts_opt", "TS optimization")]
+        return [StageDef("dft_ts_opt", "TS optimization", use_last_hess=True)]
 
 
 def test_hessian_is_deleted_only_after_successful_ts_optimization(tmp_path, monkeypatch):
@@ -339,7 +385,7 @@ def test_hessian_is_deleted_only_after_successful_ts_optimization(tmp_path, monk
         "hessian.parquet",
         "optts.parquet",
         tmp_path,
-        ExecutionOptions(artifact_policy="screening"),
+        ExecutionOptions(artifact_policy="compact"),
     )
 
     assert "dft_hessian-input.hess" not in result
@@ -380,7 +426,7 @@ def test_failed_ts_optimization_retains_hessian_evidence(tmp_path, monkeypatch):
         "hessian.parquet",
         "optts.parquet",
         tmp_path,
-        ExecutionOptions(artifact_policy="screening"),
+        ExecutionOptions(artifact_policy="compact"),
     )
 
     assert "dft_hessian-input.hess" in result

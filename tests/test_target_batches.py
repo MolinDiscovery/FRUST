@@ -42,7 +42,7 @@ def test_shared_scope_and_real_stepper_multiple_targets(tmp_path):
          patch('frust.workflows.core.Stepper', side_effect=stepper):
         results = _run_target_batch_submitted_job(
             wf, _targets(wf), tmp_path, ExecutionOptions(n_cores=4, mem_gb=2,
-            save_output_dir=False, uma_oet_tools=str(_oet_root(tmp_path))), None, 'attempt', 0)
+            uma_oet_tools=str(_oet_root(tmp_path))), None, 'attempt', 0)
     assert events == ['start', 'stop']
     assert len(results) == 3
     assert all((tmp_path / tag / 'final.parquet').exists() for tag in ('A','B','C'))
@@ -165,7 +165,7 @@ def test_local_batched_submission_collects_successes(tmp_path):
             return pd.DataFrame({'target': [target.tag], 'calc-NT': [True]})
     result = Tiny().submit(out_dir=tmp_path / 'run',
                            cluster=ClusterConfig(backend='local', log_dir=tmp_path / 'logs'),
-                           array=True, array_parallelism=1, targets_per_task=2, target_retention='all')
+                           array=True, array_parallelism=1, targets_per_task=2, artifact_policy='diagnostic')
     collector = submitit.LocalJob(folder=tmp_path / 'logs', job_id=result.collection_job_id)
     deadline = time.monotonic() + 30
     while not collector.paths.result_pickle.exists() and time.monotonic() < deadline:

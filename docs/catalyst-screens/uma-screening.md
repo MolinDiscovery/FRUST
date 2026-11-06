@@ -98,8 +98,7 @@ Run locally or submit the same workflow with compact storage:
 submission = cycle.submit(
     out_dir="results/uma-cycle",
     cluster=cluster,  # Your configured ft.cluster.ClusterConfig.
-    artifact_policy="screening",
-    target_retention="compact_success",
+    artifact_policy="compact",
 )
 ```
 

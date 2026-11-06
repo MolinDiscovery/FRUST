@@ -91,9 +91,9 @@ ft.show_steps(df)
 ft.show_timing(df)
 ```
 
-Successful targets keep only their final parquet and `timing.json` by default.
-Pass `target_retention="all"` when you want every intermediate checkpoint for
-debugging.
+By default, successful targets keep their final parquet, tier snapshots,
+timing, and routine calculator files. Pass `artifact_policy="diagnostic"` when
+you also want every intermediate checkpoint for debugging.
 
 ## Submit The Same Workflow
 

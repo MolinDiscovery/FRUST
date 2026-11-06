@@ -201,7 +201,7 @@ def test_native_mocked_racemic_execution_and_collection(method, tmp_path):
         catalyst_stereoisomers='all', dimer_pairing='racemic',
         ranking='uma-alpb-chloroform', top_n=4, ranking_top_n=3, validation_top_n=3,
         prune_initial=False)
-    run = run_mocked(wf, tmp_path, artifact_policy='screening')
+    run = run_mocked(wf, tmp_path, artifact_policy='compact')
     refs = run.dimer_references()
     assert len(refs) == 20 and refs.selected.sum() == 2
     assert refs.loc[refs.selected, 'result_id'].nunique() == 1
@@ -330,7 +330,7 @@ def test_explicit_input_and_all_have_identical_racemic_targets_and_parent_refere
     a = ft.workflows.catalyst_screen(**options, catalyst_stereoisomers='input')
     b = ft.workflows.catalyst_screen(**options, catalyst_stereoisomers='all')
     assert [i.target.as_dict() for i in a.targets()] == [i.target.as_dict() for i in b.targets()]
-    run = run_mocked(a, tmp_path, artifact_policy='screening')
+    run = run_mocked(a, tmp_path, artifact_policy='compact')
     refs = run.dimer_references()
     assert refs.selected.sum() == 2
     assert refs.loc[refs.selected, 'result_id'].nunique() == 1

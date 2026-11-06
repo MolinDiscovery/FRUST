@@ -247,8 +247,8 @@ run.summary()
 get after a cluster submission. `run.states()` lists every calculated state;
 `run.barriers()` returns the barrier table.
 
-After a successful run, the default `target_retention="compact_success"` keeps
-each target's final parquet plus `timing.json`. Use `target_retention="all"`
+After a successful run, the default `artifact_policy="standard"` keeps
+each target's final parquet plus `timing.json`. Use `artifact_policy="diagnostic"`
 when you deliberately want every staged checkpoint.
 
 !!! tip "Single-target smoke tests use `screen_ts`"

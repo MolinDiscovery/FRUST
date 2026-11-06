@@ -47,7 +47,7 @@ def test_local_failure_retry_and_recollection(tmp_path):
     root = tmp_path / 'run'
     cluster = ClusterConfig(backend='local',log_dir=tmp_path/'logs')
     first = wf.submit(out_dir=root, cluster=cluster, array=True, array_parallelism=2,
-                      targets_per_task=3, target_retention='all')
+                      targets_per_task=3, artifact_policy='diagnostic')
     _wait(first, cluster.log_dir)
     report = json.loads(Path(first.collection_report).read_text())
     assert report['retry_targets'] == ['B','D','E']

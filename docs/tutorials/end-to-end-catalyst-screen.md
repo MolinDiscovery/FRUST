@@ -253,17 +253,18 @@ submission = wf.submit(
     cluster=cluster,
     execution="dft_staged",
     stage_resources=resources,
-    artifact_policy="screening",
+    artifact_policy="compact",
 )
 
 submission.finalization_job_id
 submission.child_submissions
 ```
 
-For hundreds or thousands of systems, `artifact_policy="screening"` keeps the
-final geometry and scientific values but removes successful calculator files,
-per-target parquets, and bulk Submitit bookkeeping after final validation. The
-default remains `"standard"`.
+For hundreds or thousands of systems, `artifact_policy="compact"` keeps
+portable scientific results and uses scratch for routine calculator output.
+Branch collection can release obsolete checkpoints from successful targets
+while preserving the final and tier inputs needed for finalization or retry.
+Full finalization releases the per-target copies and bulk Submitit files.
 
 A full TS row in the collected screening result is compact:
 
@@ -276,10 +277,8 @@ A full TS row in the collected screening result is compact:
 | frequencies | `dft_freq-frequencies_cm1` |
 | completion | `dft_ts_opt-NT`, `dft_freq-NT`, `dft_solv_sp-NT` |
 
-The frequency column contains every frequency value, so quality classification
-and thermochemistry are unchanged. It does not contain displacement vectors;
-`ft.plot_vibs(...)` explains that the selected structure must be recalculated
-with `artifact_policy="standard"` when an animation is needed.
+The frequency column contains every frequency value. Full TS results also
+retain their final displacement vectors for animation with `ft.plot_vibs(...)`.
 
 After a successful screening run, the portable bundle looks like:
 
@@ -299,7 +298,7 @@ results/
 During execution, target and collector logs live in `results/.submitit/jobs/`,
 not in `ClusterConfig.log_dir`. Stderr is merged into stdout. The finalizer
 deletes `jobs/` only when every required collection, reference, and analysis
-artifact validates. Failed runs retain both logs and failed-stage evidence.
+artifact validates. Failed runs retain scheduler logs and failed-stage evidence.
 No separate scratch filesystem is required.
 
 The finalizer cannot safely delete its own active control files. Remove that
