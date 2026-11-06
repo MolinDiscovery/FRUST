@@ -19,6 +19,7 @@ from typing import Any, Literal
 import pandas as pd
 
 from frust.artifacts import (
+    ARTIFACT_POLICY_VERSION,
     ArtifactPolicy,
     compact_result_dataframe,
     validate_artifact_policy,
@@ -526,9 +527,7 @@ class CatalystScreenWorkflow:
         n_cores: int = 10,
         mem_gb: int = 20,
         debug: bool = False,
-        save_output_dir: bool = True,
         work_dir: str | Path | None = None,
-        target_retention: str = "compact_success",
         artifact_policy: ArtifactPolicy = "standard",
         uma_oet_tools: str | Path | None = None,
     ) -> ScreenRun:
@@ -542,15 +541,6 @@ class CatalystScreenWorkflow:
             artifacts as described by :meth:`submit`.
         """
         artifact_policy = validate_artifact_policy(artifact_policy)
-        if artifact_policy == "screening" and target_retention != "compact_success":
-            raise ValueError(
-                "artifact_policy='screening' requires target_retention='compact_success'"
-            )
-        if not save_output_dir:
-            raise ValueError(
-                "catalyst_screen requires save_output_dir=True so reference "
-                "calculator evidence remains portable"
-            )
         root = Path(out_dir)
         root.mkdir(parents=True, exist_ok=True)
         self._write_manifest(root, artifact_policy=artifact_policy)
@@ -586,9 +576,7 @@ class CatalystScreenWorkflow:
                 n_cores=n_cores,
                 mem_gb=mem_gb,
                 debug=debug,
-                save_output_dir=save_output_dir,
                 work_dir=work_dir,
-                target_retention=target_retention,
                 artifact_policy=artifact_policy,
                 uma_oet_tools=uma_oet_tools,
             )
@@ -609,13 +597,11 @@ class CatalystScreenWorkflow:
         retry: bool = False,
         targets: Mapping[str, Any] | None = None,
         debug: bool = False,
-        save_output_dir: bool = True,
         work_dir: str | Path | None = None,
         collect_require_normal_termination: bool = True,
         collect_resources: Resources | None = None,
         finalize_resources: Resources | None = None,
-        target_retention: str = "compact_success",
-        artifact_policy: ArtifactPolicy = "standard",
+        artifact_policy: ArtifactPolicy | None = None,
         uma_oet_tools: str | Path | None = None,
     ) -> ScreenSubmissionResult:
         """Submit the complete catalyst screen and its analysis finalizer.
@@ -682,10 +668,6 @@ class CatalystScreenWorkflow:
         debug : bool, optional
             Forward debugging output to structure generation and calculator
             stages.
-        save_output_dir : bool, optional
-            Retain calculator output directories. This composed workflow
-            requires ``True`` so reference evidence can be copied into the
-            portable run and shared reference store.
         work_dir : str, pathlib.Path, or None, optional
             Scratch directory for calculator execution. When omitted, use
             ``cluster.work_dir`` if configured.
@@ -699,16 +681,12 @@ class CatalystScreenWorkflow:
         finalize_resources : Resources or None, optional
             Resources for the final reference-snapshot and analysis job. The
             default is ``Resources(cpus=2, mem_gb=4, timeout_min=120)``.
-        target_retention : {"compact_success", "all"}, optional
-            ``"compact_success"`` removes intermediate target parquets after
-            successful collection while retaining the final parquet, timing,
-            and required scientific evidence. Failed, skipped, or incomplete
-            targets remain unmodified. ``"all"`` retains every intermediate
-            parquet.
-        artifact_policy : {"standard", "screening"}, optional
-            ``"screening"`` keeps compact scientific results, uses a managed
-            ``.submitit`` directory, and cleans successful artifacts only after
-            final validation. ``"standard"`` preserves existing behavior.
+        artifact_policy : {"standard", "compact", "diagnostic"}, optional
+            ``"standard"`` keeps rich results and routine calculator output,
+            pruning obsolete successful checkpoints. ``"compact"`` keeps
+            portable results and final TS modes, with routine calculator
+            output in scratch. ``"diagnostic"`` keeps every generated
+            checkpoint and the standard calculator files.
         uma_oet_tools : str, pathlib.Path, or None, optional
             OET runtime selected inside child jobs containing UMA stages.
             For example, point to a pinned FairChem 2.23 CPU runtime.
@@ -785,16 +763,11 @@ class CatalystScreenWorkflow:
         leaving the remainder for job overhead. UMA screening also uses ORCA
         at ``level="low_cost"``.
         """
-        artifact_policy = validate_artifact_policy(artifact_policy)
-        if artifact_policy == "screening" and target_retention != "compact_success":
-            raise ValueError(
-                "artifact_policy='screening' requires target_retention='compact_success'"
-            )
-        if not save_output_dir:
-            raise ValueError(
-                "catalyst_screen requires save_output_dir=True so reference "
-                "calculator evidence remains portable"
-            )
+        if retry and artifact_policy is None:
+            manifest_path = Path(out_dir) / "manifest.json"
+            if manifest_path.is_file():
+                artifact_policy = json.loads(manifest_path.read_text()).get("artifact_policy")
+        artifact_policy = validate_artifact_policy("standard" if artifact_policy is None else artifact_policy)
         children, calculated, selected, limits = _screen_submission_plan(
             self, out_dir, execution, stage_resources, array, array_parallelism,
             targets_per_task, retry, targets,
@@ -815,7 +788,7 @@ class CatalystScreenWorkflow:
                 _atomic_write_submission_json(attempt['_path'], attempt)
             submit_cluster = cluster
             finalize_cluster = cluster
-            if artifact_policy == "screening":
+            if artifact_policy == "compact":
                 submitit_dir = initialize_submitit_directory(root)
                 submit_cluster = replace(
                     cluster,
@@ -866,17 +839,15 @@ class CatalystScreenWorkflow:
                     _screen_manifest_validated=attempt is None,
                     targets=branch_targets,
                     debug=debug,
-                    save_output_dir=save_output_dir,
                     work_dir=work_dir,
                     collect=True,
                     collect_output=collect_output,
                     collect_report=collect_report,
                     collect_require_normal_termination=collect_require_normal_termination,
                     collect_resources=collect_resources,
-                    target_retention=target_retention,
                     artifact_policy=artifact_policy,
                     uma_oet_tools=uma_oet_tools,
-                    _defer_screening_cleanup=artifact_policy == "screening",
+                    _defer_compact_cleanup=artifact_policy == "compact",
                 )
                 submissions[branch] = submission
                 dependency_ids.append(
@@ -929,7 +900,7 @@ class CatalystScreenWorkflow:
                 finalization_job_id=getattr(final_job, "job_id", None),
                 backend=cluster.backend,
                 submitit_dir=(
-                    str(root / ".submitit") if artifact_policy == "screening" else None
+                    str(root / ".submitit") if artifact_policy == "compact" else None
                 ),
             )
 
@@ -1059,7 +1030,7 @@ class CatalystScreenWorkflow:
                 continue
             local = local_library.import_record(record)
             frame = local.materialize(item.target)
-            if artifact_policy == "screening":
+            if artifact_policy == "compact":
                 frame = compact_result_dataframe(frame)
             frame["reference_id"] = local.reference_id
             frame["reference_source"] = "shared_library"
@@ -1079,7 +1050,7 @@ class CatalystScreenWorkflow:
                     continue
                 local_tier = local_library.import_record(tier_record)
                 tier_frame = local_tier.materialize(item.target)
-                if artifact_policy == "screening":
+                if artifact_policy == "compact":
                     tier_frame = compact_result_dataframe(tier_frame)
                 tier_frame["reference_id"] = local_tier.reference_id
                 tier_frame["reference_source"] = "shared_library"
@@ -1154,6 +1125,7 @@ class CatalystScreenWorkflow:
             ),
             "calculation_level": self.level,
             "artifact_policy": artifact_policy,
+            "artifact_policy_version": ARTIFACT_POLICY_VERSION,
             "analysis_levels": list(self._analysis_levels()),
             "screening": self.screening.to_dict(),
             "screening_fingerprint": self.screening.fingerprint(),
@@ -1234,6 +1206,7 @@ class CatalystScreenWorkflow:
             "reference_protocol",
             "analysis_targets",
             "artifact_policy",
+            "artifact_policy_version",
         ]
         if self.catalyst_stereoisomers != "input" or self.dimer_pairing != "input":
             manifest["stereo_reference_targets"] = [
@@ -1373,6 +1346,7 @@ class Wb97ComparisonWorkflow(CatalystScreenWorkflow):
                 and existing.get("screening_fingerprint") == self.screening.fingerprint()
                 and existing.get("reuse_policy") == self.reuse_policy
                 and existing.get("artifact_policy") == artifact_policy
+                and existing.get("artifact_policy_version") == ARTIFACT_POLICY_VERSION
                 and existing.get("dimer_reference") == self.dimer_reference
             ):
                 raise FileExistsError(
@@ -2059,15 +2033,12 @@ def _finalize_run(
     (root / "run_report.json").write_text(
         json.dumps(report, indent=2, sort_keys=True, default=str) + "\n"
     )
-    if artifact_policy == "screening" and report["overall_status"] == "success":
+    if artifact_policy == "compact" and report["overall_status"] == "success":
         report["artifact_cleanup"] = _cleanup_screening_targets(workflow, root)
-        if report["artifact_cleanup"]["errors"]:
-            report["overall_status"] = "partial"
-        elif (root / ".submitit" / "ownership.json").exists():
+        if not report["artifact_cleanup"]["errors"] and (root / ".submitit" / "ownership.json").exists():
             try:
                 report["submitit_cleanup"] = cleanup_submitit_jobs(root)
             except Exception as exc:
-                report["overall_status"] = "partial"
                 report["submitit_cleanup"] = {"error": str(exc)}
         (root / "run_report.json").write_text(
             json.dumps(report, indent=2, sort_keys=True, default=str) + "\n"
@@ -2160,7 +2131,7 @@ def _collection_report_summary(payload: Mapping[str, Any]) -> dict[str, Any]:
         "n_skipped",
         "n_missing",
         "n_errored",
-        "target_retention",
+        "artifact_policy",
     )
     summary = {key: payload.get(key) for key in keys if key in payload}
     timing = payload.get("timing")
@@ -2209,8 +2180,8 @@ def _cleanup_screening_targets(
             try:
                 frame = pd.read_parquet(final_path)
                 nt_columns = normal_termination_columns(frame)
-                normal = not nt_columns or bool(
-                    frame[nt_columns].fillna(False).all().all()
+                normal = not frame.empty and (
+                    not nt_columns or bool(frame[nt_columns].fillna(False).all().all())
                 )
                 if not normal:
                     result["retained_targets"].append(str(target_dir))

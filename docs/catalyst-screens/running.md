@@ -250,7 +250,7 @@ ft.show_steps(merged)
 
 !!! tip "Keep every checkpoint"
 
-    Pass `target_retention="all"` to `wf.run(...)` or `wf.submit(...)` when you
+    Pass `artifact_policy="diagnostic"` to `wf.run(...)` or `wf.submit(...)` when you
     want to keep `init.parquet`, `init.hess.parquet`, and other intermediate
     checkpoint files for successful targets.
 

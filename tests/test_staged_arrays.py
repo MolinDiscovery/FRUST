@@ -107,7 +107,7 @@ def test_local_staged_order_failure_independent_progress_and_retry(tmp_path, mod
     names = [wf._group_name(group) for group in wf._stage_groups(mode)]
     limits = {name: 2 if i == 0 else 1 for i, name in enumerate(names)}
     first = wf.submit(out_dir=root, cluster=cluster, execution=mode, array=True,
-                      array_parallelism=limits, target_retention='all')
+                      array_parallelism=limits, artifact_policy='diagnostic')
     _wait(first, cluster.log_dir)
     report = json.loads(Path(first.collection_report).read_text())
     assert report['retry_targets'] == ['B']
@@ -127,7 +127,7 @@ def test_local_staged_order_failure_independent_progress_and_retry(tmp_path, mod
     preserved = (root/'A'/final_name).read_bytes()
     marker.touch()
     retry = wf.submit(out_dir=root, cluster=cluster, execution=mode, array=True,
-                      array_parallelism=1, targets=[1], retry=True, target_retention='all',
+                      array_parallelism=1, targets=[1], retry=True, artifact_policy='diagnostic',
                       stage_resources={'init':Resources(2,4,5)})
     _wait(retry, cluster.log_dir)
     assert (root/'A'/final_name).read_bytes() == preserved

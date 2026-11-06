@@ -241,7 +241,7 @@ get after a cluster submission. `run.states()` lists every calculated state
 with energies and quality flags; `run.barriers()` returns the barrier table.
 
 Successful targets are compacted by default to their final parquet plus
-`timing.json`. Use `target_retention="all"` when debugging and you want every
+`timing.json`. Use `artifact_policy="diagnostic"` when debugging and you want every
 intermediate checkpoint.
 
 !!! tip "Single-target smoke tests use `screen_ts`"

@@ -139,7 +139,7 @@ def submit_jobs(
             out_dir=out_dir, cluster=cluster, execution='single_job',
             stage_resources={'single_job': resources}, array=array,
             array_parallelism=array_parallelism, targets_per_task=targets_per_task,
-            retry=retry, targets=targets, debug=debug, save_output_dir=save_output_dir,
+            retry=retry, targets=targets, debug=debug,
             work_dir=work_dir, orca_memory_fraction=orca_memory_fraction,
         )
         return replace(result, mode=pipeline)

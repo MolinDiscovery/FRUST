@@ -248,7 +248,8 @@ After a partial screen finishes, `screen.submit(..., retry=True, array=True,
 array_parallelism=2)` selects failed targets from branch reports and recollects
 complete branches, including earlier successful targets. Keep the same output
 directory and scientific settings. Screen retries also support
-`artifact_policy="screening"`; cleanup waits for successful final validation.
+`artifact_policy="compact"`. Partial runs retain the final and tier snapshots
+needed for recollection, and failed targets retain their checkpoints.
 The original reference reuse plan and submission records are retained.
 A successfully finalized screen rejects further retries, including after its
 per-target files have been cleaned up. Use a new output directory for more work.

@@ -510,7 +510,7 @@ def test_compact_reference_omits_calculator_files_and_full_evidence_is_preferred
         target,
         method,
         source_target_dir=tmp_path / "source",
-        artifact_policy="screening",
+        artifact_policy="compact",
     )
     full.approve(note="full evidence")
     compact.approve(note="compact evidence")
@@ -1658,7 +1658,7 @@ def test_screening_submission_uses_owned_submitit_directory_and_light_jobs(tmp_p
         submission = workflow.submit(
             out_dir=root,
             cluster=cluster,
-            artifact_policy="screening",
+            artifact_policy="compact",
         )
 
     assert submission.submitit_dir == str(root / ".submitit")

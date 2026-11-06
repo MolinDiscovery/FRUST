@@ -46,7 +46,7 @@ def test_validation_count_survives_all_stages(tmp_path, screening, ranking, meth
         validation = stages[stages.phase.eq("validation") & stages.kind.eq("calc")]
         assert validation.lowest.isna().all()
         assert not validation.empty
-    run = run_mocked(wf, tmp_path, artifact_policy="screening")
+    run = run_mocked(wf, tmp_path, artifact_policy="compact")
     for state, name, cids, coords, kwargs in FakeStepper.calls:
         if name in {
             "uma_min_opt",
@@ -217,7 +217,7 @@ def test_custom_role_keys_drive_execution_results_and_reference_publication(tmp_
 
     with patch.object(FakeStepper, "calculate", classmethod(renamed)):
         run = run_mocked(
-            wf, tmp_path, execution="dft_staged", artifact_policy="screening"
+            wf, tmp_path, execution="dft_staged", artifact_policy="compact"
         )
     assert run.barriers().delta_g_kcal_mol.notna().all()
     frame = pd.read_parquet(run.path / "calculations/transition_states/merged.parquet")

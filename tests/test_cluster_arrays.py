@@ -256,7 +256,7 @@ def test_local_concurrency_and_collection_after_failure(tmp_path):
     with patch("frust.workflows.core._run_target_submitted_job", worker):
         result = _workflow().submit(
             out_dir=tmp_path / "run", cluster=ClusterConfig(backend="local", log_dir=tmp_path / "logs"),
-            array=True, array_parallelism=2, target_retention="all",
+            array=True, array_parallelism=2, artifact_policy="diagnostic",
         )
     job = submitit.LocalJob(folder=tmp_path / "logs", job_id=result.collection_job_id)
     deadline = time.monotonic() + 40

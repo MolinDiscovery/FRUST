@@ -45,7 +45,7 @@ from frust.cluster.submission import (
     _plan_submission, _submit_array_jobs,
     _validate_array_scheduler_options, _validate_array_size, _atomic_write_submission_json,
     _submission_guard, _mutation_lock, _mark_completed, _target_outcomes, _submission_history,
-    _ensure_collection_ready,
+    _ensure_collection_ready, _latest_targets,
     _stage_outcome_path, _array_dependency, _submit_local_stages,
     _record_afterany_completion,
 )
@@ -74,7 +74,6 @@ from frust.workflows.diagnostics import _collection_failure_summary
 from frust.workflows.methods import CalculatorSpec, MethodPlan, preset as method_preset
 
 ExecutionMode = Literal["single_job", "dft_staged", "fully_staged"]
-TargetRetention = Literal["compact_success", "all"]
 DEFAULT_WORKFLOW_RESOURCES = Resources(cpus=4, mem_gb=20, timeout_min=720)
 DEFAULT_COLLECTION_RESOURCES = Resources(cpus=2, mem_gb=4, timeout_min=120)
 TARGET_TIMING_FILE = "timing.json"
@@ -206,11 +205,9 @@ class ExecutionOptions:
         Memory in GB forwarded to Stepper and calculator backends.
     debug : bool, optional
         Debug flag forwarded to workflow preparation and calculator stages.
-    save_output_dir : bool, optional
-        Whether calculator output directories should be retained by Stepper.
     work_dir : str, optional
         Scratch/work directory used by calculator backends.
-    artifact_policy : {"standard", "screening"}, optional
+    artifact_policy : {"standard", "compact", "diagnostic"}, optional
         Scientific artifact retention policy.
     uma_oet_tools : str or None, optional
         OET runtime selected inside a job that contains UMA stages. This lets
@@ -221,7 +218,6 @@ class ExecutionOptions:
     n_cores: int = 4
     mem_gb: int = 20
     debug: bool = False
-    save_output_dir: bool = True
     work_dir: str | None = None
     artifact_policy: ArtifactPolicy = "standard"
     uma_oet_tools: str | None = None
@@ -540,9 +536,7 @@ class BaseWorkflow:
         n_cores: int = 10,
         mem_gb: int = 20,
         debug: bool = False,
-        save_output_dir: bool = True,
         work_dir: str | Path | None = None,
-        target_retention: TargetRetention = "compact_success",
         artifact_policy: ArtifactPolicy = "standard",
         uma_oet_tools: str | Path | None = None,
     ) -> pd.DataFrame:
@@ -557,7 +551,7 @@ class BaseWorkflow:
             Output root. When provided, FRUST creates one subdirectory per
             target and writes staged parquet checkpoints inside each target
             directory. Successful targets are compacted according to
-            ``target_retention``. When omitted, stages run in memory and no
+            ``artifact_policy``. When omitted, stages run in memory and no
             staged parquet files are written.
         execution : {"single_job", "dft_staged", "fully_staged"} or None, optional
             Local stage grouping. ``None`` defaults to ``"single_job"`` for
@@ -569,20 +563,14 @@ class BaseWorkflow:
             Memory in GB forwarded to Stepper.
         debug : bool, optional
             Debug flag forwarded to stage preparation and calculators.
-        save_output_dir : bool, optional
-            Whether Stepper should retain calculator output directories.
         work_dir : str or pathlib.Path or None, optional
             Scratch/work directory forwarded to Stepper.
-        target_retention : {"compact_success", "all"}, optional
-            Output retention policy for successful targets when ``out_dir`` is
-            provided. ``"compact_success"`` keeps only the final target parquet
-            and ``timing.json`` after a target completes successfully.
-            ``"all"`` keeps all intermediate parquet checkpoints.
-        artifact_policy : {"standard", "screening"}, optional
-            ``"screening"`` retains final structure, scalar energies, and
-            frequency values while omitting consumed intermediate data. Full
-            UMA TS results retain final mode vectors for review.
-            ``"standard"`` remains the default.
+        artifact_policy : {"standard", "compact", "diagnostic"}, optional
+            ``"standard"`` keeps rich results and routine calculator output,
+            pruning obsolete successful checkpoints. ``"compact"`` keeps
+            portable results and final TS modes, with routine calculator
+            output in scratch. ``"diagnostic"`` keeps every generated
+            checkpoint and the standard calculator files.
         uma_oet_tools : str or pathlib.Path or None, optional
             OET runtime used for UMA stages within each local target or stage
             group. For example, pass a dedicated FairChem 2.23 runtime here.
@@ -600,15 +588,12 @@ class BaseWorkflow:
 
         >>> df = wf.run(targets=[0], out_dir="debug/screen_ts", execution="dft_staged")
         """
-        _validate_target_retention(target_retention)
         artifact_policy = validate_artifact_policy(artifact_policy)
-        _validate_screening_retention(artifact_policy, target_retention)
         selected = self._select_targets(targets)
         options = ExecutionOptions(
             n_cores=n_cores,
             mem_gb=mem_gb,
             debug=debug,
-            save_output_dir=save_output_dir,
             work_dir=None if work_dir is None else str(work_dir),
             artifact_policy=artifact_policy,
             uma_oet_tools=None if uma_oet_tools is None else str(uma_oet_tools),
@@ -652,8 +637,8 @@ class BaseWorkflow:
                     if current_parquet is not None:
                         final_parquet = save_dir / current_parquet
                 if (
-                    artifact_policy != "screening"
-                    and target_retention == "compact_success"
+                    artifact_policy != "diagnostic"
+                    and _all_normal_terminated(df)
                     and final_parquet is not None
                 ):
                     _compact_successful_target(save_dir, final_parquet)
@@ -683,18 +668,16 @@ class BaseWorkflow:
         retry: bool = False,
         targets: Iterable[WorkflowTarget] | Iterable[int] | None = None,
         debug: bool = False,
-        save_output_dir: bool = True,
         work_dir: str | Path | None = None,
         collect: bool = True,
         collect_output: str | Path | None = None,
         collect_report: str | Path | None = None,
         collect_require_normal_termination: bool = True,
         collect_resources: Resources | None = None,
-        target_retention: TargetRetention = "compact_success",
         orca_memory_fraction: float = DEFAULT_ORCA_MEMORY_FRACTION,
-        artifact_policy: ArtifactPolicy = "standard",
+        artifact_policy: ArtifactPolicy | None = None,
         uma_oet_tools: str | Path | None = None,
-        _defer_screening_cleanup: bool = False,
+        _defer_compact_cleanup: bool = False,
         _collect_targets: list[WorkflowTarget] | None = None,
         _screen_manifest_validated: bool = False,
     ) -> JobSubmissionResult:
@@ -706,7 +689,7 @@ class BaseWorkflow:
             Root output directory. FRUST creates one subdirectory per selected
             workflow target and writes staged parquet checkpoints inside that
             target directory. Successful collected targets are compacted
-            according to ``target_retention``.
+            according to ``artifact_policy``.
         cluster : frust.cluster.config.ClusterConfig
             Shared executor configuration, such as Slurm partition, log
             directory, and optional scratch ``work_dir``.
@@ -759,9 +742,6 @@ class BaseWorkflow:
             If omitted, all workflow targets are submitted.
         debug : bool, optional
             Forwarded to workflow stages and calculators.
-        save_output_dir : bool, optional
-            Forwarded to workflow stages that save calculator output
-            directories.
         work_dir : str or pathlib.Path or None, optional
             Scratch/work directory override. If omitted, ``cluster.work_dir`` is
             used when configured.
@@ -781,21 +761,17 @@ class BaseWorkflow:
         collect_resources : Resources or None, optional
             Scheduler resources for the automatic collection job. ``None`` uses
             ``Resources(cpus=2, mem_gb=4, timeout_min=120)``.
-        target_retention : {"compact_success", "all"}, optional
-            Output retention policy for successful collected targets.
-            ``"compact_success"`` keeps only the final target parquet and
-            ``timing.json`` for collected targets. Failed, skipped, missing, and
-            non-normal-termination targets remain untouched. ``"all"`` keeps
-            all intermediate target parquets.
         orca_memory_fraction : float, optional
             Fraction of each target job's Slurm memory allocation forwarded to
             ORCA through Stepper. The default, ``0.8``, reserves 20 percent
             of the requested allocation for job overhead. Slurm still receives
             the full ``Resources.mem_gb`` value.
-        artifact_policy : {"standard", "screening"}, optional
-            ``"screening"`` projects normally terminated target results onto
-            the compact scientific schema. It requires
-            ``target_retention="compact_success"``.
+        artifact_policy : {"standard", "compact", "diagnostic"}, optional
+            ``"standard"`` keeps rich results and routine calculator output,
+            pruning obsolete successful checkpoints. ``"compact"`` keeps
+            portable results and final TS modes, with routine calculator
+            output in scratch. ``"diagnostic"`` keeps every generated
+            checkpoint and the standard calculator files.
         uma_oet_tools : str or pathlib.Path or None, optional
             OET runtime selected inside each submitted UMA job. For example,
             ``"/lustre/hpc/kemi/jmni/software/oet-uma-2p23-cpu"`` selects the
@@ -836,13 +812,21 @@ class BaseWorkflow:
         a sequential target batch. Collectors remain separate ordinary jobs.
         A standalone retry's automatic collection contains its selection;
         after it finishes, ``wf.collect(out_dir)`` collects the whole run.
-        Direct screening-policy retries require the composed screen's
+        Omit ``artifact_policy`` to reuse the recorded policy on retry.
+        Direct compact-policy retries require the composed screen's
         finalization and reuse contract.
         """
-        _validate_target_retention(target_retention)
-        artifact_policy = validate_artifact_policy(artifact_policy)
-        _validate_screening_retention(artifact_policy, target_retention)
         selected = self._select_targets(targets)
+        if retry and artifact_policy is None:
+            history = _latest_targets(out_dir)
+            policies = {
+                history[target.tag][0].get("artifact_policy")
+                for target in selected if target.tag in history
+            }
+            if len(policies) > 1:
+                raise ValueError("Select retry targets with the same recorded artifact_policy")
+            artifact_policy = next(iter(policies), None)
+        artifact_policy = validate_artifact_policy("standard" if artifact_policy is None else artifact_policy)
         mode = execution or ("dft_staged" if self.dft else "single_job")
         groups = self._stage_groups(mode)
         planned_groups = []
@@ -867,11 +851,12 @@ class BaseWorkflow:
             _validate_array_size(cluster, len(plan[0].batches))
         if not isinstance(retry, bool):
             raise ValueError("retry must be a boolean")
-        if retry and artifact_policy == "screening" and not _defer_screening_cleanup:
+        if retry and artifact_policy == "compact" and not _defer_compact_cleanup:
             raise NotImplementedError("Screen retries must use the screen reuse contract; direct retry is not supported")
         root = Path(out_dir)
         root.mkdir(parents=True, exist_ok=True)
         with _submission_guard(root, plan, self, selected, cluster, mode=mode, array=array, retry=retry,
+                               artifact_policy=artifact_policy,
                                preserve_screen_reuse=_screen_manifest_validated) as ledger:
             executor = create_executor(cluster) if selected else None
             submitted_workflow = copy.copy(self)
@@ -896,7 +881,7 @@ class BaseWorkflow:
                 for directory in save_dirs:
                     Path(directory).mkdir(parents=True, exist_ok=True)
                 staged_options = ExecutionOptions(
-                    debug=debug, save_output_dir=save_output_dir,
+                    debug=debug,
                     work_dir=str(work_dir or cluster.work_dir) if (work_dir or cluster.work_dir) else None,
                     artifact_policy=artifact_policy,
                     uma_oet_tools=None if uma_oet_tools is None else str(uma_oet_tools),
@@ -917,7 +902,7 @@ class BaseWorkflow:
                 options = ExecutionOptions(
                     n_cores=resources.cpus,
                     mem_gb=orca_memory_gb(resources, orca_memory_fraction),
-                    debug=debug, save_output_dir=save_output_dir,
+                    debug=debug,
                     work_dir=str(work_dir or cluster.work_dir) if (work_dir or cluster.work_dir) else None,
                     artifact_policy=artifact_policy,
                     uma_oet_tools=None if uma_oet_tools is None else str(uma_oet_tools),
@@ -982,7 +967,6 @@ class BaseWorkflow:
                         n_cores=resources.cpus,
                         mem_gb=orca_memory_gb(resources, orca_memory_fraction),
                         debug=debug,
-                        save_output_dir=save_output_dir,
                         work_dir=(
                             str(work_dir or cluster.work_dir)
                             if (work_dir or cluster.work_dir)
@@ -1028,7 +1012,6 @@ class BaseWorkflow:
                         n_cores=resources.cpus,
                         mem_gb=orca_memory_gb(resources, orca_memory_fraction),
                         debug=debug,
-                        save_output_dir=save_output_dir,
                         work_dir=(
                             str(work_dir or cluster.work_dir)
                             if (work_dir or cluster.work_dir)
@@ -1103,9 +1086,8 @@ class BaseWorkflow:
                     collection_report_path,
                     collect_require_normal_termination,
                     wait_jobs,
-                    target_retention,
                     artifact_policy,
-                    _defer_screening_cleanup, ledger.attempt_id, _collect_targets is not None,
+                    _defer_compact_cleanup, ledger.attempt_id, _collect_targets is not None,
                 )
                 ledger.collected(collection_job)
                 collection_job_id = getattr(
@@ -1137,9 +1119,8 @@ class BaseWorkflow:
         output: str | Path | None = None,
         report: str | Path | None = None,
         require_normal_termination: bool = False,
-        target_retention: TargetRetention = "all",
     ) -> pd.DataFrame:
-        """Collect finished per-target workflow outputs.
+        """Collect finished per-target workflow outputs without pruning inputs.
 
         Parameters
         ----------
@@ -1156,11 +1137,6 @@ class BaseWorkflow:
         require_normal_termination : bool, optional
             If ``True``, skip target outputs where normal-termination columns
             ending in ``"-NT"`` are present and not all true.
-        target_retention : {"all", "compact_success"}, optional
-            Output retention policy for collected targets. The default
-            ``"all"`` preserves existing run directories during manual
-            recovery. ``"compact_success"`` removes intermediate parquet
-            checkpoints for successfully collected targets.
 
         Returns
         -------
@@ -1173,7 +1149,6 @@ class BaseWorkflow:
         FileNotFoundError
             If no final staged parquet files are found below ``out_dir``.
         """
-        _validate_target_retention(target_retention)
         root = Path(out_dir)
         targets = self.targets()
         with _mutation_lock(root):
@@ -1190,7 +1165,7 @@ class BaseWorkflow:
                 self, targets, root, expected,
                 output if output is not None else root / 'merged.parquet',
                 report if report is not None else root / 'collection_report.json',
-                require_normal_termination, target_retention=target_retention,
+                require_normal_termination, artifact_policy=None,
             )
 
     def _build_targets(self) -> list[WorkflowTarget]:
@@ -1449,9 +1424,9 @@ class BaseWorkflow:
                 artifact_policy=options.artifact_policy,
             )
             if (
-                options.artifact_policy == "screening"
-                and stage.id == "dft_ts_opt"
-                and save_dir is not None
+                options.artifact_policy == "compact"
+                and stage.use_last_hess
+                and stage.id == _last_hessian_consumer(self)
                 and _all_normal_terminated(df)
             ):
                 hessian_columns = [
@@ -1459,7 +1434,6 @@ class BaseWorkflow:
                 ]
                 if hessian_columns:
                     df = df.drop(columns=hessian_columns)
-                _remove_consumed_hessians(save_dir)
         if df is None:
             raise ValueError("No workflow stages were run")
         return df
@@ -1612,7 +1586,7 @@ def _run_target_job(
         resources=_options_resources(options),
     )
     append_workflow_timing(df.attrs, group_record)
-    if options.artifact_policy == "screening" and _all_normal_terminated(df):
+    if options.artifact_policy == "compact" and _all_normal_terminated(df):
         df = compact_result_dataframe(df)
     if attempt_id is not None:
         df.attrs["frust_submission"] = {"attempt_id": attempt_id, "target": target.tag}
@@ -1829,7 +1803,7 @@ def _run_stage_group_job(
     append_workflow_timing(df.attrs, group_record)
     if (
         is_final_group
-        and options.artifact_policy == "screening"
+        and options.artifact_policy == "compact"
         and _all_normal_terminated(df)
     ):
         df = compact_result_dataframe(df)
@@ -1848,12 +1822,16 @@ def _run_stage_group_job(
         output_parquet=output_parquet,
     )
     if (
-        options.artifact_policy == "screening"
-        and "dft_ts_opt" in stage_ids
-        and input_parquet is not None
+        options.artifact_policy == "compact"
+        and _last_hessian_consumer(workflow) in stage_ids
         and _all_normal_terminated(df)
     ):
-        (target_dir / input_parquet).unlink(missing_ok=True)
+        try:
+            _remove_consumed_hessians(target_dir)
+            if input_parquet is not None:
+                (target_dir / input_parquet).unlink(missing_ok=True)
+        except OSError as exc:
+            print(f"FRUST cleanup warning for {target_dir}: {exc}")
     return df
 
 
@@ -1897,10 +1875,9 @@ def _collect_expected_outputs(
     report: str | Path,
     require_normal_termination: bool,
     wait_jobs: list[Any] | None = None,
-    target_retention: TargetRetention = "compact_success",
-    artifact_policy: ArtifactPolicy = "standard",
+    artifact_policy: ArtifactPolicy | None = "standard",
     return_dataframe: bool = True,
-    defer_screening_cleanup: bool = False,
+    defer_compact_cleanup: bool = False,
     attempt_id: str | None = None,
 ) -> pd.DataFrame:
     """Collect exact expected workflow outputs and write a JSON report.
@@ -1925,8 +1902,16 @@ def _collect_expected_outputs(
     wait_jobs : list, optional
         Submitit jobs to wait for before collecting. This is used for local
         submitit backends that do not receive Slurm dependency parameters.
-    target_retention : {"compact_success", "all"}, optional
-        Output retention policy for successfully collected targets.
+    artifact_policy : {"standard", "compact", "diagnostic"} or None, optional
+        Retention policy for submitted work. ``None`` preserves source files
+        during manual collection.
+    return_dataframe : bool, optional
+        Whether to read the merged result back into memory.
+    defer_compact_cleanup : bool, optional
+        Keep target directories for composed finalization while releasing
+        obsolete checkpoints of verified successes.
+    attempt_id : str or None, optional
+        Submission attempt to validate against recorded target outcomes.
 
     Returns
     -------
@@ -1941,8 +1926,8 @@ def _collect_expected_outputs(
     """
     for job in wait_jobs or []:
         job.wait()
-    _validate_target_retention(target_retention)
-    artifact_policy = validate_artifact_policy(artifact_policy)
+    if artifact_policy is not None:
+        artifact_policy = validate_artifact_policy(artifact_policy)
 
     root = Path(out_dir)
     output_path = Path(output)
@@ -1950,6 +1935,8 @@ def _collect_expected_outputs(
     attr_frames: list[pd.DataFrame] = []
     row_count = 0
     collected_files: list[str] = []
+    successful_files: list[str] = []
+    non_normal_files: list[str] = []
     skipped_files: list[str] = []
     missing_files: list[str] = []
     errored_files: list[str] = []
@@ -1982,11 +1969,16 @@ def _collect_expected_outputs(
             outcome.update(status="stale", error="Output does not belong to the selected submission attempt")
             missing_files.append(str(final_file))
             continue
-        outcome["status"] = "success" if _all_normal_terminated(df) else "non_normal"
-        if require_normal_termination and not _all_normal_terminated(df):
+        normal = _all_normal_terminated(df)
+        outcome["status"] = "success" if normal else "non_normal"
+        if not normal:
+            non_normal_files.append(str(final_file))
+        if require_normal_termination and not normal:
             skipped_files.append(str(final_file))
             continue
-        if artifact_policy == "screening":
+        if normal:
+            successful_files.append(str(final_file))
+        if artifact_policy == "compact" and normal:
             df = compact_result_dataframe(df)
             _atomic_write_parquet(df, final_file)
         attr_frame = pd.DataFrame()
@@ -2015,7 +2007,7 @@ def _collect_expected_outputs(
         "timing": timing_report,
     }
     failure_summary = _collection_failure_summary(
-        skipped_files=skipped_files,
+        skipped_files=non_normal_files,
         missing_files=missing_files,
         errors=errors,
         errored_files=errored_files,
@@ -2055,27 +2047,27 @@ def _collect_expected_outputs(
         merged = pd.read_parquet(output_path) if return_dataframe else pd.DataFrame()
     else:
         merged = pd.DataFrame()
-    if artifact_policy == "screening":
+    report_payload["artifact_policy"] = artifact_policy
+    report_payload["compaction"] = _empty_compaction_report()
+    _atomic_write_submission_json(report_path, report_payload)
+    if artifact_policy in {"standard", "compact"}:
+        collection_paths = (output_path.resolve(), report_path.resolve())
+        cleanup_files = [
+            source for source in successful_files
+            if all(not path.is_relative_to(Path(source).parent.resolve())
+                   for path in collection_paths)
+        ]
         if (
-            not defer_screening_cleanup
-            and not failure_summary
-            and len(collected_files) == len(targets)
+            artifact_policy == "compact"
+            and not defer_compact_cleanup
+            and len(cleanup_files) == len(targets)
         ):
-            compaction_report = _remove_collected_target_directories(
-                root,
-                collected_files,
+            report_payload["compaction"] = _remove_collected_target_directories(
+                root, cleanup_files,
             )
         else:
-            compaction_report = _empty_compaction_report()
-    elif target_retention == "compact_success":
-        compaction_report = _compact_collected_targets(collected_files)
-    else:
-        compaction_report = _empty_compaction_report()
-    report_payload["target_retention"] = target_retention
-    report_payload["compaction"] = compaction_report
-
-    report_path.parent.mkdir(parents=True, exist_ok=True)
-    _atomic_write_submission_json(report_path, report_payload)
+            report_payload["compaction"] = _compact_collected_targets(cleanup_files)
+        _atomic_write_submission_json(report_path, report_payload)
     from uuid import uuid4
     _atomic_write_submission_json(root / '.frust/reports' / f'{uuid4().hex}.json', report_payload)
 
@@ -2106,9 +2098,8 @@ def _collect_expected_outputs_submitted(
     report: str | Path,
     require_normal_termination: bool,
     wait_jobs: list[Any] | None = None,
-    target_retention: TargetRetention = "compact_success",
     artifact_policy: ArtifactPolicy = "standard",
-    defer_screening_cleanup: bool = False,
+    defer_compact_cleanup: bool = False,
     attempt_id: str | None = None,
     collect_all_attempts: bool = False,
 ) -> CollectionJobResult:
@@ -2128,11 +2119,10 @@ def _collect_expected_outputs_submitted(
                 report,
                 require_normal_termination,
                 wait_jobs,
-                target_retention,
-                artifact_policy,
-                False,
-                defer_screening_cleanup,
-                None if collect_all_attempts else attempt_id,
+                artifact_policy=artifact_policy,
+                return_dataframe=False,
+                defer_compact_cleanup=defer_compact_cleanup,
+                attempt_id=None if collect_all_attempts else attempt_id,
             )
             payload = json.loads(Path(report).read_text())
             return CollectionJobResult(
@@ -2330,9 +2320,8 @@ def _remove_collected_target_directories(
         }
         try:
             resolved_target = target_dir.resolve()
-            resolved_target.relative_to(resolved_root)
-            if target_dir.is_symlink():
-                raise ValueError("target directory is a symlink")
+            if target_dir.is_symlink() or resolved_target.parent != resolved_root:
+                raise ValueError("target directory is not an owned child of the run directory")
             files = [path for path in target_dir.rglob("*") if path.is_file()]
             target_result["removed_files"] = [str(path) for path in files]
             target_result["removed_bytes"] = sum(path.stat().st_size for path in files)
@@ -2369,21 +2358,24 @@ def _compact_successful_target(target_dir: Path, final_file: Path) -> dict[str, 
         "removed_bytes": 0,
         "errors": [],
     }
-    if not target_dir.is_dir():
+    if not target_dir.is_dir() or target_dir.is_symlink():
         result["errors"].append(
             {"file": str(target_dir), "error": "target directory does not exist"}
         )
         return result
-    if not final_file.exists():
+    if not final_file.is_file() or final_file.is_symlink():
         result["errors"].append(
             {"file": str(final_file), "error": "final parquet does not exist"}
         )
         return result
 
-    for path in sorted(target_dir.glob("*.parquet")):
-        if _same_file(path, final_file) or path.name in ANALYSIS_TIER_FILES.values():
-            continue
-        _remove_compaction_file(path, result)
+    stages = final_file.stem.split(".")
+    checkpoints = {"init.parquet", "structure_guess.parquet", "ts_guess.parquet"}
+    checkpoints.update(".".join(stages[:index]) + ".parquet" for index in range(1, len(stages)))
+    for name in sorted(checkpoints):
+        path = target_dir / name
+        if path.exists() and not _same_file(path, final_file):
+            _remove_compaction_file(path, result)
 
     timing_path = target_dir / TARGET_TIMING_FILE
     if timing_path.exists():
@@ -2395,7 +2387,7 @@ def _compact_successful_target(target_dir: Path, final_file: Path) -> dict[str, 
 def _remove_compaction_file(path: Path, result: dict[str, Any]) -> None:
     """Remove one file and update a compaction result."""
     try:
-        size = path.stat().st_size
+        size = path.lstat().st_size
         path.unlink()
     except Exception as exc:
         result["errors"].append({"file": str(path), "error": str(exc)})
@@ -2410,23 +2402,6 @@ def _same_file(path: Path, other: Path) -> bool:
         return path.samefile(other)
     except OSError:
         return path.resolve() == other.resolve()
-
-
-def _validate_target_retention(value: str) -> None:
-    """Validate a workflow target retention policy."""
-    if value not in {"compact_success", "all"}:
-        raise ValueError("target_retention must be 'compact_success' or 'all'")
-
-
-def _validate_screening_retention(
-    artifact_policy: ArtifactPolicy,
-    target_retention: TargetRetention,
-) -> None:
-    """Require safe collection compaction for screening runs."""
-    if artifact_policy == "screening" and target_retention != "compact_success":
-        raise ValueError(
-            "artifact_policy='screening' requires target_retention='compact_success'"
-        )
 
 
 def _atomic_write_parquet(df: pd.DataFrame, path: str | Path) -> None:
@@ -2463,6 +2438,19 @@ def _stream_parquet_files(
     import pyarrow.parquet as pq
 
     destination.parent.mkdir(parents=True, exist_ok=True)
+    source_schemas = [pq.read_schema(path) for path in files]
+    unified_schema = pa.unify_schemas(
+        [source.remove_metadata() for source in source_schemas],
+        promote_options="permissive",
+    )
+    columns = list(unified_schema.names)
+    first_metadata = dict(source_schemas[0].metadata or {})
+    first_metadata[b"PANDAS_ATTRS"] = json.dumps(
+        dict(attrs),
+        default=str,
+        sort_keys=True,
+    ).encode("utf-8")
+    schema = unified_schema.with_metadata(first_metadata)
     handle = tempfile.NamedTemporaryFile(
         prefix=f".{destination.name}.",
         suffix=".tmp",
@@ -2471,34 +2459,17 @@ def _stream_parquet_files(
     )
     temporary = Path(handle.name)
     handle.close()
-    writer = None
-    source_schemas = [pq.read_schema(path).remove_metadata() for path in files]
-    unified_schema = pa.unify_schemas(
-        source_schemas,
-        promote_options="permissive",
-    )
-    columns = list(unified_schema.names)
-    first_metadata = dict(pq.read_schema(files[0]).metadata or {})
-    first_metadata[b"PANDAS_ATTRS"] = json.dumps(
-        dict(attrs),
-        default=str,
-        sort_keys=True,
-    ).encode("utf-8")
-    schema = unified_schema.with_metadata(first_metadata)
     try:
-        writer = pq.ParquetWriter(temporary, schema)
-        for path in files:
-            frame = pd.read_parquet(path)
-            frame = frame.reindex(columns=columns)
-            table = pa.Table.from_pandas(
-                frame,
-                schema=unified_schema,
-                preserve_index=False,
-                safe=False,
-            )
-            writer.write_table(table.replace_schema_metadata(schema.metadata))
-        writer.close()
-        writer = None
+        with pq.ParquetWriter(temporary, schema) as writer:
+            for path in files:
+                source = pq.read_table(path)
+                arrays = [
+                    source[field.name].cast(field.type, safe=False)
+                    if field.name in source.column_names
+                    else pa.nulls(source.num_rows, type=field.type)
+                    for field in schema
+                ]
+                writer.write_table(pa.Table.from_arrays(arrays, schema=schema))
         parquet = pq.ParquetFile(temporary)
         if parquet.metadata.num_rows != expected_rows:
             raise ValueError(
@@ -2509,16 +2480,21 @@ def _stream_parquet_files(
             raise ValueError("Collected parquet schema verification failed")
         os.replace(temporary, destination)
     finally:
-        if writer is not None:
-            writer.close()
         temporary.unlink(missing_ok=True)
+
+
+def _last_hessian_consumer(workflow: BaseWorkflow) -> str | None:
+    """Return the last stage that reads a Hessian from the workflow frame."""
+    return next((stage.id for stage in reversed(workflow._stage_defs()) if stage.use_last_hess), None)
 
 
 def _remove_consumed_hessians(target_dir: Path) -> None:
     """Remove Hessians only after the dependent TS optimization succeeds."""
-    for path in Path(target_dir).rglob("*.hess"):
-        if path.is_file():
-            path.unlink(missing_ok=True)
+    for directory in target_dir.glob("FRUST_results*"):
+        if directory.is_dir() and not directory.is_symlink():
+            for path in directory.rglob("*.hess"):
+                if path.is_file():
+                    path.unlink(missing_ok=True)
 
 
 def _stage_engine(stage: StageDef, spec: CalculatorSpec | None) -> str | None:
@@ -2731,9 +2707,10 @@ def _all_normal_terminated(df: pd.DataFrame) -> bool:
     Returns
     -------
     bool
-        ``True`` when there are no ``"-NT"`` columns or when all such columns are
-        truthy after missing values are treated as failures.
+        Whether the frame has rows and every termination flag is truthy.
     """
+    if df.empty:
+        return False
     nt_cols = normal_termination_columns(df)
     if not nt_cols:
         return True
@@ -2959,9 +2936,11 @@ def _run_stage_calculation(
         memory_gb=options.mem_gb,
         debug=options.debug,
         output_base=save_dir,
-        save_output_dir=options.save_output_dir,
+        save_output_dir=save_dir is not None and options.artifact_policy != "compact",
         work_dir=options.work_dir,
     )
+    if save_dir is not None and options.artifact_policy == "compact":
+        step._retain_failed_orca_log = True
     if stage.kind == "prune":
         return step.prune_conformers(
             df,
@@ -3067,7 +3046,7 @@ def _write_analysis_tier_snapshot(
         "source_rows": int(len(df)),
         "selected_rows": int(len(snapshot)),
     }
-    if artifact_policy == "screening":
+    if artifact_policy == "compact":
         snapshot = compact_result_dataframe(snapshot)
     _atomic_write_parquet(snapshot, Path(save_dir) / ANALYSIS_TIER_FILES[tier])
 

@@ -30,6 +30,25 @@ def test_stepper_captures_native_log_without_widening_results(converged, explici
     assert check["status"] == ("converged" if converged else "not_converged")
 
 
+def test_compact_orca_log_retention_saves_failure_only(tmp_path):
+    def engine(atoms, coords):
+        if atoms == ["H"]:
+            return {"normal_termination": False, "log": "ORCA failed"}
+        return {"normal_termination": True, "electronic_energy": -1.0}
+
+    frame = pd.DataFrame({
+        "atoms": [["H"], ["He"]],
+        "coords_embedded": [[[0.0, 0.0, 0.0]], [[0.0, 0.0, 0.0]]],
+    })
+    step = Stepper(output_base=tmp_path, save_output_dir=False)
+    step.orca_fn = engine
+    step._retain_failed_orca_log = True
+    result = step.orca(frame, name="sp", options={"HF": None})
+
+    assert result["sp-NT"].tolist() == [False, True]
+    assert [path.read_text() for path in tmp_path.rglob("orca.out")] == ["ORCA failed"]
+
+
 def test_merge_retains_every_geometry_and_rejects_stale_or_conflicting_evidence():
     frames = []
     for cid in range(3):

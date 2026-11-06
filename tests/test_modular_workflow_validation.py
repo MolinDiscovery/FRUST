@@ -433,7 +433,7 @@ def test_full_cycle_selection_uses_the_same_limit_for_int3():
     )
 
 
-@pytest.mark.parametrize("artifact_policy", ["standard", "screening"])
+@pytest.mark.parametrize("artifact_policy", ["standard", "compact"])
 @pytest.mark.parametrize("environment", ["uma-gas", "uma-alpb-chloroform", "hybrid"])
 def test_full_uma_cycle_is_balanced_and_keeps_intermediate_geometry(
     tmp_path, artifact_policy, environment
@@ -506,7 +506,7 @@ def test_full_uma_cycle_is_balanced_and_keeps_intermediate_geometry(
         run.path / "calculations/full_cycle/int3/merged.parquet"
     )
     assert "uma_min_opt-oc" in stored
-    if artifact_policy == "screening":
+    if artifact_policy == "compact":
         assert "uma_freq-frequencies_cm1" in stored
         assert "uma_freq-vibs" not in stored
         assert "xtb_preopt-oc" not in stored
@@ -637,7 +637,7 @@ def test_cycle_reference_publication_uses_quality_before_energy(
     monkeypatch.setattr(FakeStepper, "calculate", classmethod(bad_minimum))
     wf = workflow(scope="full_cycle", ranking_top_n=2,
                   ts_types=["TS1", "TS2", "TS3", "TS4"])
-    run = run_mocked(wf, tmp_path, artifact_policy="screening")
+    run = run_mocked(wf, tmp_path, artifact_policy="compact")
     references = pd.read_parquet(run.path / "calculations/references/merged.parquet")
     catalyst = references[references.state_id.eq("catalyst")]
     report = json.loads((run.path / "run_report.json").read_text())

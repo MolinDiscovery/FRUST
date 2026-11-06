@@ -92,15 +92,15 @@ screen = ft.workflows.catalyst_screen(
 submission = screen.submit(
     out_dir="results/screen_1000",
     cluster=cluster,
-    artifact_policy="screening",
+    artifact_policy="compact",
 )
 ```
 
-Screening mode keeps final coordinates, scalar energies, full frequency
-values, termination flags, compact lower tiers, references, analysis tables,
-and provenance. Successful ORCA directories, displacement vectors,
-per-target results, and bulk Submitit files are deleted only after validated
-aggregation. Failed targets and their logs are left untouched.
+Compact mode keeps final coordinates, energies, frequencies, final TS modes,
+termination flags, lower tiers, references, and provenance. Routine calculator
+output stays in scratch. Successful targets can release obsolete checkpoints
+after branch collection, even if another target fails. Full finalization
+releases the per-target results and bulk Submitit files.
 
 Submitit uses `results/screen_1000/.submitit/jobs/` while the run is active.
 After success only the small `.submitit/control/` finalizer record remains;

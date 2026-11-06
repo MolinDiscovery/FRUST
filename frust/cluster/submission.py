@@ -17,6 +17,7 @@ from dataclasses import asdict, dataclass, replace
 from pathlib import Path
 from uuid import uuid4
 
+from frust.artifacts import ARTIFACT_POLICY_VERSION
 from frust.cluster.config import Resources, SubmissionRecord
 
 
@@ -152,12 +153,13 @@ def _submit_array_jobs(
 class SubmissionLedger:
     """Persist each accepted job before attempting another submission."""
 
-    def __init__(self, root, groups, *, mode, backend, array):
+    def __init__(self, root, groups, *, mode, backend, array, artifact_policy="standard"):
         self.attempt_id = uuid4().hex
         self.path = Path(root) / ".frust" / "submissions" / f"{self.attempt_id}.json"
         self.mode = mode
         self.backend = backend
         self.array = array
+        self.artifact_policy = artifact_policy
         self.groups = groups
         self.collection_job_id = None
         self.created_ns = time.time_ns()
@@ -183,6 +185,8 @@ class SubmissionLedger:
         payload = {
             "schema_version": 1, "attempt_id": self.attempt_id,
             "mode": self.mode, "backend": self.backend, "array": self.array,
+            "artifact_policy": self.artifact_policy,
+            "artifact_policy_version": ARTIFACT_POLICY_VERSION,
             "groups": [asdict(group) for group in self.groups],
             "records": [asdict(record) for record in self.records],
             "collection_job_id": self.collection_job_id,
@@ -434,7 +438,10 @@ def _target_fingerprints(workflow, targets):
 
 
 @contextmanager
-def _submission_guard(root, plan, workflow, targets, cluster, *, mode, array, retry, preserve_screen_reuse=False):
+def _submission_guard(
+    root, plan, workflow, targets, cluster, *, mode, array, retry,
+    artifact_policy, preserve_screen_reuse=False,
+):
     if retry and mode != 'single_job' and not array:
         raise NotImplementedError('Staged retries currently require array=True and rerun the complete chain')
     fingerprints = _target_fingerprints(workflow, targets) if mode == 'single_job' or array else {}
@@ -453,6 +460,10 @@ def _submission_guard(root, plan, workflow, targets, cluster, *, mode, array, re
                     raise ValueError(f'Existing artifacts for {target.tag}; use a new out_dir')
                 continue
             attempt, record = previous
+            if (attempt.get("artifact_policy_version"), attempt.get("artifact_policy")) != (
+                ARTIFACT_POLICY_VERSION, artifact_policy
+            ):
+                raise ValueError("Managed submission requires the original supported artifact_policy and version")
             # Existing screen restarts are validated by their scientific manifest.
             if ((preserve_screen_reuse or (mode != 'single_job' and attempt['mode'] != 'single_job'))
                     and not array and not retry and not attempt.get('array')
@@ -481,7 +492,10 @@ def _submission_guard(root, plan, workflow, targets, cluster, *, mode, array, re
                     if belongs and not target_failed and (not nt or frame[nt].fillna(False).astype(bool).all().all()):
                         raise ValueError(f'Target {target.tag} already succeeded; exclude it from retry targets')
             predecessors[target.tag] = attempt['attempt_id']
-        ledger = SubmissionLedger(root, plan, mode=mode, backend=cluster.backend, array=array)
+        ledger = SubmissionLedger(
+            root, plan, mode=mode, backend=cluster.backend, array=array,
+            artifact_policy=artifact_policy,
+        )
         ledger.fingerprints = fingerprints
         ledger.previous_attempts = predecessors
         ledger.log_dir = str(Path(cluster.log_dir).resolve())

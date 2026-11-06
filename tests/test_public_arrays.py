@@ -118,7 +118,7 @@ def test_legacy_chain_options_rejected_before_input_or_scheduler(tmp_path,entry)
     assert not (tmp_path/'bad').exists()
 
 
-@pytest.mark.parametrize('artifact_policy',['standard','screening'])
+@pytest.mark.parametrize('artifact_policy',['diagnostic','compact'])
 def test_screen_arrays_retry_recollects_successes_and_freezes_reference_plan(tmp_path,artifact_policy):
     scheduler = Scheduler()
     wf = ft.workflows.catalyst_screen(dataframe=_components(),level='low_cost',ts_types=['TS1','TS2'])
@@ -144,7 +144,7 @@ def test_screen_arrays_retry_recollects_successes_and_freezes_reference_plan(tmp
          patch.object(BaseWorkflow,'_run_stage_group',calculation), \
          patch('frust.workflows.screening._finalize_run',side_effect=finalize):
         first = wf.submit(out_dir=root,cluster=cluster,array=True,array_parallelism=2,
-                          targets_per_task=2,target_retention='all' if artifact_policy=='standard' else 'compact_success',
+                          targets_per_task=2,
                           artifact_policy=artifact_policy)
         assert set(first.child_submissions)=={'transition_states','references'}
         assert len(first.child_submissions['transition_states'].job_ids)==1
@@ -162,7 +162,7 @@ def test_screen_arrays_retry_recollects_successes_and_freezes_reference_plan(tmp
         with patch.object(wf,'_cached_reference',return_value=SimpleNamespace(reference_id='newly-cached')), \
              patch.object(wf,'_snapshot_reused_references') as snapshot:
             retried = wf.submit(out_dir=root,cluster=cluster,array=True,array_parallelism=1,
-                                retry=True,target_retention='all' if artifact_policy=='standard' else 'compact_success',
+                                retry=True,
                                 artifact_policy=artifact_policy)
             snapshot.assert_not_called()
             assert scheduler.run(prior_calls)==[]
@@ -180,7 +180,6 @@ def test_screen_arrays_retry_recollects_successes_and_freezes_reference_plan(tmp
         with pytest.raises(ValueError,match='finalized successfully'):
             wf.submit(out_dir=root,cluster=cluster,array=True,array_parallelism=1,
                       retry=True,targets={'transition_states':[0]},
-                      target_retention='all' if artifact_policy=='standard' else 'compact_success',
                       artifact_policy=artifact_policy)
 
 
@@ -246,7 +245,7 @@ def test_all_references_reused_submits_no_reference_jobs(tmp_path):
          patch('frust.workflows.core.create_executor',side_effect=scheduler.create), \
          patch('frust.workflows.screening.create_executor',side_effect=scheduler.create):
         result = wf.submit(out_dir=tmp_path/'screen',cluster=ClusterConfig(),
-                           array=True,array_parallelism=2,artifact_policy='screening')
+                           array=True,array_parallelism=2,artifact_policy='compact')
     assert set(result.child_submissions)=={'transition_states'}
     assert result.submitit_dir
     assert sum(call[0].__name__=='_collect_expected_outputs_submitted' for call in scheduler.calls)==1
