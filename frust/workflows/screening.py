@@ -21,7 +21,6 @@ import pandas as pd
 from frust.artifacts import (
     ARTIFACT_POLICY_VERSION,
     ArtifactPolicy,
-    compact_result_dataframe,
     validate_artifact_policy,
 )
 from frust.cluster.config import ClusterConfig, JobSubmissionResult, Resources
@@ -35,14 +34,17 @@ from frust.screen import expand as expand_screen
 from frust.screen import read as read_screen
 from frust.screen.core import _read_explicit_systems
 from frust.screen.cleanup import cleanup_submitit_jobs, initialize_submitit_directory
-from frust.screen.references import ReferenceLibrary, ReferenceRecord, ReusePolicy
-from frust.screen.runs import ScreenRun, _resolve_terms, _state_rows, build_analysis
+from frust.screen.runs import (
+    SCREEN_MANIFEST_VERSION,
+    ScreenRun,
+    _read_screen_manifest,
+    build_analysis,
+)
 from frust.schema import normal_termination_columns
 from frust.structures import StructureTarget
 from frust.structures.specs import DIMER_STATES
 from frust.utils.dataframes import merge_dataframe_attrs
 from frust.workflows.core import ANALYSIS_TIER_FILES
-from frust.workflows.factories import Int3Workflow, MolsWorkflow, ScreenTSWorkflow
 from frust.workflows.factories import SeededWb97TSWorkflow
 from frust.workflows.methods import (
     CalculationLevel,
@@ -75,8 +77,6 @@ class CatalystScreenTarget:
 
     branch: str
     target: StructureTarget
-    action: Literal["calculate", "reuse"] = "calculate"
-    reference_id: str | None = None
 
 
 @dataclass(frozen=True)
@@ -90,7 +90,7 @@ class ScreenSubmissionResult:
     child_submissions : dict
         Submission results for each homogeneous calculation branch.
     finalization_job_id : str or int or None
-        Job that snapshots references and generates portable analysis.
+        Job that collects analysis tiers and generates portable analysis.
     backend : str
         Cluster backend name.
     submitit_dir : str or None
@@ -139,8 +139,6 @@ class CatalystScreenWorkflow:
         catalyst_stereoisomers: str = "input",
         dimer_pairing: str = "input",
         g_corrections_kcal_mol: dict[str, float] | None = None,
-        reference_store: str | Path | None = None,
-        reuse_policy: ReusePolicy = "approved",
         n_confs: int | None = None,
         top_n: int = 20,
         uma_rank_top_n: int | None = None,
@@ -161,8 +159,6 @@ class CatalystScreenWorkflow:
                 "dimer_reference must be 'lowest', 'dimer', "
                 "'dimer_bh_bridged', or 'dimer_eight_membered'"
             )
-        if reuse_policy not in {"approved", "auto_valid"}:
-            raise ValueError("reuse_policy must be 'approved' or 'auto_valid'")
         normalized_level = str(level).strip().lower()
         if normalized_level not in {"low_cost", "uma_ranked", "dft_ranked", "full"}:
             raise ValueError("level must be 'low_cost', 'uma_ranked', 'dft_ranked', or 'full'")
@@ -288,11 +284,6 @@ class CatalystScreenWorkflow:
                 for key, value in (g_corrections_kcal_mol or {}).items()
             },
         }
-        configured_store = reference_store or os.environ.get("FRUST_REFERENCE_STORE", "").strip() or None
-        self.reference_store = (
-            None if configured_store is None else Path(configured_store)
-        )
-        self.reuse_policy = reuse_policy
         self.n_confs = n_confs
         self.top_n = int(top_n)
         count = _resolve_count(validation_top_n=validation_top_n,
@@ -389,25 +380,15 @@ class CatalystScreenWorkflow:
         return dict(self._children_cache)
 
     def targets(self) -> list[CatalystScreenTarget]:
-        """Return lightweight targets and reference reuse decisions."""
-        children = self.children()
-        planned: list[CatalystScreenTarget] = []
-        for branch, workflow in children.items():
-            for target in workflow.targets():
-                action: Literal["calculate", "reuse"] = "calculate"
-                reference_id: str | None = None
-                if branch == "references":
-                    record = self._cached_reference(target)
-                    if record is not None:
-                        action = "reuse"
-                        reference_id = record.reference_id
-                planned.append(
-                    CatalystScreenTarget(branch, target, action, reference_id)
-                )
-        return planned
+        """Return the lightweight targets for each calculation branch."""
+        return [
+            CatalystScreenTarget(branch, target)
+            for branch, workflow in self.children().items()
+            for target in workflow.targets()
+        ]
 
     def plan(self) -> pd.DataFrame:
-        """Return a compact calculation and cache-action table."""
+        """Return the targets and reasons for each calculation."""
         rows = []
         for item in self.targets():
             target = item.target
@@ -422,8 +403,6 @@ class CatalystScreenWorkflow:
                     "dimer_monomers": target.system.metadata.get("dimer_monomers"),
                     "rpos": target.rpos,
                     "scope": target.scope,
-                    "action": item.action,
-                    "reference_id": item.reference_id,
                     "target": target.tag,
                     "options": ";".join(
                         (self._reaction_plan or {})
@@ -442,8 +421,6 @@ class CatalystScreenWorkflow:
                 "dimer_monomers",
                 "rpos",
                 "scope",
-                "action",
-                "reference_id",
                 "target",
                 "options",
             ],
@@ -497,21 +474,11 @@ class CatalystScreenWorkflow:
         selected = planned if targets is None else [planned[index] for index in targets]
         frames: list[pd.DataFrame] = []
         children = self.children()
-        for branch in children:
-            branch_items = [item for item in selected if item.branch == branch]
-            if not branch_items:
-                continue
-            cached = [item for item in branch_items if item.action == "reuse"]
-            calculated = [item for item in branch_items if item.action == "calculate"]
-            for item in cached:
-                record = self._cached_reference(item.target)
-                if record is not None:
-                    frame = record.materialize(item.target)
-                    frame["preview_source"] = "reference_library"
-                    frames.append(frame)
-            if calculated:
-                frame = children[branch].preview(
-                    targets=[item.target for item in calculated],
+        for branch, child in children.items():
+            branch_targets = [item.target for item in selected if item.branch == branch]
+            if branch_targets:
+                frame = child.preview(
+                    targets=branch_targets,
                     n_confs=n_confs,
                     n_cores=n_cores,
                 )
@@ -544,33 +511,10 @@ class CatalystScreenWorkflow:
         root = Path(out_dir)
         root.mkdir(parents=True, exist_ok=True)
         self._write_manifest(root, artifact_policy=artifact_policy)
-        children = self.children()
-        reference_items = [
-            item for item in self.targets() if item.branch == "references"
-        ]
-        self._snapshot_reused_references(
-            root,
-            reference_items,
-            artifact_policy=artifact_policy,
-        )
-
-        for branch, workflow in children.items():
+        for branch, workflow in self.children().items():
             branch_dir = _branch_dir(root, branch)
             branch_dir.mkdir(parents=True, exist_ok=True)
-            branch_targets = None
-            output_name = "merged.parquet"
-            if branch == "references":
-                branch_targets = [
-                    item.target
-                    for item in reference_items
-                    if item.action == "calculate"
-                ]
-                output_name = "computed.parquet"
-                if not branch_targets:
-                    _write_verified_parquet(pd.DataFrame(), branch_dir / output_name)
-                    continue
             frame = workflow.run(
-                targets=branch_targets,
                 out_dir=branch_dir,
                 execution=execution,
                 n_cores=n_cores,
@@ -580,7 +524,7 @@ class CatalystScreenWorkflow:
                 artifact_policy=artifact_policy,
                 uma_oet_tools=uma_oet_tools,
             )
-            _write_verified_parquet(frame, branch_dir / output_name)
+            _write_verified_parquet(frame, branch_dir / "merged.parquet")
         _finalize_run(self, root, artifact_policy=artifact_policy)
         return ScreenRun(root)
 
@@ -610,14 +554,14 @@ class CatalystScreenWorkflow:
         branch. Barrier runs contain ``transition_states`` and ``references``;
         full-cycle runs additionally contain ``cycle_molecules`` and ``int3``.
         Every branch receives a collector, followed by one ``afterany``
-        finalizer that snapshots references and builds the portable state,
+        finalizer that collects analysis tiers and builds the portable state,
         barrier, profile, quality, and report artifacts.
 
         Parameters
         ----------
         out_dir : str or pathlib.Path
             Portable run directory. It receives ``manifest.json``, calculation
-            branches, collected parquets, local reference snapshots,
+            branches, collected Parquet tables,
             ``analysis/``, and ``run_report.json``. An existing directory is
             accepted only when its recorded scientific signature matches this
             workflow.
@@ -656,15 +600,14 @@ class CatalystScreenWorkflow:
             Retry failed targets in a compatible managed screen, after its
             earlier finalizer ends. By default use each report's retry_targets.
             Recollect complete branches before finalization, preserving earlier
-            successes, reference reuse decisions, and attempt records.
+            successes and attempt records.
             A successfully finalized screen requires a new output directory
             for further calculations, including after target cleanup.
         targets : mapping of str to iterable or None, optional
             Retry-only branch-specific child target objects or positions, for example
             {"transition_states": [0, 1]}. Omitted branches select no work when
             a mapping is supplied. An empty mapping is an initial no-op.
-            Use child workflows for initial subsets. Reused references cannot
-            be submitted.
+            Use child workflows for initial subsets.
         debug : bool, optional
             Forward debugging output to structure generation and calculator
             stages.
@@ -679,7 +622,7 @@ class CatalystScreenWorkflow:
             Resources for each child branch's collection job. The underlying
             default is ``Resources(cpus=2, mem_gb=4, timeout_min=120)``.
         finalize_resources : Resources or None, optional
-            Resources for the final reference-snapshot and analysis job. The
+            Resources for the final analysis job. The
             default is ``Resources(cpus=2, mem_gb=4, timeout_min=120)``.
         artifact_policy : {"standard", "compact", "diagnostic"}, optional
             ``"standard"`` keeps rich results and routine calculator output,
@@ -800,15 +743,6 @@ class CatalystScreenWorkflow:
                     log_dir=submitit_dir / "control",
                     stderr_to_stdout=True,
                 )
-            reference_items = [
-                item for item in self.targets() if item.branch == "references"
-            ]
-            if not retry:
-                self._snapshot_reused_references(
-                    root,
-                    reference_items,
-                    artifact_policy=artifact_policy,
-                )
             submissions: dict[str, JobSubmissionResult] = {}
             dependency_ids: list[str | int] = []
             wait_paths: list[str] = []
@@ -816,13 +750,12 @@ class CatalystScreenWorkflow:
             for branch, workflow in children.items():
                 branch_dir = _branch_dir(root, branch)
                 branch_targets = selected[branch]
-                collect_output = branch_dir / ("computed.parquet" if branch == "references" else "merged.parquet")
+                collect_output = branch_dir / "merged.parquet"
                 if not branch_targets:
                     previous_report = branch_dir / "collection_report.json"
                     if retry and previous_report.exists():
                         wait_paths.append(str(previous_report))
-                    elif not retry and branch == "references" and not calculated[branch]:
-                        branch_dir.mkdir(parents=True, exist_ok=True)
+                    elif not retry and not calculated[branch]:
                         _write_verified_parquet(pd.DataFrame(), collect_output)
                     continue
                 collect_report = branch_dir / (
@@ -936,137 +869,6 @@ class CatalystScreenWorkflow:
             return ("low_cost", "dft_ranked")
         return ("low_cost",)
 
-    def _reference_protocol(
-        self,
-        calculation_level: CalculationLevel | None = None,
-    ) -> dict[str, Any]:
-        """Return reference identity settings for one nested result tier."""
-        level = self.level if calculation_level is None else calculation_level
-        protocol = {
-            "workflow": "frust.workflows.mols::v2",
-            "calculation_level": level,
-            "screening_fingerprint": self.screening.fingerprint(),
-            "ranking_solvation": (
-                {
-                    "requested": "method",
-                    "model": None,
-                    "solvent": None,
-                    "applied": False,
-                }
-                if self.ranking is not None and level == "low_cost"
-                else self.ranking_solvation
-            ),
-            "n_confs": self.n_confs,
-            "top_n": self.top_n,
-            "prune_initial": self.prune_initial,
-        }
-        if self.ranking is not None and level != "low_cost":
-            protocol["ranking_fingerprint"] = self.ranking.fingerprint()
-            protocol["uma_rank_top_n"] = self.uma_rank_top_n
-        if level == "full" and self.validation_top_n is not None and self.ranking is None:
-            protocol["validation_top_n"] = self.validation_top_n
-        if level == "full" and not self.include_dft_rank_sp:
-            protocol["include_dft_rank_sp"] = False
-        return protocol
-
-    def _shared_library(self, *, initialize: bool = False) -> ReferenceLibrary | None:
-        if self.reference_store is None:
-            return None
-        library = ReferenceLibrary(self.reference_store)
-        if initialize:
-            library.initialize()
-        elif not library.root.exists():
-            return None
-        return library
-
-    def _cached_reference(self, target: StructureTarget) -> ReferenceRecord | None:
-        library = self._shared_library(initialize=False)
-        if library is None:
-            return None
-        record = library.find(
-            target,
-            self.method,
-            protocol=self._reference_protocol(self.level),
-            reuse_policy=(self.reuse_policy if self.level == "full" else "auto_valid"),
-            calculation_level=self.level,
-        )
-        if record is None:
-            return None
-        for tier in self._analysis_levels():
-            if tier == self.level:
-                continue
-            nested = library.find(
-                target,
-                self.method,
-                protocol=self._reference_protocol(tier),
-                reuse_policy="auto_valid",
-                calculation_level=tier,
-            )
-            if nested is None:
-                return None
-        return record
-
-    def _snapshot_reused_references(
-        self,
-        root: Path,
-        items: list[CatalystScreenTarget],
-        *,
-        artifact_policy: ArtifactPolicy = "standard",
-    ) -> None:
-        branch_dir = _branch_dir(root, "references")
-        local_library = ReferenceLibrary(branch_dir).initialize()
-        frames: list[pd.DataFrame] = []
-        sources: list[Path] = []
-        tier_frames: dict[str, list[pd.DataFrame]] = {
-            tier: [] for tier in self._analysis_levels() if tier != self.level
-        }
-        tier_sources: dict[str, list[Path]] = {tier: [] for tier in tier_frames}
-        shared_library = self._shared_library(initialize=False)
-        for item in items:
-            if item.action != "reuse":
-                continue
-            record = self._cached_reference(item.target)
-            if record is None:
-                continue
-            local = local_library.import_record(record)
-            frame = local.materialize(item.target)
-            if artifact_policy == "compact":
-                frame = compact_result_dataframe(frame)
-            frame["reference_id"] = local.reference_id
-            frame["reference_source"] = "shared_library"
-            frames.append(frame)
-            sources.append(local.path / "result.parquet")
-            if shared_library is None:
-                continue
-            for tier in tier_frames:
-                tier_record = shared_library.find(
-                    item.target,
-                    self.method,
-                    protocol=self._reference_protocol(tier),
-                    reuse_policy="auto_valid",
-                    calculation_level=tier,
-                )
-                if tier_record is None:
-                    continue
-                local_tier = local_library.import_record(tier_record)
-                tier_frame = local_tier.materialize(item.target)
-                if artifact_policy == "compact":
-                    tier_frame = compact_result_dataframe(tier_frame)
-                tier_frame["reference_id"] = local_tier.reference_id
-                tier_frame["reference_source"] = "shared_library"
-                tier_frames[tier].append(tier_frame)
-                tier_sources[tier].append(local_tier.path / "result.parquet")
-        reused = _concat_reference_results(frames, source_files=sources)
-        _write_verified_parquet(reused, branch_dir / "reused.parquet")
-        for tier, nested_frames in tier_frames.items():
-            tier_dir = branch_dir / "tiers" / tier
-            tier_dir.mkdir(parents=True, exist_ok=True)
-            nested = _concat_reference_results(
-                nested_frames,
-                source_files=tier_sources[tier],
-            )
-            _write_verified_parquet(nested, tier_dir / "reused.parquet")
-
     def _write_manifest(
         self,
         root: Path,
@@ -1104,14 +906,12 @@ class CatalystScreenWorkflow:
                 "catalyst_parent_name": item.target.system.metadata.get("catalyst_parent_name"),
                 "dimer_monomers": item.target.system.metadata.get("dimer_monomers"),
                 "rpos": item.target.rpos,
-                "action": item.action,
-                "reference_id": item.reference_id,
             }
             for item in self.targets()
             if item.branch == "references"
         ]
         manifest = {
-            "schema_version": 3,
+            "schema_version": SCREEN_MANIFEST_VERSION,
             "run_type": "catalyst_screen",
             "created_at": _utc_now(),
             "scope": self.scope,
@@ -1148,9 +948,9 @@ class CatalystScreenWorkflow:
             "components": _records(self.components()),
             "systems": _records(self.systems()),
             "stereochemistry": self.systems().attrs.get("frust_stereoisomers", {}),
-            "reference_store_configured": self.reference_store is not None,
-            "reuse_policy": self.reuse_policy,
-            "reference_protocol": self._reference_protocol(),
+            "n_confs": self.n_confs,
+            "top_n": self.top_n,
+            "prune_initial": self.prune_initial,
             "reference_plan": reference_plan,
             "analysis_targets": [
                 {
@@ -1189,8 +989,11 @@ class CatalystScreenWorkflow:
             manifest["reaction_plan"]["random_seed"] = self.random_seed
         signature_keys = ["reaction_plan"] if self._reaction_plan is not None else []
         signature_keys += [
+            "schema_version",
             "scope",
             "dimer_reference",
+            "catalyst_stereoisomers",
+            "dimer_pairing",
             "calculation_level",
             "screening_fingerprint",
             "method_fingerprint",
@@ -1202,25 +1005,19 @@ class CatalystScreenWorkflow:
             "g_corrections_kcal_mol",
             "components",
             "systems",
-            "reuse_policy",
-            "reference_protocol",
+            "n_confs",
+            "top_n",
+            "prune_initial",
+            "reference_plan",
             "analysis_targets",
             "artifact_policy",
             "artifact_policy_version",
         ]
-        if self.catalyst_stereoisomers != "input" or self.dimer_pairing != "input":
-            manifest["stereo_reference_targets"] = [
-                {key: entry[key] for key in (
-                    "target_id", "state_id", "catalyst_parent_name", "dimer_monomers"
-                )}
-                for entry in reference_plan
-            ]
-            signature_keys.extend(["catalyst_stereoisomers", "dimer_pairing", "stereo_reference_targets"])
         if self.method.result_family == "uma":
             signature_keys.append("ts_refine_n")
         if self.ranking is not None:
             signature_keys.extend(["ranking_fingerprint", "uma_rank_top_n"])
-        if self.validation_top_n is not None and self.ranking is None:
+        if self.validation_top_n is not None:
             signature_keys.append("validation_top_n")
         manifest["run_signature"] = _json_hash(
             {key: manifest[key] for key in signature_keys}
@@ -1228,7 +1025,10 @@ class CatalystScreenWorkflow:
         manifest_path = root / "manifest.json"
         if manifest_path.exists():
             existing = json.loads(manifest_path.read_text())
-            if existing.get("run_signature") != manifest["run_signature"]:
+            if (
+                existing.get("schema_version") != SCREEN_MANIFEST_VERSION
+                or existing.get("run_signature") != manifest["run_signature"]
+            ):
                 raise FileExistsError(
                     f"Run directory {root} contains a different catalyst-screen "
                     "manifest; choose a new out_dir"
@@ -1252,16 +1052,10 @@ class Wb97ComparisonWorkflow(CatalystScreenWorkflow):
         Portable full-UMA run that supplied the TS candidates.
     candidate_rows : pandas.DataFrame
         Exact rows selected from ``parent.candidate_barriers()``.
-    reference_store : str, pathlib.Path, or None, optional
-        Shared reference library for exact-match ωB97 minima.
-    reuse_policy : {"approved", "auto_valid"}, optional
-        Rule for reusing full thermochemical references.
     """
 
     def __init__(
-        self, parent: ScreenRun, candidate_rows: pd.DataFrame, *,
-        reference_store: str | Path | None = None,
-        reuse_policy: ReusePolicy = "approved",
+        self, parent: ScreenRun, candidate_rows: pd.DataFrame,
     ) -> None:
         source = parent.manifest
         self.parent = parent
@@ -1279,8 +1073,6 @@ class Wb97ComparisonWorkflow(CatalystScreenWorkflow):
             catalyst_stereoisomers=source.get("catalyst_stereoisomers", "input"),
             dimer_pairing=source.get("dimer_pairing", "input"),
             g_corrections_kcal_mol=source["g_corrections_kcal_mol"],
-            reference_store=reference_store,
-            reuse_policy=reuse_policy,
         )
 
     def children(self) -> dict[str, Any]:
@@ -1340,11 +1132,11 @@ class Wb97ComparisonWorkflow(CatalystScreenWorkflow):
             existing = json.loads(path.read_text())
             previous = existing.get("comparison", {})
             if not (
-                previous.get("parent_run_signature") == self.parent.manifest["run_signature"]
+                existing.get("schema_version") == SCREEN_MANIFEST_VERSION
+                and previous.get("parent_run_signature") == self.parent.manifest["run_signature"]
                 and previous.get("candidate_result_ids") == requested_ids
                 and existing.get("method_fingerprint") == self.method.fingerprint()
                 and existing.get("screening_fingerprint") == self.screening.fingerprint()
-                and existing.get("reuse_policy") == self.reuse_policy
                 and existing.get("artifact_policy") == artifact_policy
                 and existing.get("artifact_policy_version") == ARTIFACT_POLICY_VERSION
                 and existing.get("dimer_reference") == self.dimer_reference
@@ -1411,8 +1203,6 @@ class Wb97ComparisonWorkflow(CatalystScreenWorkflow):
 def wb97_comparison(
     uma_run: ScreenRun | str | Path, *,
     candidates: Literal["selected"] | list[str] | tuple[str, ...] = "selected",
-    reference_store: str | Path | None = None,
-    reuse_policy: ReusePolicy = "approved",
 ) -> Wb97ComparisonWorkflow:
     """Prepare an optional ωB97 comparison for completed UMA TS candidates.
 
@@ -1424,11 +1214,6 @@ def wb97_comparison(
         ``"selected"`` advances each target's selected UMA candidate.
         A sequence names exact UMA ``ts_result_id`` values and may contain
         several candidates for the same TS target.
-    reference_store : str, pathlib.Path, or None, optional
-        Exact-match ωB97 reference library used by the follow-on run.
-    reuse_policy : {"approved", "auto_valid"}, optional
-        ``"approved"`` reuses only manually approved full references;
-        ``"auto_valid"`` also reuses automatically validated minima.
 
     Returns
     -------
@@ -1461,9 +1246,7 @@ def wb97_comparison(
         chosen = available.set_index("ts_result_id").loc[list(requested)].reset_index()
     if chosen.empty:
         raise ValueError("No selected UMA candidates are available")
-    return Wb97ComparisonWorkflow(
-        parent, chosen, reference_store=reference_store, reuse_policy=reuse_policy
-    )
+    return Wb97ComparisonWorkflow(parent, chosen)
 
 
 def catalyst_screen(
@@ -1485,8 +1268,6 @@ def catalyst_screen(
     catalyst_stereoisomers: str = "input",
     dimer_pairing: str = "input",
     g_corrections_kcal_mol: dict[str, float] | None = None,
-    reference_store: str | Path | None = None,
-    reuse_policy: ReusePolicy = "approved",
     n_confs: int | None = None,
     top_n: int = 20,
     uma_rank_top_n: int | None = None,
@@ -1601,16 +1382,6 @@ def catalyst_screen(
         Gibbs-only profile corrections in kcal/mol. Defaults to ``-1.89`` for
         TS1 and TS3. These corrections are never applied to electronic
         barriers.
-    reference_store : str, pathlib.Path, or None, optional
-        Shared inspectable reference library. When omitted, use
-        ``FRUST_REFERENCE_STORE`` if set. The completed run always receives a
-        local snapshot of references it reused.
-    reuse_policy : {"approved", "auto_valid"}, optional
-        Full thermochemical references use ``"approved"`` for manual-review
-        reuse or ``"auto_valid"`` to accept automatic minimum checks.
-        Exact-match ``"low_cost"``, ``"uma_ranked"``, and ``"dft_ranked"``
-        screening artifacts are automatically reusable because they are
-        stored separately and are not presented as approved DFT minima.
     n_confs : int or None, optional
         Initial conformer count forwarded consistently to every child
         workflow.
@@ -1664,7 +1435,7 @@ def catalyst_screen(
     ...     method="r2scan-3c",
     ...     scope="barriers",
     ... )
-    >>> wf.plan()[["branch", "state_id", "action"]]
+    >>> wf.plan()[["branch", "state_id", "options"]]
     """
     return CatalystScreenWorkflow(
         csv_path=csv_path,
@@ -1684,8 +1455,6 @@ def catalyst_screen(
         catalyst_stereoisomers=catalyst_stereoisomers,
         dimer_pairing=dimer_pairing,
         g_corrections_kcal_mol=g_corrections_kcal_mol,
-        reference_store=reference_store,
-        reuse_policy=reuse_policy,
         n_confs=n_confs,
         top_n=top_n,
         uma_rank_top_n=uma_rank_top_n,
@@ -1717,9 +1486,9 @@ def _finalize_submitted_run(
             time.sleep(1)
     try:
         with _mutation_lock(root, wait=True) if attempt_id is not None else nullcontext():
+            manifest = _read_screen_manifest(root / "manifest.json")
             if workflow.csv_path is None and workflow.dataframe is None:
                 # Recover explicit inputs from jobs serialized before inputs survived cache clearing.
-                manifest = json.loads((root / "manifest.json").read_text())
                 workflow.dataframe = pd.DataFrame(manifest["components"])
                 workflow._selected_systems = pd.DataFrame(manifest["systems"])
             if attempt_id is not None:
@@ -1743,44 +1512,6 @@ def _finalize_submitted_run(
         _mark_completed(root, attempt_id, 'screen_finalize', 0)
 
 
-def _reference_publication_frame(
-    workflow: CatalystScreenWorkflow, frame: pd.DataFrame, target: StructureTarget
-) -> pd.DataFrame:
-    """Select a reference with the same quality and energy rules as analysis."""
-    if len(frame) <= 1:
-        return frame
-    states = _state_rows(
-        frame,
-        source="references",
-        recipe=(
-            workflow.method.thermochemistry.to_dict()
-            if workflow.method.thermochemistry is not None else None
-        ),
-        reviews={},
-        calculation_level=workflow.level,
-        method=workflow.method.to_dict(),
-    )
-    selected, problems = _resolve_terms(
-        states,
-        {target.state_id: 1.0},
-        system_name=target.system.system_name,
-        substrate_name=target.system.substrate_name,
-        catalyst_name=target.system.catalyst_name,
-        rpos=target.rpos,
-        select_candidates=True,
-    )
-    if problems:
-        raise ValueError(f"Cannot select reference candidate: {';'.join(problems)}")
-    candidate = selected[target.state_id]
-    result = frame.iloc[[int(candidate["source_row"])]].copy()
-    result.attrs["frust_reference_selection"] = {
-        "input_rows": len(frame),
-        "selected_result_id": str(candidate["result_id"]),
-        "quality_status": str(candidate["quality_status"]),
-    }
-    return result
-
-
 def _finalize_run(
     workflow: CatalystScreenWorkflow,
     root: Path,
@@ -1794,14 +1525,15 @@ def _finalize_run(
         root,
         expected_report_paths or [],
     )
-    if incomplete_reports:
+    invalid_reports = [item for item in incomplete_reports if item["reason"] != "incomplete"]
+    if invalid_reports:
         status = (
             "failed"
-            if any(item["reason"] == "missing" for item in incomplete_reports)
+            if any(item["reason"] == "missing" for item in invalid_reports)
             else "partial"
         )
         report = {
-            "schema_version": 2,
+            "schema_version": 3,
             "finalized_at": _utc_now(),
             "overall_status": status,
             "artifact_policy": artifact_policy,
@@ -1820,200 +1552,50 @@ def _finalize_run(
             f"see {root / 'run_report.json'}"
         )
 
-    reference_dir = _branch_dir(root, "references")
-    local_library = ReferenceLibrary(reference_dir).initialize()
-    shared_library = workflow._shared_library(initialize=True)
-    tier_report = _finalize_nested_tiers(
-        workflow,
-        root,
-        local_library=local_library,
-        shared_library=shared_library,
-        artifact_policy=artifact_policy,
-    )
-    computed_path = reference_dir / "computed.parquet"
-    computed = (
-        pd.read_parquet(computed_path) if computed_path.exists() else pd.DataFrame()
-    )
-    reused_path = reference_dir / "reused.parquet"
-    reused = pd.read_parquet(reused_path) if reused_path.exists() else pd.DataFrame()
-    reused_ids = set(
-        reused.get("reference_id", pd.Series(dtype=str)).dropna().astype(str)
-    )
-    manifest = json.loads((root / "manifest.json").read_text())
-    reference_plan = {
-        str(entry["target_id"]): entry for entry in manifest.get("reference_plan", [])
-    }
-    computed_frames: list[pd.DataFrame] = []
-    computed_sources: list[Path] = []
-    publication_entries: list[dict[str, Any]] = []
-    reference_targets = workflow.children()["references"].targets()
-    for target in reference_targets:
-        target_dir = reference_dir / target.tag
-        result_path = _deepest_parquet(target_dir)
-        if result_path is None:
-            planned = reference_plan.get(target.target_id, {})
-            planned_reference_id = planned.get("reference_id")
-            reused_as_planned = (
-                planned.get("action") == "reuse"
-                and str(planned_reference_id) in reused_ids
-            )
-            publication_entries.append(
-                {
-                    "target_id": target.target_id,
-                    "state_id": target.state_id,
-                    "target": target.tag,
-                    "result_path": None,
-                    "status": "reused" if reused_as_planned else "missing_result",
-                    "validation_status": None,
-                    "reference_id": (
-                        str(planned_reference_id) if reused_as_planned else None
-                    ),
-                    "issue": (
-                        ""
-                        if reused_as_planned
-                        else "No completed or snapshotted reused result was found"
-                    ),
-                }
-            )
-            continue
-        frame = pd.read_parquet(result_path).reset_index(drop=True)
-        reference_id: str | None = None
-        validation_status: str | None = None
-        publication_status = "published"
-        publication_issue = ""
-        selected_frame = None
-        try:
-            selected_frame = _reference_publication_frame(workflow, frame, target)
-            local_record = local_library.publish(
-                selected_frame,
-                target,
-                workflow.method,
-                protocol=workflow._reference_protocol(),
-                calculation_level=workflow.level,
-                source_run=root,
-                source_target_dir=target_dir,
-                artifact_policy=artifact_policy,
-            )
-        except ValueError as exc:
-            publication_status = "not_published"
-            validation_status = "invalid"
-            publication_issue = str(exc)
-        else:
-            reference_id = local_record.reference_id
-            metadata = local_record.metadata
-            validation_status = str(
-                metadata.get("validation_status")
-                or metadata.get("auto_validation", {}).get("status")
-                or "auto_valid"
-            )
-            if shared_library is not None:
-                shared_library.publish(
-                    selected_frame,
-                    target,
-                    workflow.method,
-                    protocol=workflow._reference_protocol(),
-                    calculation_level=workflow.level,
-                    source_run=root,
-                    source_target_dir=target_dir,
-                    artifact_policy=artifact_policy,
-                )
-        prior_bindings = frame.attrs.get("frust_reference_bindings", {}).get(
-            "bindings", []
-        )
-        frame.attrs["frust_reference_bindings"] = {
-            "schema_version": 1,
-            "bindings": [
-                *prior_bindings,
-                {
-                    "target_id": target.target_id,
-                    "source_structure_ids": list(
-                        frame.get("structure_id", pd.Series(dtype=str))
-                        .dropna()
-                        .unique()
-                    ),
-                },
-            ],
-        }
-        frame["reference_id"] = None
-        if reference_id is not None:
-            frame.loc[selected_frame.index, "reference_id"] = reference_id
-        frame["reference_source"] = "calculated"
-        computed_frames.append(frame)
-        computed_sources.append(result_path)
-        publication_entries.append(
-            {
-                "target_id": target.target_id,
-                "state_id": target.state_id,
-                "target": target.tag,
-                "result_path": str(result_path.relative_to(root)),
-                "status": publication_status,
-                "validation_status": validation_status,
-                "reference_id": reference_id,
-                "issue": publication_issue,
-            }
-        )
-    if computed_frames:
-        computed = _concat_reference_results(
-            computed_frames,
-            source_files=computed_sources,
-        )
-        _write_verified_parquet(computed, computed_path)
-    publication_report = {
-        "schema_version": 1,
-        "generated_at": _utc_now(),
-        "n_targets": len(reference_targets),
-        "n_results": int(len(computed)),
-        "n_published": sum(
-            entry["status"] == "published" for entry in publication_entries
-        ),
-        "n_not_published": sum(
-            entry["status"] == "not_published" for entry in publication_entries
-        ),
-        "n_reused": sum(entry["status"] == "reused" for entry in publication_entries),
-        "n_missing_results": sum(
-            entry["status"] == "missing_result" for entry in publication_entries
-        ),
-        "entries": publication_entries,
-    }
-    publication_report_path = reference_dir / "publication_report.json"
-    publication_report_path.write_text(
-        json.dumps(publication_report, indent=2, sort_keys=True, default=str) + "\n"
-    )
-    available = [frame for frame in (computed, reused) if not frame.empty]
-    available_paths = [
-        path
-        for frame, path in ((computed, computed_path), (reused, reused_path))
-        if not frame.empty
-    ]
-    combined = _concat_reference_results(
-        available,
-        source_files=available_paths,
-    )
-    _write_verified_parquet(combined, reference_dir / "merged.parquet")
-
+    _read_screen_manifest(root / "manifest.json")
+    tier_report = _finalize_nested_tiers(workflow, root)
     analysis_report = build_analysis(root)
     discovered_branch_reports: dict[str, Any] = {}
     for branch in workflow.children():
         report_path = _branch_dir(root, branch) / "collection_report.json"
         if report_path.exists():
             discovered_branch_reports[branch] = json.loads(report_path.read_text())
-    branch_reports.update(discovered_branch_reports)
-    reference_complete = (
-        int(publication_report["n_not_published"]) == 0
-        and int(publication_report["n_missing_results"]) == 0
-        and (
-            int(publication_report["n_published"]) + int(publication_report["n_reused"])
-            == int(publication_report["n_targets"])
-        )
+    for branch, payload in discovered_branch_reports.items():
+        branch_reports.setdefault(branch, payload)
+    states = pd.read_parquet(
+        root / "analysis" / "states_by_level.parquet",
+        columns=["analysis_level", "source", "structure_id", "quality_status"],
     )
+    expected_targets = {
+        branch: {target.target_id for target in child.targets()}
+        for branch, child in workflow.children().items()
+    }
+    terminal_report = {
+        branch: _result_coverage(
+            states.loc[states["analysis_level"].eq(workflow.level) & states["source"].eq(branch)],
+            expected,
+            require_qualified=branch == "references",
+        )
+        for branch, expected in expected_targets.items()
+    }
+    for level, branches in tier_report["levels"].items():
+        for branch, entry in branches.items():
+            entry.update(_result_coverage(
+                states.loc[states["analysis_level"].eq(level) & states["source"].eq(branch)],
+                expected_targets[branch],
+                require_qualified=branch == "references",
+            ))
     tiers_complete = all(
         bool(branch_report.get("complete", False))
         for level_report in tier_report.get("levels", {}).values()
         for branch_report in level_report.values()
     )
-    overall_success = reference_complete and tiers_complete
+    overall_success = (
+        not incomplete_reports and tiers_complete
+        and all(branch["complete"] for branch in terminal_report.values())
+    )
     report = {
-        "schema_version": 2,
+        "schema_version": 3,
         "finalized_at": _utc_now(),
         "overall_status": "success" if overall_success else "partial",
         "artifact_policy": artifact_policy,
@@ -2023,11 +1605,8 @@ def _finalize_run(
             for branch, payload in branch_reports.items()
         },
         "analysis_tiers": tier_report,
-        "n_references_calculated": int(len(computed)),
-        "n_references_published": int(publication_report["n_published"]),
-        "n_references_not_published": int(publication_report["n_not_published"]),
-        "n_references_reused": int(len(reused)),
-        "reference_publication_report": str(publication_report_path.relative_to(root)),
+        "terminal_results": terminal_report,
+        "incomplete_collections": incomplete_reports,
         "submission": dict(submission_status or {}),
     }
     (root / "run_report.json").write_text(
@@ -2044,6 +1623,27 @@ def _finalize_run(
             json.dumps(report, indent=2, sort_keys=True, default=str) + "\n"
         )
     return report
+
+
+def _result_coverage(
+    states: pd.DataFrame, expected: set[str], *, require_qualified: bool
+) -> dict[str, Any]:
+    """Summarize target coverage and usable reference candidates."""
+    collected = set(states["structure_id"])
+    missing = sorted(expected - collected)
+    unqualified = []
+    if require_qualified:
+        qualified = set(
+            states.loc[states["quality_status"].isin(["ready", "review"]), "structure_id"]
+        )
+        unqualified = sorted((expected & collected) - qualified)
+    return {
+        "n_targets": len(expected),
+        "n_collected": len(expected & collected),
+        "missing_targets": missing,
+        "unqualified_targets": unqualified,
+        "complete": not missing and not unqualified,
+    }
 
 
 def _validate_collection_reports(
@@ -2093,9 +1693,13 @@ def _validate_collection_reports(
                     "n_failures": failures,
                 }
             )
+        if not collected and not output.exists():
             continue
         try:
-            merged = pd.read_parquet(output)
+            # Inspect the footer to avoid loading all scientific data twice.
+            from pyarrow.parquet import ParquetFile
+
+            n_rows = ParquetFile(output).metadata.num_rows
         except Exception as exc:
             incomplete.append(
                 {
@@ -2107,12 +1711,12 @@ def _validate_collection_reports(
                 }
             )
             continue
-        if expected and merged.empty:
+        if n_rows != payload.get("n_rows", n_rows) or bool(n_rows) != bool(collected):
             incomplete.append(
                 {
                     "branch": branch,
                     "report": str(path),
-                    "reason": "empty_output",
+                    "reason": "inconsistent_output",
                     "output": str(output),
                 }
             )
@@ -2204,12 +1808,8 @@ def _cleanup_screening_targets(
 def _finalize_nested_tiers(
     workflow: CatalystScreenWorkflow,
     root: Path,
-    *,
-    local_library: ReferenceLibrary,
-    shared_library: ReferenceLibrary | None,
-    artifact_policy: ArtifactPolicy = "standard",
 ) -> dict[str, Any]:
-    """Collect and publish exact nested-tier snapshots from a composed run."""
+    """Collect the exact lower-tier snapshots from each calculation branch."""
     report: dict[str, Any] = {
         "schema_version": 1,
         "levels": {},
@@ -2228,67 +1828,13 @@ def _finalize_nested_tiers(
                 snapshot_path = branch_dir / target.tag / ANALYSIS_TIER_FILES[level]
                 if not snapshot_path.exists():
                     continue
-                frame = pd.read_parquet(snapshot_path).copy()
-                if branch == "references":
-                    record = local_library.publish(
-                        frame,
-                        target,
-                        workflow.method,
-                        protocol=workflow._reference_protocol(level),
-                        calculation_level=level,
-                        source_run=root,
-                        source_target_dir=branch_dir / target.tag,
-                        artifact_policy=artifact_policy,
-                    )
-                    if shared_library is not None:
-                        shared_library.publish(
-                            frame,
-                            target,
-                            workflow.method,
-                            protocol=workflow._reference_protocol(level),
-                            calculation_level=level,
-                            source_run=root,
-                            source_target_dir=branch_dir / target.tag,
-                            artifact_policy=artifact_policy,
-                        )
-                    frame["reference_id"] = record.reference_id
-                    frame["reference_source"] = "calculated"
-                frames.append(frame)
+                frames.append(pd.read_parquet(snapshot_path))
                 sources.append(snapshot_path)
-
-            if branch == "references":
-                computed = _concat_reference_results(frames, source_files=sources)
-                computed_path = tier_dir / "computed.parquet"
-                _write_verified_parquet(computed, computed_path)
-                reused_path = tier_dir / "reused.parquet"
-                reused = (
-                    pd.read_parquet(reused_path)
-                    if reused_path.exists()
-                    else pd.DataFrame()
-                )
-                available = [value for value in (computed, reused) if not value.empty]
-                available_paths = [
-                    path
-                    for value, path in (
-                        (computed, computed_path),
-                        (reused, reused_path),
-                    )
-                    if not value.empty
-                ]
-                merged = _concat_reference_results(
-                    available,
-                    source_files=available_paths,
-                )
-            else:
-                merged = _concat_tier_results(frames, source_files=sources)
+            merged = _concat_tier_results(frames, source_files=sources)
             _write_verified_parquet(merged, tier_dir / "merged.parquet")
             level_report[branch] = {
-                "n_targets": len(child.targets()),
                 "n_snapshots": len(frames),
                 "n_rows": int(len(merged)),
-                "complete": {target.target_id for target in child.targets()}.issubset(
-                    set(merged.get("structure_id", pd.Series(dtype=str)))
-                ),
                 "path": str((tier_dir / "merged.parquet").relative_to(root)),
             }
         report["levels"][level] = level_report
@@ -2300,108 +1846,15 @@ def _concat_tier_results(
     *,
     source_files: list[str | Path],
 ) -> pd.DataFrame:
-    """Concatenate compatible non-reference tier snapshots."""
+    """Concatenate tier snapshots and preserve their result metadata."""
     if not frames:
         return pd.DataFrame()
-    merged = pd.concat(frames, ignore_index=True)
-    merged.attrs.clear()
-    merged.attrs.update(merge_dataframe_attrs(frames, source_files=source_files))
-    return merged
-
-
-def _concat_reference_results(
-    frames: list[pd.DataFrame],
-    *,
-    source_files: list[str | Path],
-) -> pd.DataFrame:
-    """Concatenate reference results without losing canonical metadata.
-
-    Parameters
-    ----------
-    frames : list of pandas.DataFrame
-        Canonical minimum-result dataframes to concatenate.
-    source_files : list of str or pathlib.Path
-        Source labels corresponding one-to-one with ``frames``.
-
-    Returns
-    -------
-    pandas.DataFrame
-        Concatenated reference results with merged dataframe attrs.
-
-    Raises
-    ------
-    ValueError
-        If a source lacks a canonical result contract or the contracts are
-        incompatible.
-    """
-    if not frames:
-        return pd.DataFrame()
-    if len(frames) != len(source_files):
-        raise ValueError("reference frames and source_files must have equal length")
-
-    missing_contract = [
-        str(source)
-        for frame, source in zip(frames, source_files)
-        if not isinstance(frame.attrs.get("frust_results"), dict)
-    ]
-    if missing_contract:
-        raise ValueError(
-            "Reference result has no canonical frust_results contract: "
-            + ", ".join(missing_contract)
-        )
-
-    compatible_frames: list[pd.DataFrame] = []
-    for frame in frames:
-        compatible = frame.copy()
-        contract = deepcopy(compatible.attrs["frust_results"])
-        contract.pop("artifact_policy", None)
-        if contract.get("calculation_level") != "full":
-            # Older direct low-cost and DFT-ranked runs could record the
-            # MethodPlan thermochemistry recipe while tier snapshots did not.
-            # Neither result depth has frequencies, so the field is inert and
-            # must not make otherwise identical cached references incompatible.
-            contract.pop("thermochemistry", None)
-        compatible.attrs["frust_results"] = contract
-        compatible_frames.append(compatible)
-
-    attrs = merge_dataframe_attrs(
-        compatible_frames,
-        source_files=source_files,
-    )
+    attrs = merge_dataframe_attrs(frames, source_files=source_files)
     if not isinstance(attrs.get("frust_results"), dict):
-        raise ValueError(
-            "Reference results have incompatible canonical frust_results contracts"
-        )
-    merged = pd.concat(compatible_frames, ignore_index=True)
-    bindings = _merged_reference_bindings(compatible_frames)
-    if bindings:
-        attrs["frust_reference_bindings"] = {
-            "schema_version": 1,
-            "bindings": bindings,
-        }
-    merged.attrs.clear()
-    merged.attrs.update(attrs)
+        raise ValueError("Tier snapshots have missing or incompatible canonical result contracts")
+    merged = pd.concat(frames, ignore_index=True)
+    merged.attrs = attrs
     return merged
-
-
-def _merged_reference_bindings(frames: list[pd.DataFrame]) -> list[dict[str, Any]]:
-    """Collect unique target bindings across concatenated reference frames."""
-    bindings: list[dict[str, Any]] = []
-    fingerprints: set[str] = set()
-    for frame in frames:
-        metadata = frame.attrs.get("frust_reference_bindings", {})
-        if not isinstance(metadata, Mapping):
-            continue
-        for binding in metadata.get("bindings", []) or []:
-            if not isinstance(binding, Mapping):
-                continue
-            item = deepcopy(dict(binding))
-            fingerprint = _json_hash(item)
-            if fingerprint in fingerprints:
-                continue
-            fingerprints.add(fingerprint)
-            bindings.append(item)
-    return bindings
 
 
 def _branch_dir(root: Path, branch: str) -> Path:
@@ -2564,17 +2017,12 @@ def _screen_submission_plan(workflow, out_dir, execution, resources, array, para
         path = Path(out_dir)/'manifest.json'
         if not path.exists():
             raise ValueError('Screen retry requires an existing compatible run manifest')
-        original = json.loads(path.read_text())
+        if json.loads(path.read_text()).get('schema_version') != SCREEN_MANIFEST_VERSION:
+            raise ValueError('Unsupported screen manifest for retry; choose a new out_dir')
         report_path = path.parent / 'run_report.json'
         if report_path.exists() and json.loads(report_path.read_text()).get('overall_status') == 'success':
             raise ValueError('Screen already finalized successfully; use a new out_dir')
-        calculated_ids = {entry['target_id'] for entry in original['reference_plan'] if entry['action']=='calculate'}
-    else:
-        calculated_ids = {item.target.target_id for item in workflow.targets()
-                          if item.branch=='references' and item.action=='calculate'}
-    calculated = {branch: [target for target in child.targets()
-                           if branch!='references' or target.target_id in calculated_ids]
-                  for branch, child in children.items()}
+    calculated = {branch: child.targets() for branch, child in children.items()}
     selected = {}
     plans = {}
     for branch, child in children.items():
@@ -2596,7 +2044,7 @@ def _screen_submission_plan(workflow, out_dir, execution, resources, array, para
             selected[branch] = [] if retry else calculated[branch]
         allowed = {target.tag for target in calculated[branch]}
         if any(target.tag not in allowed for target in selected[branch]):
-            raise ValueError(f'Branch {branch} selection contains unknown or reused targets')
+            raise ValueError(f'Branch {branch} selection contains unknown targets')
     union = {name for _, groups in plans.values() for name, _, _ in groups}
     if isinstance(parallelism, Mapping) and set(parallelism) != union:
         raise ValueError(f'array_parallelism must specify exactly these screen stage groups: {sorted(union)}')

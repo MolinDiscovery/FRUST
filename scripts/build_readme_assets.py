@@ -712,7 +712,7 @@ def build_workflow_funnel(out_dir: Path = ASSET_DIR) -> list[Path]:
             zorder=4,
         )
 
-        # Bottom Right (aligned under Cards 3-4): FRUST_REFERENCE_STORE
+        # Bottom right (aligned under cards 3–4): campaign references
         ref_x0 = xs[2]
         ref_w = (xs[3] + card_w) - ref_x0
         ref_box = FancyBboxPatch(
@@ -729,7 +729,7 @@ def build_workflow_funnel(out_dir: Path = ASSET_DIR) -> list[Path]:
         ax.text(
             ref_x0 + ref_w / 2.0,
             0.182,
-            "FRUST_REFERENCE_STORE  ·  Reference Library",
+            "References calculated within the run",
             fontsize=9.2,
             fontweight="bold",
             family="monospace",
@@ -741,7 +741,7 @@ def build_workflow_funnel(out_dir: Path = ASSET_DIR) -> list[Path]:
         ax.text(
             ref_x0 + ref_w / 2.0,
             0.100,
-            "Reuses reviewed catalyst dimers, substrates, HBpin & H₂",
+            "Saves dimers, free substrates, HBpin & H₂ with the run",
             fontsize=8.8,
             color=body_col,
             ha="center",

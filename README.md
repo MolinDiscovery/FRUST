@@ -47,7 +47,7 @@
 - **Combinatorial FLP screens** — Cross candidate B–aryl–N catalysts (including stereoisomers and resting-state dimers) with target substrates from one CSV.
 - **Role-based 3D TS assembly (`tsguess2`)** — Build productive C–H borylation (`TS1`–`TS4`) and competing bisarylation (`TS5`–`TS8`) cores dynamically without hardcoded atom indices.
 - **Composable `g-xTB` → `UMA` → `DFT` funnels** — Swap conformer screening, `ALPB`/`SMD` solvent reranking, and `OptTS` + Hessian validation presets without changing target definitions.
-- **Reusable reference store** — Cache reviewed catalyst dimers, free substrates, `HBpin`, and `H2` across campaigns via `FRUST_REFERENCE_STORE`.
+- **Campaign-local references** — Calculate each required dimer, free substrate, HBpin, or H₂ target once per campaign and trace barriers to the exact results used.
 - **Laptop-to-Slurm parity** — Preview state graphs with `wf.plan()`, smoke-test locally with `wf.run(debug=True)`, and submit Slurm job arrays with `wf.submit(array=True)`.
 
 ## Quickstart

@@ -398,7 +398,7 @@ run bundles.
 | Debug one molecule step by step | `ft.Stepper` |
 | Run a production screen that moves from laptop to Slurm | `ft.workflows.mols(...)` or `ft.workflows.catalyst_screen(...)` |
 | Inspect TS guesses before calculating | `ft.screen.create_ts_guesses(...)` then `ft.Stepper` |
-| Reuse approved references across runs | `ft.workflows.catalyst_screen(...)` |
+| Calculate and inspect campaign-local references | `ft.workflows.catalyst_screen(...)` |
 
 For new production work, start with `ft.workflows`. Drop to `Stepper` only when
 you need the extra control.

@@ -10,7 +10,6 @@ import pandas as pd
 import pytest
 
 import frust as ft
-from frust.screen.references import reference_identity
 from frust.stepper import Stepper
 from frust.workflows.factories import Int3Workflow, MolsWorkflow, ScreenTSWorkflow
 
@@ -272,7 +271,7 @@ def test_selection_and_validation_are_independent(tmp_path, ranking, method, tie
     assert run.available_analysis_levels() == ("low_cost", tier, "full")
 
 
-def test_alias_and_reference_identity_cover_candidate_policy():
+def test_alias_and_signature_cover_candidate_policy(tmp_path):
     current = workflow(ranking_top_n=2)
     legacy = workflow(ranking_top_n=None, uma_rank_top_n=2)
     assert current.plan().equals(legacy.plan())
@@ -281,27 +280,10 @@ def test_alias_and_reference_identity_cover_candidate_policy():
         workflow(ranking_top_n=2, uma_rank_top_n=1)
     with pytest.raises(ValueError, match="positive"):
         workflow(ranking_top_n=0)
-    target = current.children()["references"].targets()[0]
-
-    def identity(wf, level):
-        return reference_identity(
-            target,
-            wf.method,
-            protocol=wf._reference_protocol(level),
-            calculation_level=level,
-        )[0]
-
-    assert identity(current, "full") != identity(workflow(ranking_top_n=1), "full")
-    assert identity(current, "low_cost") == identity(
-        workflow(ranking_top_n=1), "low_cost"
-    )
-    assert identity(current, "full") != identity(
-        workflow(ranking="uma-gas", ranking_top_n=2), "full"
-    )
-    other_validation = workflow(method="wb97xd3-631g", ranking_top_n=2)
-    assert identity(current, "low_cost") == identity(other_validation, "low_cost")
-    assert identity(current, "uma_ranked") == identity(other_validation, "uma_ranked")
-    assert identity(current, "full") != identity(other_validation, "full")
+    current._write_manifest(tmp_path)
+    legacy._write_manifest(tmp_path)
+    with pytest.raises(FileExistsError, match="different catalyst-screen"):
+        workflow(ranking_top_n=1)._write_manifest(tmp_path)
 
 
 @pytest.mark.parametrize("method", ["uma-gas-opt-alpb-chloroform", "wb97xd3-631g"])
@@ -394,7 +376,7 @@ def test_native_arrays_keep_the_validation_chain_without_preparation(tmp_path, s
     manifest = ScreenRun(tmp_path / "submitted").manifest
     assert manifest["ranking_top_n"] == 1
     assert manifest["analysis_levels"] == ["low_cost", "uma_ranked", "full"]
-    assert manifest["reference_store_configured"] is False
+    assert manifest["reference_plan"]
     finalizer = next(args[0] for function, args, _ in fake.submissions
                      if function.__name__ == "_finalize_submitted_run")
     pd.testing.assert_frame_equal(finalizer.plan(), wf.plan())
@@ -524,8 +506,7 @@ def test_full_uma_cycle_is_balanced_and_keeps_intermediate_geometry(
     references = pd.read_parquet(run.path / "calculations/references/merged.parquet")
     if environment == "hybrid":
         assert len(references) == 14  # Both retained candidates remain in the run.
-        assert references.reference_id.notna().sum() == 7
-        assert set(references.loc[references.reference_id.notna(), "cid"]) == {0}
+        assert references.groupby("structure_id").size().eq(2).all()
 
 
 @pytest.mark.parametrize("from_csv", [False, True])
@@ -621,7 +602,7 @@ def test_pending_finalizer_recovers_legacy_explicit_inputs_from_manifest(tmp_pat
 
 
 @pytest.mark.parametrize("all_invalid", [False, True])
-def test_cycle_reference_publication_uses_quality_before_energy(
+def test_cycle_reference_analysis_uses_quality_before_energy(
     tmp_path, monkeypatch, all_invalid
 ):
     calculate = FakeStepper.calculate
@@ -642,8 +623,11 @@ def test_cycle_reference_publication_uses_quality_before_energy(
     catalyst = references[references.state_id.eq("catalyst")]
     report = json.loads((run.path / "run_report.json").read_text())
     cat_profile = run.profile(include_invalid=True).set_index("profile_state").loc["Cat"]
+    states = run.states().query("state_id == 'catalyst'")
+    assert set(catalyst.cid) == {0, 1}
+    coverage = report["terminal_results"]["references"]
     if all_invalid:
-        assert catalyst.reference_id.isna().all()
+        assert coverage["unqualified_targets"] == states.structure_id.unique().tolist()
         assert cat_profile.quality_status == "invalid"
         assert report["overall_status"] == "partial"
         assert "artifact_cleanup" not in report
@@ -651,13 +635,13 @@ def test_cycle_reference_publication_uses_quality_before_energy(
                       if t.state_id == "catalyst")
         assert (run.path / "calculations/references" / target.tag).exists()
     else:
-        assert catalyst.loc[catalyst.reference_id.notna(), "cid"].tolist() == [1]
+        assert states.loc[states.quality_status.eq("ready"), "cid"].tolist() == [1]
+        assert coverage["complete"]
         assert cat_profile.quality_status == "ready"
         assert report["overall_status"] == "success"
 
 
 def test_p13_parent_coverage_is_lightweight_and_contains_no_dft_stages(monkeypatch):
-    monkeypatch.delenv("FRUST_REFERENCE_STORE", raising=False)
     chemistry = pd.DataFrame(
         {
             "role": ["substrate"] * 2 + ["catalyst"] * 4,
@@ -691,7 +675,7 @@ def test_p13_parent_coverage_is_lightweight_and_contains_no_dft_stages(monkeypat
         "transition_states": 32,
         "references": 16,
     }
-    assert plan.action.eq("calculate").all() and plan.reference_id.isna().all()
+    assert plan.target.is_unique
     assert not stages.stage.str.startswith("dft_").any()
     assert not any(stage.startswith("dft_") for stage in wf.method.stages)
     assert wf.n_confs == 200 and wf.top_n == 20 and wf.ranking_top_n == 1

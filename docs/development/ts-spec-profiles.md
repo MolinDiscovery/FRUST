@@ -81,10 +81,8 @@ convergence evidence in dataframe attributes. Analysis rejects capped, stale
 or conflicting evidence even after an identity approval; changing the evidence
 invalidates the previous review. The main calculation table gains no extra columns.
 
-Reference publication applies the same native convergence gate. Reusing a
-minimum under another run's labels preserves its geometry and output hashes
-while rebinding the evidence to the receiving target. Native convergence
-evidence also participates in the immutable reference identifier.
+Collected reference minima keep the same geometry-bound convergence evidence.
+An unconverged minimum is flagged in state and barrier analysis.
 
 This evidence is collected for ordinary optimizations and TS searches, including
 when calculation directories are not retained. Frequency-only jobs and relaxed

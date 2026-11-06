@@ -176,26 +176,9 @@ def test_compact_bundle_keeps_parent_candidate_link(tmp_path, monkeypatch):
     assert comparison.method_comparison().iloc[0]["match_status"] == "matched"
 
 
-def test_comparison_submit_plan_and_reference_reuse(tmp_path, monkeypatch):
+def test_comparison_submits_references_and_seeded_ts(tmp_path, monkeypatch):
     parent = _run_full_uma(tmp_path, monkeypatch)
-    store = tmp_path / "reference_store"
-    first = ft.workflows.wb97_comparison(
-        parent, reference_store=store, reuse_policy="auto_valid"
-    )
-    with (
-        patch.object(MolsWorkflow, "_prepare_initial_df", _prepared),
-        patch("frust.workflows.core.Stepper", _FakeComparisonStepper),
-        patch("frust.workflows.core._uma_scope_for_stages", return_value=nullcontext()),
-    ):
-        first.run(out_dir=tmp_path / "first_comparison", n_cores=1, mem_gb=2)
-    second = ft.workflows.wb97_comparison(
-        parent, reference_store=store, reuse_policy="auto_valid"
-    )
-    assert all(
-        item.action == "reuse"
-        for item in second.targets()
-        if item.branch == "references"
-    )
+    comparison = ft.workflows.wb97_comparison(parent)
 
     class FakeExecutor:
         def __init__(self):
@@ -216,17 +199,17 @@ def test_comparison_submit_plan_and_reference_reuse(tmp_path, monkeypatch):
         patch("frust.workflows.core.create_executor", return_value=fake),
         patch("frust.workflows.screening.create_executor", return_value=fake),
     ):
-        submission = second.submit(
+        submission = comparison.submit(
             out_dir=tmp_path / "submitted",
             cluster=cluster,
             execution="dft_staged",
         )
-        second.submit(
+        comparison.submit(
             out_dir=tmp_path / "submitted",
             cluster=cluster,
             execution="dft_staged",
         )
-    assert set(submission.child_submissions) == {"transition_states"}
+    assert set(submission.child_submissions) == {"references", "transition_states"}
     stage_groups = [
         args[2]
         for function, args, _ in fake.submissions
@@ -248,15 +231,13 @@ def test_comparison_submit_plan_and_reference_reuse(tmp_path, monkeypatch):
         patch("frust.workflows.core.create_executor", side_effect=scheduler.create),
         patch("frust.workflows.screening.create_executor", side_effect=scheduler.create),
     ):
-        arrays = second.submit(out_dir=tmp_path / "submitted_arrays", cluster=cluster,
+        arrays = comparison.submit(out_dir=tmp_path / "submitted_arrays", cluster=cluster,
                                execution="dft_staged", array=True, array_parallelism=2)
-    assert set(arrays.child_submissions) == {"transition_states"}
+    assert set(arrays.child_submissions) == {"references", "transition_states"}
     assert any(fn.__name__ == "_run_stage_array_submitted_job" for fn, _, _, _ in scheduler.calls)
     assert arrays.child_submissions["transition_states"].records
     with pytest.raises(FileExistsError, match="different catalyst-screen"):
         ft.workflows.wb97_comparison(
             parent,
             candidates=parent.candidate_barriers()["ts_result_id"].tolist(),
-            reference_store=store,
-            reuse_policy="auto_valid",
         ).submit(out_dir=tmp_path / "submitted", cluster=cluster)

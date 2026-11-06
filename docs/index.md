@@ -41,7 +41,7 @@ wf.plan()
 - [Installation](getting-started/installation.md) covers basic Python package setup and optional extras.
 - [External tool setup](getting-started/external-tool-setup.md) covers `.env`, xTB, ORCA, ORCA-External-Tools, UMA prerequisites, and g-xTB paths.
 - [Quickstart](getting-started/quickstart.md) shows the shortest practical workflow and `Stepper` entry points.
-- [End-to-end catalyst-screen tutorial](tutorials/end-to-end-catalyst-screen.md) walks from `screen.csv` through reusable reference stores (`FRUST_REFERENCE_STORE`), vibration review, and portable barrier bundles.
+- [End-to-end catalyst-screen tutorial](tutorials/end-to-end-catalyst-screen.md) walks from `screen.csv` through reference calculations, vibration review, and portable barrier bundles.
 - [UMA method choices](catalyst-screens/uma-screening.md) compares hybrid `g-xTB -> UMA` and `UMA -> ωB97X-D3` plans alongside full-cycle UMA characterization.
 - [Reaction coverage](catalyst-screens/reaction-coverage.md), [Bisarylation review](catalyst-screens/bisarylation.md), and [Catalyst stereochemistry](development/catalyst-stereochemistry.md) cover `TS1`–`TS8` pathway planning, stereoisomers, and off-cycle branch analysis.
 - [TS guess dataframes](catalyst-screens/ts-guesses.md) explains how the `tsguess2` backend turns systems and reactive positions into self-describing constrained TS rows.

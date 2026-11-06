@@ -9,13 +9,6 @@ from frust.screen.core import create_ts_guesses, expand, read
 from frust.screen.stereo import resolve_stereoisomers
 
 _LAZY_API = {
-    "ReferenceLibrary": ("frust.screen.references", "ReferenceLibrary"),
-    "ReferenceRecord": ("frust.screen.references", "ReferenceRecord"),
-    "open_reference_library": ("frust.screen.references", "open_reference_library"),
-    "repair_reference_bindings": (
-        "frust.screen.repairs",
-        "repair_reference_bindings",
-    ),
     "ScreenRun": ("frust.screen.runs", "ScreenRun"),
     "build_analysis": ("frust.screen.runs", "build_analysis"),
     "open_run": ("frust.screen.runs", "open_run"),
@@ -23,23 +16,19 @@ _LAZY_API = {
 }
 
 __all__ = [
-    "ReferenceLibrary",
-    "ReferenceRecord",
     "ScreenRun",
     "build_analysis",
     "cleanup_submitit",
     "create_ts_guesses",
     "expand",
-    "open_reference_library",
     "open_run",
     "read",
     "resolve_stereoisomers",
-    "repair_reference_bindings",
 ]
 
 
 def __getattr__(name: str) -> Any:
-    """Lazily resolve run-analysis and reference-library helpers."""
+    """Lazily resolve run-analysis and cleanup helpers."""
     try:
         module_name, attribute = _LAZY_API[name]
     except KeyError as exc:
@@ -56,6 +45,4 @@ def __dir__() -> list[str]:
 
 if TYPE_CHECKING:
     from frust.screen.cleanup import cleanup_submitit
-    from frust.screen.references import ReferenceLibrary, ReferenceRecord, open_reference_library
-    from frust.screen.repairs import repair_reference_bindings
     from frust.screen.runs import ScreenRun, build_analysis, open_run

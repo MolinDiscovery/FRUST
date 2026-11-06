@@ -169,23 +169,22 @@ references required by the barrier equations. `scope="full_cycle"` additionally
 calculates catalyst, int1, int2, INT3, and borylated product states for a
 balanced catalytic-cycle profile.
 
-`wf.plan()` is calculation-free. It shows which structures will be calculated
-and which approved references can be reused:
+`wf.plan()` shows the required structures before embedding or calculation.
 
 ```python
-wf.plan()[["branch", "state_id", "system_name", "rpos", "action"]]
+wf.plan()[["branch", "state_id", "system_name", "rpos"]]
 ```
 
-| branch | state_id | system_name | rpos | action |
-| --- | --- | --- | ---: | --- |
-| `transition_states` | `TS1` | `n_methyl_pyrrole__tmp_bcat` | 2 | `calculate` |
-| `transition_states` | `TS1` | `n_methyl_pyrrole__tmp_bcat` | 3 | `calculate` |
-| `transition_states` | `TS2` | `n_methyl_pyrrole__tmp_bcat` | 2 | `calculate` |
-| ... | ... | ... | ... | ... |
-| `references` | `ligand` | `n_methyl_pyrrole__tmp_bcat` |  | `calculate` |
-| `references` | `dimer` | `n_methyl_pyrrole__tmp_bcat` |  | `calculate` |
-| `references` | `HBpin-mol` | `n_methyl_pyrrole__tmp_bcat` |  | `calculate` |
-| `references` | `HH` | `n_methyl_pyrrole__tmp_bcat` |  | `calculate` |
+| branch | state_id | system_name | rpos |
+| --- | --- | --- | ---: |
+| `transition_states` | `TS1` | `n_methyl_pyrrole__tmp_bcat` | 2 |
+| `transition_states` | `TS1` | `n_methyl_pyrrole__tmp_bcat` | 3 |
+| `transition_states` | `TS2` | `n_methyl_pyrrole__tmp_bcat` | 2 |
+| ... | ... | ... | ... |
+| `references` | `ligand` | `n_methyl_pyrrole__tmp_bcat` |  |
+| `references` | `dimer` | `n_methyl_pyrrole__tmp_bcat` |  |
+| `references` | `HBpin-mol` | `n_methyl_pyrrole__tmp_bcat` |  |
+| `references` | `HH` | `n_methyl_pyrrole__tmp_bcat` |  |
 
 Inspect the active calculation and scheduler groups before running:
 
@@ -275,7 +274,7 @@ result = wf.submit(
 ```
 
 The finalization job writes a portable run bundle with per-branch
-`merged.parquet` files, `run_report.json`, and a snapshot of reused references.
+`merged.parquet` files for each calculation branch and `run_report.json`.
 Open the bundle with `ft.screen.open_run(...)`:
 
 ```python

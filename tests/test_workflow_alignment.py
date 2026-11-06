@@ -83,14 +83,8 @@ def test_alias_conflicts_and_identity():
         workflow(validation_top_n=2, ranking_top_n=None, ts_refine_n=3)
     explicit = workflow(validation_top_n=2, ranking_top_n=None)
     alias = workflow(ranking_top_n=2)
-    assert explicit._reference_protocol("full") == alias._reference_protocol("full")
-    assert explicit._reference_protocol("low_cost") == alias._reference_protocol(
-        "low_cost"
-    )
     assert explicit.method.fingerprint() == alias.method.fingerprint()
-    assert explicit._reference_protocol("full") != workflow(
-        ranking_top_n=1
-    )._reference_protocol("full")
+    assert explicit.show_stages().equals(alias.show_stages())
 
 
 @pytest.mark.parametrize("factory", ["mols", "raw_mols", "screen_ts", "int3"])
@@ -172,7 +166,7 @@ def test_local_staged_execution_and_repeated_run_preserve_candidate_results(
     assert set(before[before.state_id.eq("TS1")].cid) == {0, 1}
 
 
-def test_custom_role_keys_drive_execution_results_and_reference_publication(tmp_path):
+def test_custom_role_keys_drive_execution_and_reference_results(tmp_path):
     base = ft.workflows.methods.preset("r2scan-3c")
     roles = {
         role: "custom_" + stage
@@ -229,9 +223,9 @@ def test_custom_role_keys_drive_execution_results_and_reference_publication(tmp_
     )
     assert "custom_dft_freq-vibs" in frame
     report = __import__("json").loads(
-        (run.path / "calculations/references/publication_report.json").read_text()
+        (run.path / "run_report.json").read_text()
     )
-    assert report["n_not_published"] == 0
+    assert report["terminal_results"]["references"]["complete"]
 
 
 def test_old_submitted_objects_restore_historical_defaults():
@@ -290,9 +284,10 @@ def test_quality_and_missing_thermal_data_override_lower_final_energy(tmp_path, 
     assert run.barriers().iloc[0].ts_cid == 0
     candidates = run.candidate_barriers().set_index("cid")
     assert candidates.loc[1, "quality_status"] == "incomplete"
-    refs = pd.read_parquet(run.path / "calculations/references/computed.parquet")
-    published = refs[refs.reference_id.notna()]
-    assert set(published.cid) == {0}
+    refs = run.states().query("source == 'references'")
+    assert refs.groupby("structure_id").size().eq(2).all()
+    assert set(refs.loc[refs.quality_status.eq("ready"), "cid"]) == {0}
+    assert set(refs.loc[refs.quality_status.eq("invalid"), "cid"]) == {1}
 
 
 def test_missing_roles_reject_inspection_and_unused_roles_are_optional():
@@ -373,10 +368,3 @@ def test_explicit_validation_boundary_reoptimizes_a_changed_uma_environment(tmp_
     assert "uma_refine_prune" not in stages.index
     run = run_mocked(wf, tmp_path)
     assert run.barriers().delta_g_kcal_mol.notna().all()
-
-
-@pytest.mark.parametrize('value', ['', '   '])
-def test_blank_reference_store_environment_disables_shared_publication(monkeypatch, value):
-    monkeypatch.setenv('FRUST_REFERENCE_STORE', value)
-    wf = workflow()
-    assert wf.reference_store is None

@@ -119,7 +119,7 @@ def test_legacy_chain_options_rejected_before_input_or_scheduler(tmp_path,entry)
 
 
 @pytest.mark.parametrize('artifact_policy',['diagnostic','compact'])
-def test_screen_arrays_retry_recollects_successes_and_freezes_reference_plan(tmp_path,artifact_policy):
+def test_screen_arrays_retry_recollects_successes(tmp_path,artifact_policy):
     scheduler = Scheduler()
     wf = ft.workflows.catalyst_screen(dataframe=_components(),level='low_cost',ts_types=['TS1','TS2'])
     root = tmp_path/'screen'
@@ -159,13 +159,9 @@ def test_screen_arrays_retry_recollects_successes_and_freezes_reference_plan(tmp
         manifest = (root/'manifest.json').read_bytes()
         prior_calls = len(scheduler.calls)
         ready = True
-        with patch.object(wf,'_cached_reference',return_value=SimpleNamespace(reference_id='newly-cached')), \
-             patch.object(wf,'_snapshot_reused_references') as snapshot:
-            retried = wf.submit(out_dir=root,cluster=cluster,array=True,array_parallelism=1,
-                                retry=True,
-                                artifact_policy=artifact_policy)
-            snapshot.assert_not_called()
-            assert scheduler.run(prior_calls)==[]
+        retried = wf.submit(out_dir=root,cluster=cluster,array=True,array_parallelism=1,
+                            retry=True,artifact_policy=artifact_policy)
+        assert scheduler.run(prior_calls)==[]
         assert set(retried.child_submissions)=={'transition_states'}
         assert retried.child_submissions['transition_states'].tags==[failed_tag]
         frame = pd.read_parquet(retried.child_submissions['transition_states'].collection_output)
@@ -237,19 +233,79 @@ def test_staged_screen_uses_group_limits_resources_and_control_jobs(tmp_path):
             if 'slurm_array_parallelism' in values}==set(limits.values())
 
 
-def test_all_references_reused_submits_no_reference_jobs(tmp_path):
+def test_reference_retry_rebuilds_compact_screen(tmp_path, monkeypatch):
+    from contextlib import nullcontext
+    from test_modular_workflow_validation import FakeStepper, prepared, workflow
+    from frust.workflows.factories import MolsWorkflow, ScreenTSWorkflow
+
     scheduler = Scheduler()
-    wf = ft.workflows.catalyst_screen(dataframe=_components(),level='low_cost',ts_types=['TS1'])
-    with patch.object(wf,'_cached_reference',return_value=SimpleNamespace(reference_id='cached')), \
-         patch.object(wf,'_snapshot_reused_references'), \
-         patch('frust.workflows.core.create_executor',side_effect=scheduler.create), \
-         patch('frust.workflows.screening.create_executor',side_effect=scheduler.create):
-        result = wf.submit(out_dir=tmp_path/'screen',cluster=ClusterConfig(),
-                           array=True,array_parallelism=2,artifact_policy='compact')
-    assert set(result.child_submissions)=={'transition_states'}
-    assert result.submitit_dir
-    assert sum(call[0].__name__=='_collect_expected_outputs_submitted' for call in scheduler.calls)==1
-    assert scheduler.calls[-1][0].__name__=='_finalize_submitted_run'
+    wf = workflow(ts_types=["TS1"], dimer_reference="dimer")
+    root = tmp_path / "screen"
+    references = wf.children()["references"].targets()
+    failed = next(target for target in references if target.state_id == "dimer")
+    ready = False
+
+    def prepare_reference(child, target, **kwargs):
+        if target == failed and not ready:
+            raise RuntimeError("injected dimer failure")
+        return prepared(child, target, **kwargs)
+
+    monkeypatch.setattr(MolsWorkflow, "_prepare_initial_df", prepare_reference)
+    monkeypatch.setattr(ScreenTSWorkflow, "_prepare_initial_df", prepared)
+    monkeypatch.setattr("frust.workflows.core.Stepper", FakeStepper)
+    monkeypatch.setattr("frust.workflows.core._uma_scope_for_stages", lambda *a, **k: nullcontext())
+    monkeypatch.setattr("frust.workflows.core.create_executor", scheduler.create)
+    monkeypatch.setattr("frust.workflows.screening.create_executor", scheduler.create)
+
+    settings = dict(out_dir=root, cluster=ClusterConfig(), array=True,
+                    array_parallelism=2, artifact_policy="compact")
+    first = wf.submit(**settings)
+    assert first.child_submissions["references"].tags == [t.tag for t in references]
+    assert scheduler.run()
+    report = json.loads((root / "run_report.json").read_text())
+    assert report["overall_status"] == "partial"
+    assert report["terminal_results"]["references"]["missing_targets"] == [failed.target_id]
+    assert all(
+        branches["references"]["missing_targets"] == [failed.target_id]
+        for branches in report["analysis_tiers"]["levels"].values()
+    )
+    run = ft.screen.open_run(root)
+    assert run.barriers().quality_status.tolist() == ["incomplete"]
+    manifest = (root / "manifest.json").read_bytes()
+
+    prior_calls = len(scheduler.calls)
+    ready = True
+    retry = wf.submit(**settings, retry=True)
+    assert list(retry.child_submissions) == ["references"]
+    assert retry.child_submissions["references"].tags == [failed.tag]
+    assert scheduler.run(prior_calls) == []
+    assert (root / "manifest.json").read_bytes() == manifest
+    report = json.loads((root / "run_report.json").read_text())
+    assert report["overall_status"] == "success"
+    assert report["terminal_results"]["references"]["n_collected"] == len(references)
+    assert report["artifact_cleanup"]["n_removed_targets"] > 0
+    reference_dir = root / "calculations" / "references"
+    assert set(reference_dir.glob("*.parquet")) == {reference_dir / "merged.parquet"}
+    assert not (reference_dir / "entries").exists()
+    assert not (reference_dir / "reviews.csv").exists()
+    before = {level: run.barriers(level=level) for level in run.available_analysis_levels()}
+    relocated = root.rename(tmp_path / "relocated")
+    moved = ft.screen.open_run(relocated).refresh_analysis()
+    for level, barriers in before.items():
+        pd.testing.assert_frame_equal(moved.barriers(level=level), barriers)
+
+
+def test_retry_rejects_older_screen_manifest(tmp_path):
+    wf = ft.workflows.catalyst_screen(dataframe=_components(), level="low_cost")
+    manifest = tmp_path / "manifest.json"
+    manifest.write_text(json.dumps({"run_type": "catalyst_screen", "schema_version": 3}))
+    with patch("frust.workflows.core.create_executor") as create:
+        with pytest.raises(ValueError, match="Unsupported screen manifest"):
+            wf.submit(out_dir=tmp_path, cluster=ClusterConfig(), retry=True)
+        create.assert_not_called()
+    with pytest.raises(ValueError, match="Unsupported catalyst-screen manifest version"):
+        ft.screen.build_analysis(tmp_path)
+    assert sorted(path.name for path in tmp_path.iterdir()) == ["manifest.json"]
 
 
 def test_active_screen_finalizer_blocks_retries(tmp_path):
@@ -283,12 +339,31 @@ def test_local_screen_collectors_finish_before_partial_finalizer(tmp_path):
     import time
     import types
     import submitit
+    from frust.results import attach_result_contract
+    from test_modular_workflow_validation import FORMULAS
     wf = ft.workflows.catalyst_screen(dataframe=_components(),level='low_cost',ts_types=['TS1','TS2'])
     failed_tag = wf.children()['transition_states'].targets()[0].tag
     def fake_group(self, target, stages, **kwargs):
         if target.tag==failed_tag:
             raise RuntimeError('deliberate local screen failure')
-        return pd.DataFrame({'target':[target.tag],'calc-NT':[True]})
+        atoms = [atom for atom, count in FORMULAS[target.state_id].items()
+                 for _ in range(count)]
+        frame = pd.DataFrame([{
+            "structure_id": target.target_id,
+            "state_id": target.state_id,
+            "state_kind": target.state_kind,
+            "system_name": target.system.system_name,
+            "substrate_name": target.system.substrate_name,
+            "catalyst_name": target.system.catalyst_name,
+            "rpos": target.rpos,
+            "cid": 0,
+            "atoms": atoms,
+            "xtb_opt-EE": -10.0,
+            "xtb_opt-oc": [[0.0, 0.0, 0.0]] * len(atoms),
+            "xtb_opt-NT": True,
+        }])
+        attach_result_contract(frame, target.state_kind, dft=False, calculation_level="low_cost")
+        return frame
     for child in wf.children().values():
         child._run_stage_group = types.MethodType(fake_group,child)
     cluster = ClusterConfig(backend='local',log_dir=tmp_path/'logs')
