@@ -2501,12 +2501,20 @@ def _stream_parquet_files(
         with pq.ParquetWriter(temporary, schema) as writer:
             for path in files:
                 source = pq.read_table(path)
-                arrays = [
-                    source[field.name].cast(field.type, safe=False)
-                    if field.name in source.column_names
-                    else pa.nulls(source.num_rows, type=field.type)
-                    for field in schema
-                ]
+                arrays = []
+                for field in schema:
+                    if field.name not in source.column_names:
+                        array = pa.nulls(source.num_rows, type=field.type)
+                    else:
+                        column = source[field.name]
+                        try:
+                            array = column.cast(field.type, safe=False)
+                        except (pa.ArrowTypeError, pa.ArrowNotImplementedError):
+                            if not pa.types.is_nested(field.type):
+                                raise
+                            # Struct casts require matching child-field order.
+                            array = pa.array(column.to_pylist(), type=field.type)
+                    arrays.append(array)
                 writer.write_table(pa.Table.from_arrays(arrays, schema=schema))
         parquet = pq.ParquetFile(temporary)
         if parquet.metadata.num_rows != expected_rows:
