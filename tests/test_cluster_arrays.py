@@ -153,6 +153,7 @@ def test_workflow_array_resources_mapping_and_collection(tmp_path):
         result = wf.submit(
             out_dir=tmp_path, cluster=ClusterConfig(), execution="single_job",
             array=True, array_parallelism=2, stage_resources={"single_job": RESOURCES},
+            uma_server_cores=2,
         )
     prepare.assert_not_called()
     assert len(worker.calls) == 1
@@ -160,6 +161,7 @@ def test_workflow_array_resources_mapping_and_collection(tmp_path):
     assert fn.__name__ == "_run_target_submitted_job"
     assert [args[1].tag for args in arguments] == result.tags
     assert all(args[3].n_cores == 2 and args[3].mem_gb == pytest.approx(2.4) for args in arguments)
+    assert all(args[3].uma_server_cores == 2 for args in arguments)
     assert worker.parameters[-1] == {"slurm_array_parallelism": 2}
     assert worker.parameters[0]["mem_gb"] == 3
     assert result.array_job_ids == ["123"]

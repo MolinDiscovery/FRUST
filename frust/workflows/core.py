@@ -75,6 +75,7 @@ from frust.workflows.methods import CalculatorSpec, MethodPlan, preset as method
 
 ExecutionMode = Literal["single_job", "dft_staged", "fully_staged"]
 DEFAULT_WORKFLOW_RESOURCES = Resources(cpus=4, mem_gb=20, timeout_min=720)
+DEFAULT_VALIDATION_RESOURCES = Resources(cpus=6, mem_gb=26, timeout_min=720)
 DEFAULT_COLLECTION_RESOURCES = Resources(cpus=2, mem_gb=4, timeout_min=120)
 TARGET_TIMING_FILE = "timing.json"
 ANALYSIS_TIER_FILES = {
@@ -151,6 +152,11 @@ class StageDef:
     n_cores : int, optional
         Stage-local calculator core count forwarded to Stepper. Submission
         resources still control the scheduler allocation.
+    n_workers : int or None, optional
+        Concurrent dataframe rows. ``None`` selects the engine policy: one
+        core per xTB/g-xTB row, up to four UMA single-point clients, and one
+        row for optimizations and DFT. UMA numerical Hessians always use one
+        row while distributing displacements across the server workers.
     read_files : list of str, optional
         Files that ORCA should read from the previous saved calculation output.
     use_last_hess : bool, optional
@@ -190,6 +196,7 @@ class StageDef:
     geometry_from: str | None = None
     operation: str | None = None
     phase: str | None = None
+    n_workers: int | None = None
 
 
 @dataclass(frozen=True)
@@ -213,6 +220,9 @@ class ExecutionOptions:
         OET runtime selected inside a job that contains UMA stages. This lets
         the submitted job use a pinned runtime without changing the login
         process or the user's global ``OET_TOOLS`` setting.
+    uma_server_cores : int or None, optional
+        Explicit UMA server worker count. ``None`` budgets 3.4 GiB of usable
+        ``mem_gb`` per worker, bounded by ``n_cores`` with a minimum of one.
     """
 
     n_cores: int = 4
@@ -221,6 +231,7 @@ class ExecutionOptions:
     work_dir: str | None = None
     artifact_policy: ArtifactPolicy = "standard"
     uma_oet_tools: str | None = None
+    uma_server_cores: int | None = None
 
 
 @dataclass(frozen=True)
@@ -485,6 +496,7 @@ class BaseWorkflow:
                             "calculator_kwargs": _format_planned_mapping(
                                 spec.kwargs if spec is not None else None
                             ),
+                            "n_workers": stage.n_workers,
                             "read_files": _format_planned_sequence(stage.read_files),
                             "use_last_hess": stage.use_last_hess,
                             "save_files": _format_planned_sequence(stage.save_files),
@@ -518,6 +530,7 @@ class BaseWorkflow:
                     "detailed_inp_str",
                     "xtra_inp_str",
                     "calculator_kwargs",
+                    "n_workers",
                     "read_files",
                     "use_last_hess",
                     "save_files",
@@ -539,6 +552,7 @@ class BaseWorkflow:
         work_dir: str | Path | None = None,
         artifact_policy: ArtifactPolicy = "standard",
         uma_oet_tools: str | Path | None = None,
+        uma_server_cores: int | None = None,
     ) -> pd.DataFrame:
         """Run selected workflow targets locally.
 
@@ -574,6 +588,10 @@ class BaseWorkflow:
         uma_oet_tools : str or pathlib.Path or None, optional
             OET runtime used for UMA stages within each local target or stage
             group. For example, pass a dedicated FairChem 2.23 runtime here.
+        uma_server_cores : int or None, optional
+            Override automatic UMA worker sizing. ``None`` budgets 3.4 GiB
+            per worker from ``mem_gb``, capped at ``n_cores``. For example,
+            ``n_cores=10, mem_gb=20`` selects five UMA workers.
 
         Returns
         -------
@@ -597,6 +615,7 @@ class BaseWorkflow:
             work_dir=None if work_dir is None else str(work_dir),
             artifact_policy=artifact_policy,
             uma_oet_tools=None if uma_oet_tools is None else str(uma_oet_tools),
+            uma_server_cores=uma_server_cores,
         )
         frames: list[pd.DataFrame] = []
         root = Path(out_dir) if out_dir is not None else None
@@ -677,6 +696,7 @@ class BaseWorkflow:
         orca_memory_fraction: float = DEFAULT_ORCA_MEMORY_FRACTION,
         artifact_policy: ArtifactPolicy | None = None,
         uma_oet_tools: str | Path | None = None,
+        uma_server_cores: int | None = None,
         _defer_compact_cleanup: bool = False,
         _collect_targets: list[WorkflowTarget] | None = None,
         _screen_manifest_validated: bool = False,
@@ -702,7 +722,9 @@ class BaseWorkflow:
             jobs for either UMA or DFT. ``"fully_staged"`` submits one dependent job per stage.
         stage_resources : dict[str, Resources] or None, optional
             Optional resource overrides by stage-group name. Missing groups use
-            ``Resources(cpus=4, mem_gb=20, timeout_min=720)``. Call
+            ``Resources(cpus=6, mem_gb=26, timeout_min=720)`` when they contain
+            full validation, otherwise ``Resources(cpus=4, mem_gb=20,
+            timeout_min=720)``. Call
             ``wf.show_stages(execution="dft_staged")`` to see the active group
             names before choosing overrides. In ``"dft_staged"`` mode, raw
             molecule and molecule workflows usually use ``"init"``,
@@ -776,6 +798,11 @@ class BaseWorkflow:
             OET runtime selected inside each submitted UMA job. For example,
             ``"/lustre/hpc/kemi/jmni/software/oet-uma-2p23-cpu"`` selects the
             pinned cluster runtime without starting a server on the login node.
+        uma_server_cores : int or None, optional
+            Override automatic UMA server worker sizing for every job. ``None``
+            budgets 3.4 GiB per worker after ``orca_memory_fraction`` reserves
+            job overhead, capped at the allocated CPUs. The default validation
+            allocation selects six workers from 20.8 GiB of usable memory.
 
         Returns
         -------
@@ -839,7 +866,7 @@ class BaseWorkflow:
             )
             planned_groups.append((
                 group_name,
-                _resource_for_group(group_name, group, stage_resources, default=DEFAULT_WORKFLOW_RESOURCES),
+                _resource_for_group(group_name, group, stage_resources, default=_default_workflow_resources(self, group)),
                 planned_output,
             ))
         plan = _plan_submission(
@@ -885,6 +912,7 @@ class BaseWorkflow:
                     work_dir=str(work_dir or cluster.work_dir) if (work_dir or cluster.work_dir) else None,
                     artifact_policy=artifact_policy,
                     uma_oet_tools=None if uma_oet_tools is None else str(uma_oet_tools),
+                    uma_server_cores=uma_server_cores,
                 )
                 final_jobs, final_job_ids = _submit_staged_arrays(
                     submitted_workflow, selected, root, cluster, plan, groups,
@@ -906,6 +934,7 @@ class BaseWorkflow:
                     work_dir=str(work_dir or cluster.work_dir) if (work_dir or cluster.work_dir) else None,
                     artifact_policy=artifact_policy,
                     uma_oet_tools=None if uma_oet_tools is None else str(uma_oet_tools),
+                    uma_server_cores=uma_server_cores,
                 )
                 arguments = []
                 for target in selected:
@@ -954,7 +983,7 @@ class BaseWorkflow:
                         "single_job",
                         groups[0],
                         stage_resources,
-                        default=DEFAULT_WORKFLOW_RESOURCES,
+                        default=_default_workflow_resources(self, groups[0]),
                     )
                     update_executor_with_dependency(
                         executor,
@@ -974,6 +1003,7 @@ class BaseWorkflow:
                         ),
                         artifact_policy=artifact_policy,
                         uma_oet_tools=None if uma_oet_tools is None else str(uma_oet_tools),
+                        uma_server_cores=uma_server_cores,
                     )
                     submitted_at = utc_timestamp()
                     job = ledger.submit(
@@ -998,7 +1028,7 @@ class BaseWorkflow:
                         group_name,
                         group,
                         stage_resources,
-                        default=DEFAULT_WORKFLOW_RESOURCES,
+                        default=_default_workflow_resources(self, group),
                     )
                     update_executor_with_dependency(
                         executor,
@@ -1019,6 +1049,7 @@ class BaseWorkflow:
                         ),
                         artifact_policy=artifact_policy,
                         uma_oet_tools=None if uma_oet_tools is None else str(uma_oet_tools),
+                        uma_server_cores=uma_server_cores,
                     )
                     submitted_at = utc_timestamp()
                     job = ledger.submit(
@@ -1315,7 +1346,14 @@ class BaseWorkflow:
         groups: list[list[StageDef]] = []
         if first_split:
             groups.append(stages[:first_split])
-        groups.extend([[stage] for stage in stages[first_split:]])
+        pending = []
+        for stage in stages[first_split:]:
+            pending.append(stage)
+            if stage.id != "validation_dedup":
+                groups.append(pending)
+                pending = []
+        if pending:
+            groups.append(pending)
         return groups
 
     def _group_name(self, group: list[StageDef]) -> str:
@@ -2570,6 +2608,8 @@ def _format_pruning_stage_options(options: Mapping[str, Any] | None) -> str | No
         parts.append(f"coords_col={options.get('coords_col')}")
     if options.get("energy_col") is not None:
         parts.append(f"energy_col={options.get('energy_col')}")
+    if options.get("max_dE") is not None:
+        parts.append(f"max_dE={options.get('max_dE')}")
     return " ".join(parts) if parts else _format_stage_options(options)
 
 
@@ -2602,6 +2642,14 @@ def _coerce_method(method: MethodPlan | str | None) -> MethodPlan:
     ):
         return method
     raise TypeError("method must be a MethodPlan, preset name, or None")
+
+
+def _default_workflow_resources(workflow: BaseWorkflow, group: list[StageDef]) -> Resources:
+    """Size validation groups separately from screening-only groups."""
+    full = getattr(workflow, "calculation_level", "full" if workflow.dft else "low_cost") == "full"
+    if full and any(stage.phase == "validation" for stage in group):
+        return DEFAULT_VALIDATION_RESOURCES
+    return DEFAULT_WORKFLOW_RESOURCES
 
 
 def _resource_for_group(
@@ -2792,7 +2840,7 @@ def _apply_calculator(
     stage: StageDef,
     spec: CalculatorSpec,
     *,
-    uma_server_cores: int,
+    options: ExecutionOptions,
 ) -> pd.DataFrame:
     """Dispatch one calculator stage through Stepper.
 
@@ -2807,8 +2855,8 @@ def _apply_calculator(
     spec : CalculatorSpec
         Calculator engine, options, and extra input selected from the method
         plan.
-    uma_server_cores : int
-        Stable server budget from the workflow job allocation.
+    options : ExecutionOptions
+        CPU and usable memory budgets shared by all row workers in this stage.
 
     Returns
     -------
@@ -2838,16 +2886,39 @@ def _apply_calculator(
         inputs = dict(df.attrs.get("frust_geometry_inputs", {}))
         inputs[stage.id] = geometry_column
         df.attrs["frust_geometry_inputs"] = inputs
+    from frust.utils.uma import resolve_uma_server_cores
+
+    server_cores = resolve_uma_server_cores(
+        options.n_cores, options.mem_gb,
+        spec.kwargs.get("uma_server_cores", options.uma_server_cores),
+    )
+    uses_uma_server = (
+        spec.engine == "orca" and spec.kwargs.get("uma") is not None
+        and spec.kwargs.get("uma_server", True)
+    )
+    if spec.engine in {"xtb", "gxtb"}:
+        n_cores = stage.n_cores or 1
+        n_workers = stage.n_workers or max(1, options.n_cores // n_cores)
+    elif uses_uma_server and spec.supports_operation("frequencies"):
+        n_cores = stage.n_cores or server_cores
+        n_workers = 1
+    elif uses_uma_server and spec.supports_operation("analysis_single_point"):
+        n_cores = stage.n_cores or 1
+        n_workers = stage.n_workers or min(4, server_cores, max(1, options.n_cores // n_cores))
+    else:
+        n_cores = stage.n_cores or options.n_cores
+        n_workers = stage.n_workers or 1
     kwargs = {
         "name": stage.id,
         "options": spec.options,
         "constraint": stage.constraint,
         "lowest": stage.lowest,
-        "n_cores": stage.n_cores,
+        "n_cores": n_cores,
+        "n_workers": n_workers,
         **spec.kwargs,
     }
     if spec.engine == "orca" and kwargs.get("uma") is not None and kwargs.get("uma_server", True):
-        kwargs.setdefault("uma_server_cores", uma_server_cores)
+        kwargs.setdefault("uma_server_cores", server_cores)
     if spec.engine == "xtb":
         return step.xtb(
             df,
@@ -2944,12 +3015,14 @@ def _run_stage_calculation(
     if stage.kind == "prune":
         return step.prune_conformers(
             df,
-            name=stage.name,
+            name=stage.id if stage.id == "validation_dedup" else stage.name,
             **(stage.prune_options or {}),
         )
 
     spec = workflow.method.for_stage(stage.method_stage or stage.id)
-    return _apply_calculator(step, df, stage, spec, uma_server_cores=options.n_cores)
+    return _apply_calculator(
+        step, df, stage, spec, options=options,
+    )
 
 
 def _write_analysis_tier_snapshot(

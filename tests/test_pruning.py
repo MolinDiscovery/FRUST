@@ -4,10 +4,63 @@ from unittest.mock import patch
 
 import numpy as np
 import pandas as pd
+import pytest
 
 import frust as ft
 from frust.stepper import Stepper
 from frust.utils.pruning import prune_conformers
+
+
+@pytest.mark.parametrize("mode", ["moi", "rmsd"])
+def test_real_prism_energy_gate_keeps_lowest_duplicate_and_distinct_rows(mode):
+    coords = [[0., 0., 0.], [1., 0., 0.], [0., 1., 0.]]
+    df = pd.DataFrame({
+        "substrate_name": ["water"] * 5,
+        "cid": [0, 1, 2, 3, 4],
+        "atoms": [["O", "H", "H"]] * 5,
+        "coords_embedded": [coords, coords, coords, [[v * 2 for v in point] for point in coords], None],
+        "energy": [-10., -10.00004, -9.99, -10.00005, np.nan],
+        "connectivity_bonds": [[(0, 1), (0, 2)]] * 5,
+    })
+    out = prune_conformers(df, modes=(mode,), energy_col="energy",
+                           max_dE=0.05 / 627.5095, heavy_atoms_only=False,
+                           moi_max_deviation=0.005, rmsd_max_rmsd=0.1)
+    assert out.cid.tolist() == [1, 2, 3, 4]
+    meta = out.attrs["frust_steps"]["initial_prune"]
+    assert meta["options"]["max_dE"] == 0.05 / 627.5095
+    assert "max_dE=" in ft.show_steps(out).loc["initial_prune", "options"]
+
+
+def test_pruning_energy_arrays_follow_each_mode_mask():
+    calls = []
+
+    def moi(coords, atoms, energies, max_dE, **kwargs):
+        calls.append(energies.tolist())
+        mask = np.array([True, False, True, True])
+        return coords[mask], mask
+
+    def rmsd(coords, atoms, energies, max_dE, **kwargs):
+        calls.append(energies.tolist())
+        return coords, np.ones(len(coords), dtype=bool)
+
+    def rot_corr(coords, atoms, graph, **kwargs):
+        return rmsd(coords, atoms, **kwargs)
+
+    with patch("frust.utils.pruning._load_prism_functions", return_value=(moi, rmsd, rot_corr, lambda *args: None)):
+        Stepper(save_output_dir=False).prune_conformers(
+            _pruning_df(), modes=("moi", "rmsd", "rot_corr_rmsd"), energy_col="energy", max_dE=0.1)
+    assert calls == [[0., 2., 5., 10.], [0., 5., 10.], [0., 5., 10.]]
+
+
+@pytest.mark.parametrize("threshold", [0, -1, np.nan, np.inf])
+def test_pruning_rejects_invalid_energy_gate(threshold):
+    with pytest.raises(ValueError, match="finite and positive"):
+        prune_conformers(_pruning_df(), energy_col="energy", max_dE=threshold)
+
+
+def test_pruning_energy_gate_requires_energy_column():
+    with pytest.raises(ValueError, match="requires energy_col"):
+        prune_conformers(_pruning_df(), max_dE=0.1)
 
 
 def _pruning_df() -> pd.DataFrame:
@@ -129,6 +182,18 @@ class PruneConformersTests(unittest.TestCase):
         ):
             out = prune_conformers(df, modes=("moi",), energy_col="energy")
 
+        self.assertEqual(list(out["cid"]), [1])
+
+    def test_real_prism_moi_keeps_lowest_energy_duplicate(self):
+        df = _pruning_df().iloc[:2].copy()
+        df.at[1, "coords_embedded"] = df.at[0, "coords_embedded"]
+        # cid=0 has energy=10.0, cid=1 has energy=0.0; cid=1 must survive
+        out = prune_conformers(
+            df,
+            modes=("moi",),
+            coords_col="coords_embedded",
+            energy_col="energy",
+        )
         self.assertEqual(list(out["cid"]), [1])
 
     def test_single_string_mode_is_treated_as_one_mode(self):

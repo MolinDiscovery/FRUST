@@ -37,13 +37,13 @@ def test_full_uma_ts_plan_releases_constraints_and_keeps_one_potential(environme
         ts_refine_n=3, ts_types=["TS1"],
     )
     stages = workflow.show_stages(detail="full")
-    tail = stages["stage"].tolist()[-5:]
+    tail = stages["stage"].tolist()[-6:]
 
-    assert tail == ["uma_refine_prune", "uma_refine_filter", "uma_hessian", "uma_ts_opt", "uma_freq"]
+    assert tail == ["uma_refine_prune", "uma_refine_filter", "uma_hessian", "uma_ts_opt", "validation_dedup", "uma_freq"]
     assert stages.set_index("stage").loc["uma_opt", "constraint"]
     assert not stages.set_index("stage").loc["uma_ts_opt", "constraint"]
     assert stages.set_index("stage").loc["uma_ts_opt", "use_last_hess"]
-    assert workflow._stage_defs()[-3].read_files == ["input.hess"]
+    assert workflow._stage_defs()[-4].read_files == ["input.hess"]
     assert workflow.resolved_spec_profile == "omol-uma-s-1p2p1/gas"
     assert len(workflow._stage_groups("dft_staged")) == 4
     for stage in ("uma_sp", "uma_opt", "uma_hessian", "uma_ts_opt", "uma_freq"):
@@ -102,6 +102,8 @@ def test_uma_ts_refines_multiple_source_guesses_and_keeps_modes():
             pass
 
         def prune_conformers(self, df, *, name, **kwargs):
+            if name == "validation_dedup":
+                return df.copy()
             assert name == "UMA geometry diversity selection"
             return df[df["cid"] != 2].copy()
 
@@ -193,7 +195,7 @@ def test_uma_orca_reuses_seed_hessian_and_includes_alpb_flag(tmp_path, monkeypat
 
 @pytest.mark.parametrize("optimization_stage", ["uma_min_opt", "uma_ts_opt"])
 def test_terminal_alpb_sp_receives_optimized_gas_coordinates(tmp_path, monkeypatch, optimization_stage):
-    from frust.workflows.core import StageDef, _apply_calculator
+    from frust.workflows.core import ExecutionOptions, StageDef, _apply_calculator
 
     oet = tmp_path / "oet"
     (oet / "bin").mkdir(parents=True)
@@ -222,7 +224,8 @@ def test_terminal_alpb_sp_receives_optimized_gas_coordinates(tmp_path, monkeypat
     for name in (optimization_stage, "uma_freq", "uma_solv_sp"):
         spec = method.for_stage(name)
         spec = replace(spec, kwargs={**spec.kwargs, "uma_server": False})
-        frame = _apply_calculator(step, frame, StageDef(name, name), spec, uma_server_cores=1)
+        frame = _apply_calculator(step, frame, StageDef(name, name), spec,
+                                  options=ExecutionOptions(n_cores=1, mem_gb=2))
     assert calls[1][0] == optimized
     assert calls[2][0] == optimized
     assert "--xtb-alpb" not in calls[0][2]

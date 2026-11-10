@@ -427,7 +427,7 @@ def test_mixed_uma_stage_graphs_cover_ts_and_all_reference_alternatives():
         target.state_id for target in refs.targets()
     }
     for child, tail in (
-        (children["transition_states"], ["uma_hessian", "uma_ts_opt", "uma_freq", "uma_solv_sp"]),
+        (children["transition_states"], ["uma_hessian", "uma_ts_opt", "validation_dedup", "uma_freq", "uma_solv_sp"]),
         (refs, ["uma_min_opt", "uma_freq", "uma_solv_sp"]),
     ):
         stages = child._stage_defs()

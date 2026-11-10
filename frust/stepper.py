@@ -5,6 +5,12 @@ import os
 from pathlib import Path
 import re
 import textwrap
+import threading
+from concurrent.futures import ThreadPoolExecutor, as_completed
+from contextlib import contextmanager
+from copy import deepcopy
+from operator import index
+from tempfile import TemporaryDirectory
 from typing import Any, Callable
 import numpy as np
 import pandas as pd
@@ -44,6 +50,43 @@ from frust.constraints import (
     render_xtb_constraints,
     validate_dataframe_constraints,
 )
+
+
+_ENGINE_ENV_LOCK = threading.RLock()
+
+
+def _positive_count(value: int, name: str) -> int:
+    """Validate CPU and row-worker counts without silently truncating them."""
+    try:
+        result = index(value)
+    except TypeError as exc:
+        raise ValueError(f"{name} must be a positive integer") from exc
+    if isinstance(value, bool) or result < 1:
+        raise ValueError(f"{name} must be a positive integer")
+    return result
+
+
+@contextmanager
+def _engine_environment(n_cores: int):
+    """Contain Tooltoad's process-wide environment changes within one stage."""
+    settings = {
+        "OMP_NUM_THREADS": str(n_cores),
+        "MKL_NUM_THREADS": str(n_cores),
+        "OPENBLAS_NUM_THREADS": str(n_cores),
+        "OMP_STACKSIZE": "4G",
+        "OMP_MAX_ACTIVE_LEVELS": "1",
+    }
+    with _ENGINE_ENV_LOCK:
+        previous = {key: os.environ.get(key) for key in (*settings, "XTBPATH")}
+        os.environ.update(settings)
+        try:
+            yield
+        finally:
+            for key, value in previous.items():
+                if value is None:
+                    os.environ.pop(key, None)
+                else:
+                    os.environ[key] = value
 
 
 def _metadata_text(value: str | None) -> str | None:
@@ -132,7 +175,8 @@ class Stepper:
         memory_gb: float = 20.0,
         save_calc_dirs: bool = False,
         save_output_dir: bool = True,
-        work_dir: str | None = None,        
+        work_dir: str | None = None,
+        n_workers: int = 1,
         **kwargs
     ):
         """Configure a Stepper instance.
@@ -162,8 +206,10 @@ class Stepper:
             Reserved for dataframe dumping workflows. Stored on the instance
             but not currently consumed by :class:`Stepper` itself.
         n_cores : int, optional
-            Default core count passed to engine calls unless overridden on an
-            individual :meth:`xtb` or :meth:`orca` call.
+            Cores per row passed to engine calls unless overridden per call.
+        n_workers : int, optional
+            Maximum simultaneous rows, default 1. The CPU budget is
+            ``n_workers * n_cores``; the caller supplies that allocation.
         memory_gb : float, optional
             Default memory setting in gigabytes used for ORCA calls.
         save_calc_dirs : bool, optional
@@ -195,7 +241,8 @@ class Stepper:
         logger_step_type    = "AUTO" if self._auto_step_type else self.step_type
         self.logger         = _make_logger(_logger_name(logger_step_type, self.job_id), debug)
         self.dump_each_step = dump_each_step
-        self.n_cores        = n_cores
+        self.n_cores        = _positive_count(n_cores, "n_cores")
+        self.n_workers      = _positive_count(n_workers, "n_workers")
         self.memory_gb      = memory_gb
         self.save_calc_dirs = save_calc_dirs
         self.save_output    = save_output_dir
@@ -273,6 +320,7 @@ class Stepper:
         coords_col: str | None = None,
         atoms_col: str = "atoms",
         energy_col: str | None = None,
+        max_dE: float | None = None,
         group_cols=None,
         moi_max_deviation: float = 0.01,
         rmsd_max_rmsd: float = 0.25,
@@ -304,7 +352,12 @@ class Stepper:
             ``"atoms"``.
         energy_col : str or None, optional
             Column used to sort rows within each structure group before
-            pruning. Defaults to ``None``. Energies are not passed to PRISM.
+            pruning, keeping the lowest-energy representative.
+        max_dE : float or None, optional
+            Prune similar pairs only when their absolute energy difference is
+            smaller than this positive threshold, in ``energy_col`` units
+            (Hartree for ``*-EE``). Requires ``energy_col``. ``None`` uses only
+            geometry. Incomplete rows are retained when this gate is enabled.
         group_cols : sequence of str or None, optional
             Structure identity columns. Defaults to ``None``, which lets FRUST
             infer them from the dataframe.
@@ -341,6 +394,7 @@ class Stepper:
             coords_col=resolved_coords_col,
             atoms_col=atoms_col,
             energy_col=energy_col,
+            max_dE=max_dE,
             group_cols=group_cols,
             moi_max_deviation=moi_max_deviation,
             rmsd_max_rmsd=rmsd_max_rmsd,
@@ -357,7 +411,11 @@ class Stepper:
 
     def _effective_n_cores(self, n_cores: int | None = None) -> int:
         """Return the effective core count for one calculator call."""
-        return int(n_cores) if n_cores is not None else int(self.n_cores)
+        return _positive_count(self.n_cores if n_cores is None else n_cores, "n_cores")
+
+    def _effective_n_workers(self, n_workers: int | None = None) -> int:
+        """Return the row-worker budget for one calculator call."""
+        return _positive_count(self.n_workers if n_workers is None else n_workers, "n_workers")
 
     def _validate_constraint_request(self, df: pd.DataFrame) -> str:
         """Validate complete role-based constraints for every dataframe row."""
@@ -1407,6 +1465,112 @@ class Stepper:
         }
         return filtered, metadata
 
+    @staticmethod
+    def _missing_coords(coords) -> bool:
+        return coords is None or (
+            not isinstance(coords, (list, tuple, np.ndarray)) and bool(pd.isna(coords))
+        )
+
+    def _run_single_row(
+        self, i, row, *, row_number, prefix, coord_col, engine_fn, build_inputs,
+        n_cores, created_dir, save_full_calc, save_files, last_hess_col,
+        runtime, isolate_scratch,
+    ):
+        """Execute one row without mutating shared dataframe or stage metadata."""
+        from contextlib import nullcontext
+        from frust.utils.optimization import _orca_optimization_requested, _optimization_record
+
+        row_name = self._row_name(row, i)
+        timing = {
+            "row_number": row_number,
+            "row_index": self._metadata_scalar(i),
+            "label": row_name,
+            "cid": self._row_conf_id(row, i),
+            "elapsed_s": 0.0,
+            "normal_termination": False,
+        }
+        coords = row[coord_col]
+        if self._missing_coords(coords):
+            timing["skipped"] = True
+            return {
+                output_column(prefix, "normal_termination"): False,
+                output_column(prefix, "electronic_energy"): np.nan,
+            }, timing, None
+
+        scratch = (
+            TemporaryDirectory(prefix="frust_row_", dir=self.work_dir)
+            if isolate_scratch else nullcontext(self.work_dir)
+        )
+        with scratch as work_dir:
+            inputs = {
+                "atoms": row["atoms"],
+                "coords": [list(c) for c in coords],
+                "n_cores": n_cores,
+                "scr": work_dir,
+                "data2file": (
+                    {"private_input.hess": row[last_hess_col]} if last_hess_col else None
+                ),
+                **deepcopy(build_inputs(row)),
+                **runtime,
+            }
+            if created_dir is not None:
+                inputs["save_dir"] = created_dir
+                if save_full_calc:
+                    inputs["calc_dir"] = created_dir
+                elif save_files is not None:
+                    inputs["save_files"] = list(save_files)
+            capture_optimization = engine_fn == self.orca_fn and _orca_optimization_requested(inputs)
+            explicit_log = "orca.out" in (inputs.get("read_files") or [])
+            if capture_optimization:
+                inputs["read_files"] = list(dict.fromkeys([*(inputs.get("read_files") or []), "orca.out"]))
+            try:
+                params = signature(engine_fn).parameters
+                if not any(param.kind == param.VAR_KEYWORD for param in params.values()):
+                    filtered = {key: value for key, value in inputs.items() if key in params}
+                    if self.debug and (dropped := sorted(set(inputs) - set(filtered))):
+                        self.logger.debug(f"[{prefix}] dropped unsupported kwargs: {dropped}")
+                    inputs = filtered
+            except (TypeError, ValueError):
+                pass
+            row_start = monotonic_seconds()
+            try:
+                out = engine_fn(**inputs) or {}
+            except Exception as error:
+                self.logger.exception(f"[{prefix}] row {i} ({row_name}) failed: {error}")
+                out = {"normal_termination": False, "error": f"{type(error).__name__}: {error}"}
+            timing["elapsed_s"] = elapsed_seconds(row_start)
+
+        if self._retain_failed_orca_log and engine_fn == self.orca_fn and not out.get("normal_termination"):
+            log = out.get("orca.out") or out.get("log")
+            if isinstance(log, str) and log:
+                try:
+                    failed_dir = make_step_dir(self.base_dir / prefix, f"failed_row_{row_number}")
+                    (failed_dir / "orca.out").write_text(log, encoding="utf-8")
+                except OSError as error:
+                    self.logger.warning("Could not retain failed ORCA log: %s", error)
+        optimization_check = None
+        if capture_optimization and isinstance(out.get("orca.out"), str):
+            final_coords = out.get("opt_coords")
+            optimization_check = _optimization_record(
+                row, prefix, coords if final_coords is None else final_coords, out["orca.out"]
+            )
+            if not explicit_log:
+                out.pop("orca.out")
+        out.setdefault("normal_termination", False)
+        if out["normal_termination"]:
+            out.setdefault("electronic_energy", np.nan)
+        allowed = {"normal_termination", "electronic_energy", "opt_coords", "vibs", "error"}
+        allowed.update(
+            key for key in out if isinstance(key, str) and " " not in key and (
+                key.startswith("private_") or re.search(r"\.(hess|xyz|inp|out|log|gbw|molden|wfn|txt|json)$", key)
+            )
+        )
+        if "vibs" in out and "gibbs_energy" in out:
+            allowed.add("gibbs_energy")
+        row_data = {output_column(prefix, key): out[key] for key in allowed if key in out}
+        timing["normal_termination"] = bool(out["normal_termination"])
+        return row_data, timing, optimization_check
+
     def _run_engine(
             self,
             df: pd.DataFrame,
@@ -1417,6 +1581,8 @@ class Stepper:
             lowest: int | None,
             save_files: list[str] | None = None,
             use_last_hess: bool = False,
+            n_workers: int | None = None,
+            n_cores: int | None = None,
         ) -> pd.DataFrame:
         """
         Generic runner for xTB or ORCA or any other engine.
@@ -1449,6 +1615,10 @@ class Stepper:
         use_last_hess : bool, optional
             If ``True``, reuse the most recent ``*.hess`` column from the
             dataframe by passing it back into the engine as an input file.
+        n_workers : int or None, optional
+            Maximum concurrent rows. ``None`` inherits ``self.n_workers``.
+        n_cores : int or None, optional
+            Cores per row. ``None`` inherits ``self.n_cores``.
 
         Returns
         -------
@@ -1469,8 +1639,6 @@ class Stepper:
           does not imply optimization convergence. The raw log becomes a
           dataframe column only when explicitly requested.
         """
-        import pandas as _pd
-
         df_out    = normalize_dataframe(df)
         df_out.attrs.update(getattr(df, "attrs", {}))
         self._validate_required_columns(
@@ -1502,218 +1670,87 @@ class Stepper:
             + (f" from {step_input_rows} input row(s)" if stage_rows != step_input_rows else "")
         )
 
-        for row_number, (i, row) in enumerate(df_out.iterrows(), start=1):
-            row_name = self._row_name(row, i)
-            row_conf_id = self._row_conf_id(row, i)
-            coords = row[coord_col]
-            # --- skip any row with no coords ---
-            # if coords is None or (_pd.isna(coords) if not isinstance(coords, (list, tuple)) else False):
-            if coords is None or (_pd.isna(coords) if not isinstance(coords, (list, tuple, np.ndarray)) else False):            
-                all_row_data.append({
-                    output_column(prefix, "normal_termination"): False,
-                    output_column(prefix, "electronic_energy"):  np.nan
-                })
-                skipped_rows += 1
-                row_timings.append(
-                    {
-                        "row_number": row_number,
-                        "row_index": self._metadata_scalar(i),
-                        "label": row_name,
-                        "cid": row_conf_id,
-                        "elapsed_s": 0.0,
-                        "normal_termination": False,
-                        "skipped": True,
-                    }
+        effective_n_cores = self._effective_n_cores(n_cores)
+        effective_n_workers = self._effective_n_workers(n_workers)
+        save_full_calc = (self.save_calc_dirs and self.save_output) or save_step
+        save_partial = save_files is not None and not save_step
+        rows = list(df_out.iterrows())
+        row_dirs = [None] * stage_rows
+        if save_full_calc or save_partial:
+            used_names = set()
+            for position, (i, row) in enumerate(rows):
+                if self._missing_coords(row[coord_col]):
+                    continue
+                dir_name = f"{self._row_name(row, i)}_{self._row_conf_id(row, i)}"
+                if dir_name in used_names:
+                    dir_name += f"_row_{position + 1}"
+                while dir_name in used_names:
+                    dir_name += "_"
+                used_names.add(dir_name)
+                row_dirs[position] = str(make_step_dir(
+                    self._ensure_base_dir() / prefix, dir_name
+                ).resolve())
+        if self._retain_failed_orca_log:
+            self._ensure_base_dir()
+        last_hess_col = (
+            [col for col in df_out.columns if col.endswith(".hess")][-1]
+            if use_last_hess else None
+        )
+        results = [None] * stage_rows
+        with _engine_environment(effective_n_cores):
+            runtime = {}
+            # Resolve before ORCA workers temporarily change process XTBPATH.
+            if effective_n_workers > 1 and engine_fn is self.orca_fn:
+                from tooltoad.orca import orca_calculate, _resolve_orca_runtime
+
+                if engine_fn is orca_calculate:
+                    try:
+                        command, environment = _resolve_orca_runtime()
+                        runtime = {"orca_cmd": command, "set_env": environment}
+                    except Exception:
+                        pass  # Preserve the usual per-row engine failure record.
+
+            def run_row(position):
+                i, row = rows[position]
+                return self._run_single_row(
+                    i, row, row_number=position + 1, prefix=prefix,
+                    coord_col=coord_col, engine_fn=engine_fn, build_inputs=build_inputs,
+                    n_cores=effective_n_cores, created_dir=row_dirs[position],
+                    save_full_calc=save_full_calc, save_files=save_files,
+                    last_hess_col=last_hess_col, runtime=runtime,
+                    isolate_scratch=effective_n_workers > 1,
+                )
+
+            def record(position, result, completed):
+                results[position] = result
+                timing = result[1]
+                stage_elapsed = elapsed_seconds(stage_start)
+                eta = stage_elapsed / completed * (stage_rows - completed)
+                status = "skipped: missing coordinates" if timing.get("skipped") else (
+                    f"done in {format_duration(timing['elapsed_s'])}"
                 )
                 self.logger.info(
-                    f"[{prefix}] row {row_number}/{stage_rows} ({row_name}) skipped: missing coordinates"
+                    f"[{prefix}] row {completed}/{stage_rows} ({timing['label']}) {status}; "
+                    f"input row {timing['row_number']}; "
+                    f"elapsed {format_duration(stage_elapsed)}; ETA {format_duration(eta)}"
                 )
-                continue
 
-            row_save_files = save_files
-            save_full_calc = (self.save_calc_dirs and self.save_output) or save_step
-            save_partial   = row_save_files is not None and not save_step
-
-            if save_full_calc or save_partial:
-                self._ensure_base_dir()
-                row_name = self._row_name(row, i)
-                row_conf_id = self._row_conf_id(row, i)
-                dir_name = f"{row_name}_{row_conf_id}"
-                engine_base = self.base_dir / prefix
-                engine_base.mkdir(parents=True, exist_ok=True)
-                created_dir = str(make_step_dir(engine_base, dir_name))
+            if effective_n_workers == 1 or stage_rows <= 1:
+                for position in range(stage_rows):
+                    record(position, run_row(position), position + 1)
             else:
-                created_dir = None
+                with ThreadPoolExecutor(max_workers=effective_n_workers) as pool:
+                    futures = {pool.submit(run_row, position): position for position in range(stage_rows)}
+                    for completed, future in enumerate(as_completed(futures), start=1):
+                        record(futures[future], future.result(), completed)
 
-            if save_full_calc:
-                calc_dir   = created_dir
-                save_dir   = created_dir
-                row_save_files = None
-            elif save_partial:
-                calc_dir   = None
-                save_dir   = created_dir
-            else:
-                calc_dir   = None
-                save_dir   = None
-            
-            if use_last_hess:
-                last_hess_col = [col for col in df.columns if col.endswith(".hess")][-1]
-                last_hess = {"private_input.hess": row[last_hess_col]}
-
-            base_args = {
-                "atoms":  row["atoms"],
-                "coords": [list(c) for c in coords],
-                "n_cores": self.n_cores,
-                "scr": self.work_dir,
-                "data2file": last_hess if use_last_hess else None
-            }
-
-            if calc_dir is not None:
-                base_args["calc_dir"] = calc_dir
-            if save_dir is not None:
-                base_args["save_dir"] = save_dir
-            if row_save_files is not None:
-                base_args["save_files"] = row_save_files
-
-            inputs = {**base_args, **build_inputs(row)}
-            from frust.utils.optimization import _orca_optimization_requested
-
-            capture_optimization = engine_fn == self.orca_fn and _orca_optimization_requested(inputs)
-            explicit_log = "orca.out" in (inputs.get("read_files") or [])
-            if capture_optimization:
-                inputs["read_files"] = list(dict.fromkeys([*(inputs.get("read_files") or []), "orca.out"]))
-
-            # Filter inputs to only those accepted by engine_fn (avoids unexpected kwargs)
-            try:
-                allowed = set(signature(engine_fn).parameters.keys())
-                filtered = {k: v for k, v in inputs.items() if k in allowed}
-                if self.debug:
-                    dropped = sorted(set(inputs) - set(filtered))
-                    if dropped:
-                        self.logger.debug(f"[{prefix}] dropped unsupported kwargs: {dropped}")
-                inputs = filtered
-            except Exception:
-                # If introspection fails for any reason, fall back to original inputs
-                pass
-
-            # step 3: run engine, catch exceptions
-            self.logger.info(f"[{prefix}] row {i} ({row_name})…")
-            row_start = monotonic_seconds()
-            try:
-                out = engine_fn(**inputs) or {}
-            except Exception as e:
-                self.logger.exception(f"[{prefix}] row {i} ({row_name}) failed: {e}")
-                out = {
-                    "normal_termination": False,
-                    "error": f"{type(e).__name__}: {e}",
-                }
-            finally:
-                row_elapsed = elapsed_seconds(row_start)
-                processed_rows += 1
-                if save_step and save_dir:
-                    try:
-                        import shutil
-                        from pathlib import Path
-
-                        row_conf_id = self._row_conf_id(row, i)
-                        dir_name = f"{row_name}_{row_conf_id}"
-
-                        candidates = list(Path(self.work_dir).rglob(dir_name))
-                        src = max(candidates, key=lambda p: len(p.parts)) if candidates else None
-
-                        if src is None:
-                            self.logger.warning(f"No calc dir named '{dir_name}' found under {self.work_dir}")
-                        else:
-                            save_path = Path(save_dir)
-                            if src.resolve() != save_path.resolve():
-                                for p in src.iterdir():
-                                    dst = save_path / p.name
-                                    if p.is_dir():
-                                        shutil.copytree(p, dst, dirs_exist_ok=True)
-                                    else:
-                                        shutil.copy2(p, dst)
-                    except Exception as e:
-                        self.logger.error(f"Failed to stage files from '{src}' to '{save_dir}': {e}")
-
-            if (
-                self._retain_failed_orca_log
-                and engine_fn == self.orca_fn
-                and not out.get("normal_termination")
-            ):
-                log = out.get("orca.out") or out.get("log")
-                if isinstance(log, str) and log:
-                    try:
-                        failed_dir = make_step_dir(
-                            self._ensure_base_dir() / prefix, f"failed_row_{row_number}"
-                        )
-                        (failed_dir / "orca.out").write_text(log, encoding="utf-8")
-                    except OSError as error:
-                        self.logger.warning("Could not retain failed ORCA log: %s", error)
-
-            # step 4: enforce defaults
-            if capture_optimization and isinstance(out.get("orca.out"), str):
-                from frust.utils.optimization import _optimization_record
-
-                final_coords = out.get("opt_coords")
-                optimization_checks.append(_optimization_record(
-                    row, prefix, coords if final_coords is None else final_coords, out["orca.out"]
-                ))
-                if not explicit_log:
-                    out.pop("orca.out")
-            out.setdefault("normal_termination", False)
-            if out["normal_termination"]:
-                out.setdefault("electronic_energy", np.nan)
-            # step 5: pick only the keys we know how to handle
-            allowed = {"normal_termination", "electronic_energy", "opt_coords", "vibs", "error"}
-            def _filelike(k: str) -> bool:
-                # Accept only filename-ish keys (no spaces), or our private_* stash
-                if not isinstance(k, str) or " " in k:
-                    return False
-                if k.startswith("private_"):
-                    return True
-                return bool(re.search(
-                    r"\.(hess|xyz|inp|out|log|gbw|molden|wfn|txt|json)$", k
-                ))
-
-            for k in out.keys():
-                if _filelike(k):
-                    allowed.add(k)
-
-            if "vibs" in out and "gibbs_energy" in out:
-                allowed.add("gibbs_energy")
-
-            if self.debug:
-                ignored = sorted([k for k in out.keys()
-                                if '.' in k and k not in allowed])
-                if ignored:
-                    self.logger.debug(f"[{prefix}] ignoring non-file dot-keys: {ignored}")
-
-            row_data: dict[str, object] = {}
-            for key in allowed:
-                if key in out:
-                    col = output_column(prefix, key)
-                    row_data[col] = out[key]
-
+        for row_data, timing, optimization_check in results:
             all_row_data.append(row_data)
-            row_timings.append(
-                {
-                    "row_number": row_number,
-                    "row_index": self._metadata_scalar(i),
-                    "label": row_name,
-                    "cid": row_conf_id,
-                    "elapsed_s": row_elapsed,
-                    "normal_termination": bool(out.get("normal_termination")),
-                }
-            )
-            stage_elapsed = elapsed_seconds(stage_start)
-            remaining = max(0, stage_rows - row_number)
-            eta = (stage_elapsed / row_number) * remaining if row_number else 0.0
-            self.logger.info(
-                f"[{prefix}] row {row_number}/{stage_rows} ({row_name}) "
-                f"done in {format_duration(row_elapsed)}; "
-                f"elapsed {format_duration(stage_elapsed)}; "
-                f"ETA {format_duration(eta)}"
-            )
+            row_timings.append(timing)
+            skipped_rows += int(timing.get("skipped", False))
+            processed_rows += int(not timing.get("skipped", False))
+            if optimization_check is not None:
+                optimization_checks.append(optimization_check)
 
         # --- now assemble all_row_data back into df_out ---
         all_cols = sorted({c for rd in all_row_data for c in rd})
@@ -1741,6 +1778,10 @@ class Stepper:
         step_meta = {
             "engine": prefix.split("-", 1)[0],
             "columns": sorted(column_arrays),
+            "calculator": {"resources": {
+                "n_cores": effective_n_cores,
+                "n_workers": effective_n_workers,
+            }},
             "row_counts": {
                 "input_rows": step_input_rows,
                 "output_rows": int(len(df_out)),
@@ -1787,50 +1828,68 @@ class Stepper:
         save_step: bool = False,
         lowest: int | None = None,
         n_cores: int | None = None,
+        n_workers: int | None = None,
     ) -> pd.DataFrame:
-        """Embed multiple conformers with xTB and optionally optimize and/or
-        compute frequencies.
+        """Run xTB on conformer rows, optionally optimizing or computing frequencies.
 
-        Args:
-            df (pd.DataFrame): A DataFrame containing conformers. Required
-                columns:
-                - ``atoms``: list of atomic symbols
-                - one coordinate column, typically ``coords_embedded`` or a
-                  prior ``*-oc`` column
-                - ``constraint_roles`` and ``constraint_spec`` when
-                  ``constraint=True``
-                - ``substrate_name`` when ``lowest`` is used
-            name (str): Base name for the xTB step, used to prefix result
-                columns.
-            options (dict, optional): xTB driver options, e.g. ``{'gfn': 2,
-                'opt': None}``. Defaults to ``{'gfn': 0}``.
-            detailed_inp_str (str, optional): Additional xTB input block
-                (cards) to include. Defaults to ``""``.
-            constraint (bool, optional): If ``True``, renders the role-based
-                distance and angle constraints stored on every dataframe row.
-                Defaults to ``False``.
-            save_step (bool, optional): If ``True``, saves calculation
-                directories for each conformer. Defaults to ``False``.
-            lowest (int or None, optional): If set, retains only the
-                lowest-energy ``N`` conformers per structure group. Defaults
-                to ``None``.
-            n_cores (int or None, optional): If set, overrides the Stepper’s
-                default core count for this xTB call only. Defaults to
-                ``None``.
+        Parameters
+        ----------
+        df : pd.DataFrame
+            A DataFrame containing conformers. Required
+            columns:
+            - ``atoms``: list of atomic symbols
+            - one coordinate column, typically ``coords_embedded`` or a
+              prior ``*-oc`` column
+            - ``constraint_roles`` and ``constraint_spec`` when
+              ``constraint=True``
+            - ``substrate_name`` when ``lowest`` is used
+        name : str
+            Base name for the xTB step, used to prefix result
+            columns.
+        options : dict, optional
+            xTB driver options, e.g. ``{'gfn': 2,
+            'opt': None}``. Defaults to ``{'gfn': 0}``.
+        detailed_inp_str : str, optional
+            Additional xTB input block
+            (cards) to include. Defaults to ``""``.
+        constraint : bool, optional
+            If ``True``, renders the role-based
+            distance and angle constraints stored on every dataframe row.
+            Defaults to ``False``.
+        save_step : bool, optional
+            If ``True``, saves calculation
+            directories for each conformer. Defaults to ``False``.
+        lowest : int or None, optional
+            If set, retains only the
+            lowest-energy ``N`` conformers per structure group. Defaults
+            to ``None``.
+        n_cores : int or None, optional
+            If set, overrides the Stepper’s
+            default core count for this xTB call only. Defaults to
+            ``None``.
 
-        Returns:
-            pd.DataFrame: The input DataFrame augmented with stage-prefixed xTB
+        n_workers : int or None, optional
+            Maximum concurrent rows; ``None`` inherits the Stepper setting
+            (default 1). Each row uses ``n_cores`` cores. Input order, row
+            failures, and optimization checks are preserved. Thread environment
+            settings are restored when the stage ends, including on failure.
+
+        Returns
+        -------
+        pandas.DataFrame
+            The input DataFrame augmented with stage-prefixed xTB
             result columns, typically including:
-                - ``{prefix}-NT``
-                - ``{prefix}-EE``
-                - ``{prefix}-oc`` for optimization jobs
-                - ``{prefix}-vibs`` and ``{prefix}-GE`` for
-                  frequency jobs
-                - ``{prefix}-error`` when a row-level engine failure occurs
-                - saved file-content columns when the backend returns them
+            - ``{prefix}-NT``
+            - ``{prefix}-EE``
+            - ``{prefix}-oc`` for optimization jobs
+            - ``{prefix}-vibs`` and ``{prefix}-GE`` for
+              frequency jobs
+            - ``{prefix}-error`` when a row-level engine failure occurs
+            - saved file-content columns when the backend returns them
         """
         opts = dict(options) if options else {"gfn": 0}
         effective_n_cores = self._effective_n_cores(n_cores)
+        effective_n_workers = self._effective_n_workers(n_workers)
         if constraint:
             self._validate_constraint_request(df)
         keys = list(opts)
@@ -1864,7 +1923,8 @@ class Stepper:
             return inp
 
         result = self._run_engine(
-            df, self.xtb_fn, prefix, build_xtb, save_step, lowest
+            df, self.xtb_fn, prefix, build_xtb, save_step, lowest,
+            n_workers=effective_n_workers, n_cores=effective_n_cores,
         )
         result.attrs.setdefault("frust_steps", {}).setdefault(prefix, {}).update(
             {
@@ -1877,12 +1937,13 @@ class Stepper:
                     "save_step": bool(save_step),
                     "lowest": lowest,
                     "n_cores": effective_n_cores,
+                    "n_workers": effective_n_workers,
                 },
                 "calculator": calculator_provenance(
                     name="xtb",
                     mode="direct",
                     backend=self.xtb_fn,
-                    resources={"n_cores": effective_n_cores},
+                    resources={"n_cores": effective_n_cores, "n_workers": effective_n_workers},
                     executables={
                         "xtb": env_executable("XTB_EXE", fallback_command="xtb"),
                     },
@@ -1901,10 +1962,43 @@ class Stepper:
         save_step: bool = False,
         lowest: int | None = None,
         n_cores: int | None = None,
+        n_workers: int | None = None,
     ) -> pd.DataFrame:
-        """Run g-xTB v2 calculations through Tooltoad's g-xTB calculator."""
+        """Run g-xTB v2 over conformer rows.
+
+        Parameters
+        ----------
+        df : pandas.DataFrame
+            Conformers with ``atoms`` and ``coords_embedded`` or a prior
+            ``*-oc`` column. Constraints require row role/spec metadata.
+        name : str, optional
+            Output stage prefix, default ``"gxtb"``.
+        options : dict or None, optional
+            g-xTB keywords, for example ``{"opt": None}`` for optimization.
+        detailed_inp_str : str, optional
+            Additional xTB input cards.
+        constraint : bool, optional
+            Render role-based distance and angle constraints for each row.
+        save_step : bool, optional
+            Retain each row's calculation directory.
+        lowest : int or None, optional
+            Retain the lowest-energy N conformers per structure group.
+        n_cores : int or None, optional
+            Cores per row. ``None`` inherits the Stepper setting.
+        n_workers : int or None, optional
+            Maximum simultaneous rows. ``None`` inherits the Stepper setting
+            (default 1). Allocate ``n_workers * n_cores`` CPU cores.
+
+        Returns
+        -------
+        pandas.DataFrame
+            Input rows with ``*-NT`` (normal termination), ``*-EE`` (Hartree
+            energy), and any ``*-oc`` (optimized coordinates) or ``*-error``
+            outputs. Resource and timing metadata live in ``df.attrs``.
+        """
         opts = dict(options) if options else {}
         effective_n_cores = self._effective_n_cores(n_cores)
+        effective_n_workers = self._effective_n_workers(n_workers)
         if constraint:
             self._validate_constraint_request(df)
         keys = list(opts)
@@ -1935,7 +2029,8 @@ class Stepper:
             return inp
 
         result = self._run_engine(
-            df, self.gxtb_fn, prefix, build_gxtb, save_step, lowest
+            df, self.gxtb_fn, prefix, build_gxtb, save_step, lowest,
+            n_workers=effective_n_workers, n_cores=effective_n_cores,
         )
         result.attrs.setdefault("frust_steps", {}).setdefault(prefix, {}).update(
             {
@@ -1948,12 +2043,13 @@ class Stepper:
                     "save_step": bool(save_step),
                     "lowest": lowest,
                     "n_cores": effective_n_cores,
+                    "n_workers": effective_n_workers,
                 },
                 "calculator": calculator_provenance(
                     name="gxtb",
                     mode="direct_gxtb",
                     backend=self.gxtb_fn,
-                    resources={"n_cores": effective_n_cores},
+                    resources={"n_cores": effective_n_cores, "n_workers": effective_n_workers},
                     executables={
                         "gxtb": gxtb_executable(),
                     },
@@ -1998,123 +2094,166 @@ class Stepper:
         gxtb_exe: str | None = None,
         gxtb_ext_params: str | None = None,
         calc_hess: bool = False,
+        n_workers: int | None = None,
         **kw        
     ) -> pd.DataFrame:
         """Run ORCA calculations and attach results to the DataFrame.
 
-        Args:
-            df (pd.DataFrame): DataFrame of conformers to compute. Must include:
-                - ``atoms``: list of atomic symbols
-                - one coordinate column, typically ``coords_embedded`` or a
-                  prior ``*-oc`` column
-                - ``constraint_roles`` and ``constraint_spec`` when
-                  ``constraint=True``
-                - ``substrate_name`` when ``lowest`` is used
-                - a prior ``*.hess`` column when ``use_last_hess=True``
-            name (str): Base name for the ORCA step, used to prefix result
-                columns.
-            options (dict): ORCA input keywords, e.g.
-                ``{'wB97X-D3': None, '6-31G**': None, 'OptTS': None,
-                'Freq': None}``.
-            xtra_inp_str (str, optional): Additional ORCA input block such as
-                CPCM settings or custom geometry directives. Defaults to
-                ``""``.
-            constraint (bool, optional): If ``True``, renders the role-based
-                distance and angle constraints stored on every dataframe row.
-                Defaults to ``False``.
-            save_step (bool, optional): If ``True``, saves ORCA run
-                directories for inspection. Defaults to ``False``.
-            save_files (list[str] or None, optional): Specific ORCA output
-                files to retain when partial saving is enabled. If omitted and
-                instance-level output saving is enabled, defaults to
-                ``["orca.out"]``.
-            lowest (int or None, optional): If set, keeps only the
-                lowest-energy conformer per structure group. Defaults to
-                ``None``.
-            uma (str or None, optional): Optional UMA task/profile identifier
-                used to inject ORCA external optimization settings. Defaults to
-                ``None``.
-            read_files (list or None, optional): Deposit contents from files in
-                the work directory directly into the dataframe, e.g.
-                ``["input.hess"]``.
-            use_last_hess (bool, optional): If ``True``, scan the dataframe for
-                the most recent ``*.hess`` column and feed it back to ORCA as
-                ``private_input.hess``. Defaults to ``False``.
-            n_cores (int or None, optional): If set, overrides the Stepper's
-                default core count for this ORCA call only. Defaults to
-                ``None``.
-            uma_server (bool, optional): If ``True``, runs UMA through OET's
-                server/client mode. If ``False``, uses standalone ``oet_uma``.
-                Defaults to ``True``.
-            uma_device (str, optional): OET UMA device argument, typically
-                ``"cpu"`` or ``"cuda"``. Defaults to ``"cpu"``.
-            uma_cache_dir (str or None, optional): Optional FairChem cache
-                directory passed to OET UMA. Defaults to ``None``.
-            uma_offline (bool, optional): If ``True``, asks OET UMA to use
-                offline mode. Defaults to ``False``.
-            uma_server_cores (int or None, optional): Total core budget passed
-                to ``oet_server --nthreads``. Defaults to this ORCA call's
-                core count.
-            uma_memory_per_thread_mib (int, optional): Memory budget passed to
-                ``oet_server --memory-per-thread``. Defaults to ``500``.
-            uma_keep_logs (bool or str, optional): Server-log retention policy:
-                ``"on_failure"`` preserves logs only when the UMA-backed ORCA
-                step fails, ``True``/``"always"`` keeps logs, and
-                ``False``/``"never"`` removes them. Defaults to
-                ``"on_failure"``.
-            uma_log_dir (str or None, optional): Directory for preserved UMA
-                server logs. If omitted, transient logs are written to a temp
-                directory and preserved failures are copied to ``UMA-logs``.
-            uma_xtb_alpb (str or None, optional): Add the GFN2-xTB ALPB solvent
-                correction to UMA energies and gradients. Currently accepts
-                ``"chloroform"``; ``None`` keeps gas-phase UMA.
-            uma_xtb_exe (str or None, optional): Normal xTB executable used
-                for the UMA solvent correction. Requires ``uma_xtb_alpb``.
-                If omitted, OET uses ``XTB_EXE`` or ``xtb`` on its path.
-            uma_inference_settings (str or None, optional): FairChem inference
-                mode: ``"default"`` or ``"turbo"`` use model compilation;
-                ``"batch"`` avoids it. ``None`` uses OET's ``"batch"`` default.
-            ts_mode (sequence of str or None, optional): Chemical roles defining
-                the ORCA internal coordinate followed during ``OptTS``. Two
-                roles select a bond, three an angle, and four a dihedral. For
-                TS3, use ``("pin_B", "substrate_C")``. Atom indices are
-                resolved from each row's ``constraint_roles``.
-            ts_active_atoms (sequence of str or None, optional): Chemical roles
-                passed to ORCA ``TS_Active_Atoms``. For TS3, use the complete
-                reactive core ``("cat_B", "transfer_H", "pin_B",
-                "substrate_C")``.
-            ts_active_atoms_factor (float or None, optional): Positive ORCA
-                ``TS_Active_Atoms_Factor``. Requires ``ts_active_atoms``.
-            recalc_hess (int or None, optional): Positive number of OptTS cycles
-                between exact Hessian recalculations.
-            trust_radius (float or None, optional): ORCA trust radius. Positive
-                values are adaptive and negative values keep the absolute
-                radius fixed.
-            max_step (float or None, optional): Positive ORCA maximum component
-                of the optimization step.
-            gxtb (bool, optional): If ``True``, runs ORCA with OET g-xTB v2 as
-                an external method provider. ORCA still owns ``Opt``,
-                ``OptTS``, ``NEB-TS``, and related run types. Defaults to
-                ``False``.
-            gxtb_exe (str or None, optional): Optional path to the g-xTB v2
-                ``xtb`` executable. If omitted, ``GXTB_EXE`` is used.
-            gxtb_ext_params (str or None, optional): Extra parameters appended
-                to OET ``oet_gxtb`` through ORCA ``Ext_Params``.
-            calc_hess (bool, optional): If ``True``, add an explicit ORCA
-                ``%geom Calc_Hess true`` block. This is intended for
-                optimization jobs that need an initial optimizer Hessian and is
-                not implied by ``Freq``. Defaults to ``False``.
+        Parameters
+        ----------
+        df : pd.DataFrame
+            DataFrame of conformers to compute. Must include:
+            - ``atoms``: list of atomic symbols
+            - one coordinate column, typically ``coords_embedded`` or a
+              prior ``*-oc`` column
+            - ``constraint_roles`` and ``constraint_spec`` when
+              ``constraint=True``
+            - ``substrate_name`` when ``lowest`` is used
+            - a prior ``*.hess`` column when ``use_last_hess=True``
+        name : str
+            Base name for the ORCA step, used to prefix result
+            columns.
+        options : dict
+            ORCA input keywords, e.g.
+            ``{'wB97X-D3': None, '6-31G**': None, 'OptTS': None,
+            'Freq': None}``.
+        xtra_inp_str : str, optional
+            Additional ORCA input block such as
+            CPCM settings or custom geometry directives. Defaults to
+            ``""``.
+        constraint : bool, optional
+            If ``True``, renders the role-based
+            distance and angle constraints stored on every dataframe row.
+            Defaults to ``False``.
+        save_step : bool, optional
+            If ``True``, saves ORCA run
+            directories for inspection. Defaults to ``False``.
+        save_files : list[str] or None, optional
+            Specific ORCA output
+            files to retain when partial saving is enabled. If omitted and
+            instance-level output saving is enabled, defaults to
+            ``["input.inp", "orca.out"]``.
+        lowest : int or None, optional
+            If set, keeps only the
+            lowest-energy conformer per structure group. Defaults to
+            ``None``.
+        uma : str or None, optional
+            Optional UMA task/profile identifier
+            used to inject ORCA external optimization settings. Defaults to
+            ``None``.
+        read_files : list or None, optional
+            Deposit contents from files in
+            the work directory directly into the dataframe, e.g.
+            ``["input.hess"]``.
+        use_last_hess : bool, optional
+            If ``True``, scan the dataframe for
+            the most recent ``*.hess`` column and feed it back to ORCA as
+            ``private_input.hess``. Defaults to ``False``.
+        n_cores : int or None, optional
+            If set, overrides the Stepper's
+            default cores per row for this ORCA call only. ``memory_gb``
+            is shared equally among the concurrent row clients.
+        uma_server : bool, optional
+            If ``True``, runs UMA through OET's
+            server/client mode. If ``False``, uses standalone ``oet_uma``.
+            Defaults to ``True``.
+        uma_device : str, optional
+            OET UMA device argument, typically
+            ``"cpu"`` or ``"cuda"``. Defaults to ``"cpu"``.
+        uma_cache_dir : str or None, optional
+            Optional FairChem cache
+            directory passed to OET UMA. Defaults to ``None``.
+        uma_offline : bool, optional
+            If ``True``, asks OET UMA to use
+            offline mode. Defaults to ``False``.
+        uma_server_cores : int or None, optional
+            Total core budget passed
+            to ``oet_server --nthreads``. Defaults to this ORCA call's
+            core count.
+        uma_memory_per_thread_mib : int, optional
+            Memory budget passed to
+            ``oet_server --memory-per-thread``. Defaults to ``500``.
+        uma_keep_logs : bool or str, optional
+            Server-log retention policy:
+            ``"on_failure"`` preserves logs only when the UMA-backed ORCA
+            step fails, ``True``/``"always"`` keeps logs, and
+            ``False``/``"never"`` removes them. Defaults to
+            ``"on_failure"``.
+        uma_log_dir : str or None, optional
+            Directory for preserved UMA
+            server logs. If omitted, transient logs are written to a temp
+            directory and preserved failures are copied to ``UMA-logs``.
+        uma_xtb_alpb : str or None, optional
+            Add the GFN2-xTB ALPB solvent
+            correction to UMA energies and gradients. Currently accepts
+            ``"chloroform"``; ``None`` keeps gas-phase UMA.
+        uma_xtb_exe : str or None, optional
+            Normal xTB executable used
+            for the UMA solvent correction. Requires ``uma_xtb_alpb``.
+            If omitted, OET uses ``XTB_EXE`` or ``xtb`` on its path.
+        uma_inference_settings : str or None, optional
+            FairChem inference
+            mode: ``"default"`` or ``"turbo"`` use model compilation;
+            ``"batch"`` avoids it. ``None`` uses OET's ``"batch"`` default.
+        ts_mode : sequence of str or None, optional
+            Chemical roles defining
+            the ORCA internal coordinate followed during ``OptTS``. Two
+            roles select a bond, three an angle, and four a dihedral. For
+            TS3, use ``("pin_B", "substrate_C")``. Atom indices are
+            resolved from each row's ``constraint_roles``.
+        ts_active_atoms : sequence of str or None, optional
+            Chemical roles
+            passed to ORCA ``TS_Active_Atoms``. For TS3, use the complete
+            reactive core ``("cat_B", "transfer_H", "pin_B",
+            "substrate_C")``.
+        ts_active_atoms_factor : float or None, optional
+            Positive ORCA
+            ``TS_Active_Atoms_Factor``. Requires ``ts_active_atoms``.
+        recalc_hess : int or None, optional
+            Positive number of OptTS cycles
+            between exact Hessian recalculations.
+        trust_radius : float or None, optional
+            ORCA trust radius. Positive
+            values are adaptive and negative values keep the absolute
+            radius fixed.
+        max_step : float or None, optional
+            Positive ORCA maximum component
+            of the optimization step.
+        gxtb : bool, optional
+            If ``True``, runs ORCA with OET g-xTB v2 as
+            an external method provider. ORCA still owns ``Opt``,
+            ``OptTS``, ``NEB-TS``, and related run types. Defaults to
+            ``False``.
+        gxtb_exe : str or None, optional
+            Optional path to the g-xTB v2
+            ``xtb`` executable. If omitted, ``GXTB_EXE`` is used.
+        gxtb_ext_params : str or None, optional
+            Extra parameters appended
+            to OET ``oet_gxtb`` through ORCA ``Ext_Params``.
+        calc_hess : bool, optional
+            If ``True``, add an explicit ORCA
+            ``%geom Calc_Hess true`` block. This is intended for
+            optimization jobs that need an initial optimizer Hessian and is
+            not implied by ``Freq``. Defaults to ``False``.
 
-        Returns:
-            pd.DataFrame: The input DataFrame extended with stage-prefixed ORCA
+        n_workers : int or None, optional
+            Maximum concurrent rows; ``None`` inherits the Stepper setting
+            (default 1). Each row uses ``n_cores`` cores. Input order, row
+            failures, and optimization checks are preserved. Thread environment
+            settings are restored when the stage ends, including on failure.
+
+        Returns
+        -------
+        pandas.DataFrame
+            The input DataFrame extended with stage-prefixed ORCA
             output columns, typically including:
-                - ``{prefix}-NT``
-                - ``{prefix}-EE``
-                - ``{prefix}-oc`` for optimization jobs
-                - ``{prefix}-vibs`` and ``{prefix}-GE`` for
-                  frequency jobs
-                - ``{prefix}-error`` when a row-level engine failure occurs
-                - saved file-content columns when ORCA returns them
+            - ``{prefix}-NT``
+            - ``{prefix}-EE``
+            - ``{prefix}-oc`` for optimization jobs
+            - ``{prefix}-vibs`` and ``{prefix}-GE`` for
+              frequency jobs
+            - ``{prefix}-error`` when a row-level engine failure occurs
+            - saved file-content columns when ORCA returns them
         """
         opts = dict(options or {})
         if kw:
@@ -2189,6 +2328,7 @@ class Stepper:
             prefix = f"{name}-{func}-{basis}" + (f"-{opt_flag}" if opt_flag else "")
 
         effective_n_cores = self._effective_n_cores(n_cores)
+        effective_n_workers = self._effective_n_workers(n_workers)
         generated_input_blocks = []
         if calc_hess:
             generated_input_blocks.append("calc_hess")
@@ -2217,6 +2357,7 @@ class Stepper:
                 "trust_radius": trust_radius,
                 "max_step": max_step,
                 "n_cores": effective_n_cores,
+                "n_workers": effective_n_workers,
                 "memory_gb": self.memory_gb,
                 "generated_input_blocks": generated_input_blocks or None,
             }
@@ -2238,6 +2379,7 @@ class Stepper:
 
             resource_data: dict[str, object] = {
                 "n_cores": effective_n_cores,
+                "n_workers": effective_n_workers,
                 "memory_gb": self.memory_gb,
             }
             resource_data.update(resources or {})
@@ -2263,7 +2405,7 @@ class Stepper:
             inp = {
                 "options": opts,
                 "xtra_inp_str": xtra_inp_str.strip(),
-                "memory": self.memory_gb,
+                "memory": self.memory_gb / effective_n_workers,
                 "n_cores": effective_n_cores,
                 "read_files": read_files,
             }
@@ -2291,7 +2433,10 @@ class Stepper:
             return inp
 
         if uma is None and not gxtb:
-            result = self._run_engine(df, self.orca_fn, prefix, build_orca, save_step, lowest, save_files, use_last_hess)
+            result = self._run_engine(
+                df, self.orca_fn, prefix, build_orca, save_step, lowest, save_files, use_last_hess,
+                n_workers=effective_n_workers, n_cores=effective_n_cores,
+            )
             result.attrs.setdefault("frust_steps", {}).setdefault(prefix, {}).update(
                 {
                     "engine": "orca",
@@ -2323,6 +2468,7 @@ class Stepper:
                 lowest,
                 save_files,
                 use_last_hess,
+                n_workers=effective_n_workers, n_cores=effective_n_cores,
             )
             result.attrs.setdefault("frust_steps", {}).setdefault(prefix, {}).update(
                 {
@@ -2417,6 +2563,7 @@ class Stepper:
             result = self._run_engine(
                 df, self.orca_fn, prefix, build_orca_uma, save_step, lowest,
                 save_files, use_last_hess,
+                n_workers=effective_n_workers, n_cores=effective_n_cores,
             )
             uma_input = {
                 "uma": uma,

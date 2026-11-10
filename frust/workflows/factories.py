@@ -312,7 +312,9 @@ def _complete_stage_graph(
                 method,
                 profile=profile,
                 preopt=profile != "minimum" and not direct_ts,
-                selected_candidates=ranking is not None,
+                selected_candidates=(
+                    ranking is not None or validation_top_n is not None or direct_ts
+                ),
             )
         )
     else:
@@ -341,8 +343,8 @@ def _molecule_stage_defs(
     ranking = _ranking_stage(method)
     stages = [
         StageDef("prepare", "prepare", kind="prepare"),
-        StageDef("xtb_preopt", "xtb_preopt", n_cores=2),
-        StageDef(screening_sp, "screening single point", n_cores=2),
+        StageDef("xtb_preopt", "xtb_preopt"),
+        StageDef(screening_sp, "screening single point"),
     ]
     if screening_sp == "uma_sp" or ranking is not None:
         stages.append(
@@ -360,7 +362,6 @@ def _molecule_stage_defs(
             "screening optimization",
             lowest=top_n,
             rank_by=screening_opt,
-            n_cores=2,
         )
     )
     return _complete_stage_graph(
@@ -2022,11 +2023,10 @@ def _ts_screening_stages(
     screening_sp, screening_opt = _screening_stage_ids(method)
     stages = [
         StageDef("prepare", "prepare", kind="prepare"),
-        StageDef("xtb_preopt", "xtb_preopt", constraint=True, n_cores=2),
+        StageDef("xtb_preopt", "xtb_preopt", constraint=True),
         StageDef(
             screening_sp,
             "UMA single point" if screening_sp == "uma_sp" else "xtb_sp",
-            n_cores=2,
         ),
     ]
     if screening_sp == "uma_sp":
@@ -2060,7 +2060,6 @@ def _ts_screening_stages(
             constraint=True,
             lowest=top_n,
             rank_by=screening_opt,
-            n_cores=2,
         )
     )
     return _with_initial_prune(stages, prune_initial)
@@ -2069,7 +2068,7 @@ def _ts_screening_stages(
 def _ranking_stages(stage_id: str, top_n: int) -> list[StageDef]:
     """Return single-point ranking followed by finite-energy selection."""
     return [
-        StageDef(stage_id, "single-point reranking", n_cores=2),
+        StageDef(stage_id, "single-point reranking"),
         StageDef(
             stage_id.removesuffix("_sp") + "_filter",
             "reranked candidate selection",

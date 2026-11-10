@@ -147,10 +147,48 @@ wf = ft.workflows.screen_ts(
 !!! note "PRISM is an optional dependency"
 
     The pruning stage lazy-loads PRISM only when it runs. Install
-    `prism-pruner` in the workflow environment, or set `prune_initial=False` to
-    skip pruning.
+    `prism-pruner` in the workflow environment. `prune_initial=False` skips
+    initial pruning; validation candidate deduplication also uses PRISM.
 
 ## Run One Local Smoke Test
+
+Workflow CPU and memory budgets determine how many rows run together:
+
+| Stage, given 6 CPUs and 20.8 GiB usable memory | Concurrent rows | Cores per row |
+| --- | ---: | ---: |
+| xTB or g-xTB screening | Up to 6 | 1 |
+| UMA single-point ranking or final energy | Up to 4 | 1 |
+| UMA geometry optimization | 1 | 6 |
+| UMA numerical Hessian or frequencies | 1 | 6 displacement workers |
+| DFT optimization, frequencies, or single point | 1 | 6 |
+
+All UMA stages in a job share one server. Automatic sizing budgets 3.4 GiB per
+server worker, capped at the CPU allocation with a minimum of one worker.
+On the cluster, the default 20% memory reserve is deducted first. Full-validation
+groups default to 6 CPUs/26 GiB; screening-only groups default to 4 CPUs/20 GiB.
+`stage_resources` overrides these allocations.
+
+```python
+submission = wf.submit(
+    out_dir="runs/screen_ts",
+    cluster=cluster,
+    execution="single_job",
+)
+```
+
+`single_job` keeps the same server warm through screening and validation.
+Use `uma_server_cores=6` on `run(...)` or `submit(...)` to explicitly select a
+server budget instead of automatic sizing. This override does not request
+additional scheduler CPUs or memory.
+
+!!! note "Selected candidates can converge to the same geometry"
+
+    For workflows with a validation candidate selection, `validation_dedup`
+    removes duplicates after optimization and before frequencies. It requires
+    both an energy difference below 0.05 kcal/mol and a moment-of-inertia
+    deviation below 0.5%, keeping the lowest-energy representative. UMA and DFT
+    use the same rule. In `dft_staged` mode this pruning runs in the frequency
+    job. Inspect its input, output, and dropped row counts with `ft.show_steps(df)`.
 
 Run one target locally before submitting the full screen:
 

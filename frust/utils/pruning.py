@@ -23,6 +23,7 @@ DEFAULT_PRUNING_OPTIONS: dict[str, Any] = {
     "coords_col": None,
     "atoms_col": "atoms",
     "energy_col": None,
+    "max_dE": None,
     "group_cols": None,
     "moi_max_deviation": 0.01,
     "rmsd_max_rmsd": 0.5,
@@ -67,6 +68,7 @@ def prune_conformers(
     coords_col: str | None = None,
     atoms_col: str = "atoms",
     energy_col: str | None = None,
+    max_dE: float | None = None,
     group_cols: Sequence[str] | None = None,
     moi_max_deviation: float = 0.01,
     rmsd_max_rmsd: float = 0.25,
@@ -97,8 +99,14 @@ def prune_conformers(
         Atom-symbol column matching the coordinate order. Defaults to
         ``"atoms"``.
     energy_col : str or None, optional
-        Column used to sort rows within each group before pruning. Energies are
-        not passed to PRISM in this adapter. Defaults to ``None``.
+        Column used to sort rows within each group before pruning, keeping the
+        lowest-energy representative. Defaults to ``None``.
+    max_dE : float or None, optional
+        Only prune geometrically similar pairs whose absolute energy difference
+        is strictly smaller than this positive threshold, in ``energy_col``
+        units (Hartree for ``*-EE``). Requires ``energy_col``. ``None`` applies
+        geometry-only pruning. Rows without finite energies or coordinates are
+        retained when the energy gate is enabled.
     group_cols : sequence of str or None, optional
         Columns defining independent conformer families. Defaults to ``None``,
         which lets FRUST infer identity columns such as ``system_name``,
@@ -131,6 +139,12 @@ def prune_conformers(
         Pruned dataframe with original row indices and dataframe attrs
         preserved.
     """
+    if max_dE is not None:
+        if energy_col is None:
+            raise ValueError("max_dE requires energy_col")
+        max_dE = float(max_dE)
+        if not np.isfinite(max_dE) or max_dE <= 0:
+            raise ValueError("max_dE must be finite and positive")
     normalized_modes = _normalize_modes(modes)
     if not normalized_modes:
         out = normalize_dataframe(df)
@@ -157,15 +171,28 @@ def prune_conformers(
         group_start = monotonic_seconds()
         work = group.copy()
         if energy_col is not None:
-            work = work.sort_values(energy_col, na_position="last")
+            work = work.sort_values(energy_col, na_position="last", kind="stable")
 
-        atoms = np.asarray(work.iloc[0][atoms_col], dtype=str)
-        if not all(list(row_atoms) == list(atoms) for row_atoms in work[atoms_col]):
-            raise ValueError("All rows in a PRISM pruning group must have the same atom order.")
+        energies = None
+        retained = work.iloc[[]]
+        if max_dE is not None:
+            finite = np.isfinite(work[energy_col].to_numpy(dtype=float))
+            finite &= work[resolved_coords_col].map(_has_finite_coords).to_numpy()
+            retained = work.loc[~finite]
+            work = work.loc[finite]
+            energies = work[energy_col].to_numpy(dtype=float)
 
-        coords = np.stack([_coerce_coords_array(value, resolved_coords_col)
-                           for value in work[resolved_coords_col]])
-        _validate_coords_shape(coords, atoms, resolved_coords_col)
+        if work.empty:
+            atoms = np.array([], dtype=str)
+            coords = np.empty((0, 0, 3))
+        else:
+            atoms = np.asarray(work.iloc[0][atoms_col], dtype=str)
+            if not all(list(row_atoms) == list(atoms) for row_atoms in work[atoms_col]):
+                raise ValueError("All rows in a PRISM pruning group must have the same atom order.")
+
+            coords = np.stack([_coerce_coords_array(value, resolved_coords_col)
+                               for value in work[resolved_coords_col]])
+            _validate_coords_shape(coords, atoms, resolved_coords_col)
 
         active_coords = coords
         active_indices = np.arange(len(work))
@@ -177,6 +204,11 @@ def prune_conformers(
                 mode_counts.append(_mode_count(mode, before, before))
                 continue
 
+            energy_options = (
+                {"energies": energies[active_indices], "max_dE": max_dE}
+                if energies is not None else {}
+            )
+
             if mode == "moi":
                 _, mask = prune_moi(
                     active_coords,
@@ -184,6 +216,7 @@ def prune_conformers(
                     max_deviation=moi_max_deviation,
                     timeout_s=timeout_s,
                     debugfunction=debugfunction,
+                    **energy_options,
                 )
             elif mode == "rmsd":
                 _, mask = prune_rmsd(
@@ -194,6 +227,7 @@ def prune_conformers(
                     timeout_s=timeout_s,
                     heavy_atoms_only=heavy_atoms_only,
                     debugfunction=debugfunction,
+                    **energy_options,
                 )
             elif mode == "rot_corr_rmsd":
                 graph = _rot_corr_graph(
@@ -213,6 +247,7 @@ def prune_conformers(
                     heavy_atoms_only=heavy_atoms_only,
                     debugfunction=debugfunction,
                     logfunction=None,
+                    **energy_options,
                 )
             else:  # pragma: no cover - guarded by _normalize_modes
                 raise ValueError(f"Unsupported pruning mode: {mode!r}")
@@ -227,7 +262,7 @@ def prune_conformers(
             active_indices = active_indices[mask]
             mode_counts.append(_mode_count(mode, before, int(len(active_indices))))
 
-        selected = work.iloc[active_indices]
+        selected = pd.concat([work.iloc[active_indices], retained])
         kept.append(selected)
         group_elapsed = elapsed_seconds(group_start)
         group_record = {
@@ -262,6 +297,7 @@ def prune_conformers(
             "coords_col": resolved_coords_col,
             "atoms_col": atoms_col,
             "energy_col": energy_col,
+            "max_dE": max_dE,
             "group_cols": list(resolved_group_cols),
             "moi_max_deviation": float(moi_max_deviation),
             "rmsd_max_rmsd": float(rmsd_max_rmsd),
@@ -308,6 +344,15 @@ def prune_conformers(
     return pruned
 
 
+def _has_finite_coords(value) -> bool:
+    """Keep incomplete optimization results out of energy-gated comparisons."""
+    try:
+        coords = _coerce_coords_array(value, "coordinates")
+    except (TypeError, ValueError):
+        return False
+    return bool(coords.ndim == 2 and coords.shape[1] == 3 and np.isfinite(coords).all())
+
+
 def _load_prism_functions():
     try:
         pruner = importlib.import_module("prism_pruner.pruner")
@@ -320,8 +365,29 @@ def _load_prism_functions():
                 "`pip install prism-pruner`."
             ) from exc
         raise
+
+    def _prune_by_moment_of_inertia_keep_first(structures, atoms, **kwargs):
+        # prism_pruner._main_compute_row rejects index i when similar to any j > i,
+        # keeping the last duplicate. Reverse input/output order so index 0
+        # (the lowest-energy row when sorted by energy_col) survives, matching
+        # _batch_rmsd_prune and _batch_rot_corr_prune.
+        call_kwargs = dict(kwargs)
+        energies = call_kwargs.get("energies")
+        if energies is not None and len(energies) == len(structures):
+            # PRISM re-sorts when its last energy is nonzero. A common offset
+            # preserves pairwise differences while keeping our reversed order.
+            reversed_energies = np.asarray(energies)[::-1]
+            call_kwargs["energies"] = reversed_energies - reversed_energies[-1]
+        _, rev_mask = pruner.prune_by_moment_of_inertia(
+            structures[::-1],
+            atoms,
+            **call_kwargs,
+        )
+        mask = np.asarray(rev_mask, dtype=bool)[::-1]
+        return structures[mask], mask
+
     return (
-        pruner.prune_by_moment_of_inertia,
+        _prune_by_moment_of_inertia_keep_first,
         pruner.prune_by_rmsd,
         pruner.prune_by_rmsd_rot_corr,
         graph_module.graphize,

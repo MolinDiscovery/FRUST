@@ -17,7 +17,45 @@ from pathlib import Path
 from frust.config import get_oet_tools
 
 DEFAULT_UMA_MODEL = "uma-s-1p1"
+DEFAULT_UMA_WORKER_MEMORY_GB = 3.4
 LOCAL_BIND_HOST = "127.0.0.1"
+
+
+def resolve_uma_server_cores(
+    n_cores: int,
+    mem_gb: float,
+    uma_server_cores: int | None = None,
+) -> int:
+    """Resolve a UMA server budget from usable calculator memory.
+
+    Parameters
+    ----------
+    n_cores : int
+        Available CPU cores, shared by the stage's row workers.
+    mem_gb : float
+        Usable calculator memory in GiB, after any scheduler memory reserve.
+        Automatic sizing budgets 3.4 GiB per UMA worker, with at least one
+        worker and at most ``n_cores`` workers.
+    uma_server_cores : int or None, optional
+        Explicit positive worker budget. Overrides automatic memory sizing.
+
+    Returns
+    -------
+    int
+        Number of workers passed to ``oet_server --nthreads``.
+    """
+    import math
+    from operator import index
+
+    if isinstance(n_cores, bool) or index(n_cores) < 1:
+        raise ValueError("n_cores must be a positive integer")
+    if not math.isfinite(mem_gb) or mem_gb <= 0:
+        raise ValueError("mem_gb must be finite and positive")
+    if uma_server_cores is not None:
+        if isinstance(uma_server_cores, bool) or index(uma_server_cores) < 1:
+            raise ValueError("uma_server_cores must be a positive integer")
+        return int(uma_server_cores)
+    return min(int(n_cores), max(1, int(mem_gb / DEFAULT_UMA_WORKER_MEMORY_GB)))
 
 
 @dataclass(frozen=True)

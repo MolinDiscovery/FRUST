@@ -128,7 +128,7 @@ class StepperProvenanceTests(unittest.TestCase):
         self.assertEqual(calc["name"], "xtb")
         self.assertEqual(calc["mode"], "direct")
         self.assertEqual(calc["backend"], f"{__name__}.StepperProvenanceTests.test_xtb_records_calculator_metadata.<locals>.fake_xtb")
-        self.assertEqual(calc["resources"], {"n_cores": 3})
+        self.assertEqual(calc["resources"], {"n_cores": 3, "n_workers": 1})
         self.assertEqual(calc["executables"]["xtb"]["path"], str(xtb.resolve()))
         self.assertEqual(calc["executables"]["xtb"]["source"], "XTB_EXE")
 
@@ -164,7 +164,7 @@ class StepperProvenanceTests(unittest.TestCase):
         calc = out.attrs["frust_steps"]["gxtb_test"]["calculator"]
         self.assertEqual(calc["name"], "gxtb")
         self.assertEqual(calc["mode"], "direct_gxtb")
-        self.assertEqual(calc["resources"], {"n_cores": 4})
+        self.assertEqual(calc["resources"], {"n_cores": 4, "n_workers": 1})
         self.assertEqual(calc["executables"]["gxtb"]["path"], str(gxtb.resolve()))
         self.assertEqual(calc["executables"]["gxtb"]["source"], "GXTB_EXE")
 
@@ -210,7 +210,7 @@ end"""
         calc = meta["calculator"]
         self.assertEqual(calc["name"], "orca")
         self.assertEqual(calc["mode"], "direct")
-        self.assertEqual(calc["resources"], {"n_cores": 2, "memory_gb": 12})
+        self.assertEqual(calc["resources"], {"n_cores": 2, "n_workers": 1, "memory_gb": 12})
         self.assertEqual(calc["executables"]["orca"]["path"], str(orca.resolve()))
         self.assertEqual(calc["executables"]["xtb"]["path"], str(xtb.resolve()))
         self.assertEqual(calc["environment"]["OPEN_MPI_DIR"]["path"], str(mpi.resolve()))

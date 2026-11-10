@@ -254,8 +254,13 @@ wf.show_stages()[["branch", "stage", "phase", "operation", "lowest"]]
 | `ranking_top_n=3` | Existing count after explicit single-point reranking; `uma_rank_top_n` is its legacy alias |
 | `ts_refine_n=3` | Legacy distinct-geometry cutoff for direct UMA TS refinement without explicit reranking |
 
-Every retained candidate receives all required validation stages. Final analysis
-selects by quality and then final free energy, so the final winner can differ
+Every retained candidate is optimized with the final method. Before frequencies,
+`validation_dedup` keeps the lowest electronic-energy representative of candidates
+with both an energy difference below **0.05 kcal/mol** and a moment-of-inertia
+deviation below **0.5%**. Distinct candidates continue to frequencies and the final
+single point. This applies to both UMA and DFT and leaves incomplete results
+available for inspection. Final analysis selects by quality and then final free
+energy, so the final winner can differ
 from the screening or reranking winner. `run.candidate_barriers()` retains the
 other TS candidates for review. This applies to UMA and DFT, including ordinary
 minima and INT3 reference selection. Without explicit reranking, the validation
@@ -549,8 +554,9 @@ df = wf.run(targets=[0], out_dir="debug/screen_ts", execution="dft_staged")
 result = wf.submit(out_dir="runs/screen_ts", cluster=cluster, execution="dft_staged")
 ```
 
-That cluster call submits all targets. Because `stage_resources` is omitted,
-every submitted job group uses `Resources(cpus=4, mem_gb=20, timeout_min=720)`.
+That cluster call submits all targets. With `stage_resources` omitted, groups
+containing full validation use `Resources(cpus=6, mem_gb=26, timeout_min=720)`;
+screening-only groups use `Resources(cpus=4, mem_gb=20, timeout_min=720)`.
 It also submits a final collector job by default. When all target jobs have
 finished, that collector writes:
 

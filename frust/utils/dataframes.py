@@ -42,6 +42,7 @@ _SUMMARY_COLUMNS = [
     "output_rows",
     "dropped_rows",
     "n_cores",
+    "n_workers",
     "memory_gb",
     "xtra_inp_str",
 ]
@@ -55,6 +56,7 @@ _SUMMARY_STABLE_COLUMNS = [
     "lowest",
     "filter_energy_col",
     "n_cores",
+    "n_workers",
     "memory_gb",
 ]
 _SUMMARY_COUNT_COLUMNS = ["input_rows", "output_rows", "dropped_rows"]
@@ -312,7 +314,7 @@ def show_steps(df: pd.DataFrame, *, detail: str = "summary") -> pd.DataFrame:
                 "mean_row": format_duration(mean_row_s),
                 "max_row_s": max_row_s,
                 "max_row": format_duration(max_row_s),
-                "core_hours": _core_hours(elapsed_s, n_cores),
+                "core_hours": _core_hours(elapsed_s, _calculator_core_budget(resources)),
                 "processed_rows": timing.get("processed_rows"),
                 "skipped_rows": timing.get("skipped_rows"),
                 "options": _format_step_options(step),
@@ -325,6 +327,7 @@ def show_steps(df: pd.DataFrame, *, detail: str = "summary") -> pd.DataFrame:
                 "dropped_rows": row_counts.get("dropped_rows", filtering.get("dropped_rows")),
                 "n_filter_groups": filtering.get("n_groups"),
                 "n_cores": n_cores,
+                "n_workers": resources.get("n_workers"),
                 "memory_gb": resources.get("memory_gb"),
                 "xtra_inp_str": input_data.get("xtra_inp_str"),
                 "detailed_inp_str": input_data.get("detailed_inp_str"),
@@ -418,7 +421,8 @@ def _step_timing_frame(df: pd.DataFrame) -> pd.DataFrame:
                 "max_row": format_duration(max_row_s),
                 "max_row_s": max_row_s,
                 "n_cores": n_cores,
-                "core_hours": _core_hours(elapsed_s, n_cores),
+                "n_workers": resources.get("n_workers"),
+                "core_hours": _core_hours(elapsed_s, _calculator_core_budget(resources)),
                 "started_at": timing.get("started_at"),
                 "finished_at": timing.get("finished_at"),
             }
@@ -686,6 +690,17 @@ def _weighted_mean(values: Sequence[Any], weights: Sequence[Any]) -> float | Non
     if total_weight <= 0:
         return None
     return total / total_weight
+
+
+def _calculator_core_budget(resources: Mapping[str, Any]) -> float | None:
+    """Count concurrent row cores and the shared UMA pool without double counting."""
+    cores = resources.get("n_cores")
+    if cores is None:
+        return None
+    return max(
+        float(cores) * float(resources.get("n_workers") or 1),
+        float(resources.get("uma_server_cores") or 0),
+    )
 
 
 def _core_hours(elapsed_s: Any, n_cores: Any) -> float | None:
@@ -1562,6 +1577,7 @@ def _format_step_options(step: Mapping[str, Any]) -> str | None:
     for key in (
         "coords_col",
         "energy_col",
+        "max_dE",
         "moi_max_deviation",
         "rmsd_max_rmsd",
         "rmsd_max_dev",

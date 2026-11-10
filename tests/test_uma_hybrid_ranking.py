@@ -67,6 +67,9 @@ class _FakeStepper:
     def __init__(self, **kwargs):
         del kwargs
 
+    def prune_conformers(self, df, **kwargs):
+        return df.copy()
+
     def xtb(self, df, *, name, **kwargs):
         return self._calculate(df, name, kwargs)
 

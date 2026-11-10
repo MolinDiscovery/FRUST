@@ -126,7 +126,7 @@ def test_workflow_reuses_one_server_for_sp_opt_and_numfreq(tmp_path):
 
     assert [event[0] for event in starts] == ["start", "stop"]
     assert starts[0][2] == str(runtime)
-    assert starts[0][1]["server_cores"] == 4
+    assert starts[0][1]["server_cores"] == 1
     assert len(requests) == 3
     assert all("-b 127.0.0.1:12345" in request for request in requests)
     assert all(
@@ -134,7 +134,7 @@ def test_workflow_reuses_one_server_for_sp_opt_and_numfreq(tmp_path):
         for stage in ("uma_sp", "uma_opt", "uma_numfreq")
     )
     assert all(
-        result.attrs["frust_steps"][stage]["input"]["uma_server_cores"] == 4
+        result.attrs["frust_steps"][stage]["input"]["uma_server_cores"] == 1
         for stage in ("uma_sp", "uma_opt", "uma_numfreq")
     )
     assert current_uma_job_scope() is None

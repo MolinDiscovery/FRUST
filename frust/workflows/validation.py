@@ -1,6 +1,7 @@
 """Role-based validation graphs shared by chemistry-specific workflows."""
 
 from frust.workflows.core import StageDef
+from frust.utils.pruning import normalize_pruning_options
 
 
 def _validation_stages(method, *, profile, preopt=False, selected_candidates=False):
@@ -70,6 +71,22 @@ def _validation_stages(method, *, profile, preopt=False, selected_candidates=Fal
                 phase="validation",
             )
         )
+    if selected_candidates:
+        stages.append(
+            StageDef(
+                "validation_dedup",
+                "stationary-point deduplication",
+                kind="prune",
+                phase="validation",
+                prune_options=normalize_pruning_options({
+                    "modes": ("moi",),
+                    "coords_col": f"{key}-oc",
+                    "energy_col": f"{key}-EE",
+                    "moi_max_deviation": 0.005,
+                    "max_dE": 0.05 / 627.5095,
+                }),
+            )
+        )
     key = roles["frequencies"]
     stages.append(
         StageDef(key, "final frequencies", operation="frequencies", phase="validation")
@@ -90,6 +107,8 @@ def _validation_stages(method, *, profile, preopt=False, selected_candidates=Fal
             "set preoptimization_id when reusing the minimum calculator"
         )
     for stage in stages:
+        if stage.kind != "calc":
+            continue
         spec = method.for_stage(stage.method_stage or stage.id)
         if not spec.supports_operation(stage.operation):
             raise ValueError(
@@ -98,7 +117,7 @@ def _validation_stages(method, *, profile, preopt=False, selected_candidates=Fal
     potentials = {
         (spec.kwargs.get("uma"), spec.kwargs.get("uma_xtb_alpb"))
         for stage in stages
-        if stage.operation != "analysis_single_point"
+        if stage.kind == "calc" and stage.operation != "analysis_single_point"
         for spec in [method.for_stage(stage.method_stage or stage.id)]
         if spec.kwargs.get("uma") is not None
     }

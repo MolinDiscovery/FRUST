@@ -56,7 +56,8 @@ def test_stage_arrays_keep_indices_resources_and_dependencies(tmp_path, mode):
     resources = {name: Resources(i + 1, i + 2, 5) for i, name in enumerate(names)}
     with patch('frust.workflows.core.create_executor', side_effect=[*workers, collector]), patch.object(wf, '_prepare_initial_df') as prepare:
         result = wf.submit(out_dir=tmp_path, cluster=ClusterConfig(), execution=mode,
-                           array=True, array_parallelism=limits, stage_resources=resources, targets=[2, 0, 1])
+                           array=True, array_parallelism=limits, stage_resources=resources, targets=[2, 0, 1],
+                           uma_server_cores=2)
     prepare.assert_not_called()
     assert result.tags == ['C', 'A', 'B']
     for i, (name, worker) in enumerate(zip(names, workers)):
@@ -67,6 +68,7 @@ def test_stage_arrays_keep_indices_resources_and_dependencies(tmp_path, mode):
         assert arguments[0][2] == [stage.id for stage in groups[i]]
         assert arguments[0][6].n_cores == resources[name].cpus
         assert arguments[0][6].mem_gb == pytest.approx(resources[name].mem_gb * .8)
+        assert arguments[0][6].uma_server_cores == 2
         extra = worker.parameters[0]['slurm_additional_parameters']
         assert extra['kill-on-invalid-dep'] == 'yes'
         assert extra.get('dependency') == (None if i == 0 else f'aftercorr:{99 + i}')

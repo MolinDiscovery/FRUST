@@ -840,7 +840,7 @@ class WorkflowExecutionTests(unittest.TestCase):
         ]
         self.assertEqual(
             resource_params,
-            [(4, 20, 720), (4, 20, 720), (4, 20, 720), (4, 20, 720)],
+            [(4, 20, 720), (6, 26, 720), (6, 26, 720), (6, 26, 720)],
         )
 
     def test_raw_mols_submit_uses_default_resources_when_stage_resources_omitted(self):
@@ -863,7 +863,7 @@ class WorkflowExecutionTests(unittest.TestCase):
         ]
         self.assertEqual(
             resource_params,
-            [(4, 20, 720), (4, 20, 720), (4, 20, 720), (4, 20, 720)],
+            [(4, 20, 720), (6, 26, 720), (6, 26, 720), (6, 26, 720)],
         )
 
     def test_submit_single_job_submits_one_job_per_target(self):
@@ -884,10 +884,10 @@ class WorkflowExecutionTests(unittest.TestCase):
         self.assertEqual(result.mode, "mols:single_job")
         self.assertEqual(len(result.tags), 2)
         self.assertEqual(len(fake.submissions), 2)
-        self.assertEqual([params["mem_gb"] for params in fake.parameters], [20, 20])
+        self.assertEqual([params["mem_gb"] for params in fake.parameters], [26, 26])
         self.assertEqual(
             [submission[1][3].mem_gb for submission in fake.submissions],
-            [16.0, 16.0],
+            [20.8, 20.8],
         )
 
     def test_collect_expected_outputs_writes_report_and_skips_failed_outputs(self):

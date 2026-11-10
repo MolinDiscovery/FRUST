@@ -194,6 +194,7 @@ def test_uma_ranked_geometry_reaches_constrained_preopt_and_unconstrained_valida
         "uma_preopt",
         "uma_hessian",
         "uma_ts_opt",
+        "validation_dedup",
         "uma_freq",
         "uma_solv_sp",
     ]
@@ -354,12 +355,18 @@ def test_native_arrays_keep_the_validation_chain_without_preparation(tmp_path, s
                 execution="single_job",
                 array=True,
                 array_parallelism=4,
+                uma_server_cores=2,
             )
         ts_prepare.assert_not_called()
         ref_prepare.assert_not_called()
         int3_prepare.assert_not_called()
     branches = 4 if scope == "full_cycle" else 2
     assert len(submitted.child_submissions) == branches and fake.array_count == branches
+    assert all(
+        args[3].uma_server_cores == 2
+        for function, args, _ in fake.submissions
+        if function.__name__ == "_run_target_submitted_job"
+    )
     chains = [
         [stage.id for stage in args[0]._stage_defs()]
         for function, args, _ in fake.submissions

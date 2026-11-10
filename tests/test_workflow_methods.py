@@ -1,7 +1,7 @@
 from __future__ import annotations
 
 import unittest
-import importlib
+from unittest.mock import patch
 
 import frust as ft
 from frust.workflows import methods
@@ -174,14 +174,17 @@ class WorkflowMethodTests(unittest.TestCase):
         self.assertIs(methods.preset("unit-test-xtb-opt"), method)
 
     def test_register_user_preset_does_not_hide_builtins(self):
-        fresh_methods = importlib.reload(methods)
-        method = fresh_methods.MethodPlan(
-            name="minimal",
-            stages={"xtb_sp": fresh_methods.gxtb(job="sp")},
-        )
-        fresh_methods.register_preset("minimal-custom", method)
+        with patch.object(methods, "_PRESETS", {}), patch.object(
+            methods, "_BUILTINS_REGISTERED", False
+        ):
+            method = methods.MethodPlan(
+                name="minimal",
+                stages={"xtb_sp": methods.gxtb(job="sp")},
+            )
+            methods.register_preset("minimal-custom", method)
 
-        self.assertEqual(fresh_methods.preset("r2scan-3c").name, "r2scan-3c")
+            self.assertEqual(methods.preset("r2scan-3c").name, "r2scan-3c")
+            self.assertIs(methods.preset("minimal-custom"), method)
 
 
 if __name__ == "__main__":

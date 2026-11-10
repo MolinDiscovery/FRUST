@@ -56,6 +56,41 @@ df = step.orca(
 ORCA stage after `xtb_opt` will use `xtb_opt-oc` rather than the original
 `coords_embedded`.
 
+For an allocation of eight cores, run eight independent xTB rows at once:
+
+```python
+import frust as ft
+
+step = ft.Stepper(n_cores=1, n_workers=8)
+df = step.xtb(df, name="xtb_opt", options={"gfn": 2, "opt": None})
+ft.show_steps(df)[["n_cores", "n_workers", "input_rows", "output_rows"]]
+```
+
+`n_cores` is the core count per row; `n_workers` is the maximum number of rows
+running together. Each calculator call can override either value. `Stepper`
+defaults to one worker, preserves input row order, and records failed rows in
+`*-NT` and `*-error`. Concurrent ORCA clients share the Stepper memory budget
+equally. Workflow objects choose stage concurrency automatically.
+
+To remove optimized duplicates only when their energies also agree:
+
+```python
+df = step.prune_conformers(
+    df,
+    name="optimized_prune",
+    modes=("moi",),
+    coords_col="xtb_opt-oc",
+    energy_col="xtb_opt-EE",
+    moi_max_deviation=0.005,
+    max_dE=0.05 / 627.5095,
+)
+```
+
+`max_dE` uses the units of `energy_col`: the example converts 0.05 kcal/mol to
+Hartree. Both the energy and geometry criteria must match before a row is
+removed. The lowest-energy representative survives. Omitting `max_dE` retains
+the usual geometry-only pruning behavior.
+
 ## TS Workflow Stages
 
 Staged workflow submission writes a new parquet file after each major group:

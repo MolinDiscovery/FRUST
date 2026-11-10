@@ -128,7 +128,7 @@ def test_staged_grouping_uses_validation_roles(method):
     child = workflow(method=method).children()["transition_states"]
     groups = child._stage_groups("dft_staged")
     assert groups[0][-1].operation == "constrained_preoptimization"
-    assert [g[0].operation for g in groups[1:]] == [
+    assert [g[-1].operation for g in groups[1:]] == [
         "hessian_seed",
         "ts_search",
         "frequencies",

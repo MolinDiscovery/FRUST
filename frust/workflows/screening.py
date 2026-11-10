@@ -497,11 +497,15 @@ class CatalystScreenWorkflow:
         work_dir: str | Path | None = None,
         artifact_policy: ArtifactPolicy = "standard",
         uma_oet_tools: str | Path | None = None,
+        uma_server_cores: int | None = None,
     ) -> ScreenRun:
         """Run child workflows locally and build the screen analysis.
 
         Parameters
         ----------
+        uma_server_cores : int or None, optional
+            Override the child workflows' UMA worker budget. ``None`` selects
+            workers from usable memory (3.4 GiB each), capped at available CPUs.
         uma_oet_tools : str, pathlib.Path, or None, optional
             OET runtime selected inside each child workflow group containing
             UMA stages. Other arguments control the child workflows and run
@@ -523,6 +527,7 @@ class CatalystScreenWorkflow:
                 work_dir=work_dir,
                 artifact_policy=artifact_policy,
                 uma_oet_tools=uma_oet_tools,
+                uma_server_cores=uma_server_cores,
             )
             _write_verified_parquet(frame, branch_dir / "merged.parquet")
         _finalize_run(self, root, artifact_policy=artifact_policy)
@@ -547,6 +552,7 @@ class CatalystScreenWorkflow:
         finalize_resources: Resources | None = None,
         artifact_policy: ArtifactPolicy | None = None,
         uma_oet_tools: str | Path | None = None,
+        uma_server_cores: int | None = None,
     ) -> ScreenSubmissionResult:
         """Submit the complete catalyst screen and its analysis finalizer.
 
@@ -630,6 +636,9 @@ class CatalystScreenWorkflow:
             portable results and final TS modes, with routine calculator
             output in scratch. ``"diagnostic"`` keeps every generated
             checkpoint and the standard calculator files.
+        uma_server_cores : int or None, optional
+            Override the child workflows' UMA worker budget. ``None`` selects
+            workers from usable memory (3.4 GiB each), capped at available CPUs.
         uma_oet_tools : str, pathlib.Path, or None, optional
             OET runtime selected inside child jobs containing UMA stages.
             For example, point to a pinned FairChem 2.23 CPU runtime.
@@ -780,6 +789,7 @@ class CatalystScreenWorkflow:
                     collect_resources=collect_resources,
                     artifact_policy=artifact_policy,
                     uma_oet_tools=uma_oet_tools,
+                    uma_server_cores=uma_server_cores,
                     _defer_compact_cleanup=artifact_policy == "compact",
                 )
                 submissions[branch] = submission
