@@ -16,6 +16,7 @@ import time
 
 from frust.cluster.progress_eta import _Batch, _Estimate, _Target, _estimate_worker_time, _timestamp
 from frust.cluster.submission import _completion_path, _submission_history
+from frust.utils.timing import format_duration
 
 
 _BRANCH_LABELS = {
@@ -49,6 +50,7 @@ class _Branch:
     label: str
     batches: list[_Batch]
     collector: _ControlJob | None
+    submitted_ns: int | None
 
 
 @dataclass(frozen=True)
@@ -60,6 +62,7 @@ class _Snapshot:
     observed_at: float
     calculation: _Estimate | None
     ready_at: float | None
+    submitted_at: float | None
 
 
 def _is_run_root(path: Path) -> bool:
@@ -173,7 +176,8 @@ def _read_branch(root: Path, label: str, screens: list[dict]) -> _Branch:
             report_status = "collected" if complete else "finished with issues"
         ended = _finished_at(collector_marker) if collector_finished and report_status == "collected" else None
         collector = _ControlJob(job_id, collector_finished, report_status, ended)
-    return _Branch(label, batches, collector)
+    submitted_ns = history[0].get("created_ns") if history else None
+    return _Branch(label, batches, collector, submitted_ns)
 
 
 def _finalization_report(root: Path, identity: str) -> tuple[str | None, float | None]:
@@ -337,7 +341,9 @@ def _read_snapshot(root: Path) -> _Snapshot:
         ended = branches[0].collector.finished_at
         if ended is not None and ended <= now:
             ready_at = ended
-    return _Snapshot(root, summary, finalization, errors, now, calculation, ready_at)
+    submitted_ns = screens[0]["created_ns"] if screens else branches[0].submitted_ns
+    submitted_at = submitted_ns / 1e9 if isinstance(submitted_ns, int) and submitted_ns > 0 else None
+    return _Snapshot(root, summary, finalization, errors, now, calculation, ready_at, submitted_at)
 
 
 def _format_progress(label: str, counts: Counter[str], collection: str | None = None) -> str:
@@ -359,7 +365,12 @@ def _format_snapshot(snapshot: _Snapshot) -> str:
     for _, counts, _ in snapshot.branches:
         overall.update(counts)
     updated = datetime.fromtimestamp(snapshot.observed_at).astimezone().strftime("%H:%M:%S %Z")
-    lines = [f"FRUST progress  |  {snapshot.root}", f"Updated {updated}", "", "Finished targets"]
+    lines = [f"FRUST progress  |  {snapshot.root}"]
+    end = snapshot.ready_at if snapshot.ready_at is not None else snapshot.observed_at
+    if snapshot.submitted_at is not None and snapshot.submitted_at <= end:
+        submitted = datetime.fromtimestamp(snapshot.submitted_at).astimezone().strftime("%a %d %b %H:%M %Z")
+        lines.append(f"Submitted {submitted}  |  Elapsed {format_duration(end - snapshot.submitted_at)}")
+    lines.extend([f"Updated {updated}", "", "Finished targets"])
     if snapshot.finalization is None and len(snapshot.branches) == 1:
         lines.append(_format_progress("Overall", overall, snapshot.branches[0][2]))
     else:

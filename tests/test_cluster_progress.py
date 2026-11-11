@@ -120,20 +120,25 @@ def test_cancelled_array_element_and_scheduler_outage(tmp_path, monkeypatch):
 
 def test_retry_keeps_other_targets_and_rejects_old_final_report(tmp_path, monkeypatch):
     refs = tmp_path / "calculations" / "references"
-    _screen(tmp_path, "first")
-    first = _submit(refs, [("ok", "retry")], ["101_0"], collector="102")
+    submitted_ns = 1_794_000_000_000_000_000
+    monkeypatch.setattr(progress.time, "time", lambda: 1_794_000_120)
+    _screen(tmp_path, "first", created_ns=submitted_ns)
+    first = _submit(refs, [("ok", "retry")], ["101_0"], created_ns=submitted_ns + 1, collector="102")
     _batch(refs, first, {"ok": "success", "retry": "failed"}, finished=True)
     _atomic_write_submission_json(tmp_path / "run_report.json", {
         "overall_status": "partial",
         "submission": {"references": {"collection_report": str(refs / "collection_report_first.json")}},
     })
-    _screen(tmp_path, "second", created_ns=30, job="201")
-    second = _submit(refs, [("retry",)], ["105_0"], created_ns=40, collector="106", previous={"retry": first})
+    retried_ns = submitted_ns + 30_000_000_000
+    _screen(tmp_path, "second", created_ns=retried_ns, job="201")
+    second = _submit(refs, [("retry",)], ["105_0"], created_ns=retried_ns + 1,
+                     collector="106", previous={"retry": first})
     _slurm(monkeypatch, queue="105_0|PENDING\n106|PENDING\n201|PENDING\n")
 
     snapshot = progress._read_snapshot(tmp_path)
     assert snapshot.branches[0][1] == {"succeeded": 1, "queued": 1}
     assert snapshot.finalization == "pending"
+    assert "Elapsed 2m 00s" in progress._format_snapshot(snapshot)
 
     _batch(refs, second, {"retry": "success"}, finished=True)
     snapshot = progress._read_snapshot(tmp_path)
@@ -152,7 +157,6 @@ def test_retry_keeps_other_targets_and_rejects_old_final_report(tmp_path, monkey
     _atomic_write_submission_json(tmp_path / "run_report.json", report)
     completed_ns = 1_794_000_060_000_000_000
     _mark_completed(tmp_path, "second", "screen_finalize", 0, finished_ns=completed_ns)
-    monkeypatch.setattr(progress.time, "time", lambda: 1_794_000_120)
     assert progress._read_snapshot(tmp_path).finalization == "finished without a verified report"
     for status, display in [("partial", "finished with issues"), ("success", "ready")]:
         _atomic_write_submission_json(tmp_path / "run_report.json", {
@@ -163,7 +167,10 @@ def test_retry_keeps_other_targets_and_rejects_old_final_report(tmp_path, monkey
         snapshot = progress._read_snapshot(tmp_path)
         assert snapshot.finalization == display
         assert snapshot.ready_at == (completed_ns / 1e9 if status == "success" else None)
-        assert ("Results ready at:" in progress._format_snapshot(snapshot)) == (status == "success")
+        output = progress._format_snapshot(snapshot)
+        assert ("Results ready at:" in output) == (status == "success")
+        if status == "success":
+            assert "Elapsed 1m 00s" in output
 
 
 def test_calculation_eta_accounts_for_running_and_queued_targets(tmp_path, monkeypatch):
@@ -288,8 +295,10 @@ def test_calculation_eta_absorbs_runaway_worker_when_parallel_pool_dominates(tmp
 
 
 def test_standalone_collector_reads_only_matching_report(tmp_path, monkeypatch):
-    attempt = _submit(tmp_path, [("anisole",)], ["100"], collector="101")
-    _mark_completed(tmp_path, attempt, "collect", 0)
+    submitted_ns = 1_794_000_000_000_000_000
+    attempt = _submit(tmp_path, [("anisole",)], ["100"], created_ns=submitted_ns, collector="101")
+    _mark_completed(tmp_path, attempt, "collect", 0, finished_ns=submitted_ns + 95_000_000_000)
+    monkeypatch.setattr(progress.time, "time", lambda: 1_794_000_120)
     report = {"n_targets": 1, "n_collected": 1, "n_failures": 0, "target_results": [
         {"target": "anisole", "attempt_id": "older", "status": "success"},
     ]}
@@ -298,7 +307,9 @@ def test_standalone_collector_reads_only_matching_report(tmp_path, monkeypatch):
     _atomic_write_submission_json(tmp_path / ".frust" / "reports" / "custom.json", report)
     calls = _slurm(monkeypatch)
 
-    assert progress._read_snapshot(tmp_path).branches == [("Workflow", {"succeeded": 1}, "collected")]
+    snapshot = progress._read_snapshot(tmp_path)
+    assert snapshot.branches == [("Workflow", {"succeeded": 1}, "collected")]
+    assert "Elapsed 1m 35s" in progress._format_snapshot(snapshot)
     assert calls == []
 
 
