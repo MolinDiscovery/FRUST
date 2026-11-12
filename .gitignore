@@ -36,6 +36,3 @@ FRUST.egg-info/
 !/playground/*.ipynb
 !/playground/**/*.py
 !/playground/*.py
-
-# Local agent-generated plans, probes, and research artifacts
-/autodev/
